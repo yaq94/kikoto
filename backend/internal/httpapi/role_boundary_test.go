@@ -54,27 +54,36 @@ func TestRemoteActionsRequireTrackOrFetchCapability(t *testing.T) {
 	fixture := newRoleBoundaryFixture(t)
 	// No remote source is configured, so an allowed request ends in a
 	// validation or not-found answer without any outbound request.
-	routes := []struct{ method, target, body string }{
-		{http.MethodPost, "/api/remote-sources/1/works/RJ00000001/track", `{}`},
-		{http.MethodPost, "/api/remote-sources/1/works/RJ00000001/sync", `{"triggerReason":"mark_interest"}`},
-		{http.MethodDelete, "/api/works/1/tracked-sources/1", ``},
-		{http.MethodPost, "/api/works/RJ00000001/source-availability", `{}`},
-		{http.MethodPost, "/api/remote-sources/1/works/RJ00000001/cache", `{"path":"track.mp3"}`},
-		{http.MethodPost, "/api/media/1/cache", ``},
-		{http.MethodPost, "/api/remote-sources/1/works/RJ00000001/fetch-plan", `{}`},
-		{http.MethodPost, "/api/remote-sources/1/works/RJ00000001/fetch", `{}`},
-		{http.MethodPost, "/api/remote-sources/1/works/RJ00000001/save-plan", `{}`},
-		{http.MethodPost, "/api/remote-sources/1/works/RJ00000001/save", `{}`},
-		{http.MethodPost, "/api/workflow-runs/remote-bulk", `{"action":"track","sourceId":1,"codes":["RJ00000001"]}`},
-		{http.MethodPost, "/api/workflow-runs/remote-bulk", `{"action":"fetch","sourceId":1,"codes":["RJ00000001"]}`},
-		{http.MethodPost, "/api/workflow-runs/remote-popular", `{"sourceId":1,"action":"track","limit":5,"skipTag":true}`},
+	routes := []struct {
+		method, target, body string
+		contributorAllowed   bool
+	}{
+		{http.MethodPost, "/api/remote-sources/1/works/RJ00000001/track", `{}`, true},
+		{http.MethodPost, "/api/remote-sources/1/works/RJ00000001/sync", `{"triggerReason":"mark_interest"}`, true},
+		{http.MethodDelete, "/api/works/1/tracked-sources/1", ``, true},
+		{http.MethodPost, "/api/works/RJ00000001/source-availability", `{}`, true},
+		{http.MethodPost, "/api/remote-sources/1/works/RJ00000001/cache", `{"path":"track.mp3"}`, true},
+		{http.MethodPost, "/api/media/1/cache", ``, true},
+		{http.MethodPost, "/api/remote-sources/1/works/RJ00000001/fetch-plan", `{}`, false},
+		{http.MethodPost, "/api/remote-sources/1/works/RJ00000001/fetch", `{}`, false},
+		{http.MethodPost, "/api/remote-sources/1/works/RJ00000001/save-plan", `{}`, false},
+		{http.MethodPost, "/api/remote-sources/1/works/RJ00000001/save", `{}`, false},
+		{http.MethodPost, "/api/workflow-runs/remote-bulk", `{"action":"track","sourceId":1,"codes":["RJ00000001"]}`, true},
+		{http.MethodPost, "/api/workflow-runs/remote-bulk", `{"action":"fetch","sourceId":1,"codes":["RJ00000001"]}`, false},
+		{http.MethodPost, "/api/workflow-runs/remote-popular", `{"sourceId":1,"action":"track","limit":5,"skipTag":true}`, true},
+		{http.MethodPost, "/api/workflow-runs/remote-popular", `{"sourceId":1,"action":"fetch","limit":5,"skipTag":true}`, false},
 	}
 	for _, route := range routes {
 		if response := fixture.request("user", route.method, route.target, route.body); response.Code != http.StatusForbidden {
 			t.Errorf("user %s %s = %d, want 403: %s", route.method, route.target, response.Code, response.Body)
 		}
-		if response := fixture.request("contributor", route.method, route.target, route.body); response.Code == http.StatusForbidden || response.Code == http.StatusUnauthorized {
-			t.Errorf("contributor %s %s = %d, want the permission check to pass: %s", route.method, route.target, response.Code, response.Body)
+		response := fixture.request("contributor", route.method, route.target, route.body)
+		if route.contributorAllowed {
+			if response.Code == http.StatusForbidden || response.Code == http.StatusUnauthorized {
+				t.Errorf("contributor %s %s = %d, want the permission check to pass: %s", route.method, route.target, response.Code, response.Body)
+			}
+		} else if response.Code != http.StatusForbidden {
+			t.Errorf("contributor %s %s = %d, want 403 for composite Fetch capability: %s", route.method, route.target, response.Code, response.Body)
 		}
 	}
 }

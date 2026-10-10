@@ -251,7 +251,7 @@ func TestAvailabilityWatchUsesOneScheduleTriggerAndRecordsScheduledRuns(t *testi
 	if err := db.QueryRow(`SELECT id FROM workflow_definition WHERE code = 'availability_watch'`).Scan(&definitionID); err != nil {
 		t.Fatal(err)
 	}
-	actor := account.User{ID: 1, Role: "contributor", Permissions: account.PermissionsForRole("contributor")}
+	actor := account.User{ID: 1, Role: "admin", Permissions: account.PermissionsForRole("admin")}
 	createTrigger := func(body string) *httptest.ResponseRecorder {
 		t.Helper()
 		request := httptest.NewRequest(http.MethodPost, "/api/workflow-triggers", strings.NewReader(body))
@@ -437,7 +437,7 @@ func TestAvailabilityWatchAddKeepsExistingTargets(t *testing.T) {
 	}
 	server := NewServer(db, config.Config{})
 	request := httptest.NewRequest(http.MethodPost, "/api/availability-watch/targets", strings.NewReader(`{"targetCodes":["rj00000001"]}`))
-	request = request.WithContext(context.WithValue(request.Context(), currentUserKey, account.User{ID: 1, Role: "contributor", Permissions: account.PermissionsForRole("contributor")}))
+	request = request.WithContext(context.WithValue(request.Context(), currentUserKey, account.User{ID: 1, Role: "admin", Permissions: account.PermissionsForRole("admin")}))
 	response := httptest.NewRecorder()
 	server.addAvailabilityWatchTargets(response, request)
 	if response.Code != http.StatusOK {
@@ -449,5 +449,36 @@ func TestAvailabilityWatchAddKeepsExistingTargets(t *testing.T) {
 	}
 	if active != 2 {
 		t.Fatalf("active targets = %d, want 2", active)
+	}
+}
+
+func TestAvailabilityWatchQueuedRunRechecksMetadataPermission(t *testing.T) {
+	db := openMigratedTestDB(t)
+	for _, statement := range []string{
+		`INSERT INTO user_account (id, username, role) VALUES (1, 'watch-requester', 'admin')`,
+		`INSERT INTO availability_watch (id, configured_by_user_id, action) VALUES (1, 1, 'monitor')`,
+		`INSERT INTO availability_watch_target (id, watch_id, work_code, state) VALUES (1, 1, 'RJ00000001', 'monitoring')`,
+	} {
+		if _, err := db.Exec(statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+	server := NewServer(db, config.Config{})
+	client := &availabilityWatchDLsiteClient{}
+	server.dlsiteClient = client
+	queued, err := server.enqueueAvailabilityWatch(context.Background(), 1, workflowRunTrigger{Type: "manual", Reason: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE user_account SET role = 'contributor' WHERE id = 1`); err != nil {
+		t.Fatal(err)
+	}
+	_ = server.runNextQueuedWorkflowJob(context.Background())
+	var status string
+	if err := db.QueryRow(`SELECT status FROM workflow_run WHERE id = ?`, queued.RunID).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != "failed" || len(client.requests) != 0 {
+		t.Fatalf("queued watch after permission loss = %q, DLsite requests=%v", status, client.requests)
 	}
 }

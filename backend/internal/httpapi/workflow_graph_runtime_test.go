@@ -415,7 +415,7 @@ func TestWorkflowGraphRetryRequiresCurrentPermissions(t *testing.T) {
 		DefinitionJSON: workflowGraphAPIDefinitionJSON,
 		Inputs:         map[string]any{},
 		UserID:         ownerID,
-		Permissions:    account.PermissionsForRole("contributor"),
+		Permissions:    account.PermissionsForRole("admin"),
 	}
 	if _, err := db.Exec(`
 		INSERT INTO workflow_job (workflow_run_id, workflow_node_run_id, worker_type, status, recoverable, payload_json)
@@ -426,7 +426,7 @@ func TestWorkflowGraphRetryRequiresCurrentPermissions(t *testing.T) {
 	server := NewServer(db, config.Config{})
 	// The owner started the run as a contributor and has since been changed
 	// to a user, who may no longer start it.
-	fullPermissions := account.PermissionsForRole("contributor")
+	fullPermissions := account.PermissionsForRole("admin")
 	deniedPermission := requestWorkflowRunAction(t, server.retryWorkflowRun, runID, account.User{ID: ownerID, Role: "user", Permissions: account.PermissionsForRole("user")})
 	if deniedPermission.Code != http.StatusForbidden {
 		t.Fatalf("retry without current capability = %d, body = %s", deniedPermission.Code, deniedPermission.Body.String())

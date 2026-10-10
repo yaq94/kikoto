@@ -1115,7 +1115,7 @@ export const surfaceEnglish = {
     noCompatibleSource: "No compatible source",
     action: "Action",
     remotePopularAction: "Remote popular action",
-    fetchPermissionRequired: "Fetch requires the permission to fetch remote files.",
+    fetchPermissionRequired: "Fetch requires remote:fetch and metadata:sync.",
     workLimit: "Work limit",
     worksCount: "{{count}} works",
     rankingPeriod: "Ranking period",

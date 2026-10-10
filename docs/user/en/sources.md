@@ -54,8 +54,10 @@ Sources describe where files come from.
 Browsing a remote source, searching, sorting, recommendations, work detail,
 the file tree, text previews, covers, and playback through this server are open
 to every account that can read the Library. Tracking, forking, untracking,
-checking a work's sources now, caching, and Fetch need `remote:track` or
-`remote:fetch`; [Users](settings.md#users) lists which role holds each. An
+checking a work's sources now, and caching need `remote:track` or
+`remote:fetch`; Fetch also refreshes DLsite family metadata and requires both
+`remote:fetch` and `metadata:sync`. [Users](settings.md#users) lists which
+role holds each. An
 administrator can hide every source address from accounts that do not manage
 sources with **Remote source addresses** in [Library](settings.md#library).
 
@@ -89,10 +91,10 @@ longer than the **Maximum backoff** in Settings -> Cache & Fetch. Queued jobs fo
 for the pause to end without using up their retries, and jobs for other sources
 continue.
 
-Fetch planning uses already complete persisted metadata and cached source
-availability. When the requested code has no DLsite snapshot or edition
-relationship, preparation performs a bounded targeted family sync before
-building the review. A queued Fetch reuses the remote tree accepted during
+Fetch planning uses complete persisted metadata and cached source availability.
+When the requested code has no DLsite snapshot or edition relationship,
+preparation performs a bounded targeted family sync before building the review;
+this is why Fetch requires `metadata:sync`. A queued Fetch reuses the remote tree accepted during
 submission instead of immediately requesting the same tree again. After Local
 registration succeeds, cache objects promoted by that Fetch are removed;
 unselected cache objects remain available.

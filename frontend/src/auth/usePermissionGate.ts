@@ -45,8 +45,8 @@ export function usePermissionGate(permission: string | readonly string[], option
 
 /** Adding a remote work to the shared Library: Track, Fork, or a mark or list on a work not yet in it. */
 export const REMOTE_TRACK_PERMISSIONS = ["remote:track"] as const;
-/** Downloading remote files to the server: Fetch and caching. */
-export const REMOTE_FETCH_PERMISSIONS = ["remote:fetch"] as const;
+/** Fetching remote works also refreshes DLsite family metadata. */
+export const REMOTE_FETCH_PERMISSIONS = ["remote:fetch", "metadata:sync"] as const;
 /** Bulk actions run as a workflow, on top of the action's own permissions. */
 export const REMOTE_BULK_TRACK_PERMISSIONS = ["workflows:run", "remote:track"] as const;
-export const REMOTE_BULK_FETCH_PERMISSIONS = ["workflows:run", "remote:fetch"] as const;
+export const REMOTE_BULK_FETCH_PERMISSIONS = ["workflows:run", "remote:fetch", "metadata:sync"] as const;

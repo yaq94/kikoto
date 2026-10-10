@@ -223,9 +223,11 @@ and row count are bounded. The user table's password hashes are never read.
 - Check capabilities, never role names. `remote:track` guards every path that
   adds a remote work to the shared Library or removes a tracked source,
   including a sync for a mark or list and a work-level cache request;
-  `remote:fetch` guards every path that makes the server download remote files.
-  A new handler or background path that tracks, caches, or fetches on behalf of
-  a user must check the same capability.
+  `remote:fetch` guards every path that makes the server download remote files;
+  Fetch workflows additionally require `metadata:sync` because preparation may
+  refresh and materialize DLsite family metadata. A new handler or background
+  path that tracks, caches, or fetches on behalf of a user must check the same
+  capability set.
 
 ## Remote Source Addresses
 
