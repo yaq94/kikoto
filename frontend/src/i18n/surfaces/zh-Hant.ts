@@ -1172,7 +1172,7 @@ export const surfaceHant = {
     loadingSources: "正在載入來源",
     noCompatibleSource: "沒有相容來源",
     action: "操作",
-    fetchPermissionRequired: "取得需要取得遠端檔案的權限。",
+    fetchPermissionRequired: "取得需要 remote:fetch 與 metadata:sync 權限。",
     workLimit: "作品上限",
     worksCount: "{{count}} 個作品",
     rankingPeriod: "排名週期",

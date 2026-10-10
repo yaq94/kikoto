@@ -632,7 +632,9 @@ function AuthenticatedApp() {
                     canSyncMetadata={auth.demoMode || auth.hasPermission("metadata:sync")}
                     canTagWorks={auth.demoMode || auth.hasPermission("tags:write")}
                     canTrackRemote={auth.demoMode || auth.hasPermission("remote:track")}
-                    canFetchRemote={auth.demoMode || auth.hasPermission("remote:fetch")}
+                    canFetchRemote={
+                      auth.demoMode || (auth.hasPermission("remote:fetch") && auth.hasPermission("metadata:sync"))
+                    }
                     canManageSources={auth.demoMode || auth.hasPermission("sources:write")}
                     readOnly={auth.demoMode}
                   />

@@ -29,16 +29,17 @@ started, and can follow their status, events, and file progress.
 
 - Starting, configuring, or scheduling a workflow needs every permission its
   steps use: Track and the popular collection's Track need `remote:track`,
-  Fetch needs `remote:fetch`, scans and metadata workflows need
-  `metadata:sync`, and the source check needs `sources:write`. A contributor
-  therefore runs Fetch, the remote popular collection, bulk Track and Fetch,
-  and Availability Watch, and sees the other workflows without their run and
-  automation controls.
+  Fetch and every Fetch-based collection or bulk action need both
+  `remote:fetch` and `metadata:sync`, scans and metadata workflows need
+  `metadata:sync`, and the source check needs `sources:write`. Contributors
+  without `metadata:sync` can still see these workflows, but cannot start or
+  automate their Fetch paths or Availability Watch.
 - Editing, switching off, or deleting a trigger needs the same permissions as
   creating it.
-- Availability Watch's configuration, schedule, and watch pool need the
-  permissions of its action: `remote:track` for Track, `remote:fetch` for
-  Fetch, both for Track and Fetch.
+- Availability Watch always refreshes family metadata, so its configuration,
+  schedule, watch pool, and runs require `metadata:sync`; Track also needs
+  `remote:track`, Fetch also needs `remote:fetch`, and Track plus Fetch need
+  both remote permissions.
 - A run can be cancelled or retried, and its items reviewed, by the account
   that started it, directly or as the owner of the trigger that fired it.
   Administrators can do so for every run. A retry needs the permissions that

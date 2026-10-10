@@ -22,7 +22,7 @@ func availabilityWatchAPIRequest(method, target, body string, actor *account.Use
 
 func TestAvailabilityWatchHandlersPersistConfigurationTargetsAndRunState(t *testing.T) {
 	db := openMigratedTestDB(t)
-	if _, err := db.Exec("INSERT INTO user_account (id, username, role) VALUES (1, 'watch-api-user', 'contributor')"); err != nil {
+	if _, err := db.Exec("INSERT INTO user_account (id, username, role) VALUES (1, 'watch-api-user', 'admin')"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.Exec(`
@@ -38,7 +38,7 @@ func TestAvailabilityWatchHandlersPersistConfigurationTargetsAndRunState(t *test
 		t.Fatal(err)
 	}
 	server := NewServer(db, config.Config{})
-	actor := account.User{ID: 1, Role: "contributor", Permissions: account.PermissionsForRole("contributor")}
+	actor := account.User{ID: 1, Role: "admin", Permissions: account.PermissionsForRole("admin")}
 	listener := account.User{ID: 2, Role: "user", Permissions: account.PermissionsForRole("user")}
 
 	unauthorized := httptest.NewRecorder()
@@ -207,5 +207,31 @@ func TestAvailabilityWatchHandlersPersistConfigurationTargetsAndRunState(t *test
 	}
 	if deletedActive != 0 || remainingActive != 1 {
 		t.Fatalf("target activity after delete = deleted:%d remaining:%d", deletedActive, remainingActive)
+	}
+}
+
+func TestAvailabilityWatchMonitorRequiresMetadataSync(t *testing.T) {
+	db := openMigratedTestDB(t)
+	if _, err := db.Exec(`INSERT INTO user_account (id, username, role) VALUES (1, 'watch-permission-user', 'contributor')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO availability_watch (id, configured_by_user_id, action) VALUES (1, 1, 'monitor')`); err != nil {
+		t.Fatal(err)
+	}
+	server := NewServer(db, config.Config{})
+	actor := account.User{ID: 1, Permissions: []string{"workflows:run"}}
+	for _, test := range []struct {
+		method, target, body string
+		handler              http.HandlerFunc
+	}{
+		{http.MethodPut, "/api/availability-watch", `{"action":"monitor"}`, server.updateAvailabilityWatch},
+		{http.MethodPost, "/api/availability-watch/run", `{}`, server.runAvailabilityWatch},
+		{http.MethodPost, "/api/availability-watch/targets", `{"targetCodes":["RJ00000001"]}`, server.addAvailabilityWatchTargets},
+	} {
+		response := httptest.NewRecorder()
+		test.handler(response, availabilityWatchAPIRequest(test.method, test.target, test.body, &actor))
+		if response.Code != http.StatusForbidden {
+			t.Fatalf("%s %s = %d, want 403: %s", test.method, test.target, response.Code, response.Body.String())
+		}
 	}
 }

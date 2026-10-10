@@ -325,21 +325,20 @@ func validateAvailabilityWatchAction(actor currentUser, action string) error {
 	return nil
 }
 
-// availabilityWatchActionPermissions names what the watch does for a ready
-// target on top of monitoring: tracking needs remote:track and fetching
-// needs remote:fetch. Configuring, running, scheduling, and editing the
-// targets of a watch all require the configured action's permissions,
-// because each one decides what the watch tracks or fetches.
+// availabilityWatchActionPermissions names the composite capabilities a watch
+// needs. Every run refreshes the watched DLsite family before checking source
+// availability, so metadata:sync is required even for monitor-only watches.
+// Track and Fetch add their respective remote capability on top.
 func availabilityWatchActionPermissions(action string) ([]string, bool) {
 	switch action {
 	case "monitor":
-		return nil, true
+		return []string{"metadata:sync"}, true
 	case "track":
-		return []string{"remote:track"}, true
+		return []string{"metadata:sync", "remote:track"}, true
 	case "fetch":
-		return []string{"remote:fetch"}, true
+		return []string{"metadata:sync", "remote:fetch"}, true
 	case "track_fetch":
-		return []string{"remote:track", "remote:fetch"}, true
+		return []string{"metadata:sync", "remote:track", "remote:fetch"}, true
 	default:
 		return nil, false
 	}
@@ -680,6 +679,19 @@ func (s *Server) executeAvailabilityWatchJob(ctx context.Context, job workflowJo
 		_ = s.failClaimedWorkflowJob(ctx, job, "Availability Watch snapshot is invalid")
 		return err
 	}
+	if payload.RequestedByUserID <= 0 {
+		_ = s.failClaimedWorkflowJob(ctx, job, "Availability Watch requester is unavailable")
+		return fmt.Errorf("availability watch requester is unavailable")
+	}
+	owner, err := s.accountStore.LoadByID(ctx, payload.RequestedByUserID)
+	if err != nil {
+		_ = s.failClaimedWorkflowJob(ctx, job, "Availability Watch requester is unavailable")
+		return err
+	}
+	if missing := missingWorkflowGraphPermission(owner.Permissions, append([]string{"workflows:run"}, availabilityWatchPermissions(payload.Action)...)); missing != "" {
+		_ = s.failClaimedWorkflowJob(ctx, job, "Availability Watch permission is no longer available")
+		return fmt.Errorf("availability watch requires permission %s", missing)
+	}
 	nodeIDs, err := workflowNodeIDsByNodeID(ctx, s.db, job.RunID)
 	if err != nil {
 		_ = s.failClaimedWorkflowJob(ctx, job, err.Error())
@@ -716,6 +728,14 @@ func (s *Server) executeAvailabilityWatchJob(ctx context.Context, job workflowJo
 		return err
 	}
 	return nil
+}
+
+func availabilityWatchPermissions(action string) []string {
+	permissions, known := availabilityWatchActionPermissions(action)
+	if !known {
+		return []string{"metadata:sync", "remote:track", "remote:fetch"}
+	}
+	return permissions
 }
 
 func (s *Server) executeAvailabilityWatchTarget(

@@ -489,11 +489,14 @@ func (s *Server) retryFailedWorkflowJobFor(ctx context.Context, actor *currentUs
 func workflowJobRetryPermissions(job workflowJobRecord) []string {
 	switch job.WorkerType {
 	case "remote_work_fetch", "remote_media_cache":
+		if job.WorkerType == "remote_work_fetch" {
+			return []string{"remote:fetch", "metadata:sync"}
+		}
 		return []string{"remote:fetch"}
 	case "remote_popular_collection":
 		var payload remoteCollectionJobPayload
 		_ = decodeWorkflowJobPayload(job.PayloadJSON, &payload)
-		return []string{"tags:write", remoteCollectionActionPermission(payload.Action)}
+		return remoteCollectionActionPermissions(payload.Action)
 	case "media_cache_limit_cleanup", "media_cache_cleanup", "local_media_delete", "local_location_cleanup", "media_location_cleanup":
 		return []string{"downloads:manage"}
 	case "metadata_family_sync", "metadata_genre_names":

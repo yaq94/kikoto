@@ -166,7 +166,7 @@ func (s *Server) normalizeSystemWorkflowTriggerConfig(
 		if err != nil {
 			return preparedWorkflowTrigger{}, nil, err
 		}
-		requiredPermissions = append(requiredPermissions, "tags:write", remoteCollectionActionPermission(config.Action))
+		requiredPermissions = append(requiredPermissions, remoteCollectionActionPermissions(config.Action)...)
 		prepared.ConfigJSON = mustJSON(config)
 	case "dlsite_popular_collection":
 		config, err := normalizeDLsitePopularTriggerConfig(actor, payload.ConfigJSON, existing, now)
@@ -203,7 +203,7 @@ func (s *Server) storedWorkflowTriggerPermissions(ctx context.Context, definitio
 		action, err := s.availabilityWatchConfiguredAction(ctx)
 		actionPermissions, known := availabilityWatchActionPermissions(action)
 		if err != nil || !known {
-			actionPermissions = []string{"remote:track", "remote:fetch"}
+			actionPermissions = []string{"metadata:sync", "remote:track", "remote:fetch"}
 		}
 		return append(permissions, actionPermissions...)
 	case "local_library_scan", localMediaIndexWorkflowCode, "metadata_sync":
@@ -213,7 +213,7 @@ func (s *Server) storedWorkflowTriggerPermissions(ctx context.Context, definitio
 	case "remote_popular_collection":
 		var config systemWorkflowTriggerConfig
 		_ = json.Unmarshal([]byte(trigger.ConfigJSON), &config)
-		return append(permissions, "tags:write", remoteCollectionActionPermission(config.Action))
+		return append(permissions, remoteCollectionActionPermissions(config.Action)...)
 	case "dlsite_popular_collection":
 		return append(permissions, "metadata:sync", "tags:write")
 	}

@@ -1172,7 +1172,7 @@ export const surfaceHans = {
     noCompatibleSource: "没有兼容来源",
     action: "操作",
     remotePopularAction: "远程热门操作",
-    fetchPermissionRequired: "获取需要抓取远程文件的权限。",
+    fetchPermissionRequired: "获取需要 remote:fetch 和 metadata:sync 权限。",
     workLimit: "作品上限",
     worksCount: "{{count}} 个作品",
     rankingPeriod: "排名周期",

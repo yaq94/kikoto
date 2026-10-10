@@ -174,7 +174,7 @@ var workflowGraphCapabilities = map[string]workflowGraphCapability{
 		Description: "Queue the existing recoverable Fetch transaction for bounded, filtered remote files.",
 		Inputs:      []workflowGraphPort{{ID: "works", DataType: "work_candidates", Required: true}},
 		Outputs:     []workflowGraphPort{{ID: "completed", DataType: "work_refs"}, {ID: "failed", DataType: "work_candidates"}},
-		Permissions: []string{"remote:fetch"}, Composite: true,
+		Permissions: []string{"remote:fetch", "metadata:sync"}, Composite: true,
 		ConfigKeys: []string{"sourceId", "excludeExtensions", "maxWorks", "maxFiles", "maxBytes", "minFreeBytes", "allowUnknownSizes", "targetRoot"},
 	},
 	"tag_works": {

@@ -372,7 +372,8 @@ the backend.
   permission its steps use. Track steps (`track_works`, a remote popular
   collection's Track, a bulk Track, a watch's Track) require `remote:track`;
   Fetch steps (`fetch_works`, Fetch, a popular collection's Fetch, a bulk
-  Fetch, a watch's Fetch) require `remote:fetch`; scans, the local file index,
+  Fetch, a watch's Fetch) require both `remote:fetch` and `metadata:sync`;
+  scans, the local file index,
   metadata sync, presets, and the DLsite popular collection require
   `metadata:sync`; the source presence check requires `sources:write`; tags
   require `tags:write`. Scheduled dispatch re-checks the trigger owner's
@@ -391,8 +392,9 @@ the backend.
   `sources:write` capability shared with the other instance maintenance, or
   holds `system:admin`. A run without a recorded requester is managed only by
   workflow administrators.
-- Retry re-checks what the failed work needs: Fetch and media cache jobs
-  require `remote:fetch`, a popular collection requires `tags:write` and its
+- Retry re-checks what the failed work needs: Fetch jobs require both
+  `remote:fetch` and `metadata:sync`, media cache jobs require `remote:fetch`,
+  a popular collection requires `tags:write` and its
   action's permission, cleanup and local deletion jobs require
   `downloads:manage`, metadata jobs require `metadata:sync`, and graph jobs
   require their graph's permissions.
@@ -841,6 +843,12 @@ source offers any edition of its family: the watched code first, then the
 other editions and provider-declared edition codes, at most 32. The target
 records which edition was found, and Track, Fetch, and opening the remote work
 use that edition. Remote results never materialize new `work` rows.
+
+Because every run refreshes DLsite metadata, Availability Watch configuration,
+target edits, schedules, and manual runs require `metadata:sync`; Track also
+requires `remote:track`, Fetch also requires `remote:fetch`, and Track plus
+Fetch require both remote permissions. Scheduled dispatch re-checks the
+trigger owner's complete permission set.
 
 Available targets form the pool's Available side; configured Track and Fetch
 actions are child workflows with their own histories. A successful run that

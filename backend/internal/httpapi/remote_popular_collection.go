@@ -189,6 +189,15 @@ func (s *Server) executeRemotePopularCollectionJob(ctx context.Context, job work
 		_ = s.failClaimedWorkflowJob(ctx, job, err.Error())
 		return err
 	}
+	owner, err := s.accountStore.LoadByID(ctx, payload.UserID)
+	if err != nil {
+		_ = s.failClaimedWorkflowJob(ctx, job, "Remote collection requester is unavailable")
+		return err
+	}
+	if missing := missingWorkflowGraphPermission(owner.Permissions, append([]string{"workflows:run"}, remoteCollectionActionPermissions(payload.Action)...)); missing != "" {
+		_ = s.failClaimedWorkflowJob(ctx, job, "Remote collection permission is no longer available")
+		return fmt.Errorf("remote collection requires permission %s", missing)
+	}
 	result := checkpoint.Result
 	result.RunID = job.RunID
 	result.SourceID = source.ID
@@ -432,6 +441,14 @@ func remoteCollectionActionPermission(action string) string {
 	return "remote:track"
 }
 
+func remoteCollectionActionPermissions(action string) []string {
+	permissions := []string{"tags:write", remoteCollectionActionPermission(action)}
+	if normalizeRemoteCollectionAction(action) == "fetch" {
+		permissions = append(permissions, "metadata:sync")
+	}
+	return permissions
+}
+
 func normalizeRemoteCollectionAction(action string) string {
 	switch strings.TrimSpace(action) {
 	case "track", "tracked":
@@ -511,7 +528,7 @@ func (s *Server) createRemotePopularCollectionRun(w http.ResponseWriter, r *http
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "action must be track or fetch"})
 		return
 	}
-	if _, ok := s.requirePermissions(w, r, "tags:write", remoteCollectionActionPermission(payload.Action)); !ok {
+	if _, ok := s.requirePermissions(w, r, remoteCollectionActionPermissions(payload.Action)...); !ok {
 		return
 	}
 	result, err := s.runRemotePopularWorkflow(r.Context(), actor.ID, payload)

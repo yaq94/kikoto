@@ -75,7 +75,7 @@ export function WorkflowsPage({
   canTagWorks: boolean;
   /** `remote:track`: add remote works to the shared Library. */
   canTrackRemote: boolean;
-  /** `remote:fetch`: download remote files to the server. */
+  /** Fetch also refreshes DLsite family metadata and needs `metadata:sync`. */
   canFetchRemote: boolean;
   /** Instance settings such as the remote metadata fallback need `sources:write`. */
   canManageSources?: boolean;
@@ -617,6 +617,7 @@ export function WorkflowsPage({
                     triggers={triggers.filter((trigger) => trigger.workflowDefinitionId === selectedDefinition.id)}
                     recentRuns={recentDefinitionRuns}
                     readOnly={readOnly}
+                    canSyncMetadata={canSyncMetadata}
                     canTrackRemote={canTrackRemote}
                     canFetchRemote={canFetchRemote}
                     onCreateTrigger={createAutomationTrigger}

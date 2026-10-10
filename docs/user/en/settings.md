@@ -222,7 +222,7 @@ Each role has a fixed set of permissions:
 | Role | Permissions | What it adds |
 | --- | --- | --- |
 | User | `library:read`, `playback:use`, `favorites:write`, `tags:write` | Browse and play the Library and remote sources, and manage personal data: marks, lists, personal tags, progress, and history. |
-| Contributor | User's, plus `remote:track`, `remote:fetch`, `workflows:run` | Track, Fork, and untrack remote works; check a work's sources now; cache and Fetch remote files; follow those runs in Workflows. |
+| Contributor | User's, plus `remote:track`, `remote:fetch`, `workflows:run` | Track, Fork, and untrack remote works; check a work's sources now; cache remote files; follow workflows. Fetch workflows also require `metadata:sync`. |
 | Admin | Contributor's, plus `library:write`, `sources:write`, `metadata:sync`, `downloads:manage`, `users:manage` | Metadata editing and sync, source and instance settings, local scans, local file deletion and cleanup, lyrics download, and accounts. |
 | Super admin | Admin's, plus `system:admin` | Every permission, every workflow run, and instance access. |
 
@@ -230,9 +230,10 @@ Each role has a fixed set of permissions:
   account sees it: Track, Fork, a mark or list on a remote work that is not
   in the Library yet, removing a tracked source, and an on-demand source
   check. Reading a work's recorded source availability needs no permission.
-- `remote:fetch` makes the server download remote files: Fetch into the
-  library, caching one file or a work's file, and caching while playing a
-  remote stream.
+- `remote:fetch` makes the server download remote files: caching one file or a
+  work's file, and caching while playing a remote stream. Fetch into the
+  library is a composite operation and also requires `metadata:sync` because
+  it may refresh the DLsite family before publication.
 - Without these permissions the same actions stay visible and explain that
   the account lacks permission when chosen, before any dialog opens. A mark or
   list on a work that is already in the Library, including one another account

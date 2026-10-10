@@ -1238,7 +1238,7 @@ export const surfaceKorean = {
     loadingSources: "소스 로드 중",
     noCompatibleSource: "호환되는 소스가 없습니다",
     action: "작업",
-    fetchPermissionRequired: "가져오기를 사용하려면 원격 파일을 가져오는 권한이 필요합니다.",
+    fetchPermissionRequired: "가져오기에는 remote:fetch와 metadata:sync 권한이 필요합니다.",
     workLimit: "작품 한도",
     worksCount: "작품 {{count}}개",
     rankingPeriod: "순위 기간",

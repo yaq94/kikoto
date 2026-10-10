@@ -1244,7 +1244,7 @@ export const surfaceJapanese = {
     loadingSources: "ソースを読み込み中",
     noCompatibleSource: "互換性のあるソースはありません",
     action: "操作",
-    fetchPermissionRequired: "取得にはリモートファイルを取得する権限が必要です。",
+    fetchPermissionRequired: "取得には remote:fetch と metadata:sync が必要です。",
     workLimit: "作品数上限",
     worksCount: "{{count}} 件",
     rankingPeriod: "ランキング期間",

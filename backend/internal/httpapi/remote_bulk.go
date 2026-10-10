@@ -89,17 +89,17 @@ func normalizeRemoteBulkAction(action string) string {
 	}
 }
 
-// remoteBulkActionPermissions names the capability each part of a bulk
-// action needs: tracking adds works to the shared Library and fetching
-// downloads remote files to the server.
+// remoteBulkActionPermissions names the composite capability each part of a
+// bulk action needs: tracking adds works to the shared Library, while Fetch
+// downloads remote files and may refresh DLsite family metadata.
 func remoteBulkActionPermissions(action string) []string {
 	switch normalizeRemoteBulkAction(action) {
 	case "track":
 		return []string{"remote:track"}
 	case "fetch":
-		return []string{"remote:fetch"}
+		return []string{"remote:fetch", "metadata:sync"}
 	default:
-		return []string{"remote:track", "remote:fetch"}
+		return []string{"remote:track", "remote:fetch", "metadata:sync"}
 	}
 }
 
@@ -121,6 +121,15 @@ func (s *Server) executeRemoteBulkActionJob(ctx context.Context, job workflowJob
 	if err := decodeWorkflowJobPayload(job.PayloadJSON, &payload); err != nil {
 		_ = s.failClaimedWorkflowJob(ctx, job, err.Error())
 		return err
+	}
+	owner, err := s.accountStore.LoadByID(ctx, payload.UserID)
+	if err != nil {
+		_ = s.failClaimedWorkflowJob(ctx, job, "Remote bulk requester is unavailable")
+		return err
+	}
+	if missing := missingWorkflowGraphPermission(owner.Permissions, append([]string{"workflows:run"}, remoteBulkActionPermissions(payload.Action)...)); missing != "" {
+		_ = s.failClaimedWorkflowJob(ctx, job, "Remote bulk permission is no longer available")
+		return fmt.Errorf("remote bulk action requires permission %s", missing)
 	}
 	result := remoteBulkWorkflowResult{RunID: job.RunID, SourceID: payload.SourceID, Action: payload.Action, Codes: payload.Codes, Status: "succeeded", Failures: []string{}}
 	for _, code := range payload.Codes {

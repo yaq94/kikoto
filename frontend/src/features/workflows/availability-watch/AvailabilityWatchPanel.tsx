@@ -46,6 +46,7 @@ export function AvailabilityWatchPanel({
   triggers,
   recentRuns,
   readOnly,
+  canSyncMetadata,
   canTrackRemote,
   canFetchRemote,
   onCreateTrigger,
@@ -58,6 +59,8 @@ export function AvailabilityWatchPanel({
   triggers: WorkflowTrigger[];
   recentRuns: WorkflowRun[];
   readOnly: boolean;
+  /** Availability Watch refreshes DLsite family metadata on every run. */
+  canSyncMetadata: boolean;
   /** `remote:track`: the watch may track ready works. */
   canTrackRemote: boolean;
   /** `remote:fetch`: the watch may fetch ready works. */
@@ -145,7 +148,8 @@ export function AvailabilityWatchPanel({
   const layout = runFormLayout({ optionsTitle: workflowCopy("configuration") });
   // The targets and schedule decide what the configured action tracks or
   // fetches, so editing them needs the same permissions as that action.
-  const manageReadOnly = readOnly || !availabilityWatchActionAllowed(watch.action, canTrackRemote, canFetchRemote);
+  const manageReadOnly =
+    readOnly || !availabilityWatchActionAllowed(watch.action, canSyncMetadata, canTrackRemote, canFetchRemote);
   const sourceName = (sourceId: number | null) =>
     sourceId ? (sources.find((source) => source.id === sourceId)?.displayName ?? `#${sourceId}`) : "";
 
@@ -157,6 +161,7 @@ export function AvailabilityWatchPanel({
           watch={watch}
           sources={sources}
           readOnly={manageReadOnly}
+          canSyncMetadata={canSyncMetadata}
           canTrackRemote={canTrackRemote}
           canFetchRemote={canFetchRemote}
           onSaved={setWatch}
@@ -209,20 +214,26 @@ function availabilityWatchSourceOptions(sources: LibrarySource[], selectedId: nu
   return options;
 }
 
-function availabilityWatchActionAllowed(action: string, canTrackRemote: boolean, canFetchRemote: boolean) {
+function availabilityWatchActionAllowed(
+  action: string,
+  canSyncMetadata: boolean,
+  canTrackRemote: boolean,
+  canFetchRemote: boolean,
+) {
+  if (!canSyncMetadata) return false;
   if (action === "track") return canTrackRemote;
   if (action === "fetch") return canFetchRemote;
   if (action === "track_fetch") return canTrackRemote && canFetchRemote;
   return true;
 }
 
-function availabilityWatchActionOptions(canTrackRemote: boolean, canFetchRemote: boolean) {
+function availabilityWatchActionOptions(canSyncMetadata: boolean, canTrackRemote: boolean, canFetchRemote: boolean) {
   return (["monitor", "track", "fetch", "track_fetch"] as const).map((value) => ({
     value,
     label: workflowCopy(
       ({ monitor: "monitorOnly", track: "track", fetch: "fetch", track_fetch: "trackFetch" } as const)[value],
     ),
-    disabled: !availabilityWatchActionAllowed(value, canTrackRemote, canFetchRemote),
+    disabled: !availabilityWatchActionAllowed(value, canSyncMetadata, canTrackRemote, canFetchRemote),
   }));
 }
 
@@ -235,6 +246,7 @@ function AvailabilityWatchRunForm({
   watch,
   sources,
   readOnly,
+  canSyncMetadata,
   canTrackRemote,
   canFetchRemote,
   onSaved,
@@ -244,6 +256,7 @@ function AvailabilityWatchRunForm({
   watch: AvailabilityWatch;
   sources: LibrarySource[];
   readOnly: boolean;
+  canSyncMetadata: boolean;
   canTrackRemote: boolean;
   canFetchRemote: boolean;
   onSaved: (watch: AvailabilityWatch) => void;
@@ -326,7 +339,7 @@ function AvailabilityWatchRunForm({
             value={config.action}
             onChange={(action) => update({ action })}
             disabled={disabled}
-            options={availabilityWatchActionOptions(canTrackRemote, canFetchRemote)}
+            options={availabilityWatchActionOptions(canSyncMetadata, canTrackRemote, canFetchRemote)}
           />
         </OptionField>
         <OptionField label={workflowCopy("excludeExtensions")}>
