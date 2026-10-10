@@ -2355,6 +2355,7 @@ export const surfaceEnglish = {
     noSeriesWorks: "No works match this series view.",
     noSeriesForCircle: "No series found for this circle.",
     noCatalogWorks: "No catalog works match this view.",
+    catalogWorksPartial: "Showing {{loaded}} of {{total}} works. Search and selection cover the loaded results only.",
     circleRefreshQueued: "Circle refresh #{{id}} queued.",
     circleRefreshFinished: "Circle refresh #{{id}} finished.",
     circleRefreshFailed: "Circle refresh #{{id}} failed.",

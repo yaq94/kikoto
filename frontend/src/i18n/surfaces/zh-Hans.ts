@@ -2252,6 +2252,7 @@ export const surfaceHans = {
     noSeriesWorks: "此系列视图没有符合条件的作品。",
     noSeriesForCircle: "此社团没有系列。",
     noCatalogWorks: "没有符合此视图的目录作品。",
+    catalogWorksPartial: "当前显示 {{total}} 个作品中的 {{loaded}} 个。搜索和选择仅覆盖已加载的结果。",
     circleRefreshQueued: "社团刷新 #{{id}} 已排队。",
     circleRefreshFinished: "社团刷新 #{{id}} 已完成。",
     circleRefreshFailed: "社团刷新 #{{id}} 失败。",

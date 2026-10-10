@@ -99,6 +99,13 @@ func TestCircleProjectionAssignsTranslatedCatalogAndAvailabilityToOriginCircle(t
 	if work.ReleaseDate == nil || *work.ReleaseDate != "2024-01-01" {
 		t.Fatalf("projected release = %v, want canonical release", work.ReleaseDate)
 	}
+	available, total, err := server.loadCircleWorksPage(ctx, 0, 1, circleWorksQuery{Page: 1, PageSize: 24, Availability: "available"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 1 || len(available) != 1 || available[0].PrimaryCode != "RJ00000000" {
+		t.Fatalf("available page = %+v/%d, want the one playable logical work", available, total)
+	}
 
 	translatorRequest := httptest.NewRequest(http.MethodGet, "/api/circles/RG00000002", nil)
 	translatorRequest.SetPathValue("externalId", "RG00000002")
@@ -270,5 +277,33 @@ func TestLoadCircleWorksLimitsLogicalWorksAfterEditionExpansion(t *testing.T) {
 	}
 	if !seen[testfixture.WorkCodeAt(0)] || !seen[testfixture.WorkCodeAt(101)] {
 		t.Fatalf("projected codes = %v, want canonical and second logical work", seen)
+	}
+	pageOne, total, err := (&Server{db: db}).loadCircleWorksPage(ctx, 0, 1, circleWorksQuery{Page: 1, PageSize: 1, Availability: "all"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 2 || len(pageOne) != 1 {
+		t.Fatalf("page one = %d/%d, want one of two logical works", len(pageOne), total)
+	}
+	pageTwo, total, err := (&Server{db: db}).loadCircleWorksPage(ctx, 0, 1, circleWorksQuery{Page: 2, PageSize: 1, Availability: "all"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 2 || len(pageTwo) != 1 || pageOne[0].PrimaryCode == pageTwo[0].PrimaryCode {
+		t.Fatalf("page two = %+v/%d, want the other logical work", pageTwo, total)
+	}
+	filtered, total, err := (&Server{db: db}).loadCircleWorksPage(ctx, 0, 1, circleWorksQuery{Page: 1, PageSize: 24, Query: testfixture.WorkCodeAt(101), Availability: "all"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 1 || len(filtered) != 1 || filtered[0].PrimaryCode != testfixture.WorkCodeAt(101) {
+		t.Fatalf("filtered page = %+v/%d, want one matching logical work", filtered, total)
+	}
+	detail, err := (&Server{db: db}).loadCircleDetailWithWorksQuery(ctx, 0, "RG00000001", circleWorksQuery{Page: 1, PageSize: 1, Availability: "all", Legacy: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if detail.WorksMeta.Total != 2 || detail.WorksMeta.Loaded != 1 || !detail.WorksMeta.Truncated || !detail.WorksMeta.HasMore {
+		t.Fatalf("works meta = %+v, want a truncated first page", detail.WorksMeta)
 	}
 }

@@ -2343,6 +2343,7 @@ export const surfaceKorean = {
     noSeriesWorks: "이 시리즈 보기에 일치하는 작품이 없습니다.",
     noSeriesForCircle: "이 서클에 시리즈가 없습니다.",
     noCatalogWorks: "이 보기에 일치하는 카탈로그 작품이 없습니다.",
+    catalogWorksPartial: "전체 {{total}}개 중 {{loaded}}개를 표시합니다. 검색과 선택은 불러온 결과에만 적용됩니다.",
     circleRefreshQueued: "서클 새로 고침 #{{id}}을(를) 대기열에 추가했습니다.",
     circleRefreshFinished: "서클 새로 고침 #{{id}}이(가) 완료되었습니다.",
     circleRefreshFailed: "서클 새로 고침 #{{id}}이(가) 실패했습니다.",

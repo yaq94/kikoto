@@ -99,6 +99,15 @@ export type CircleCatalogWork = {
   progress?: WorkProgressSummary;
 };
 
+export type CircleWorksMeta = {
+  page: number;
+  pageSize: number;
+  loaded: number;
+  total: number;
+  hasMore: boolean;
+  truncated: boolean;
+};
+
 export type CircleSeries = {
   titleId: string;
   name: string;
@@ -114,6 +123,7 @@ export type CircleSeries = {
 export type CircleDetail = CircleSummary & {
   availableWorks: number;
   works: CircleCatalogWork[];
+  worksMeta: CircleWorksMeta;
   series: CircleSeries[];
   /** Newest follow run for this circle, so the page can follow a queued refresh across reloads. */
   refresh?: CreatorRefreshRun | null;
@@ -334,8 +344,43 @@ export const creatorApi = {
     const page = await getJSON<CircleSummaryPage>(`/api/circles${search}`, options.signal);
     return { ...page, circles: page.circles.map(normalizeCreatorSyncState) };
   },
-  getCircle: async (externalId: string, signal?: AbortSignal) =>
-    normalizeCreatorSyncState(await getJSON<CircleDetail>(`/api/circles/${encodeURIComponent(externalId)}`, signal)),
+  getCircle: async (
+    externalId: string,
+    options:
+      | {
+          page?: number;
+          pageSize?: number;
+          query?: string;
+          availability?: string;
+          series?: string;
+          signal?: AbortSignal;
+        }
+      | AbortSignal = {},
+  ) => {
+    const params = options instanceof AbortSignal ? {} : options;
+    const signal = options instanceof AbortSignal ? options : params.signal;
+    const search = new URLSearchParams();
+    if (params.page !== undefined) search.set("page", String(params.page));
+    if (params.pageSize !== undefined) search.set("pageSize", String(params.pageSize));
+    if (params.query?.trim()) search.set("q", params.query.trim());
+    if (params.availability && params.availability !== "all") search.set("availability", params.availability);
+    if (params.series?.trim()) search.set("series", params.series.trim());
+    const suffix = search.toString() ? `?${search.toString()}` : "";
+    const detail = normalizeCreatorSyncState(
+      await getJSON<CircleDetail>(`/api/circles/${encodeURIComponent(externalId)}${suffix}`, signal),
+    );
+    return {
+      ...detail,
+      worksMeta: detail.worksMeta ?? {
+        page: params.page ?? 1,
+        pageSize: params.pageSize ?? detail.works.length,
+        loaded: detail.works.length,
+        total: detail.catalogWorks,
+        hasMore: detail.works.length < detail.catalogWorks,
+        truncated: detail.works.length < detail.catalogWorks,
+      },
+    };
+  },
   listVoices: async (options: CreatorListOptions = {}) => {
     const search = creatorListSearch(options);
     const page = await getJSON<VoiceSummaryPage>(`/api/voices${search}`, options.signal);

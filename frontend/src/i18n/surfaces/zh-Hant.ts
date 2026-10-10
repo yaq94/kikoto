@@ -2253,6 +2253,7 @@ export const surfaceHant = {
     noSeriesWorks: "此系列檢視沒有符合條件的作品。",
     noSeriesForCircle: "此社團沒有系列。",
     noCatalogWorks: "沒有符合此檢視的目錄作品。",
+    catalogWorksPartial: "目前顯示 {{total}} 項作品中的 {{loaded}} 項。搜尋和選取只涵蓋已載入的結果。",
     circleRefreshQueued: "社團重新整理 #{{id}} 已排入佇列。",
     circleRefreshFinished: "社團重新整理 #{{id}} 已完成。",
     circleRefreshFailed: "社團重新整理 #{{id}} 失敗。",

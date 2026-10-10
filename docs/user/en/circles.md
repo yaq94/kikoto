@@ -17,6 +17,9 @@ Circles represent makers, circles, and related party catalog state.
 - Summarizes each circle card with its sync state and one canonical
   `Available N/total` badge instead of separate local and remote counts.
 - Shows circle detail by external id.
+- Paginates circle catalog works on the server. Catalog totals remain complete,
+  while search, availability, and series filters apply before pagination;
+  bulk selection covers the loaded page.
 - Supports catalog refresh in incremental or full mode.
 - Stores catalog rows separately from imported works.
 - Shows local/cache/remote source availability tags for catalog works.
