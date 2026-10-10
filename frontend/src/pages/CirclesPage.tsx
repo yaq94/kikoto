@@ -295,14 +295,24 @@ function CircleDetailPage({
   const [saveConfirm, setSaveConfirm] = useState<{ count: number; run: () => Promise<void> } | null>(null);
   const remoteWorkActions = useRemoteWorkActions();
   const [catalogOptionsOpen, setCatalogOptionsOpen] = useState(false);
-  const fetchWorkspace = useRemoteFetchWorkspace({
-    onWorksChanged: async () => setDetail(await api.getCircle(externalId)),
-  });
   const [workQuery, setWorkQuery] = useState("");
   const [availabilityFilter, setAvailabilityFilter] = useState<CircleAvailabilityFilter>("all");
   const [workPage, setWorkPage] = useState(1);
   const [workPageSize, setWorkPageSize] = useState<CatalogWorkPageSize>(24);
   const loadedExternalID = useRef("");
+  const detailQuery = useMemo(
+    () => ({
+      page: workPage,
+      pageSize: workPageSize,
+      query: workQuery,
+      availability: availabilityFilter,
+      series: seriesCode ?? "",
+    }),
+    [availabilityFilter, seriesCode, workPage, workPageSize, workQuery],
+  );
+  const fetchWorkspace = useRemoteFetchWorkspace({
+    onWorksChanged: async () => setDetail(await api.getCircle(externalId, detailQuery)),
+  });
 
   const loadCircleDetail = useCallback(
     async (showLoading = false, signal?: AbortSignal) => {
@@ -311,7 +321,7 @@ function CircleDetailPage({
         setIsLoading(true);
       }
       try {
-        const next = await api.getCircle(externalId, signal);
+        const next = await api.getCircle(externalId, { ...detailQuery, signal });
         if (signal?.aborted) return null;
         loadedExternalID.current = externalId;
         setDetail(next);
@@ -319,20 +329,20 @@ function CircleDetailPage({
         return next;
       } catch (error) {
         if (signal?.aborted) return null;
-        setDetail(null);
         if (error instanceof ApiError && error.status === 404) {
+          setDetail(null);
           setNotFound(error.code === "circle_not_in_database" ? "missing" : "hidden");
           return null;
         }
         toast.notify(toastFromError(error, t("errors.unavailable")));
         return null;
       } finally {
-        if (showLoading) {
+        if (showLoading && !signal?.aborted) {
           setIsLoading(false);
         }
       }
     },
-    [active, externalId, t, toast],
+    [active, detailQuery, externalId, t, toast],
   );
 
   // Track completions can arrive in bursts; each one only needs the circle's
@@ -342,7 +352,7 @@ function CircleDetailPage({
     () =>
       coalesceRuns(async () => {
         try {
-          const next = await api.getCircle(externalId);
+          const next = await api.getCircle(externalId, detailQuery);
           if (loadedExternalID.current === externalId) setDetail(next);
         } catch (error) {
           if (loadedExternalID.current === externalId) {
@@ -350,7 +360,7 @@ function CircleDetailPage({
           }
         }
       }),
-    [externalId, t, toast],
+    [detailQuery, externalId, t, toast],
   );
 
   useEffect(() => {
@@ -373,7 +383,7 @@ function CircleDetailPage({
   }, [active, detail?.works, reloadAfterTrack]);
 
   useEffect(() => {
-    if (!active || loadedExternalID.current === externalId) return;
+    if (!active) return;
     const controller = new AbortController();
     void loadCircleDetail(true, controller.signal);
     return () => controller.abort();
@@ -383,33 +393,13 @@ function CircleDetailPage({
   // feed the selection sync effect below.
   const circle = useMemo(() => detail ?? emptyCircleDetail(externalId), [detail, externalId]);
   const filteredWorks = useMemo(() => {
-    const needle = workQuery.trim().toLowerCase();
-    return circle.works.filter((work) => {
-      const matchesQuery =
-        !needle ||
-        [work.primaryCode, work.title, work.releaseDate ?? "", work.catalogStatus].some((value) =>
-          value.toLowerCase().includes(needle),
-        );
-      if (!matchesQuery) return false;
-      switch (availabilityFilter) {
-        case "available":
-          return work.local || work.remote;
-        case "unavailable":
-          return !work.local && !work.remote;
-        case "local":
-          return work.local;
-        case "remote":
-          return work.remote;
-        default:
-          return true;
-      }
-    });
-  }, [availabilityFilter, circle.works, workQuery]);
+    return circle.works;
+  }, [circle.works]);
   const catalogOnlyCount = circle.works.filter((work) => work.catalogStatus !== "imported").length;
   const availableWorkCount = circle.availableWorks ?? circle.works.filter((work) => work.local || work.remote).length;
-  const totalWorkPages = Math.max(1, Math.ceil(filteredWorks.length / workPageSize));
-  const currentWorkPage = Math.min(workPage, totalWorkPages);
-  const pagedWorks = filteredWorks.slice((currentWorkPage - 1) * workPageSize, currentWorkPage * workPageSize);
+  const totalWorkPages = Math.max(1, Math.ceil(circle.worksMeta.total / workPageSize));
+  const currentWorkPage = Math.min(circle.worksMeta.page || workPage, totalWorkPages);
+  const pagedWorks = filteredWorks;
   const selectablePagedWorks = pagedWorks.filter(isCircleBulkSaveSelectable);
   const selectedWorks = circle.works.filter((work) => selectedWorkCodes.has(work.primaryCode));
   const selectedForkableWorks = selectedWorks.filter((work) => work.workId === null);
@@ -437,7 +427,7 @@ function CircleDetailPage({
 
   useEffect(() => {
     setWorkPage(1);
-  }, [availabilityFilter, externalId, workPageSize, workQuery]);
+  }, [availabilityFilter, externalId, seriesCode, workPageSize, workQuery]);
 
   useEffect(() => {
     setSelectedWorkCodes((current) => retainVisibleSelection(current, filteredWorks, (work) => work.primaryCode));
@@ -449,32 +439,8 @@ function CircleDetailPage({
   const isSeriesView = seriesCode !== undefined;
   const seriesWorks = useMemo(() => {
     if (!isSeriesView) return [];
-    const codes = new Set((selectedSeries?.workCodes ?? []).map((code) => code.toUpperCase()));
-    const base = selectedSeries
-      ? circle.works.filter((work) => codes.has(work.primaryCode.toUpperCase()))
-      : circle.works;
-    const needle = workQuery.trim().toLowerCase();
-    return base.filter((work) => {
-      const matchesQuery =
-        !needle ||
-        [work.primaryCode, work.title, work.releaseDate ?? "", work.catalogStatus].some((value) =>
-          value.toLowerCase().includes(needle),
-        );
-      if (!matchesQuery) return false;
-      switch (availabilityFilter) {
-        case "available":
-          return work.local || work.remote;
-        case "unavailable":
-          return !work.local && !work.remote;
-        case "local":
-          return work.local;
-        case "remote":
-          return work.remote;
-        default:
-          return true;
-      }
-    });
-  }, [availabilityFilter, circle.works, isSeriesView, selectedSeries, workQuery]);
+    return filteredWorks;
+  }, [filteredWorks, isSeriesView]);
   const activeSeriesCount = selectedSeries
     ? selectedSeries.works
     : circle.series.reduce((total, series) => total + series.works, 0);
@@ -583,7 +549,7 @@ function CircleDetailPage({
           ? t("creatorBrowse.catalogWorkRemoved", { code: deleteTarget.primaryCode })
           : t("creatorBrowse.catalogWorkAlreadyRemoved", { code: deleteTarget.primaryCode }),
       );
-      const next = await api.getCircle(externalId);
+      const next = await api.getCircle(externalId, detailQuery);
       setDetail(next);
       setDeleteTarget(null);
     } catch (error) {
@@ -622,7 +588,7 @@ function CircleDetailPage({
       const syncResult = await api.syncRemoteSourceWork(target.sourceId, target.code, "circle_mark_interest");
       const markResult = await api.updateWorkUserState(syncResult.workId, { listeningStatus: status });
       toast.success(t("creatorBrowse.savedAndMarked", { code: syncResult.primaryCode }));
-      const next = await api.getCircle(externalId);
+      const next = await api.getCircle(externalId, detailQuery);
       setDetail({
         ...next,
         works: next.works.map((item) =>
@@ -649,7 +615,7 @@ function CircleDetailPage({
     try {
       const workId = await trackCatalogWorkForState(work, "circle_list");
       if (!workId) return null;
-      const next = await api.getCircle(externalId);
+      const next = await api.getCircle(externalId, detailQuery);
       setDetail(next);
       return workId;
     } catch (error) {
@@ -672,7 +638,7 @@ function CircleDetailPage({
     );
   };
 
-  const reloadDetail = async () => setDetail(await api.getCircle(externalId));
+  const reloadDetail = async () => setDetail(await api.getCircle(externalId, detailQuery));
 
   const bulkSaveSelected = async () => {
     if (selectedWorks.length === 0) return;
@@ -870,7 +836,7 @@ function CircleDetailPage({
                 aria-pressed={!isSeriesView}
                 onClick={() => openCircleRoute(circle.externalId)}
               >
-                {t("detailActions.works")} {circle.works.length}
+                {t("detailActions.works")} {circle.catalogWorks}
               </button>
               <button
                 className={segmentedItemClassName(isSeriesView)}
@@ -909,9 +875,9 @@ function CircleDetailPage({
           defaultFilter="all"
           filterOptions={circleAvailabilityOptions(t)}
           onFilterChange={changeAvailabilityFilter}
-          pageSize={isSeriesView ? undefined : workPageSize}
+          pageSize={isSeriesView && !selectedSeries ? undefined : workPageSize}
           pageSizeOptions={catalogWorkPageSizeOptions}
-          onPageSizeChange={isSeriesView ? undefined : changeWorkPageSize}
+          onPageSizeChange={isSeriesView && !selectedSeries ? undefined : changeWorkPageSize}
           mobileColumns={mobileColumns}
           desktopColumns={desktopColumns}
           onMobileColumnsChange={setMobileColumns}
@@ -927,13 +893,25 @@ function CircleDetailPage({
           }
         />
 
-        {!isSeriesView && (
+        {circle.worksMeta.truncated && (
+          <div className="flex items-start gap-2 rounded-md border border-warning-border bg-warning-surface px-3 py-2 text-sm text-warning-foreground">
+            <CircleAlert className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+            <span>
+              {t("creatorBrowse.catalogWorksPartial", {
+                loaded: circle.worksMeta.loaded,
+                total: circle.worksMeta.total,
+              })}
+            </span>
+          </div>
+        )}
+
+        {(!isSeriesView || selectedSeries) && (
           <div>
             <WorkCollectionPagination
               placement="top"
               page={currentWorkPage}
               pageSize={workPageSize}
-              totalItems={filteredWorks.length}
+              totalItems={circle.worksMeta.total}
               totalPages={totalWorkPages}
               compactMobile
               refreshing={isLoading}
@@ -1026,55 +1004,65 @@ function CircleDetailPage({
                 )}
               </div>
               {selectedSeries ? (
-                <div className={workCollectionClassName()} style={workCollectionStyle(mobileColumns, desktopColumns)}>
-                  {seriesWorks.length > 0 ? (
-                    seriesWorks.map((work) => (
-                      <div key={work.primaryCode}>
-                        <CatalogWorkCard
-                          work={work}
-                          busy={isBulkSaving || fetchWorkspace.isBusy}
-                          selected={selectedWorkCodes.has(work.primaryCode)}
-                          selectable={isCircleBulkSaveSelectable(work)}
-                          selectionActive={false}
-                          onSelectedChange={(checked) => toggleWorkSelection(work, checked)}
-                          onFork={() => void forkSingleWork(work)}
-                          onSave={() => void saveSingleWork(work)}
-                          onDeleteMissing={() => setDeleteTarget(work)}
-                          onStatusChange={(status) => void updateCatalogWorkStatus(work, status)}
-                          canMark={() => canStateCatalogWork(work)}
-                          onFavoriteSaved={(favorite) => {
-                            setDetail((current) =>
-                              current
-                                ? {
-                                    ...current,
-                                    works: current.works.map((item) =>
-                                      item.primaryCode === work.primaryCode ? { ...item, favorite } : item,
-                                    ),
-                                  }
-                                : current,
-                            );
-                          }}
-                          onEnsureWork={() => ensureCatalogWorkForList(work)}
-                          onSeriesOpen={
-                            work.seriesTitleId || seriesCodeForWork(circle.series, work.primaryCode)
-                              ? () =>
-                                  openCircleSeriesRoute(
-                                    circle.externalId,
-                                    work.seriesTitleId || seriesCodeForWork(circle.series, work.primaryCode),
-                                  )
-                              : undefined
-                          }
-                        />
-                      </div>
-                    ))
-                  ) : (
-                    <Card>
-                      <CardContent className="p-5 text-sm text-muted-foreground">
-                        {t("creatorBrowse.noSeriesWorks")}
-                      </CardContent>
-                    </Card>
-                  )}
-                </div>
+                <>
+                  <div className={workCollectionClassName()} style={workCollectionStyle(mobileColumns, desktopColumns)}>
+                    {seriesWorks.length > 0 ? (
+                      seriesWorks.map((work) => (
+                        <div key={work.primaryCode}>
+                          <CatalogWorkCard
+                            work={work}
+                            busy={isBulkSaving || fetchWorkspace.isBusy}
+                            selected={selectedWorkCodes.has(work.primaryCode)}
+                            selectable={isCircleBulkSaveSelectable(work)}
+                            selectionActive={false}
+                            onSelectedChange={(checked) => toggleWorkSelection(work, checked)}
+                            onFork={() => void forkSingleWork(work)}
+                            onSave={() => void saveSingleWork(work)}
+                            onDeleteMissing={() => setDeleteTarget(work)}
+                            onStatusChange={(status) => void updateCatalogWorkStatus(work, status)}
+                            canMark={() => canStateCatalogWork(work)}
+                            onFavoriteSaved={(favorite) => {
+                              setDetail((current) =>
+                                current
+                                  ? {
+                                      ...current,
+                                      works: current.works.map((item) =>
+                                        item.primaryCode === work.primaryCode ? { ...item, favorite } : item,
+                                      ),
+                                    }
+                                  : current,
+                              );
+                            }}
+                            onEnsureWork={() => ensureCatalogWorkForList(work)}
+                            onSeriesOpen={
+                              work.seriesTitleId || seriesCodeForWork(circle.series, work.primaryCode)
+                                ? () =>
+                                    openCircleSeriesRoute(
+                                      circle.externalId,
+                                      work.seriesTitleId || seriesCodeForWork(circle.series, work.primaryCode),
+                                    )
+                                : undefined
+                            }
+                          />
+                        </div>
+                      ))
+                    ) : (
+                      <Card>
+                        <CardContent className="p-5 text-sm text-muted-foreground">
+                          {t("creatorBrowse.noSeriesWorks")}
+                        </CardContent>
+                      </Card>
+                    )}
+                  </div>
+                  <WorkCollectionPagination
+                    placement="bottom"
+                    page={currentWorkPage}
+                    pageSize={workPageSize}
+                    totalItems={circle.worksMeta.total}
+                    totalPages={totalWorkPages}
+                    onPageChange={setWorkPage}
+                  />
+                </>
               ) : (
                 <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
                   {circle.series.length > 0 ? (
@@ -1178,7 +1166,7 @@ function CircleDetailPage({
               placement="bottom"
               page={currentWorkPage}
               pageSize={workPageSize}
-              totalItems={filteredWorks.length}
+              totalItems={circle.worksMeta.total}
               totalPages={totalWorkPages}
               onPageChange={setWorkPage}
             />
@@ -1406,6 +1394,7 @@ function emptyCircleDetail(externalId: string): CircleDetail {
     latestWork: null,
     availableWorks: 0,
     works: [],
+    worksMeta: { page: 1, pageSize: 24, loaded: 0, total: 0, hasMore: false, truncated: false },
     series: [],
   };
 }

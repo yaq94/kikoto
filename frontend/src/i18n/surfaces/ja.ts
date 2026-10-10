@@ -2354,6 +2354,7 @@ export const surfaceJapanese = {
     noSeriesWorks: "このシリーズ表示に一致する作品はありません。",
     noSeriesForCircle: "このサークルにシリーズはありません。",
     noCatalogWorks: "この表示に一致するカタログ作品はありません。",
+    catalogWorksPartial: "全{{total}}件中{{loaded}}件を表示しています。検索と選択は読み込み済みの結果だけが対象です。",
     circleRefreshQueued: "サークル更新 #{{id}} をキューに追加しました。",
     circleRefreshFinished: "サークル更新 #{{id}} が完了しました。",
     circleRefreshFailed: "サークル更新 #{{id}} が失敗しました。",

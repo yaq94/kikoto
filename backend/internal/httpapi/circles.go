@@ -61,10 +61,64 @@ type circleDetail struct {
 	circleSummary
 	AvailableWorks int                 `json:"availableWorks"`
 	Works          []circleCatalogWork `json:"works"`
+	WorksMeta      circleWorksMeta     `json:"worksMeta"`
 	Series         []circleSeries      `json:"series"`
 	// Refresh is the newest follow run for this circle, so the page can follow
 	// a queued refresh across reloads and link it in Activity.
 	Refresh *creatorRefreshRun `json:"refresh"`
+}
+
+type circleWorksMeta struct {
+	Page      int  `json:"page"`
+	PageSize  int  `json:"pageSize"`
+	Loaded    int  `json:"loaded"`
+	Total     int  `json:"total"`
+	HasMore   bool `json:"hasMore"`
+	Truncated bool `json:"truncated"`
+}
+
+type circleWorksQuery struct {
+	Page         int
+	PageSize     int
+	Query        string
+	Availability string
+	Series       string
+	Legacy       bool
+}
+
+func parseCircleWorksQuery(r *http.Request) circleWorksQuery {
+	legacy := r.URL.Query().Get("page") == "" && r.URL.Query().Get("pageSize") == "" &&
+		r.URL.Query().Get("q") == "" && r.URL.Query().Get("availability") == "" && r.URL.Query().Get("series") == ""
+	pageSize := queryInt(r, "pageSize", 24)
+	if pageSize < 1 || pageSize > 100 {
+		pageSize = 24
+	}
+	page := queryInt(r, "page", 1)
+	if page < 1 {
+		page = 1
+	}
+	availability := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("availability")))
+	switch availability {
+	case "", "all", "available", "unavailable", "local", "remote":
+	default:
+		availability = "all"
+	}
+	query := strings.TrimSpace(r.URL.Query().Get("q"))
+	if len(query) > 200 {
+		query = query[:200]
+	}
+	series := strings.TrimSpace(r.URL.Query().Get("series"))
+	if len(series) > 128 {
+		series = series[:128]
+	}
+	return circleWorksQuery{
+		Page:         page,
+		PageSize:     pageSize,
+		Query:        query,
+		Availability: availability,
+		Series:       series,
+		Legacy:       legacy,
+	}
 }
 
 type circleSeries struct {
@@ -228,7 +282,7 @@ func (s *Server) getCircle(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid circle external id"})
 		return
 	}
-	detail, err := s.loadCircleDetail(r.Context(), userID, externalID)
+	detail, err := s.loadCircleDetailWithWorksQuery(r.Context(), userID, externalID, parseCircleWorksQuery(r))
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			writeCircleLookupError(w, err)

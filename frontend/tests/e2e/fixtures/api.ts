@@ -595,7 +595,24 @@ export function circleDetailFixture(
   circle: CircleSummary = circleSummaryFixture(),
   overrides: Partial<CircleDetail> = {},
 ): CircleDetail {
-  return { ...circle, availableWorks: 0, works: [], series: [], ...overrides };
+  const detail = {
+    ...circle,
+    availableWorks: 0,
+    works: [],
+    series: [],
+    ...overrides,
+  };
+  return {
+    ...detail,
+    worksMeta: overrides.worksMeta ?? {
+      page: 1,
+      pageSize: 24,
+      loaded: detail.works.length,
+      total: detail.catalogWorks,
+      hasMore: detail.works.length < detail.catalogWorks,
+      truncated: false,
+    },
+  };
 }
 
 export function circleCatalogWorkFixture(overrides: Partial<CircleCatalogWork> = {}): CircleCatalogWork {
