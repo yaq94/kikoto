@@ -42,7 +42,7 @@ import {
   type TreeStats,
   type TreeTrack,
 } from "@/features/work-detail/media/mediaTreeModel";
-import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { FilePreviewDialog, type FilePreviewRequest } from "@/features/work-detail/dialogs/FilePreviewDialog";
 import {
   DirectoryLoadErrorPanel,
@@ -66,12 +66,8 @@ import { toastFromError, useToast } from "@/components/ui/toast";
 import { REMOTE_TRACK_PERMISSIONS, usePermissionGate } from "@/auth/usePermissionGate";
 import { useRemoteFetchWorkspace } from "@/features/work-detail/workflows/useRemoteFetchWorkspace";
 import { useLibraryPlayer } from "@/player/PlayerProvider";
-import {
-  captureInitialPlaybackTrack,
-  currentPlaybackDirectoryPath,
-  type PlaybackRouteSnapshot,
-  playbackTrackMatchesRemoteWork,
-} from "@/features/work-detail/media/playbackDirectoryRouting";
+import { playbackTrackMatchesRemoteWork } from "@/features/work-detail/media/playbackDirectoryRouting";
+import { usePlaybackAutoRouting, usePlaybackRoutePath } from "@/features/work-detail/media/usePlaybackAutoRouting";
 import {
   announceRemoteTrackCreated,
   isMatchingRemoteTrack,
@@ -757,23 +753,13 @@ export function RemoteOnlyWorkDetailController({
     remoteStats: directoryStats,
   });
   const playbackMatchesWork = playbackTrackMatchesRemoteWork(player.currentTrack, detail, code, source.id);
-  const autoPlaybackRouteKey = `remote:${source.id}:${code}`;
-  const [manualPlaybackRouteKey, setManualPlaybackRouteKey] = useState("");
-  useEffect(() => setManualPlaybackRouteKey(""), [autoPlaybackRouteKey]);
-  const autoPlaybackRoutingEnabled = manualPlaybackRouteKey !== autoPlaybackRouteKey;
-  const autoPlaybackSnapshotRef = useRef<PlaybackRouteSnapshot>({ routeKey: "", track: null });
-  const autoPlaybackTrack = captureInitialPlaybackTrack(
-    autoPlaybackSnapshotRef,
-    autoPlaybackRouteKey,
-    player.currentTrack,
-    player.isPlaying,
-    playbackMatchesWork,
-  );
-  const autoRoutePath = useMemo(
-    () => (autoPlaybackRoutingEnabled ? currentPlaybackDirectoryPath(visibleTree, autoPlaybackTrack) : null),
-    [autoPlaybackRoutingEnabled, autoPlaybackTrack, visibleTree],
-  );
-  const autoRouteStateKey = `${autoPlaybackRouteKey}:${autoPlaybackRoutingEnabled ? "automatic" : "manual"}`;
+  const playbackRouting = usePlaybackAutoRouting({
+    routeKey: `remote:${source.id}:${code}`,
+    currentTrack: player.currentTrack,
+    isPlaying: player.isPlaying,
+    matchesWork: playbackMatchesWork,
+  });
+  const autoRoutePath = usePlaybackRoutePath(playbackRouting, visibleTree);
 
   useEffect(() => {
     let cancelled = false;
@@ -1104,7 +1090,7 @@ export function RemoteOnlyWorkDetailController({
     detail,
   );
   const selectRemoteSourceTab = (key: string) => {
-    setManualPlaybackRouteKey(autoPlaybackRouteKey);
+    playbackRouting.disable();
     setActiveRemoteTab(key);
   };
   const detailActionProps: RemoteOnlyDetailActionsProps = {
@@ -1150,7 +1136,7 @@ export function RemoteOnlyWorkDetailController({
       currentLocationId={player.currentLocationId}
       currentPlaybackKey={player.currentPlaybackKey}
       autoRoutePath={autoRoutePath}
-      routeStateKey={autoRouteStateKey}
+      routeStateKey={playbackRouting.routeStateKey}
       remoteAvailability={remoteAvailability}
       hasMaterializedWork={Boolean(trackedWork)}
       selectionModal={<LazyRemoteFetchWorkspaceDialog workspace={fetchWorkspace} />}

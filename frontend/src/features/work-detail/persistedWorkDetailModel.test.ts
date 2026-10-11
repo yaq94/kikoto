@@ -1,0 +1,131 @@
+import { describe, expect, it, vi } from "vitest";
+
+vi.hoisted(() => {
+  (globalThis as typeof globalThis & { __APP_VERSION__: string }).__APP_VERSION__ = "test";
+});
+
+import type { SourcePresenceItem, WorkDetail } from "@/lib/api";
+import type { RemoteSourceAvailability, SourceTabInfo } from "@/features/work-detail/source/sourceContextModel";
+import { syntheticWorkCode } from "@/test-support/workCode";
+import {
+  persistedDetailActionMode,
+  persistedDirectoryLoadState,
+  persistedFetchTarget,
+  persistedTrackingActionState,
+} from "./persistedWorkDetailModel";
+
+const workCode = syntheticWorkCode("RJ", 0);
+const editionCode = syntheticWorkCode("RJ", 1);
+
+function remote(overrides: Partial<RemoteSourceAvailability["summary"]> = {}, extra = {}) {
+  return {
+    source: { id: 7, code: "example_remote_a", displayName: "Example Remote A" },
+    summary: { sourceId: 7, status: "available", primaryCode: workCode, ...overrides },
+    ...extra,
+  } as RemoteSourceAvailability;
+}
+
+function trackedPresence(overrides: Partial<SourcePresenceItem> = {}) {
+  return {
+    type: "tracked",
+    availability: "available",
+    fileSourceId: 7,
+    fileSourceCode: "example_remote_a",
+    fileSourceName: "Example Remote A",
+    ...overrides,
+  } as SourcePresenceItem;
+}
+
+function work(sourcePresence: SourcePresenceItem[] = []) {
+  return { id: 1, primaryCode: workCode, sourcePresence } as WorkDetail;
+}
+
+const loadState = {
+  work: work(),
+  selectedRemoteSource: null,
+  selectedRemoteDetail: null,
+  selectedRemoteTreeError: "",
+  selectedRemoteTreeLoading: false,
+  mediaError: "",
+  isDirectoryLoading: false,
+};
+
+describe("persistedWorkDetailModel", () => {
+  it("derives the action mode from the selected source context", () => {
+    const trackedTab = { kind: "tracked" } as SourceTabInfo;
+    const localTab = { kind: "local" } as SourceTabInfo;
+
+    expect(persistedDetailActionMode(remote(), trackedPresence(), true, trackedTab)).toBe("remote_source");
+    expect(persistedDetailActionMode(null, trackedPresence(), true, trackedTab)).toBe("tracked_forked");
+    expect(persistedDetailActionMode(null, trackedPresence(), false, trackedTab)).toBe("tracked_unforked");
+    expect(persistedDetailActionMode(null, null, false, trackedTab)).toBe("tracked_unforked");
+    expect(persistedDetailActionMode(null, null, false, localTab)).toBe("local");
+  });
+
+  it("fetches the code the selected source knows the work by", () => {
+    const selectedWork = work();
+
+    expect(persistedFetchTarget(remote(), null, editionCode, null, selectedWork, workCode).code).toBe(editionCode);
+    expect(
+      persistedFetchTarget(null, remote(), "", trackedPresence({ remoteCode: editionCode }), selectedWork, workCode),
+    ).toMatchObject({ code: editionCode, remote: { source: { id: 7 } } });
+    expect(persistedFetchTarget(null, null, "", trackedPresence(), selectedWork, workCode).code).toBe(workCode);
+    expect(persistedFetchTarget(null, null, "", null, null, workCode)).toEqual({ remote: undefined, code: workCode });
+  });
+
+  it("offers Track only for a browsable remote that is not tracked yet", () => {
+    const detail = { primaryCode: workCode };
+
+    expect(
+      persistedTrackingActionState({
+        work: work(),
+        selectedRemoteSource: remote({}, { detail }),
+        selectedRemoteWorkCode: workCode,
+        selectedTrackedPresence: null,
+      }),
+    ).toMatchObject({ canTrackRemote: true, hasTrackedSource: false });
+
+    const presence = trackedPresence({ remoteCode: workCode });
+    expect(
+      persistedTrackingActionState({
+        work: work([presence]),
+        selectedRemoteSource: remote({}, { detail }),
+        selectedRemoteWorkCode: workCode,
+        selectedTrackedPresence: null,
+      }),
+    ).toMatchObject({ canTrackRemote: false, hasTrackedSource: true, activeTrackedPresence: presence });
+
+    expect(
+      persistedTrackingActionState({
+        work: work(),
+        selectedRemoteSource: remote({ hasTracked: true }, { detail }),
+        selectedRemoteWorkCode: workCode,
+        selectedTrackedPresence: null,
+      }),
+    ).toMatchObject({ canTrackRemote: false, selectedRemoteHasTracked: true, activeTrackedPresence: null });
+  });
+
+  it("shows the skeleton while a browsable remote has no detail yet", () => {
+    expect(persistedDirectoryLoadState({ ...loadState, selectedRemoteSource: remote() })).toMatchObject({
+      sourceDetailsLoading: true,
+      showSkeleton: true,
+    });
+    expect(
+      persistedDirectoryLoadState({ ...loadState, selectedRemoteSource: remote({ status: "unavailable" }) }),
+    ).toMatchObject({ sourceDetailsLoading: false, showSkeleton: false });
+  });
+
+  it("reports the selected source's own load error instead of a skeleton", () => {
+    expect(
+      persistedDirectoryLoadState({
+        ...loadState,
+        selectedRemoteSource: remote(),
+        selectedRemoteTreeError: "remote failed",
+        mediaError: "local failed",
+      }),
+    ).toMatchObject({ mediaLoadError: "remote failed", showSkeleton: false });
+    expect(
+      persistedDirectoryLoadState({ ...loadState, mediaError: "local failed", isDirectoryLoading: true }),
+    ).toMatchObject({ mediaLoadError: "local failed", showSkeleton: false });
+  });
+});
