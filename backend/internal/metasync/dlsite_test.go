@@ -37,6 +37,25 @@ func TestDLsiteWorkNoPatternUsesMetadataPrefixesAndLength(t *testing.T) {
 	}
 }
 
+func TestCombinedLanguageEditionValueUsesItsLabel(t *testing.T) {
+	zero := 0
+	product := dlsite.Product{
+		WorkNo: "RJ00000000",
+		LanguageEditions: []dlsite.LanguageEdition{{
+			WorkNo: "RJ00000000", Label: "日本語", Lang: "CHI_HANS,CHI_HANT,JPN",
+		}},
+		TranslationInfo: dlsite.TranslationInfo{StatusForTranslatorByLang: dlsite.TranslationStatuses{
+			"CHI_HANS": {OnSaleCount: &zero},
+		}},
+	}
+	if got := productEditionLanguage(product); got != "JPN" {
+		t.Fatalf("productEditionLanguage() = %q, want JPN", got)
+	}
+	if !languageEditionExplicitlyUnavailable(product, dlsite.LanguageEdition{Lang: "CHI_HANS,CHI_HANT", Label: "简体中文"}) {
+		t.Fatalf("combined language value did not match unavailable translation status")
+	}
+}
+
 type fakeDLsiteClient struct {
 	products map[string]dlsite.Product
 	errors   map[string]error

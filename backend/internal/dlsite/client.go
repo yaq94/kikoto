@@ -1,6 +1,7 @@
 package dlsite
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -13,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -173,6 +175,114 @@ type LanguageEdition struct {
 	DisplayOrder int    `json:"display_order"`
 	Label        string `json:"label"`
 	Lang         string `json:"lang"`
+}
+
+// LanguageEditionList accepts both the normal array returned by DLsite and
+// the numeric-keyed object used when the provider serializes a sparse array.
+// The object keys are ordering hints; display_order remains the provider's
+// relationship order and is handled separately by metadata sync.
+type LanguageEditionList []LanguageEdition
+
+// UnmarshalJSON keeps Product's public slice type compatible while decoding
+// the two shapes accepted by LanguageEditionList.
+func (product *Product) UnmarshalJSON(data []byte) error {
+	type productAlias Product
+	decoded := struct {
+		LanguageEditions json.RawMessage `json:"language_editions"`
+		*productAlias
+	}{productAlias: (*productAlias)(product)}
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	if decoded.LanguageEditions != nil {
+		var editions LanguageEditionList
+		if err := json.Unmarshal(decoded.LanguageEditions, &editions); err != nil {
+			return err
+		}
+		product.LanguageEditions = []LanguageEdition(editions)
+	}
+	return nil
+}
+
+func (editions *LanguageEditionList) UnmarshalJSON(data []byte) error {
+	data = bytes.TrimSpace(data)
+	if bytes.Equal(data, []byte("null")) {
+		*editions = nil
+		return nil
+	}
+	if len(data) == 0 {
+		return fmt.Errorf("language_editions is empty JSON")
+	}
+	switch data[0] {
+	case '[':
+		var decoded []LanguageEdition
+		if err := json.Unmarshal(data, &decoded); err != nil {
+			return fmt.Errorf("decode language_editions array: %w", err)
+		}
+		*editions = LanguageEditionList(decoded)
+		return nil
+	case '{':
+		var values map[string]json.RawMessage
+		if err := json.Unmarshal(data, &values); err != nil {
+			return fmt.Errorf("decode language_editions object: %w", err)
+		}
+		indexed := make([]indexedLanguageEdition, 0, len(values))
+		for key, raw := range values {
+			index, err := parseLanguageEditionIndex(key)
+			if err != nil {
+				return err
+			}
+			var edition LanguageEdition
+			if err := json.Unmarshal(raw, &edition); err != nil {
+				return fmt.Errorf("decode language_editions object value: %w", err)
+			}
+			indexed = append(indexed, indexedLanguageEdition{index: index, key: key, edition: edition})
+		}
+		sort.Slice(indexed, func(left, right int) bool {
+			if indexed[left].index != indexed[right].index {
+				return indexed[left].index < indexed[right].index
+			}
+			return indexed[left].key < indexed[right].key
+		})
+		decoded := make(LanguageEditionList, len(indexed))
+		for index, value := range indexed {
+			decoded[index] = value.edition
+		}
+		*editions = decoded
+		return nil
+	default:
+		return fmt.Errorf("language_editions must be an array, numeric-keyed object, or null")
+	}
+}
+
+type indexedLanguageEdition struct {
+	index   uint64
+	key     string
+	edition LanguageEdition
+}
+
+func parseLanguageEditionIndex(key string) (uint64, error) {
+	if key == "" || strings.IndexFunc(key, func(value rune) bool { return value < '0' || value > '9' }) >= 0 {
+		return 0, fmt.Errorf("language_editions object contains a non-numeric key")
+	}
+	index, err := strconv.ParseUint(key, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("language_editions object contains an invalid numeric key")
+	}
+	return index, nil
+}
+
+// LanguageTokens returns the provider's language values as individual tokens.
+// A few DLsite responses incorrectly join all family languages in one field.
+func (edition LanguageEdition) LanguageTokens() []string {
+	parts := strings.Split(edition.Lang, ",")
+	result := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if part = strings.TrimSpace(part); part != "" {
+			result = append(result, part)
+		}
+	}
+	return result
 }
 
 type ProductOptions struct {
