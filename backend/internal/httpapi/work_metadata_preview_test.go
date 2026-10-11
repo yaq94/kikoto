@@ -73,6 +73,9 @@ func TestWorkMetadataPreviewApplyAcceptsProviderValueWithoutManualOverride(t *te
 		t.Fatal(err)
 	}
 	workID, _ := result.LastInsertId()
+	if _, err := db.Exec(`INSERT INTO user_account (id, username, display_name, role) VALUES (1, 'preview-user', 'Preview User', 'admin')`); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := db.Exec(`INSERT INTO work_manual_override(work_id, field_name, language, value_json) VALUES (?, 'title', '', '"Old manual title"')`, workID); err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +90,7 @@ func TestWorkMetadataPreviewApplyAcceptsProviderValueWithoutManualOverride(t *te
 		Product:   &previewProduct,
 		CreatedAt: time.Now().UTC(),
 	})
-	body := `{"previewId":` + mustJSON(previewID) + `,"baseUpdatedAt":` + mustJSON(baseUpdatedAt) + `,"selections":{"title":"fetched"},"values":{"title":"Fetched title","titleLanguage":"origin"}}`
+	body := `{"previewId":` + mustJSON(previewID) + `,"baseUpdatedAt":` + mustJSON(baseUpdatedAt) + `,"selections":{"title":"fetched","description":"manual","releaseDate":"manual","ageRating":"manual"},"values":{"title":"Fetched title","titleLanguage":"origin","description":"Authored description","releaseDate":"2026-10-11","ageRating":"general"}}`
 	request := httptest.NewRequest(http.MethodPost, "/api/works/"+strconv.FormatInt(workID, 10)+"/metadata-preview/apply", strings.NewReader(body))
 	request = request.WithContext(context.WithValue(request.Context(), currentUserKey, account.User{ID: 1, Permissions: []string{"library:write", "metadata:sync"}}))
 	request.SetPathValue("id", strconv.FormatInt(workID, 10))
@@ -102,6 +105,16 @@ func TestWorkMetadataPreviewApplyAcceptsProviderValueWithoutManualOverride(t *te
 	}
 	if title != "Fetched title" {
 		t.Fatalf("stored title = %q", title)
+	}
+	var description, releaseDate, ageRating string
+	if err := db.QueryRow(`SELECT
+		(SELECT value_json FROM work_manual_override WHERE work_id = ? AND field_name = 'description'),
+		(SELECT value_json FROM work_manual_override WHERE work_id = ? AND field_name = 'release_date'),
+		(SELECT value_json FROM work_manual_override WHERE work_id = ? AND field_name = 'age_rating')`, workID, workID, workID).Scan(&description, &releaseDate, &ageRating); err != nil {
+		t.Fatal(err)
+	}
+	if description != `"Authored description"` || releaseDate != `"2026-10-11"` || ageRating != `"general"` {
+		t.Fatalf("scalar manual overrides = %q/%q/%q", description, releaseDate, ageRating)
 	}
 	var manualCount int
 	if err := db.QueryRow("SELECT COUNT(*) FROM work_manual_override WHERE work_id = ? AND field_name = 'title'", workID).Scan(&manualCount); err != nil {

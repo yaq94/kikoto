@@ -103,6 +103,9 @@ export type ManualOverrideCover = {
 export type WorkManualOverrides = {
   titles?: Record<string, string>;
   title?: string;
+  description?: string;
+  releaseDate?: string;
+  ageRating?: string;
   circle?: ManualOverrideEntity;
   series?: ManualOverrideSeries;
   voiceActors?: ManualOverridePerson[];
@@ -112,6 +115,9 @@ export type WorkManualOverrides = {
 export type WorkManualOverridePayload = {
   titles?: Record<string, string | null>;
   title?: string | null;
+  description?: string | null;
+  releaseDate?: string | null;
+  ageRating?: string | null;
   circle?: ManualOverrideEntity | null;
   series?: ManualOverrideSeries | null;
   voiceActors?: ManualOverridePerson[];

@@ -374,6 +374,27 @@ func (s *Server) applyPreviewManualOverrides(ctx context.Context, workID, userID
 		}
 		fields["titles"] = true
 	}
+	if selection, ok := payload.Selections["description"]; ok && (selection == "manual" || (providerFields && selection == "current")) {
+		manual.Description = stringPointer(strings.TrimSpace(payload.Values.Description))
+		fields["description"] = true
+	} else if payload.Selections["description"] == "fetched" {
+		manual.Description = nil
+		fields["description"] = true
+	}
+	if selection, ok := payload.Selections["releaseDate"]; ok && (selection == "manual" || (providerFields && selection == "current")) {
+		manual.ReleaseDate = payload.Values.ReleaseDate
+		fields["releaseDate"] = true
+	} else if payload.Selections["releaseDate"] == "fetched" {
+		manual.ReleaseDate = nil
+		fields["releaseDate"] = true
+	}
+	if selection, ok := payload.Selections["ageRating"]; ok && (selection == "manual" || (providerFields && selection == "current")) {
+		manual.AgeRating = stringPointer(strings.TrimSpace(payload.Values.AgeRating))
+		fields["ageRating"] = true
+	} else if payload.Selections["ageRating"] == "fetched" {
+		manual.AgeRating = nil
+		fields["ageRating"] = true
+	}
 	if selection, ok := payload.Selections["circle"]; ok && (selection == "manual" || (providerFields && selection == "current")) {
 		if strings.TrimSpace(payload.Values.Circle) == "" && strings.TrimSpace(payload.Values.CircleExternalID) == "" {
 			manual.Circle = nil

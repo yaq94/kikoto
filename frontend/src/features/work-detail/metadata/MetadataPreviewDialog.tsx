@@ -245,7 +245,7 @@ function PreviewField({
 }) {
   const { t } = useTranslation();
   const label = t(`metadataEditor.previewFields.${field}`);
-  const editable = ["title", "circle"].includes(field);
+  const editable = ["title", "description", "releaseDate", "ageRating", "circle"].includes(field);
   return (
     <div className="grid gap-2 rounded-md border p-3 md:grid-cols-[minmax(7rem,0.35fr)_1fr_1fr_1fr] md:items-start">
       <div className="text-sm font-medium">{label}</div>
