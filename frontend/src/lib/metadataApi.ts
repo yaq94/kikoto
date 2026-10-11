@@ -264,6 +264,7 @@ export type WorkMetadataPreviewValues = {
   description: string;
   releaseDate: string | null;
   ageRating: string;
+  series: string;
   rating: number | null;
   sales: number | null;
   regularPrice: number | null;

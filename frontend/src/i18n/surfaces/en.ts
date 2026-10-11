@@ -55,6 +55,7 @@ export const surfaceEnglish = {
       releaseDate: "Release date",
       ageRating: "Age rating",
       circle: "Circle",
+      series: "Series",
       tags: "Tags",
       voiceActors: "Voice actors",
     },

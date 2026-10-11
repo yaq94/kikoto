@@ -26,6 +26,7 @@ type workMetadataPreviewValues struct {
 	Description      string                             `json:"description"`
 	ReleaseDate      *string                            `json:"releaseDate"`
 	AgeRating        string                             `json:"ageRating"`
+	Series           string                             `json:"series"`
 	Rating           *float64                           `json:"rating"`
 	Sales            *int64                             `json:"sales"`
 	RegularPrice     *int64                             `json:"regularPrice"`
@@ -300,7 +301,7 @@ func (s *Server) applyWorkMetadataPreview(w http.ResponseWriter, r *http.Request
 	}
 	providerSync := providerFields || payload.Selections["family"] == "fetched"
 	if providerSync {
-		if err := s.applyPreviewProvider(r.Context(), workID, preview, payload.Selections["family"] == "fetched"); err != nil {
+		if err := s.applyPreviewProvider(r.Context(), workID, preview, payload.Selections["family"] == "fetched", payload.Selections["cover"] == "fetched"); err != nil {
 			if errors.Is(err, errMetadataSourceUnavailable) {
 				writeAPIError(w, http.StatusBadRequest, "metadata_source_unavailable", "metadata source is unavailable", false)
 				return
@@ -328,7 +329,7 @@ func (s *Server) applyWorkMetadataPreview(w http.ResponseWriter, r *http.Request
 
 func previewSelectionField(field string) bool {
 	switch field {
-	case "title", "description", "releaseDate", "ageRating", "circle", "tags", "voiceActors", "family":
+	case "title", "description", "releaseDate", "ageRating", "circle", "series", "tags", "voiceActors", "cover", "family":
 		return true
 	default:
 		return false
@@ -346,7 +347,7 @@ func (s *Server) previewBaseIsCurrent(ctx context.Context, workID int64, expecte
 	return strings.TrimSpace(current) == strings.TrimSpace(expected)
 }
 
-func (s *Server) applyPreviewProvider(ctx context.Context, workID int64, preview metadataPreviewRecord, acceptFamily bool) error {
+func (s *Server) applyPreviewProvider(ctx context.Context, workID int64, preview metadataPreviewRecord, acceptFamily, acceptCover bool) error {
 	code := preview.PrimaryCode
 	applyCtx, cancel := context.WithTimeout(ctx, remoteMetadataFallbackTimeout)
 	defer cancel()
@@ -371,7 +372,13 @@ func (s *Server) applyPreviewProvider(ctx context.Context, workID int64, preview
 	if preview.Product == nil {
 		return errors.New("metadata preview product missing")
 	}
-	_, err := s.newDLsiteMetadataSyncer(applyCtx).SyncProductOnly(applyCtx, *preview.Product)
+	syncer := s.newDLsiteMetadataSyncer(applyCtx)
+	var err error
+	if acceptCover {
+		_, err = syncer.SyncProductOnlyWithCover(applyCtx, *preview.Product)
+	} else {
+		_, err = syncer.SyncProductOnly(applyCtx, *preview.Product)
+	}
 	return err
 }
 
@@ -430,6 +437,10 @@ func (s *Server) applyPreviewManualOverrides(ctx context.Context, workID, userID
 	} else if payload.Selections["circle"] == "fetched" {
 		manual.Circle = nil
 		fields["circle"] = true
+	}
+	if payload.Selections["series"] == "fetched" {
+		manual.Series = nil
+		fields["series"] = true
 	}
 	if selection, ok := payload.Selections["voiceActors"]; ok && (selection == "manual" || (providerFields && selection == "current")) {
 		for _, name := range payload.Values.VoiceActors {
@@ -498,6 +509,7 @@ func previewValuesFromWork(work workDetail) workMetadataPreviewValues {
 	return workMetadataPreviewValues{
 		Title: work.Title, TitleLanguage: work.MetadataLanguage, Description: work.Description,
 		ReleaseDate: work.ReleaseDate, AgeRating: work.AgeRating, Circle: work.Circle,
+		Series: work.Series,
 		Rating: work.Rating, Sales: work.Sales, RegularPrice: work.RegularPrice, Price: work.Price,
 		PriceCurrency: work.PriceCurrency, PermanentlyFree: work.PermanentlyFree,
 		CircleExternalID: work.CircleExternalID, Tags: append([]string(nil), work.Tags...),
@@ -518,6 +530,15 @@ func previewValuesFromDLsiteProduct(product dlsite.Product) workMetadataPreviewV
 	if description == "" {
 		description = strings.TrimSpace(product.Intro)
 	}
+	series := ""
+	var seriesFields struct {
+		SeriesName string `json:"series_name"`
+		Series     string `json:"series"`
+	}
+	if len(product.ProductRaw) > 0 {
+		_ = json.Unmarshal(product.ProductRaw, &seriesFields)
+	}
+	series = strings.TrimSpace(firstNonEmpty(seriesFields.SeriesName, seriesFields.Series))
 	actors := []string{}
 	seenActors := map[string]bool{}
 	for _, creator := range product.Creators["voice_by"] {
@@ -567,7 +588,7 @@ func previewValuesFromDLsiteProduct(product dlsite.Product) workMetadataPreviewV
 		})
 	}
 	return workMetadataPreviewValues{
-		Title: title, TitleLanguage: language, Description: description,
+		Title: title, TitleLanguage: language, Description: description, Series: series,
 		ReleaseDate: previewStringPointer(product.RegistDate), AgeRating: strings.TrimSpace(product.AgeCategoryString),
 		Rating: product.RateAverage2DP, Sales: product.SalesCount, RegularPrice: product.RegularPrice, Price: product.CurrentPrice,
 		PriceCurrency: "JPY", PermanentlyFree: product.IsPermanentlyFree(),

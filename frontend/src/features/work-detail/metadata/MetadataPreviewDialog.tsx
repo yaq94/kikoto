@@ -18,7 +18,17 @@ import { librarySourceProvidesMetadata } from "@/lib/remoteSourceCapabilities";
 export type MetadataPreviewSelection = "current" | "fetched" | "manual" | "merged";
 export type MetadataPreviewSelections = Record<string, MetadataPreviewSelection>;
 
-const comparableFields = ["title", "description", "releaseDate", "ageRating", "circle", "tags", "voiceActors"] as const;
+const comparableFields = [
+  "title",
+  "description",
+  "releaseDate",
+  "ageRating",
+  "circle",
+  "series",
+  "tags",
+  "voiceActors",
+  "cover",
+] as const;
 type ComparableField = (typeof comparableFields)[number];
 
 export function MetadataPreviewDialog({
@@ -79,8 +89,9 @@ export function MetadataPreviewDialog({
 
   const select = (field: ComparableField, side: "current" | "fetched") => {
     if (!preview || readOnly || saving) return;
-    const value = preview[side][field];
-    setExpected((current) => (current ? { ...current, [field]: copyField(value) } : current));
+    const value = previewFieldValue(preview[side], field);
+    const expectedField = field === "cover" ? "coverAvailable" : field;
+    setExpected((current) => (current ? { ...current, [expectedField]: copyField(value) } : current));
     setSelections((current) => ({ ...current, [field]: side }));
   };
 
@@ -177,9 +188,9 @@ export function MetadataPreviewDialog({
                 <PreviewField
                   key={field}
                   field={field}
-                  current={preview.current[field]}
-                  fetched={preview.fetched[field]}
-                  expected={expected[field]}
+                  current={previewFieldValue(preview.current, field)}
+                  fetched={previewFieldValue(preview.fetched, field)}
+                  expected={previewFieldValue(expected, field)}
                   selection={selections[field] ?? "current"}
                   disabled={readOnly || saving}
                   onSelect={select}
@@ -358,6 +369,10 @@ function formatValue(field: ComparableField, value: unknown): string {
   if (field === "tags" || field === "voiceActors") return Array.isArray(value) ? value.join(", ") : "";
   if (field === "releaseDate") return typeof value === "string" ? value : "";
   return typeof value === "string" ? value : value == null ? "" : String(value);
+}
+
+function previewFieldValue(values: WorkMetadataPreviewValues, field: ComparableField): unknown {
+  return field === "cover" ? values.coverAvailable : values[field];
 }
 
 function copyValues(values: WorkMetadataPreviewValues): WorkMetadataPreviewValues {

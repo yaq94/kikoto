@@ -235,6 +235,17 @@ func (s *DLsiteSyncer) SyncProductOnly(ctx context.Context, product dlsite.Produ
 	return workID, nil
 }
 
+// SyncProductOnlyWithCover stores one supplied product and refreshes its
+// provider cover when the caller explicitly accepted that cover in a preview.
+func (s *DLsiteSyncer) SyncProductOnlyWithCover(ctx context.Context, product dlsite.Product) (int64, error) {
+	workID, err := s.SyncProductOnly(ctx, product)
+	if err != nil || s.cacheRoot == "" {
+		return workID, err
+	}
+	_, coverErr := s.downloadCover(ctx, product)
+	return workID, coverErr
+}
+
 func (s *DLsiteSyncer) SyncAll(ctx context.Context) (DLsiteSyncResult, error) {
 	result, err := s.SyncAllWithoutWorkflow(ctx)
 	if err != nil {
