@@ -164,10 +164,10 @@ export function PlayerQueuePanel({
     (event: React.PointerEvent<HTMLButtonElement>, commit: boolean) => {
       const session = dragRef.current;
       if (!session || session.pointerId !== event.pointerId) return;
+      finishDrag(commit);
       if (event.currentTarget.hasPointerCapture(event.pointerId)) {
         event.currentTarget.releasePointerCapture(event.pointerId);
       }
-      finishDrag(commit);
     },
     [finishDrag],
   );

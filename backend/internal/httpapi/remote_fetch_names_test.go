@@ -321,7 +321,7 @@ func TestRemoteFetchPlanRejectsFilesAboveDownloadLimit(t *testing.T) {
 	request.SetPathValue("id", "7")
 	request.SetPathValue("code", code)
 	request = request.WithContext(context.WithValue(request.Context(), currentUserKey, currentUser{
-		ID: 1, Permissions: []string{"remote:fetch"},
+		ID: 1, Permissions: []string{"remote:fetch", "metadata:sync"},
 	}))
 	response := httptest.NewRecorder()
 
