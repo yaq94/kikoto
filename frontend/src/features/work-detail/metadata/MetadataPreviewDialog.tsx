@@ -6,7 +6,14 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogBody, DialogFooter, DialogHeader } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { toastFromError, useToast } from "@/components/ui/toast";
-import { api, type WorkDetail, type WorkMetadataPreview, type WorkMetadataPreviewValues } from "@/lib/api";
+import {
+  api,
+  type LibrarySource,
+  type WorkDetail,
+  type WorkMetadataPreview,
+  type WorkMetadataPreviewValues,
+} from "@/lib/api";
+import { librarySourceProvidesMetadata } from "@/lib/remoteSourceCapabilities";
 
 export type MetadataPreviewSelection = "current" | "fetched" | "manual";
 export type MetadataPreviewSelections = Record<string, MetadataPreviewSelection>;
@@ -16,12 +23,14 @@ type ComparableField = (typeof comparableFields)[number];
 
 export function MetadataPreviewDialog({
   work,
+  sources,
   open,
   readOnly,
   onClose,
   onApply,
 }: {
   work: WorkDetail;
+  sources: LibrarySource[];
   open: boolean;
   readOnly: boolean;
   onClose: () => void;
@@ -38,6 +47,8 @@ export function MetadataPreviewDialog({
   const [selections, setSelections] = useState<MetadataPreviewSelections>({});
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [selectedSourceId, setSelectedSourceId] = useState<number | undefined>(undefined);
+  const previewSources = sources.filter((source) => source.enabled && librarySourceProvidesMetadata(source));
 
   useEffect(() => {
     if (!open) return;
@@ -47,7 +58,7 @@ export function MetadataPreviewDialog({
     setExpected(null);
     setSelections(Object.fromEntries(comparableFields.map((field) => [field, "current"])));
     void api
-      .previewWorkMetadata(work.id)
+      .previewWorkMetadata(work.id, selectedSourceId)
       .then((result) => {
         if (cancelled) return;
         setPreview(result);
@@ -62,7 +73,7 @@ export function MetadataPreviewDialog({
     return () => {
       cancelled = true;
     };
-  }, [open, work.id, toast, t]);
+  }, [open, work.id, selectedSourceId, toast, t]);
 
   if (!open) return null;
 
@@ -114,6 +125,28 @@ export function MetadataPreviewDialog({
         closeLabel={t("content.close")}
       />
       <DialogBody className="space-y-4">
+        {previewSources.length > 0 && (
+          <label className="flex flex-wrap items-center gap-2 text-sm">
+            <span className="font-medium">{t("metadataEditor.previewSource")}</span>
+            <select
+              className="h-9 rounded-md border bg-background px-2 text-sm"
+              aria-label={t("metadataEditor.previewSource")}
+              value={selectedSourceId ?? "dlsite"}
+              disabled={loading || saving}
+              onChange={(event) => {
+                const value = event.target.value;
+                setSelectedSourceId(value === "dlsite" ? undefined : Number(value));
+              }}
+            >
+              <option value="dlsite">{t("metadataEditor.previewSourceDLsite")}</option>
+              {previewSources.map((source) => (
+                <option key={source.id} value={source.id}>
+                  {source.displayName}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
         {loading && (
           <div className="flex items-center gap-2 text-sm text-muted-foreground" role="status">
             <Loader2 className="h-4 w-4 animate-spin" />

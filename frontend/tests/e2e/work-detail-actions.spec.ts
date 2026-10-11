@@ -122,6 +122,75 @@ test("remote metadata choices use declared capabilities and preserve drafts afte
   await expect(dialog.getByRole("button", { name: "Save", exact: true })).toBeEnabled();
 });
 
+test("Fetch for edit compares a selected source and applies an authored value", async ({ page }) => {
+  await metadataActions(page, [
+    librarySourceFixture(),
+    librarySourceFixture({ id: 2, code: "example_remote_b", displayName: "Synthetic Remote B", metadataCapable: true }),
+  ]);
+  const previews: unknown[] = [];
+  let applied: unknown = null;
+  await page.route(/\/api\/works\/1\/metadata-preview$/, async (route) => {
+    previews.push(route.request().postDataJSON());
+    await route.fulfill({
+      json: {
+        previewId: "synthetic-preview",
+        workId: 1,
+        primaryCode: "RJ00000000",
+        provider: "remote",
+        sourceCode: "example_remote_b",
+        sourceName: "Synthetic Remote B",
+        baseUpdatedAt: "2026-10-11T00:00:00Z",
+        current: {
+          title: "Current title",
+          titleLanguage: "ja-jp",
+          description: "Current description",
+          releaseDate: null,
+          ageRating: "general",
+          circle: "Current circle",
+          circleExternalId: "RG00000000",
+          tags: ["Current tag"],
+          voiceActors: [],
+          coverAvailable: false,
+          family: [],
+        },
+        fetched: {
+          title: "Fetched title",
+          titleLanguage: "ja-jp",
+          description: "Fetched description",
+          releaseDate: "2026-10-11",
+          ageRating: "general",
+          circle: "Fetched circle",
+          circleExternalId: "RG00000001",
+          tags: ["Fetched tag"],
+          voiceActors: [],
+          coverAvailable: false,
+          family: [],
+        },
+      },
+    });
+  });
+  await page.route("**/api/works/1/metadata-preview/apply", async (route) => {
+    applied = route.request().postDataJSON();
+    await route.fulfill({ json: { ok: true, updatedAt: "2026-10-11T00:01:00Z" } });
+  });
+  await page.goto("/RJ00000000");
+  await page.getByRole("button", { name: "Edit metadata", exact: true }).click();
+  const editor = page.getByRole("dialog", { name: "Edit metadata", exact: true });
+  await editor.getByRole("button", { name: "Fetch for edit", exact: true }).click();
+  const preview = page.getByRole("dialog", { name: "Compare fetched metadata", exact: true });
+  await expect(preview).toBeVisible();
+  await expect.poll(() => previews.length).toBe(1);
+  await preview.getByLabel("Fetch source", { exact: true }).selectOption("2");
+  await expect.poll(() => previews.length).toBe(2);
+  expect(previews[1]).toEqual({ sourceId: 2 });
+  await preview.getByRole("button", { name: /Fetched Fetched title/ }).click();
+  await preview.getByRole("textbox", { name: "Expected Title", exact: true }).fill("Authored title");
+  await preview.getByRole("button", { name: "Save selection", exact: true }).click();
+  await expect.poll(() => applied).toEqual(expect.objectContaining({ previewId: "synthetic-preview" }));
+  expect((applied as { values: { title: string } }).values.title).toBe("Authored title");
+  await expect(preview).toHaveCount(0);
+});
+
 test("metadata operators can refresh without permission to change manual values", async ({ page }) => {
   await metadataActions(page, [librarySourceFixture({ metadataCapable: false })], false);
   await page.goto("/RJ00000000");

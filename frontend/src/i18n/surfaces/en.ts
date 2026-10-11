@@ -44,6 +44,8 @@ export const surfaceEnglish = {
     previewSave: "Save selection",
     previewSaved: "Metadata selection saved.",
     previewExpectedField: "Expected {{field}}",
+    previewSource: "Fetch source",
+    previewSourceDLsite: "DLsite",
     previewFields: {
       title: "Title",
       description: "Description",

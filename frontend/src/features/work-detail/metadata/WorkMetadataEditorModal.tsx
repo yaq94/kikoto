@@ -4,7 +4,7 @@ import { Image, Link2, Tags, Type, Users, type LucideIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogBody, DialogFooter, DialogHeader } from "@/components/ui/dialog";
 import { toastFromError, useToast } from "@/components/ui/toast";
-import { api, type WorkDetail, type WorkMetadataSyncRunResult } from "@/lib/api";
+import { api, type LibrarySource, type WorkDetail, type WorkMetadataSyncRunResult } from "@/lib/api";
 import { cn } from "@/lib/tailwindClassNames";
 import { MetadataEditorCoverSection } from "./MetadataEditorCoverSection";
 import { MetadataEditorCreditsSection, useMetadataCreditsEditor } from "./MetadataEditorCreditsSection";
@@ -45,6 +45,7 @@ const sections: { id: MetadataEditorSection; icon: LucideIcon }[] = [
  */
 export function WorkMetadataEditorModal({
   work,
+  sources = [],
   selectedMetadataVariantKey,
   readOnly = false,
   canSyncMetadata = false,
@@ -55,6 +56,7 @@ export function WorkMetadataEditorModal({
   onLinkChanged,
 }: {
   work: WorkDetail;
+  sources?: LibrarySource[];
   selectedMetadataVariantKey?: string;
   readOnly?: boolean;
   canSyncMetadata?: boolean;
@@ -401,6 +403,7 @@ export function WorkMetadataEditorModal({
       </DialogFooter>
       <MetadataPreviewDialog
         work={work}
+        sources={sources}
         open={previewOpen}
         readOnly={readOnly || !canSyncMetadata}
         onClose={() => setPreviewOpen(false)}
