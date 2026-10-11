@@ -24,6 +24,13 @@ manual edits and DLsite values keep their precedence, and unsaved editor drafts
 remain in place. This explicit refresh does not require automatic remote
 fallback to be enabled.
 
+**Fetch for edit** opens a private comparison for the current work with Current,
+Fetched, and Expected save columns. The language scope offers All languages and
+the actual available editions, marking the canonical edition as Original. Using
+a fetched value accepts provider metadata and removes an older manual override;
+changing the expected value saves that field as a manual override. The preview
+expires and cannot be applied after the work changes.
+
 Admin and super_admin can edit work metadata with `library:write`. Save sends only fields changed from the initial editor values; selecting a cover alone preserves automatic titles, circles, series, and voice credits. Clearing a field resets only its override. Existing frozen title overrides that exactly match a trimmed DLsite title in the same family are removed during upgrade; circle, series, and voice overrides are kept.
 
 The editor groups fields into Title, Cover, Tags, Credits, and Metadata source sections; a dot marks each section with unsaved changes, and the footer lists them. Every change stays a draft until Save, including Revert on a manual circle, series, voice actor list, or cover and a new or removed metadata link, so switching sections never loses an edit. Cancel asks before discarding drafts. Circle, series, and voice actors offer suggestions that link a known entry; their identifiers stay visible beneath the name and remain editable under Edit IDs. Covers are picked from a thumbnail grid of the work's local images. Ctrl+Enter saves.

@@ -636,6 +636,13 @@ The metadata language label of an original edition whose language was never
 declared reads only Original; other editions keep their language or the
 unknown-language label.
 
+The metadata editor includes a language scope strip derived from the work's
+actual editions: All languages, the user's preferred available language, and
+the canonical edition marked as Original. The canonical label uses its
+declared language when one exists and never assumes Japanese. The family list
+follows the selected scope while shared credits and tag membership remain
+work-wide.
+
 Effective titles and descriptions arrive together in metadata variants. Detail
 language selection updates both; descriptions render stored plain text verbatim
 through React escaping, preserving brackets, ampersands and line breaks. Local,
@@ -662,6 +669,12 @@ names the filling source and, per source, which values it filled; a not-synced
 work with remote values shows the same per-source lines. The title editor names
 a remote title's source. Metadata issue rows say a DLsite-unavailable work was
 filled by a named remote source instead of showing a bare unavailable status.
+
+The metadata editor's **Fetch for edit** action opens a three-column comparison
+of current, fetched, and expected values. Choosing a fetched value keeps it as
+provider metadata; changing the expected value records a manual override. The
+preview is private, expires, and is rejected when the work changed while it
+was open.
 
 Workflows lists Learn tag names (`metadata_genre_names`) in the Basic group
 after metadata sync. It is a read-only system workflow: its runs, progress and

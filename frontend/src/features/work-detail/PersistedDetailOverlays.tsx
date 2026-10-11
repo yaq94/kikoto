@@ -129,6 +129,7 @@ export function PersistedMetadataEditorOverlay({
   section,
   work,
   selectedMetadataVariantKey,
+  canSyncMetadata = false,
   refreshActions,
   onClose,
   onSaved,
@@ -137,6 +138,7 @@ export function PersistedMetadataEditorOverlay({
   section: MetadataEditorSection | null;
   work: WorkDetail | null;
   selectedMetadataVariantKey: string;
+  canSyncMetadata?: boolean;
   refreshActions?: ReactNode;
   onClose: () => void;
   onSaved: () => void;
@@ -148,6 +150,7 @@ export function PersistedMetadataEditorOverlay({
     <WorkMetadataEditorModal
       work={work}
       selectedMetadataVariantKey={selectedMetadataVariantKey}
+      canSyncMetadata={canSyncMetadata}
       readOnly={demoMode || !hasPermission("library:write")}
       initialSection={section}
       refreshActions={refreshActions}

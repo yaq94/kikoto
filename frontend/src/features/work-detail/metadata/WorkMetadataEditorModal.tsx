@@ -13,6 +13,10 @@ import { MetadataEditorSourceSection, type StagedMetadataLink } from "./Metadata
 import { MetadataEditorPurchaseBonusSection, type StagedPurchaseBonus } from "./MetadataEditorPurchaseBonusSection";
 import { WorkMetadataTagsSection } from "./WorkMetadataTagsSection";
 import { WorkTitleEditor } from "./WorkTitleEditor";
+import { MetadataLanguageScopeTabs } from "./MetadataLanguageScopeTabs";
+import { metadataLanguageScopes, type MetadataLanguageScope } from "./metadataLanguageScope";
+import { MetadataPreviewDialog, type MetadataPreviewSelections } from "./MetadataPreviewDialog";
+import type { WorkMetadataPreview, WorkMetadataPreviewValues } from "@/lib/api";
 import {
   coverFieldStatus,
   metadataEditorInitialState,
@@ -43,6 +47,7 @@ export function WorkMetadataEditorModal({
   work,
   selectedMetadataVariantKey,
   readOnly = false,
+  canSyncMetadata = false,
   initialSection = "title",
   refreshActions,
   onClose,
@@ -52,6 +57,7 @@ export function WorkMetadataEditorModal({
   work: WorkDetail;
   selectedMetadataVariantKey?: string;
   readOnly?: boolean;
+  canSyncMetadata?: boolean;
   initialSection?: MetadataEditorSection;
   refreshActions?: ReactNode;
   onClose: () => void;
@@ -62,6 +68,14 @@ export function WorkMetadataEditorModal({
   const { t } = useTranslation();
   const toast = useToast();
   const [section, setSection] = useState(initialSection);
+  const scopes = metadataLanguageScopes(work, selectedMetadataVariantKey);
+  const [languageScopeKey, setLanguageScopeKey] = useState(() => {
+    const preferredKey = selectedMetadataVariantKey || work.metadataPresentation.defaultVariantKey;
+    const selected = scopes.find((scope) => scope.variant?.key === preferredKey);
+    return selected?.key ?? scopes[0]?.key ?? "all";
+  });
+  const languageScope: MetadataLanguageScope = scopes.find((scope) => scope.key === languageScopeKey) ??
+    scopes[0] ?? { key: "all", language: "", origin: false, label: "All", variant: null };
   const [initialState] = useState(() => metadataEditorInitialState(work));
   const manual = initialState.manual;
   const [titleDrafts, setTitleDrafts] = useState<Record<string, string>>({});
@@ -72,6 +86,7 @@ export function WorkMetadataEditorModal({
   const [stagedLink, setStagedLink] = useState<StagedMetadataLink>(null);
   const [stagedBonus, setStagedBonus] = useState<StagedPurchaseBonus>(null);
   const [saving, setSaving] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
   const [confirmingDiscard, setConfirmingDiscard] = useState(false);
   const tabRefs = useRef<Partial<Record<MetadataEditorSection, HTMLButtonElement | null>>>({});
 
@@ -177,6 +192,21 @@ export function WorkMetadataEditorModal({
     }
   };
 
+  const applyPreview = async (
+    preview: WorkMetadataPreview,
+    expected: WorkMetadataPreviewValues,
+    selections: MetadataPreviewSelections,
+  ) => {
+    await api.applyWorkMetadataPreview(work.id, {
+      previewId: preview.previewId,
+      baseUpdatedAt: preview.baseUpdatedAt,
+      selections,
+      values: expected,
+    });
+    toast.success(t("metadataEditor.previewSaved"));
+    onSaved();
+  };
+
   const onTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
     const step = { ArrowDown: 1, ArrowRight: 1, ArrowUp: -1, ArrowLeft: -1 }[event.key];
     const edge = { Home: 0, End: sections.length - 1 }[event.key];
@@ -263,6 +293,7 @@ export function WorkMetadataEditorModal({
           aria-labelledby={`metadata-editor-tab-${section}`}
           className="sm:px-6 sm:py-5"
         >
+          <MetadataLanguageScopeTabs scopes={scopes} selected={languageScope.key} onSelect={setLanguageScopeKey} />
           {/* Demo opens the editor for inspection; every field stays visible but cannot be changed. */}
           <fieldset disabled={readOnly || saving} className="m-0 min-w-0 space-y-5 border-0 p-0">
             <p className="text-sm text-muted-foreground">{t(`metadataEditor.descriptions.${section}`)}</p>
@@ -270,6 +301,7 @@ export function WorkMetadataEditorModal({
               <WorkTitleEditor
                 work={work}
                 selectedMetadataVariantKey={selectedMetadataVariantKey}
+                languageScope={languageScope}
                 drafts={titleDrafts}
                 onDraft={(language, title) => setTitleDrafts((current) => ({ ...current, [language]: title }))}
               />
@@ -307,7 +339,7 @@ export function WorkMetadataEditorModal({
                   staged={stagedBonus}
                   onStage={setStagedBonus}
                 />
-                <MetadataEditorFamilySection work={work} />
+                <MetadataEditorFamilySection work={work} languageScope={languageScope} />
               </div>
             )}
           </fieldset>
@@ -330,7 +362,14 @@ export function WorkMetadataEditorModal({
           </>
         ) : (
           <>
-            {refreshActions}
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+              {canSyncMetadata && !readOnly && (
+                <Button variant="outline" size="sm" onClick={() => setPreviewOpen(true)}>
+                  {t("metadataEditor.fetchForEdit")}
+                </Button>
+              )}
+              {refreshActions}
+            </div>
             <span
               className={cn(
                 "min-w-0 truncate text-xs text-muted-foreground",
@@ -360,6 +399,13 @@ export function WorkMetadataEditorModal({
           </>
         )}
       </DialogFooter>
+      <MetadataPreviewDialog
+        work={work}
+        open={previewOpen}
+        readOnly={readOnly || !canSyncMetadata}
+        onClose={() => setPreviewOpen(false)}
+        onApply={applyPreview}
+      />
     </Dialog>
   );
 }

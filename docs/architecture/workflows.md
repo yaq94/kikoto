@@ -995,6 +995,21 @@ precedence and `origin` contract. A remote-filled title follows DLsite in the
 title chain. Provider-declared remote edition titles add metadata language
 choices; an undeclared remote title remains the languageless fallback.
 
+## Metadata preview and apply
+
+The work metadata editor can request a bounded preview for one existing work
+without writing provider snapshots, projections, work identities, or workflow
+state. The preview is retained privately for a short period and is bound to
+the requesting user, work, and the work's update timestamp. Applying it fails
+when the work changed after the preview was opened.
+
+The comparison presents current, fetched, and expected values. Selecting a
+fetched value accepts provider metadata and clears an older manual override
+for that field. Editing the expected value creates a manual override. Keeping
+the current value while accepting another fetched field pins that current
+value as a manual override so the provider update cannot replace it. Shared
+tag overrides are cleared only when fetched tags are explicitly accepted.
+
 ## Remote Metadata Fallback
 
 The detail metadata editor also offers an explicit `From <source name>`

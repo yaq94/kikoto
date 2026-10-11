@@ -13,6 +13,8 @@ import {
   titleLanguageMarkers,
   titleSourceLabel,
 } from "./titleEditorModel";
+import type { MetadataLanguageScope } from "./metadataLanguageScope";
+import { scopeMatchesLanguage } from "./metadataLanguageScope";
 
 /**
  * Shows per-language titles first, with the universal title in advanced options.
@@ -25,17 +27,23 @@ export function WorkTitleEditor({
   selectedMetadataVariantKey = "",
   drafts,
   onDraft,
+  languageScope,
 }: {
   work: WorkDetail;
   selectedMetadataVariantKey?: string;
   drafts: Record<string, string>;
   onDraft: (language: string, title: string) => void;
+  languageScope?: MetadataLanguageScope;
 }) {
   const { t } = useTranslation();
   const manual = manualTitles(work.manualOverrides ?? {});
   const current = currentTitles(work);
   const markers = titleLanguageMarkers(work, selectedMetadataVariantKey);
   const [allLanguages, ...languages] = metadataTagLanguages;
+  const visibleLanguages =
+    languageScope && languageScope.key !== "all"
+      ? languages.filter(([language]) => scopeMatchesLanguage(languageScope, language))
+      : languages;
   const [advancedOpen, setAdvancedOpen] = useState(() => Boolean(manual[""] || drafts[""]));
   const universalDescriptionId = useId();
 
@@ -102,7 +110,7 @@ export function WorkTitleEditor({
           <h5 className="text-sm font-semibold">{t("metadataEditor.languageTitles")}</h5>
           <p className="text-xs text-muted-foreground">{t("metadataEditor.languageTitlesDescription")}</p>
         </div>
-        <div className="grid gap-3">{languages.map((language) => row(language))}</div>
+        <div className="grid gap-3">{visibleLanguages.map((language) => row(language))}</div>
       </div>
       <details
         open={advancedOpen}

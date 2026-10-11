@@ -242,6 +242,48 @@ export type WorkMetadataSyncRunResult = {
   deduplicated: boolean;
 };
 
+export type WorkMetadataPreviewFamilyEdition = {
+  code: string;
+  language: string;
+  label: string;
+  origin: boolean;
+  available: boolean;
+};
+
+export type WorkMetadataPreviewValues = {
+  title: string;
+  titleLanguage: string;
+  description: string;
+  releaseDate: string | null;
+  ageRating: string;
+  circle: string;
+  circleExternalId: string;
+  tags: string[];
+  voiceActors: string[];
+  coverAvailable: boolean;
+  family: WorkMetadataPreviewFamilyEdition[];
+};
+
+export type WorkMetadataPreview = {
+  previewId: string;
+  workId: number;
+  primaryCode: string;
+  provider: string;
+  sourceCode: string;
+  sourceName: string;
+  baseUpdatedAt: string;
+  current: WorkMetadataPreviewValues;
+  fetched: WorkMetadataPreviewValues;
+};
+
+export type WorkMetadataPreviewApply = {
+  previewId: string;
+  baseUpdatedAt: string;
+  sourceId?: number;
+  selections: Record<string, "current" | "fetched" | "manual">;
+  values: WorkMetadataPreviewValues;
+};
+
 export const metadataApi = {
   listMetadataTags: ({
     query = "",
@@ -341,6 +383,12 @@ export const metadataApi = {
     sourceId === undefined
       ? postJSON<WorkMetadataSyncRunResult>(`/api/works/${workId}/metadata-sync`)
       : postJSONBody<WorkMetadataSyncRunResult>(`/api/works/${workId}/metadata-sync`, { sourceId }),
+  previewWorkMetadata: (workId: number, sourceId?: number) =>
+    sourceId === undefined
+      ? postJSON<WorkMetadataPreview>(`/api/works/${workId}/metadata-preview`)
+      : postJSONBody<WorkMetadataPreview>(`/api/works/${workId}/metadata-preview`, { sourceId }),
+  applyWorkMetadataPreview: (workId: number, payload: WorkMetadataPreviewApply) =>
+    postJSONBody<{ ok: boolean; updatedAt: string }>(`/api/works/${workId}/metadata-preview/apply`, payload),
   listMetadataIssues: (page: number, query: string, status: string, runId: number | null, signal?: AbortSignal) => {
     const params = new URLSearchParams({ page: String(page), q: query, status });
     if (runId) params.set("runId", String(runId));
