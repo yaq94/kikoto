@@ -113,6 +113,13 @@ full mode bypasses cached remote descriptions. Source capability and enabled
 state are checked at submission and execution. DLsite full refresh of selected
 works also retries products reported unavailable.
 
+DLsite family metadata accepts `language_editions` as either an array or a
+numeric-keyed object, including sparse objects returned by the provider. The
+object keys are ordering hints; each edition's `display_order` remains the
+relationship order. Provider responses that join several language tokens with
+commas are normalized for edition matching and availability checks, so a
+combined language value does not prevent the family from synchronizing.
+
 The source tabs show only DLsite for a circle, and only enabled metadata-capable
 remote sources for a voice actor. Voice actor scope is disabled until such a
 remote is configured. All works and selected works can use either source type.

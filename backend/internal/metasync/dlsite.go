@@ -631,13 +631,11 @@ func (s *DLsiteSyncer) syncFamilyCanonical(ctx context.Context, result *DLsiteFa
 }
 
 func languageEditionExplicitlyUnavailable(product dlsite.Product, edition dlsite.LanguageEdition) bool {
-	language := strings.TrimSpace(edition.Lang)
-	if language == "" {
-		return false
-	}
-	for candidate, status := range product.TranslationInfo.StatusForTranslatorByLang {
-		if strings.EqualFold(strings.TrimSpace(candidate), language) && status.OnSaleCount != nil {
-			return *status.OnSaleCount == 0
+	for _, language := range edition.LanguageTokens() {
+		for candidate, status := range product.TranslationInfo.StatusForTranslatorByLang {
+			if strings.EqualFold(strings.TrimSpace(candidate), language) && status.OnSaleCount != nil {
+				return *status.OnSaleCount == 0
+			}
 		}
 	}
 	return false
@@ -1650,12 +1648,28 @@ func productEdition(product dlsite.Product) (dlsite.LanguageEdition, bool) {
 
 func productEditionLanguage(product dlsite.Product) string {
 	if edition, ok := productEdition(product); ok {
-		return strings.TrimSpace(firstNonEmptyText(edition.Lang, edition.Label))
+		return editionLanguageValue(edition)
 	}
 	// Product.Language is the locale requested over HTTP, not a provider
 	// declaration. Falling back to it would misclassify an origin edition when
 	// DLsite omits language_editions.
 	return strings.TrimSpace(product.TranslationInfo.Lang)
+}
+
+func editionLanguageValue(edition dlsite.LanguageEdition) string {
+	tokens := edition.LanguageTokens()
+	labelLanguage := dlsite.EditionMetadataLanguage(edition.Label)
+	if labelLanguage != "" {
+		for _, token := range tokens {
+			if dlsite.EditionMetadataLanguage(token) == labelLanguage {
+				return strings.TrimSpace(token)
+			}
+		}
+	}
+	if len(tokens) > 0 {
+		return tokens[0]
+	}
+	return strings.TrimSpace(edition.Label)
 }
 
 func productEditionLabel(product dlsite.Product) string {
@@ -1738,7 +1752,7 @@ func syncKnownProductLanguageEditions(ctx context.Context, tx *sql.Tx, providerI
 		if !dlsiteWorkNoPattern.MatchString(code) {
 			continue
 		}
-		language := strings.TrimSpace(firstNonEmptyText(edition.Lang, edition.Label))
+		language := editionLanguageValue(edition)
 		label := strings.TrimSpace(edition.Label)
 		if err := upsertWorkCodeAlias(ctx, tx, logicalWorkID, providerID, code, language, label, nil, "provider_declared"); err != nil {
 			return err
