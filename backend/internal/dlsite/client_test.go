@@ -38,6 +38,41 @@ func TestTranslationStatusesAcceptsProviderEmptyArray(t *testing.T) {
 	}
 }
 
+func TestProductAcceptsNumericKeyedLanguageEditionObjects(t *testing.T) {
+	var product Product
+	err := json.Unmarshal([]byte(`{
+		"workno":"RJ00000000",
+		"product_name":"Example",
+		"language_editions":{
+			"3":{"workno":"RJ00000002","display_order":5,"label":"简体中文","lang":"CHI_HANS"},
+			"2":{"workno":"RJ00000000","display_order":1,"label":"日本語","lang":"CHI_HANS,CHI_HANT,JPN"}
+		}
+	}`), &product)
+	if err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if product.ProductName != "Example" || len(product.LanguageEditions) != 2 {
+		t.Fatalf("product = %+v", product)
+	}
+	if got := product.LanguageEditions[0]; got.WorkNo != "RJ00000000" || got.DisplayOrder != 1 {
+		t.Fatalf("first edition = %+v", got)
+	}
+	if got := product.LanguageEditions[0].LanguageTokens(); !reflect.DeepEqual(got, []string{"CHI_HANS", "CHI_HANT", "JPN"}) {
+		t.Fatalf("language tokens = %v", got)
+	}
+	if got := product.LanguageEditions[1]; got.WorkNo != "RJ00000002" {
+		t.Fatalf("second edition = %+v", got)
+	}
+}
+
+func TestProductRejectsNonNumericLanguageEditionObjectKey(t *testing.T) {
+	var product Product
+	err := json.Unmarshal([]byte(`{"language_editions":{"origin":{"workno":"RJ00000000"}}}`), &product)
+	if err == nil || !strings.Contains(err.Error(), "non-numeric key") {
+		t.Fatalf("Unmarshal() error = %v, want non-numeric key rejection", err)
+	}
+}
+
 func TestGenreIDAcceptsPositiveIntegersAndIgnoresOtherValues(t *testing.T) {
 	var genres []Genre
 	if err := json.Unmarshal([]byte(`[

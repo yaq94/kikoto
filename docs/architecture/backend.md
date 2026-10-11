@@ -24,7 +24,10 @@ The backend is a Go HTTP API with SQLite persistence.
 - `backend/internal/localfs`: local folder discovery.
 - `backend/internal/download`: the bounded atomic download writer, cover
   publication, and raster image type detection.
-- `backend/internal/dlsite`: DLsite client and parsing.
+- `backend/internal/dlsite`: DLsite client and parsing. Its product decoder
+  accepts both array and numeric-keyed object forms of `language_editions`,
+  and splits comma-separated provider language values when family sync matches
+  an edition or its availability status.
 - `backend/internal/kikoeru`: Kikoeru-compatible client, including the
   account and SQLite readers used by personal data import.
 - `backend/internal/metasync`: metadata sync.
