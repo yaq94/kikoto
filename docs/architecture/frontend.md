@@ -308,6 +308,12 @@ app only supplies its localized prompt labels. When the asset transport
 session is removed or replaced, or the server changes, the Android shell
 clears the WebView HTTP cache.
 
+On Android 13 and later, the recent apps choice uses the task-preview API and
+does not affect other capture paths. On Android 12 and earlier, it protects the
+activity window with `FLAG_SECURE`, so it also blocks screenshots, screen
+recording, and casting, including in split-screen and freeform windows. The
+floating lyrics window follows `screenSecure` independently.
+
 ## Playback Reports
 
 `ListeningClock` measures advancing wall time, independently of media position

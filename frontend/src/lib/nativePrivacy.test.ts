@@ -18,6 +18,7 @@ import {
   DEFAULT_NATIVE_PRIVACY_SETTINGS,
   getNativePrivacySettings,
   nativeAppLockStatus,
+  nativePrivacyStatus,
   NATIVE_PRIVACY_SETTINGS_CHANGE_EVENT,
   nativeOutputIsPhoneSpeaker,
   normalizeNativePrivacySettings,
@@ -76,6 +77,21 @@ describe("native privacy bridge", () => {
     isAndroidApp.mockReturnValue(true);
     plugin.status.mockResolvedValue({ appLockSupported: true, appLockAvailable: true });
     expect(await nativeAppLockStatus()).toEqual({ supported: true, available: true });
+  });
+
+  it("reports when the recent apps choice also blocks capture", async () => {
+    isAndroidApp.mockReturnValue(true);
+    plugin.status.mockResolvedValue({
+      appLockSupported: true,
+      appLockAvailable: true,
+      recentsShieldBlocksCapture: true,
+    });
+
+    expect(await nativePrivacyStatus()).toEqual({
+      supported: true,
+      available: true,
+      recentsShieldBlocksCapture: true,
+    });
   });
 
   it("announces saved settings to the page", async () => {

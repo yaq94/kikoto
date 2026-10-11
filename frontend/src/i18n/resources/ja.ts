@@ -917,6 +917,7 @@ export const japaneseResource = {
           "ロック画面、コントロールセンター、接続中の Bluetooth や車載ディスプレイに表示する、再生中のトラックの内容です。",
         recentsShield: "最近のアプリで内容を隠す",
         recentsShieldDescription: "最近のアプリには現在のページの代わりにカバーを表示します。",
+        recentsShieldLegacyDescription: "Android 12 以前では、スクリーンショット、画面録画、キャストも禁止します。",
         lockScreenContent: "ロック中のメディアコントロール",
         lockScreenContentDescription:
           "デバイスのロック中に、メディア通知、ロック画面、接続中の Bluetooth や車載ディスプレイに表示する内容です。",

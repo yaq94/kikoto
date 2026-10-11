@@ -38,7 +38,12 @@ export const NATIVE_PRIVACY_SETTINGS_CHANGE_EVENT = "kikoto:native-privacy-setti
 type KikotoPrivacyPlugin = {
   getSettings(): Promise<NativePrivacySettings>;
   setSettings(change: Partial<NativePrivacySettings>): Promise<NativePrivacySettings>;
-  status(): Promise<{ appLockSupported: boolean; appLockAvailable: boolean }>;
+  status(): Promise<{
+    appLockSupported: boolean;
+    appLockAvailable: boolean;
+    /** Android 12 and earlier use FLAG_SECURE for the recent-apps choice. */
+    recentsShieldBlocksCapture?: boolean;
+  }>;
   setUnlockLabels(labels: { title: string; action: string }): Promise<void>;
   outputStatus(): Promise<{ phoneSpeaker: boolean }>;
   addListener(
@@ -78,9 +83,21 @@ export function normalizeNativePrivacySettings(value: unknown): NativePrivacySet
  * lock for it to authenticate against.
  */
 export async function nativeAppLockStatus() {
-  if (!supportsNativePrivacy()) return { supported: false, available: false };
+  const status = await nativePrivacyStatus();
+  return { supported: status.supported, available: status.available };
+}
+
+/** Native capabilities that affect the device privacy settings UI. */
+export async function nativePrivacyStatus() {
+  if (!supportsNativePrivacy()) {
+    return { supported: false, available: false, recentsShieldBlocksCapture: false };
+  }
   const status = await KikotoPrivacy.status().catch(() => null);
-  return { supported: status?.appLockSupported === true, available: status?.appLockAvailable === true };
+  return {
+    supported: status?.appLockSupported === true,
+    available: status?.appLockAvailable === true,
+    recentsShieldBlocksCapture: status?.recentsShieldBlocksCapture === true,
+  };
 }
 
 /** Stores the unlock prompt's title and button in the app language for the native lock screen. */

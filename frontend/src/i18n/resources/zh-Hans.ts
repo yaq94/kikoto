@@ -876,6 +876,7 @@ export const zhHansResource = {
         nowPlayingContentDescription: "锁屏、控制中心以及已连接的蓝牙或车载屏幕为当前曲目显示的内容。",
         recentsShield: "在最近任务中隐藏内容",
         recentsShieldDescription: "最近任务里显示遮罩，而不是当前页面。",
+        recentsShieldLegacyDescription: "Android 12 及以下版本还会禁止截屏、录屏和投屏。",
         lockScreenContent: "锁定时的媒体控件",
         lockScreenContentDescription: "设备锁定时，媒体通知、锁屏以及已连接的蓝牙或车载屏幕显示的内容。",
         lockScreenContentOptions: {

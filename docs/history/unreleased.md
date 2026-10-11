@@ -1,5 +1,10 @@
 # Unreleased
 
+- Android 12 and earlier now keep Kikoto content out of recent-task previews in
+  split-screen and freeform windows. The **Hide content in recent apps** choice
+  also blocks screenshots, screen recording, and casting on those versions;
+  Android 13 and later keep the choice limited to the task preview.
+
 - The Library on phones has a new toolbar and optional compact cards. Desktop
   layouts are unchanged.
   - Search is always visible instead of opening from a button. Sources and

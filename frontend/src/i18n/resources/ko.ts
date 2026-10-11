@@ -904,6 +904,7 @@ export const koreanResource = {
           "잠금 화면, 제어 센터, 연결된 Bluetooth 또는 차량 디스플레이에 표시할 현재 트랙의 내용입니다.",
         recentsShield: "최근 앱에서 내용 숨기기",
         recentsShieldDescription: "최근 앱에 현재 페이지 대신 가림 화면을 표시합니다.",
+        recentsShieldLegacyDescription: "Android 12 이하에서는 스크린샷, 화면 녹화 및 캐스트도 차단합니다.",
         lockScreenContent: "잠금 중 미디어 컨트롤",
         lockScreenContentDescription:
           "기기가 잠겨 있을 때 미디어 알림, 잠금 화면, 연결된 Bluetooth 또는 차량 디스플레이에 표시할 내용입니다.",

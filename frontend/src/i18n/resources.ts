@@ -577,6 +577,8 @@ export const englishResource = {
           "What the lock screen, Control Center, and connected Bluetooth or car displays show for the current track.",
         recentsShield: "Hide content in recent apps",
         recentsShieldDescription: "Recent apps show a cover instead of the current page.",
+        recentsShieldLegacyDescription:
+          "On Android 12 and earlier, this also blocks screenshots, screen recording, and casting.",
         lockScreenContent: "Media controls while locked",
         lockScreenContentDescription:
           "What the media notification, lock screen, and connected Bluetooth or car displays show while the device is locked.",

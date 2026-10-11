@@ -881,6 +881,7 @@ export const zhHantResource = {
         nowPlayingContentDescription: "鎖定畫面、控制中心以及已連線的藍牙或車用螢幕為目前曲目顯示的內容。",
         recentsShield: "在最近使用的應用程式中隱藏內容",
         recentsShieldDescription: "最近使用的應用程式中顯示遮罩，而不是目前頁面。",
+        recentsShieldLegacyDescription: "Android 12 及更早版本也會禁止截圖、螢幕錄影和投放。",
         lockScreenContent: "鎖定時的媒體控制項",
         lockScreenContentDescription: "裝置鎖定時，媒體通知、鎖定畫面以及已連線的藍牙或車用螢幕顯示的內容。",
         lockScreenContentOptions: {

@@ -66,6 +66,21 @@ public class KikotoPrivacyPolicyTest {
     }
 
     @Test
+    public void oldAndroidUsesWindowProtectionForEitherPrivacyChoice() {
+        assertTrue(KikotoPrivacyPolicy.windowSecureRequired(true, false, false));
+        assertTrue(KikotoPrivacyPolicy.windowSecureRequired(false, true, false));
+        assertTrue(KikotoPrivacyPolicy.windowSecureRequired(true, true, false));
+        assertFalse(KikotoPrivacyPolicy.windowSecureRequired(false, false, false));
+    }
+
+    @Test
+    public void newerAndroidKeepsRecentsShieldSeparateFromCaptureProtection() {
+        assertFalse(KikotoPrivacyPolicy.windowSecureRequired(true, false, true));
+        assertTrue(KikotoPrivacyPolicy.windowSecureRequired(false, true, true));
+        assertFalse(KikotoPrivacyPolicy.windowSecureRequired(false, false, true));
+    }
+
+    @Test
     public void unknownAppLockTimeoutLocksImmediately() {
         assertEquals(300, KikotoPrivacyPolicy.normalizeAppLockTimeoutSeconds(300));
         assertEquals(0, KikotoPrivacyPolicy.normalizeAppLockTimeoutSeconds(30));

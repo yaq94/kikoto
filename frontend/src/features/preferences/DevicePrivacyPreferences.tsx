@@ -9,25 +9,29 @@ import { useNativePrivacySettings } from "@/hooks/useNativePrivacySettings";
 import {
   APP_LOCK_TIMEOUTS_SECONDS,
   LOCK_SCREEN_MEDIA_CONTENTS,
-  nativeAppLockStatus,
+  nativePrivacyStatus,
   updateNativePrivacySettings,
   type AppLockTimeoutSeconds,
   type LockScreenMediaContent,
   type NativePrivacySettings,
 } from "@/lib/nativePrivacy";
-import { isIOSApp } from "@/lib/serverConfig";
+import { isAndroidApp, isIOSApp } from "@/lib/serverConfig";
 
 /**
- * Whether the shell offers the app lock and the device has a screen lock,
- * checked again when the user returns from the system settings.
+ * Native privacy capabilities, checked again when the user returns from the
+ * system settings.
  */
-function useAppLockStatus() {
-  const [status, setStatus] = useState<{ supported: boolean; available: boolean } | null>(null);
+function useNativePrivacyStatus() {
+  const [status, setStatus] = useState<{
+    supported: boolean;
+    available: boolean;
+    recentsShieldBlocksCapture: boolean;
+  } | null>(null);
   useEffect(() => {
     let disposed = false;
     const refresh = () => {
       if (document.visibilityState !== "visible") return;
-      void nativeAppLockStatus().then((value) => {
+      void nativePrivacyStatus().then((value) => {
         if (!disposed) setStatus(value);
       });
     };
@@ -52,8 +56,9 @@ export function DevicePrivacyPreferences() {
   const { t } = useTranslation();
   const toast = useToast();
   const { settings, loaded } = useNativePrivacySettings();
-  const appLockStatus = useAppLockStatus();
-  const appLockAvailable = appLockStatus?.available ?? null;
+  const privacyStatus = useNativePrivacyStatus();
+  const appLockAvailable = privacyStatus?.available ?? null;
+  const recentsShieldBlocksCapture = isAndroidApp() && privacyStatus?.recentsShieldBlocksCapture === true;
   const labels = isIOSApp()
     ? ({
         recentsShield: "settings.appSwitcherBlur",
@@ -85,7 +90,13 @@ export function DevicePrivacyPreferences() {
 
   return (
     <SettingsSection title={t("settings.devicePrivacy")} description={t("settings.devicePrivacyDescription")}>
-      <SettingsRow htmlFor={recentsId} title={t(labels.recentsShield)} description={t(labels.recentsShieldDescription)}>
+      <SettingsRow
+        htmlFor={recentsId}
+        title={t(labels.recentsShield)}
+        description={t(
+          recentsShieldBlocksCapture ? "settings.recentsShieldLegacyDescription" : labels.recentsShieldDescription,
+        )}
+      >
         <Switch
           id={recentsId}
           aria-label={t(labels.recentsShield)}
@@ -132,7 +143,7 @@ export function DevicePrivacyPreferences() {
           onCheckedChange={(screenSecure) => update({ screenSecure })}
         />
       </SettingsRow>
-      {appLockStatus?.supported && (
+      {privacyStatus?.supported && (
         <>
           <SettingsRow
             htmlFor={appLockId}

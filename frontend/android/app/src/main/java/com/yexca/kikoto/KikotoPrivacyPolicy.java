@@ -39,6 +39,19 @@ final class KikotoPrivacyPolicy {
     }
 
     /**
+     * Whether the activity window itself must be protected. Android 13 added
+     * a task-preview-only control; older versions need FLAG_SECURE, which also
+     * blocks screenshots, recording, and casting.
+     */
+    static boolean windowSecureRequired(
+        boolean recentsShield,
+        boolean screenSecure,
+        boolean hasRecentsScreenshotControl
+    ) {
+        return screenSecure || (recentsShield && !hasRecentsScreenshotControl);
+    }
+
+    /**
      * Whether a session change discards the WebView's HTTP cache: signing out,
      * replacing the session, or switching servers. Signing in to the server
      * already in use keeps it, because nothing private was cached before.

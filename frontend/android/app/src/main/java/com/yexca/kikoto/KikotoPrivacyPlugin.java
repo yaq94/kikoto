@@ -8,14 +8,7 @@ import android.media.AudioManager;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
-import android.view.Gravity;
-import android.view.View;
-import android.view.ViewGroup;
 import android.view.WindowManager;
-import android.widget.FrameLayout;
-import android.widget.ImageView;
-
-import androidx.core.content.ContextCompat;
 
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
@@ -24,7 +17,7 @@ import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
 
 /**
- * Device privacy settings, the recent apps cover, screen capture protection,
+ * Device privacy settings, recent apps preview protection, screen capture protection,
  * the app lock, and whether media would play from the phone speaker.
  */
 @CapacitorPlugin(name = "KikotoPrivacy")
@@ -32,7 +25,6 @@ public class KikotoPrivacyPlugin extends Plugin {
     private AudioManager audioManager;
     private AudioDeviceCallback outputCallback;
     private boolean phoneSpeaker = true;
-    private View recentsCover;
     private KikotoAppLock appLock;
 
     @Override
@@ -65,7 +57,6 @@ public class KikotoPrivacyPlugin extends Plugin {
             audioManager.unregisterAudioDeviceCallback(outputCallback);
             outputCallback = null;
         }
-        hideRecentsCover();
         if (appLock != null) appLock.onDestroy();
         super.handleOnDestroy();
     }
@@ -83,22 +74,8 @@ public class KikotoPrivacyPlugin extends Plugin {
     }
 
     @Override
-    protected void handleOnPause() {
-        super.handleOnPause();
-        // Android 13 and later leave the recent apps preview blank through
-        // setRecentsScreenshotEnabled. Earlier versions capture the window as
-        // it leaves the foreground, so cover it before that frame is drawn. A
-        // split-screen or freeform window stays visible while paused.
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) return;
-        Activity activity = getActivity();
-        if (activity == null || activity.isInMultiWindowMode()) return;
-        if (KikotoPrivacySettings.read(getContext()).recentsShield) showRecentsCover(activity);
-    }
-
-    @Override
     protected void handleOnResume() {
         super.handleOnResume();
-        hideRecentsCover();
         if (appLock != null) appLock.onResume();
     }
 
@@ -144,6 +121,7 @@ public class KikotoPrivacyPlugin extends Plugin {
         JSObject result = new JSObject();
         result.put("appLockSupported", true);
         result.put("appLockAvailable", appLock != null && appLock.deviceSecure());
+        result.put("recentsShieldBlocksCapture", Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU);
         call.resolve(result);
     }
 
@@ -179,38 +157,22 @@ public class KikotoPrivacyPlugin extends Plugin {
 
     private void applyRecentsShield(KikotoPrivacySettings settings) {
         Activity activity = getActivity();
+        // Older Android versions use FLAG_SECURE in applyScreenSecure instead.
         if (activity == null || Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return;
         activity.setRecentsScreenshotEnabled(!settings.recentsShield);
     }
 
-    /** Blocks screenshots, screen recording, and casting of the app window; floating lyrics follow it when attached. */
+    /** Blocks capture of the app window; floating lyrics follow screenSecure separately. */
     private void applyScreenSecure(KikotoPrivacySettings settings) {
         Activity activity = getActivity();
         if (activity == null) return;
-        if (settings.screenSecure) activity.getWindow().addFlags(WindowManager.LayoutParams.FLAG_SECURE);
-        else activity.getWindow().clearFlags(WindowManager.LayoutParams.FLAG_SECURE);
-    }
-
-    private void showRecentsCover(Activity activity) {
-        if (recentsCover != null) return;
-        FrameLayout cover = new FrameLayout(activity);
-        cover.setBackgroundColor(ContextCompat.getColor(activity, R.color.ic_launcher_background));
-        ImageView icon = new ImageView(activity);
-        icon.setImageResource(R.mipmap.ic_launcher_foreground);
-        int size = Math.round(160 * activity.getResources().getDisplayMetrics().density);
-        cover.addView(icon, new FrameLayout.LayoutParams(size, size, Gravity.CENTER));
-        ((ViewGroup) activity.getWindow().getDecorView()).addView(
-            cover,
-            new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+        boolean secure = KikotoPrivacyPolicy.windowSecureRequired(
+            settings.recentsShield,
+            settings.screenSecure,
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
         );
-        recentsCover = cover;
-    }
-
-    private void hideRecentsCover() {
-        View cover = recentsCover;
-        recentsCover = null;
-        if (cover == null || cover.getParent() == null) return;
-        ((ViewGroup) cover.getParent()).removeView(cover);
+        if (secure) activity.getWindow().addFlags(WindowManager.LayoutParams.FLAG_SECURE);
+        else activity.getWindow().clearFlags(WindowManager.LayoutParams.FLAG_SECURE);
     }
 
     private static JSObject settingsResult(KikotoPrivacySettings settings) {
