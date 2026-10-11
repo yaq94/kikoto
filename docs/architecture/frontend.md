@@ -676,6 +676,10 @@ provider metadata; changing the expected value records a manual override. The
 preview is private, expires, and is rejected when the work changed while it
 was open.
 
+Tags offer an explicit merge action that preserves current concepts as manual
+additions to the fetched provider set. A DLsite family has its own accept
+action; the normal field save does not materialize sibling editions.
+
 Workflows lists Learn tag names (`metadata_genre_names`) in the Basic group
 after metadata sync. It is a read-only system workflow: its runs, progress and
 failures appear in Activity, and it has no run form.

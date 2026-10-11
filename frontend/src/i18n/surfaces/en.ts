@@ -46,6 +46,9 @@ export const surfaceEnglish = {
     previewExpectedField: "Expected {{field}}",
     previewSource: "Fetch source",
     previewSourceDLsite: "DLsite",
+    previewMerge: "Merge current and fetched",
+    previewAcceptFamily: "Accept fetched family",
+    previewStats: "Rating {{rating}} · Sales {{sales}} · Price {{price}}",
     previewFields: {
       title: "Title",
       description: "Description",

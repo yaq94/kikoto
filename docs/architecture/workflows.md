@@ -1009,6 +1009,11 @@ for that field. Editing the expected value creates a manual override. Keeping
 the current value while accepting another fetched field pins that current
 value as a manual override so the provider update cannot replace it. Shared
 tag overrides are cleared only when fetched tags are explicitly accepted.
+The comparison can merge current and fetched tag concepts by stable tag id; the
+result keeps current concepts as explicit additions to the fetched provider
+set. A fetched DLsite family is accepted by a separate action and uses the
+bounded family sync path, so ordinary field acceptance never materializes
+sibling editions.
 
 ## Remote Metadata Fallback
 

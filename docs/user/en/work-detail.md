@@ -30,6 +30,9 @@ the actual available editions, marking the canonical edition as Original. Using
 a fetched value accepts provider metadata and removes an older manual override;
 changing the expected value saves that field as a manual override. The preview
 expires and cannot be applied after the work changes.
+Tags can be merged by stable metadata tag identity. Accepting a fetched DLsite
+family is a separate action; saving ordinary fields does not add sibling
+editions to the library.
 
 Admin and super_admin can edit work metadata with `library:write`. Save sends only fields changed from the initial editor values; selecting a cover alone preserves automatic titles, circles, series, and voice credits. Clearing a field resets only its override. Existing frozen title overrides that exactly match a trimmed DLsite title in the same family are removed during upgrade; circle, series, and voice overrides are kept.
 

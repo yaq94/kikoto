@@ -15,7 +15,7 @@ import {
 } from "@/lib/api";
 import { librarySourceProvidesMetadata } from "@/lib/remoteSourceCapabilities";
 
-export type MetadataPreviewSelection = "current" | "fetched" | "manual";
+export type MetadataPreviewSelection = "current" | "fetched" | "manual" | "merged";
 export type MetadataPreviewSelections = Record<string, MetadataPreviewSelection>;
 
 const comparableFields = ["title", "description", "releaseDate", "ageRating", "circle", "tags", "voiceActors"] as const;
@@ -162,6 +162,17 @@ export function MetadataPreviewDialog({
               <PreviewColumn title={t("metadataEditor.previewExpected")} values={expected} expected />
             </div>
             <div className="space-y-3">
+              {preview.provider === "dlsite" && preview.fetched.family.length > 0 && (
+                <Button
+                  type="button"
+                  variant={selections.family === "fetched" ? "default" : "outline"}
+                  size="sm"
+                  disabled={readOnly || saving}
+                  onClick={() => setSelections((current) => ({ ...current, family: "fetched" }))}
+                >
+                  {t("metadataEditor.previewAcceptFamily")}
+                </Button>
+              )}
               {comparableFields.map((field) => (
                 <PreviewField
                   key={field}
@@ -173,6 +184,19 @@ export function MetadataPreviewDialog({
                   disabled={readOnly || saving}
                   onSelect={select}
                   onEdit={editText}
+                  onMerge={(field) => {
+                    if (field !== "tags" || !preview || readOnly || saving) return;
+                    setExpected((current) =>
+                      current
+                        ? {
+                            ...current,
+                            tags: [...new Set([...preview.current.tags, ...preview.fetched.tags])],
+                            tagItems: mergeTagItems(preview.current.tagItems ?? [], preview.fetched.tagItems ?? []),
+                          }
+                        : current,
+                    );
+                    setSelections((current) => ({ ...current, tags: "merged" }));
+                  }}
                 />
               ))}
             </div>
@@ -202,6 +226,7 @@ function PreviewColumn({
   fetched?: boolean;
   expected?: boolean;
 }) {
+  const { t } = useTranslation();
   return (
     <section
       className={`rounded-md border p-3 ${fetched ? "border-primary/50 bg-primary/5" : expected ? "border-emerald-500/50 bg-emerald-500/5" : "bg-card"}`}
@@ -209,16 +234,25 @@ function PreviewColumn({
       <h3 className="mb-2 text-sm font-semibold">{title}</h3>
       <p className="truncate text-sm font-medium">{values.title || "—"}</p>
       <p className="mt-1 line-clamp-3 whitespace-pre-wrap text-xs text-muted-foreground">{values.description || "—"}</p>
+      <p className="mt-2 text-xs text-muted-foreground">
+        {t("metadataEditor.previewStats", {
+          rating: values.rating ?? "—",
+          sales: values.sales ?? "—",
+          price: values.price ?? "—",
+        })}
+      </p>
       <div className="mt-2 flex flex-wrap gap-1">
-        {values.tags.slice(0, 8).map((tag) => (
+        {(values.tags ?? []).slice(0, 8).map((tag) => (
           <Badge key={tag} variant="secondary">
             {tag}
           </Badge>
         ))}
-        {values.tags.length > 8 && <Badge variant="outline">+{values.tags.length - 8}</Badge>}
+        {(values.tags ?? []).length > 8 && <Badge variant="outline">+{(values.tags ?? []).length - 8}</Badge>}
       </div>
-      {values.family.length > 0 && (
-        <p className="mt-2 text-xs text-muted-foreground">{values.family.map((edition) => edition.code).join(" · ")}</p>
+      {(values.family ?? []).length > 0 && (
+        <p className="mt-2 text-xs text-muted-foreground">
+          {(values.family ?? []).map((edition) => edition.code).join(" · ")}
+        </p>
       )}
     </section>
   );
@@ -233,6 +267,7 @@ function PreviewField({
   disabled,
   onSelect,
   onEdit,
+  onMerge,
 }: {
   field: ComparableField;
   current: unknown;
@@ -242,6 +277,7 @@ function PreviewField({
   disabled: boolean;
   onSelect: (field: ComparableField, side: "current" | "fetched") => void;
   onEdit: (field: "title" | "description" | "releaseDate" | "ageRating" | "circle", value: string) => void;
+  onMerge: (field: ComparableField) => void;
 }) {
   const { t } = useTranslation();
   const label = t(`metadataEditor.previewFields.${field}`);
@@ -277,9 +313,14 @@ function PreviewField({
         <ChoiceCard
           label={t("metadataEditor.previewExpected")}
           value={formatValue(field, expected)}
-          active={selection === "manual"}
+          active={selection === "manual" || (field === "tags" && selection === "merged")}
           disabled={disabled}
         />
+      )}
+      {field === "tags" && (
+        <Button type="button" variant="ghost" size="sm" disabled={disabled} onClick={() => onMerge(field)}>
+          {t("metadataEditor.previewMerge")}
+        </Button>
       )}
     </div>
   );
@@ -322,10 +363,21 @@ function formatValue(field: ComparableField, value: unknown): string {
 function copyValues(values: WorkMetadataPreviewValues): WorkMetadataPreviewValues {
   return {
     ...values,
-    tags: [...values.tags],
-    voiceActors: [...values.voiceActors],
-    family: values.family.map((item) => ({ ...item })),
+    tags: [...(values.tags ?? [])],
+    tagItems: (values.tagItems ?? []).map((item) => ({ ...item })),
+    voiceActors: [...(values.voiceActors ?? [])],
+    family: (values.family ?? []).map((item) => ({ ...item })),
   };
+}
+
+function mergeTagItems(current: WorkMetadataPreviewValues["tagItems"], fetched: WorkMetadataPreviewValues["tagItems"]) {
+  const seen = new Set<number>();
+  return [...current, ...fetched].filter((item) => {
+    if (item.id <= 0) return true;
+    if (seen.has(item.id)) return false;
+    seen.add(item.id);
+    return true;
+  });
 }
 
 function copyField<T>(value: T): T {

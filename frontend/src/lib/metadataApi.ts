@@ -256,15 +256,24 @@ export type WorkMetadataPreviewFamilyEdition = {
   available: boolean;
 };
 
+export type WorkMetadataPreviewTag = { id: number; name: string };
+
 export type WorkMetadataPreviewValues = {
   title: string;
   titleLanguage: string;
   description: string;
   releaseDate: string | null;
   ageRating: string;
+  rating: number | null;
+  sales: number | null;
+  regularPrice: number | null;
+  price: number | null;
+  priceCurrency: string;
+  permanentlyFree: boolean | null;
   circle: string;
   circleExternalId: string;
   tags: string[];
+  tagItems: WorkMetadataPreviewTag[];
   voiceActors: string[];
   coverAvailable: boolean;
   family: WorkMetadataPreviewFamilyEdition[];
@@ -286,8 +295,10 @@ export type WorkMetadataPreviewApply = {
   previewId: string;
   baseUpdatedAt: string;
   sourceId?: number;
-  selections: Record<string, "current" | "fetched" | "manual">;
+  selections: Record<string, "current" | "fetched" | "manual" | "merged">;
   values: WorkMetadataPreviewValues;
+  currentTags: WorkMetadataPreviewTag[];
+  fetchedTags: WorkMetadataPreviewTag[];
 };
 
 export const metadataApi = {

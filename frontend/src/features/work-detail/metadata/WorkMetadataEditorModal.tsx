@@ -204,6 +204,8 @@ export function WorkMetadataEditorModal({
       baseUpdatedAt: preview.baseUpdatedAt,
       selections,
       values: expected,
+      currentTags: preview.current.tagItems ?? [],
+      fetchedTags: preview.fetched.tagItems ?? [],
     });
     toast.success(t("metadataEditor.previewSaved"));
     onSaved();

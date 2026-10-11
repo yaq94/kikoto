@@ -26,12 +26,24 @@ type workMetadataPreviewValues struct {
 	Description      string                             `json:"description"`
 	ReleaseDate      *string                            `json:"releaseDate"`
 	AgeRating        string                             `json:"ageRating"`
+	Rating           *float64                           `json:"rating"`
+	Sales            *int64                             `json:"sales"`
+	RegularPrice     *int64                             `json:"regularPrice"`
+	Price            *int64                             `json:"price"`
+	PriceCurrency    string                             `json:"priceCurrency"`
+	PermanentlyFree  *bool                              `json:"permanentlyFree"`
 	Circle           string                             `json:"circle"`
 	CircleExternalID string                             `json:"circleExternalId"`
 	Tags             []string                           `json:"tags"`
+	TagItems         []workMetadataPreviewTag           `json:"tagItems"`
 	VoiceActors      []string                           `json:"voiceActors"`
 	CoverAvailable   bool                               `json:"coverAvailable"`
 	Family           []workMetadataPreviewFamilyEdition `json:"family"`
+}
+
+type workMetadataPreviewTag struct {
+	ID   int64  `json:"id"`
+	Name string `json:"name"`
 }
 
 type workMetadataPreviewFamilyEdition struct {
@@ -81,6 +93,8 @@ type workMetadataPreviewApplyRequest struct {
 	BaseUpdatedAt string                    `json:"baseUpdatedAt"`
 	Selections    map[string]string         `json:"selections"`
 	Values        workMetadataPreviewValues `json:"values"`
+	CurrentTags   []workMetadataPreviewTag  `json:"currentTags"`
+	FetchedTags   []workMetadataPreviewTag  `json:"fetchedTags"`
 }
 
 // createWorkMetadataPreview fetches one existing work without changing any
@@ -172,10 +186,16 @@ func (s *Server) createWorkMetadataPreview(w http.ResponseWriter, r *http.Reques
 	previewRecord.PrimaryCode, previewRecord.BaseUpdatedAt = current.PrimaryCode, baseUpdatedAt
 	previewRecord.CreatedAt = time.Now().UTC()
 	previewRecord.ID = s.storeMetadataPreview(previewRecord)
+	currentValues := previewValuesFromWork(current)
+	if currentTags, tagsErr := s.loadWorkMetadataTags(r.Context(), workID); tagsErr == nil {
+		for _, tag := range currentTags.Tags {
+			currentValues.TagItems = append(currentValues.TagItems, workMetadataPreviewTag{ID: tag.ID, Name: tag.DisplayName})
+		}
+	}
 	writeJSON(w, http.StatusOK, workMetadataPreviewResponse{
 		PreviewID: previewRecord.ID, WorkID: workID, PrimaryCode: current.PrimaryCode, Provider: provider,
 		SourceCode: sourceCode, SourceName: sourceName, BaseUpdatedAt: baseUpdatedAt,
-		Current: previewValuesFromWork(current), Fetched: fetched,
+		Current: currentValues, Fetched: fetched,
 	})
 }
 
@@ -258,7 +278,7 @@ func (s *Server) applyWorkMetadataPreview(w http.ResponseWriter, r *http.Request
 		return
 	}
 	for field, selection := range payload.Selections {
-		if !previewSelectionField(field) || (selection != "current" && selection != "fetched" && selection != "manual") {
+		if !previewSelectionField(field) || (selection != "current" && selection != "fetched" && selection != "manual" && selection != "merged") {
 			writeAPIError(w, http.StatusBadRequest, "invalid_metadata_preview", "invalid metadata preview selection", false)
 			return
 		}
@@ -276,10 +296,11 @@ func (s *Server) applyWorkMetadataPreview(w http.ResponseWriter, r *http.Request
 
 	providerFields := false
 	for _, selection := range payload.Selections {
-		providerFields = providerFields || selection == "fetched"
+		providerFields = providerFields || selection == "fetched" || selection == "merged"
 	}
-	if providerFields {
-		if err := s.applyPreviewProvider(r.Context(), workID, preview); err != nil {
+	providerSync := providerFields || payload.Selections["family"] == "fetched"
+	if providerSync {
+		if err := s.applyPreviewProvider(r.Context(), workID, preview, payload.Selections["family"] == "fetched"); err != nil {
 			if errors.Is(err, errMetadataSourceUnavailable) {
 				writeAPIError(w, http.StatusBadRequest, "metadata_source_unavailable", "metadata source is unavailable", false)
 				return
@@ -307,7 +328,7 @@ func (s *Server) applyWorkMetadataPreview(w http.ResponseWriter, r *http.Request
 
 func previewSelectionField(field string) bool {
 	switch field {
-	case "title", "description", "releaseDate", "ageRating", "circle", "tags", "voiceActors":
+	case "title", "description", "releaseDate", "ageRating", "circle", "tags", "voiceActors", "family":
 		return true
 	default:
 		return false
@@ -325,10 +346,14 @@ func (s *Server) previewBaseIsCurrent(ctx context.Context, workID int64, expecte
 	return strings.TrimSpace(current) == strings.TrimSpace(expected)
 }
 
-func (s *Server) applyPreviewProvider(ctx context.Context, workID int64, preview metadataPreviewRecord) error {
+func (s *Server) applyPreviewProvider(ctx context.Context, workID int64, preview metadataPreviewRecord, acceptFamily bool) error {
 	code := preview.PrimaryCode
 	applyCtx, cancel := context.WithTimeout(ctx, remoteMetadataFallbackTimeout)
 	defer cancel()
+	if acceptFamily && preview.SourceID == 0 {
+		_, err := s.syncWorkMetadataFamilyWithBonus(applyCtx, code, s.settingBoolContext(applyCtx, purchaseBonusAutoLinkSetting, true))
+		return err
+	}
 	if preview.SourceID != 0 {
 		source, err := s.loadMetadataRefreshSource(applyCtx, preview.SourceID)
 		if err != nil {
@@ -353,7 +378,7 @@ func (s *Server) applyPreviewProvider(ctx context.Context, workID int64, preview
 func (s *Server) applyPreviewManualOverrides(ctx context.Context, workID, userID int64, payload workMetadataPreviewApplyRequest) error {
 	providerFields := false
 	for _, selection := range payload.Selections {
-		providerFields = providerFields || selection == "fetched"
+		providerFields = providerFields || selection == "fetched" || selection == "merged"
 	}
 	manual := workManualOverridePayload{}
 	fields := map[string]bool{}
@@ -417,7 +442,7 @@ func (s *Server) applyPreviewManualOverrides(ctx context.Context, workID, userID
 		manual.VoiceActors = []manualOverridePerson{}
 		fields["voiceActors"] = true
 	}
-	if payload.Selections["tags"] == "fetched" {
+	if payload.Selections["tags"] == "fetched" || payload.Selections["tags"] == "merged" || (providerFields && payload.Selections["tags"] == "current") {
 		fields["tags"] = true
 	}
 	if len(fields) == 0 {
@@ -437,7 +462,21 @@ func (s *Server) applyPreviewManualOverrides(ctx context.Context, workID, userID
 		}
 	}
 	if fields["tags"] {
-		if err := metadatatags.SetOverridesTx(ctx, tx, workID, nil, userID); err != nil {
+		overrides := []metadatatags.Override{}
+		if payload.Selections["tags"] != "fetched" {
+			fetchedIDs := map[int64]bool{}
+			for _, tag := range payload.FetchedTags {
+				if tag.ID > 0 {
+					fetchedIDs[tag.ID] = true
+				}
+			}
+			for _, tag := range payload.CurrentTags {
+				if tag.ID > 0 && !fetchedIDs[tag.ID] {
+					overrides = append(overrides, metadatatags.Override{TagID: tag.ID, Action: "add"})
+				}
+			}
+		}
+		if err := metadatatags.SetOverridesTx(ctx, tx, workID, overrides, userID); err != nil {
 			return err
 		}
 	}
@@ -459,6 +498,8 @@ func previewValuesFromWork(work workDetail) workMetadataPreviewValues {
 	return workMetadataPreviewValues{
 		Title: work.Title, TitleLanguage: work.MetadataLanguage, Description: work.Description,
 		ReleaseDate: work.ReleaseDate, AgeRating: work.AgeRating, Circle: work.Circle,
+		Rating: work.Rating, Sales: work.Sales, RegularPrice: work.RegularPrice, Price: work.Price,
+		PriceCurrency: work.PriceCurrency, PermanentlyFree: work.PermanentlyFree,
 		CircleExternalID: work.CircleExternalID, Tags: append([]string(nil), work.Tags...),
 		VoiceActors: append([]string(nil), work.VoiceActors...), CoverAvailable: strings.TrimSpace(work.CoverURL) != "",
 		Family: family,
@@ -502,6 +543,16 @@ func previewValuesFromDLsiteProduct(product dlsite.Product) workMetadataPreviewV
 		seenTags[key] = true
 		tags = append(tags, name)
 	}
+	tagItems := []workMetadataPreviewTag{}
+	for _, genre := range product.Genres {
+		name := strings.TrimSpace(genre.Name)
+		if name == "" {
+			name = strings.TrimSpace(genre.NameBase)
+		}
+		if name != "" && genre.ID > 0 {
+			tagItems = append(tagItems, workMetadataPreviewTag{ID: int64(genre.ID), Name: name})
+		}
+	}
 	language := previewProductLanguage(product)
 	originCode := previewOriginCode(product.LanguageEditions)
 	family := make([]workMetadataPreviewFamilyEdition, 0, len(product.LanguageEditions))
@@ -518,8 +569,10 @@ func previewValuesFromDLsiteProduct(product dlsite.Product) workMetadataPreviewV
 	return workMetadataPreviewValues{
 		Title: title, TitleLanguage: language, Description: description,
 		ReleaseDate: previewStringPointer(product.RegistDate), AgeRating: strings.TrimSpace(product.AgeCategoryString),
+		Rating: product.RateAverage2DP, Sales: product.SalesCount, RegularPrice: product.RegularPrice, Price: product.CurrentPrice,
+		PriceCurrency: "JPY", PermanentlyFree: product.IsPermanentlyFree(),
 		Circle: strings.TrimSpace(product.MakerName), CircleExternalID: strings.ToUpper(strings.TrimSpace(product.MakerID)),
-		Tags: tags, VoiceActors: actors, CoverAvailable: strings.TrimSpace(product.ImageMain.URL) != "", Family: family,
+		Tags: tags, TagItems: tagItems, VoiceActors: actors, CoverAvailable: strings.TrimSpace(product.ImageMain.URL) != "", Family: family,
 	}
 }
 
