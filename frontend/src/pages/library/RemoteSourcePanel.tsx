@@ -8,7 +8,7 @@ import type { SourceVisibilityMode } from "@/components/source-visibility/source
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { useToast } from "@/components/ui/toast";
-import { MobileWorkCardSkeleton, type MobileWorkCardLayout } from "@/components/work-card/MobileWorkCard";
+import { CompactWorkCardSkeleton, type CompactWorkCardLayout } from "@/components/work-card/CompactWorkCard";
 import { FetchConfirmDialog } from "@/components/work-collection/FetchConfirmDialog";
 import { workCollectionClassName, workCollectionStyle } from "@/components/work-collection/WorkCollectionLayout";
 import { WorkCollectionPagination } from "@/components/work-collection/WorkCollectionPagination";
@@ -95,7 +95,7 @@ function RemoteSourceResults({
   searchClauses,
   mobileColumns,
   desktopColumns,
-  mobileCardLayout,
+  cardLayout,
   coverSourceMode,
   selectionMode,
   bulkCodes,
@@ -119,7 +119,7 @@ function RemoteSourceResults({
   searchClauses: SearchClause[];
   mobileColumns: LibraryColumnSetting;
   desktopColumns: LibraryColumnSetting;
-  mobileCardLayout: MobileWorkCardLayout | null;
+  cardLayout: CompactWorkCardLayout | null;
   coverSourceMode: SourceVisibilityMode;
   selectionMode: boolean;
   bulkCodes: Set<string>;
@@ -146,7 +146,7 @@ function RemoteSourceResults({
         count={skeletonCount}
         mobileColumns={mobileColumns}
         desktopColumns={desktopColumns}
-        mobileCardLayout={mobileCardLayout}
+        cardLayout={cardLayout}
       />
     ) : null;
   }
@@ -168,7 +168,10 @@ function RemoteSourceResults({
 
   return (
     <div className="space-y-2">
-      <section className={workCollectionClassName()} style={workCollectionStyle(mobileColumns, desktopColumns)}>
+      <section
+        className={workCollectionClassName()}
+        style={workCollectionStyle(mobileColumns, desktopColumns, cardLayout)}
+      >
         {visibleWorks.map((work, index) => (
           <div key={work.remoteId} className="h-full">
             <RemoteWorkCard
@@ -177,7 +180,7 @@ function RemoteSourceResults({
               revealDelay={recommendationRevealDelay(index)}
               source={source}
               coverSourceMode={coverSourceMode}
-              mobileLayout={mobileCardLayout}
+              layout={cardLayout}
               selected={bulkCodes.has(work.primaryCode)}
               selectable={Boolean(work.primaryCode)}
               selectionActive={selectionMode}
@@ -221,7 +224,7 @@ export function RemoteSourcePanel({
   searchClauses,
   mobileColumns,
   desktopColumns,
-  mobileCardLayout,
+  cardLayout,
   coverSourceMode,
   onClearSearch,
   onPageChange,
@@ -242,7 +245,7 @@ export function RemoteSourcePanel({
   searchClauses: SearchClause[];
   mobileColumns: LibraryColumnSetting;
   desktopColumns: LibraryColumnSetting;
-  mobileCardLayout: MobileWorkCardLayout | null;
+  cardLayout: CompactWorkCardLayout | null;
   coverSourceMode: SourceVisibilityMode;
   onClearSearch: () => void;
   onPageChange: (page: number) => void;
@@ -347,7 +350,7 @@ export function RemoteSourcePanel({
         searchClauses={searchClauses}
         mobileColumns={mobileColumns}
         desktopColumns={desktopColumns}
-        mobileCardLayout={mobileCardLayout}
+        cardLayout={cardLayout}
         coverSourceMode={coverSourceMode}
         selectionMode={selectionMode}
         bulkCodes={selection.bulkCodes}
@@ -430,18 +433,21 @@ function RemoteWorkGridSkeleton({
   count,
   mobileColumns,
   desktopColumns,
-  mobileCardLayout,
+  cardLayout,
 }: {
   count: number;
   mobileColumns: LibraryColumnSetting;
   desktopColumns: LibraryColumnSetting;
-  mobileCardLayout: MobileWorkCardLayout | null;
+  cardLayout: CompactWorkCardLayout | null;
 }) {
   return (
-    <section className={workCollectionClassName()} style={workCollectionStyle(mobileColumns, desktopColumns)}>
+    <section
+      className={workCollectionClassName()}
+      style={workCollectionStyle(mobileColumns, desktopColumns, cardLayout)}
+    >
       {Array.from({ length: count }, (_, index) =>
-        mobileCardLayout ? (
-          <MobileWorkCardSkeleton key={index} layout={mobileCardLayout} />
+        cardLayout ? (
+          <CompactWorkCardSkeleton key={index} layout={cardLayout} />
         ) : (
           <div key={index} className="overflow-hidden rounded-lg border bg-card">
             <div className="p-1.5 pb-0">

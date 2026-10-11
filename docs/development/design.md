@@ -141,12 +141,17 @@ with a count of the rest, and keeps the 44px action row. The card's
 container query owns this breakpoint; tag measurement reads the row count from
 it, not from the viewport.
 
-The phone Library also offers compact cards as a display option that is off by
-default. One column uses row cards: a small cover beside the facts, one
-measured tag row with personal tags first, and the last listening position.
-Two columns use short tiles that keep the cover dominant and leave out tags and
-voice credits. Both keep the action row and its 44px touch targets, and their
-loading placeholders match the card footprint.
+The Library also offers a card mode as a display option, chosen separately for
+phones and wide screens: full (the default), compact, and mini. Compact uses
+row cards in one phone column: a small cover beside the facts, one measured tag
+row with personal tags first, and the last listening position. Two phone
+columns and wide screens use short tiles that keep the cover dominant and leave
+out tags and voice credits. Both keep the action row and its 44px touch
+targets. Mini is the deliberate exception to the browsing-level facts: a cover
+and at most two title lines with no action row, so a large collection can be
+scanned by its artwork while the work detail page carries everything else. Only
+cover source marks and the selection control ride on a mini cover. Loading
+placeholders match the footprint of the mode in use.
 
 Work detail pages should show decision-level facts:
 

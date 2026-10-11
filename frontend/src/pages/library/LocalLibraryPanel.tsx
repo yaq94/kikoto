@@ -4,7 +4,7 @@ import { useTranslation } from "react-i18next";
 import type { SourceVisibilityMode } from "@/components/source-visibility/sourceVisibility";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import type { MobileWorkCardLayout } from "@/components/work-card/MobileWorkCard";
+import type { CompactWorkCardLayout } from "@/components/work-card/CompactWorkCard";
 import { workCollectionClassName, workCollectionStyle } from "@/components/work-collection/WorkCollectionLayout";
 import { WorkCollectionPagination } from "@/components/work-collection/WorkCollectionPagination";
 import { useMobileNavigationLayout } from "@/hooks/useMobileNavigationLayout";
@@ -32,7 +32,7 @@ export function LocalLibraryPanel({
   showRecommendationScore,
   mobileColumns,
   desktopColumns,
-  mobileCardLayout,
+  cardLayout,
   coverSourceMode,
   onOpen,
   onRecommendationOpen,
@@ -66,7 +66,7 @@ export function LocalLibraryPanel({
   showRecommendationScore: boolean;
   mobileColumns: LibraryColumnSetting;
   desktopColumns: LibraryColumnSetting;
-  mobileCardLayout: MobileWorkCardLayout | null;
+  cardLayout: CompactWorkCardLayout | null;
   coverSourceMode: SourceVisibilityMode;
   onOpen: (work: Work) => void;
   onRecommendationOpen: (work: Work) => void;
@@ -100,7 +100,10 @@ export function LocalLibraryPanel({
       {works.length === 0 ? (
         !loadError && <EmptyLibraryWorksCard scope={scope} filtered={filtered} onClear={onClearFilters} />
       ) : (
-        <section className={workCollectionClassName()} style={workCollectionStyle(mobileColumns, desktopColumns)}>
+        <section
+          className={workCollectionClassName()}
+          style={workCollectionStyle(mobileColumns, desktopColumns, cardLayout)}
+        >
           {works.map((work) => (
             <LibraryWorkCard
               key={work.id}
@@ -119,7 +122,7 @@ export function LocalLibraryPanel({
               isUntracking={isUntracking}
               onFetch={onFetch}
               isFetchBusy={isFetchBusy}
-              mobileLayout={mobileCardLayout}
+              layout={cardLayout}
             />
           ))}
         </section>

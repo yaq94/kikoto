@@ -172,9 +172,17 @@ const collectionHant = {
   pageSize: "每頁數量：{{value}}",
   itemsPerPage: "每頁數量",
 
-  compactCards: "緊湊卡片",
-
-  compactCardsHint: "手機上使用更小的作品卡片",
+  cardMode: "卡片",
+  cardModes: {
+    full: "完整",
+    compact: "緊湊",
+    mini: "極簡",
+  },
+  cardModeOptions: {
+    full: "完整卡片，顯示全部資訊",
+    compact: "緊湊卡片，顯示較少資訊",
+    mini: "極簡卡片，只顯示封面和標題",
+  },
   coverSources: "封面來源標記",
   coverSourceModes: {
     auto: "自動：只顯示與目前來源不同或異常的標記",
