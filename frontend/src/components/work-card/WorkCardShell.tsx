@@ -33,7 +33,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { toastFromError, useToast } from "@/components/ui/toast";
 import i18n, { type ResolvedUiLocale } from "@/i18n";
-import { numberFormat } from "@/i18n/format";
+import { formatList, numberFormat } from "@/i18n/format";
 import { useLocale } from "@/i18n/LocaleProvider";
 import {
   api,
@@ -1039,6 +1039,7 @@ export function WorkCardActionButton({
   showLabel = false,
   responsiveLabel = false,
   label,
+  labelClassName,
   children,
   onClick,
 }: {
@@ -1046,7 +1047,8 @@ export function WorkCardActionButton({
   disabled?: boolean;
   showLabel?: boolean;
   responsiveLabel?: boolean;
-  label?: string;
+  label?: ReactNode;
+  labelClassName?: string;
   children: ReactNode;
   onClick: (event: React.MouseEvent<HTMLButtonElement>) => void;
 }) {
@@ -1061,7 +1063,7 @@ export function WorkCardActionButton({
       onClick={onClick}
     >
       {children}
-      {showLabel && <span className={responsiveLabel ? "hidden sm:inline" : undefined}>{label ?? title}</span>}
+      {showLabel && <span className={cn(responsiveLabel && "hidden sm:inline", labelClassName)}>{label ?? title}</span>}
     </Button>
   );
 }
@@ -1145,6 +1147,7 @@ export function WorkCardListButton({
   disabled,
   showLabel = false,
   responsiveLabel = false,
+  memberLists,
   ensureWorkId,
   onSaved,
 }: {
@@ -1153,11 +1156,14 @@ export function WorkCardListButton({
   disabled?: boolean;
   showLabel?: boolean;
   responsiveLabel?: boolean;
+  /** The user lists holding the work, in list order, once the caller has loaded them; they name the button. */
+  memberLists?: readonly FavoriteList[];
   ensureWorkId?: () => Promise<number | null>;
   onSaved?: (favorite: boolean, workId: number) => void;
 }) {
   const toast = useToast();
   const { t } = useTranslation();
+  const { resolvedLocale } = useLocale();
   const { demoMode, hasPermission } = useAuth();
   const [open, setOpen] = useState(false);
   const [resolvedWorkId, setResolvedWorkId] = useState<number | null>(null);
@@ -1233,14 +1239,49 @@ export function WorkCardListButton({
     }
   };
 
+  const members = memberLists ?? [];
+  const firstMemberList = members.at(0);
+  const otherMemberListCount = members.length - 1;
+
   return (
     <div className="relative" ref={ref}>
       <WorkCardActionButton
-        title={active ? t("workCard.favoriteLists") : t("workCard.addToList")}
+        title={
+          firstMemberList
+            ? t("workCard.inLists", {
+                names: formatList(
+                  members.map((list) => list.name),
+                  resolvedLocale,
+                ),
+              })
+            : active
+              ? t("workCard.favoriteLists")
+              : t("workCard.addToList")
+        }
         disabled={disabled || resolving || (!effectiveWorkId && !ensureWorkId)}
         showLabel={showLabel}
         responsiveLabel={responsiveLabel}
-        label={active ? t("workCard.lists") : t("workCard.addList")}
+        label={
+          firstMemberList ? (
+            <>
+              <span className="truncate">{firstMemberList.name}</span>
+              {otherMemberListCount > 0 && (
+                <span className="shrink-0 tabular-nums text-muted-foreground">
+                  {t("workCard.moreLists", { others: otherMemberListCount })}
+                </span>
+              )}
+            </>
+          ) : active ? (
+            t("workCard.lists")
+          ) : (
+            t("workCard.addList")
+          )
+        }
+        labelClassName={
+          firstMemberList
+            ? cn("min-w-0 max-w-24 items-baseline gap-1", responsiveLabel ? "sm:flex" : "flex")
+            : undefined
+        }
         onClick={(event) => {
           event.stopPropagation();
           if (effectiveWorkId) {

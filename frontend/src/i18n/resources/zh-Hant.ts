@@ -258,6 +258,8 @@ const workCardHant = {
   favoriteLists: "收藏清單",
   addToList: "新增至清單",
   lists: "清單",
+  inLists: "清單：{{names}}",
+  moreLists: "+{{others}}",
   addList: "新增清單",
   loadingLists: "正在載入清單...",
   noLists: "目前沒有清單。",

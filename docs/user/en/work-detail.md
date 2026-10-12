@@ -214,8 +214,11 @@ A purchase bonus, such as an early purchase bonus (`【早期購入特典】`), 
 - Show one fixed Resume action. It is disabled without a positive unfinished
   work cursor; direct file activation starts from the beginning.
 - Update quick listening status.
-- Manage favorite-list membership. **Add list** creates a list inside the List
-  menu and selects it; **Save** applies membership alongside existing choices.
+- Manage favorite-list membership. The List button names the list that holds
+  the work; when several do, it names the first in list order and counts the
+  rest, and its tooltip names them all. **Add list** creates a list inside the
+  List menu and selects it; **Save** applies membership alongside existing
+  choices.
 - Edit personal work tags separately from provider metadata tags.
 - Sync metadata.
 - Sync/cache/fetch from compatible remote sources.

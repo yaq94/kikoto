@@ -257,6 +257,8 @@ export const workCardHans = {
   favoriteLists: "收藏列表",
   addToList: "添加到列表",
   lists: "列表",
+  inLists: "列表：{{names}}",
+  moreLists: "+{{others}}",
   addList: "添加列表",
   loadingLists: "正在加载列表...",
   noLists: "暂无列表。",

@@ -34,12 +34,15 @@ test("detail list quick creation keeps existing memberships and lets a failed cr
     return route.fulfill({ status: 201, json: created });
   });
   await page.route("**/api/works/1/favorite-lists", (route) => {
-    if (route.request().method() !== "PUT") return route.fulfill({ json: [{ ...existing, selected: true }] });
+    if (route.request().method() !== "PUT") {
+      const saved = memberships.length > 0 ? [{ ...created, selected: true }] : [];
+      return route.fulfill({ json: [{ ...existing, selected: true }, ...saved] });
+    }
     memberships.push(route.request().postDataJSON());
     return route.fulfill({ json: { workId: 1, favorite: true, lists: [existing, created] } });
   });
   await page.goto("/RJ00000000");
-  await page.getByRole("button", { name: /^(Add to list|Favorite lists)$/ }).click();
+  await page.getByRole("button", { name: "Lists: Synthetic existing list", exact: true }).click();
   await page.getByRole("button", { name: "Add list", exact: true }).click();
   const form = page.getByRole("form", { name: "Add list", exact: true });
   await form.getByRole("textbox", { name: "Name", exact: true }).fill("Synthetic cancelled list");
@@ -59,6 +62,9 @@ test("detail list quick creation keeps existing memberships and lets a failed cr
   await page.getByRole("button", { name: "Save", exact: true }).click();
   await expect.poll(() => memberships).toEqual([{ listIds: [2, 3] }]);
   expect(creations).toEqual([{ name: "Synthetic new list" }, { name: "Synthetic new list" }]);
+  await expect(
+    page.getByRole("button", { name: "Lists: Synthetic existing list and Synthetic new list", exact: true }),
+  ).toBeVisible();
 });
 
 test("Metadata opens the editor directly with the default refresh and no unconfigured source options", async ({

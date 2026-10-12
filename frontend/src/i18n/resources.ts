@@ -249,6 +249,8 @@ export const workCardEnglish = {
   favoriteLists: "Favorite lists",
   addToList: "Add to list",
   lists: "Lists",
+  inLists: "Lists: {{names}}",
+  moreLists: "+{{others}}",
   addList: "Add list",
   loadingLists: "Loading lists...",
   noLists: "No lists yet.",

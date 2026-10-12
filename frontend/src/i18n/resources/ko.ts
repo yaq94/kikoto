@@ -257,6 +257,8 @@ const workCardKorean = {
   favoriteLists: "즐겨찾기 목록",
   addToList: "목록에 추가",
   lists: "목록",
+  inLists: "목록: {{names}}",
+  moreLists: "+{{others}}",
   addList: "목록 추가",
   loadingLists: "목록 로드 중...",
   noLists: "목록이 없습니다.",

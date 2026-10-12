@@ -257,6 +257,8 @@ const workCardJapanese = {
   favoriteLists: "お気に入りリスト",
   addToList: "リストに追加",
   lists: "リスト",
+  inLists: "リスト：{{names}}",
+  moreLists: "+{{others}}",
   addList: "リストを追加",
   loadingLists: "リストを読み込み中...",
   noLists: "リストはまだありません。",

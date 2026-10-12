@@ -21,7 +21,7 @@ import { WorkCardListButton, WorkCardQuickMarkButton } from "@/components/work-c
 import { AnchoredPopover } from "@/components/ui/anchored-popover";
 import { Button } from "@/components/ui/button";
 import type { RemoteSourceAvailability } from "@/features/work-detail/source/sourceContextModel";
-import type { ListeningStatus } from "@/lib/api";
+import type { FavoriteList, ListeningStatus } from "@/lib/api";
 import { useTranslation } from "react-i18next";
 
 export type DetailActionMode = "local" | "tracked_unforked" | "tracked_forked" | "remote_source";
@@ -30,6 +30,7 @@ export function WorkIdentityActionBar({
   busy,
   listeningStatus,
   favorite,
+  memberLists,
   listWorkId,
   onEnsureListWork,
   onListSaved,
@@ -41,6 +42,8 @@ export function WorkIdentityActionBar({
   busy: boolean;
   listeningStatus: ListeningStatus;
   favorite: boolean;
+  /** The user lists holding the work, once loaded. */
+  memberLists?: readonly FavoriteList[];
   listWorkId: number | null;
   onEnsureListWork?: () => Promise<number | null>;
   onListSaved?: (favorite: boolean, workID: number) => void;
@@ -76,6 +79,7 @@ export function WorkIdentityActionBar({
       <WorkCardListButton
         workId={listWorkId}
         active={favorite}
+        memberLists={memberLists}
         disabled={busy}
         showLabel
         responsiveLabel
