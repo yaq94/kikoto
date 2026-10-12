@@ -91,6 +91,19 @@ describe("native privacy bridge", () => {
       supported: true,
       available: true,
       recentsShieldBlocksCapture: true,
+      screenshotsHidden: false,
+    });
+  });
+
+  it("reports when the iOS screen capture choice hides screenshots", async () => {
+    isIOSApp.mockReturnValue(true);
+    plugin.status.mockResolvedValue({ appLockSupported: false, appLockAvailable: false, screenshotsHidden: true });
+
+    expect(await nativePrivacyStatus()).toEqual({
+      supported: false,
+      available: false,
+      recentsShieldBlocksCapture: false,
+      screenshotsHidden: true,
     });
   });
 

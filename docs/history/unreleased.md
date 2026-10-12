@@ -22,6 +22,11 @@
   Listening recorded before the upgrade, or before a time zone change,
   keeps the day it was counted on. Schema migration `067` adds the per-account
   setting.
+- With **Hide from screenshots and recordings** on, a screenshot taken in the
+  iOS app shows a blank page in place of Kikoto. The setting replaces **Hide
+  while the screen is recorded or mirrored** and keeps the stored choice.
+- The media controls choice under **Privacy on this device** is a segmented
+  control that shows its three options at once.
 - DLsite metadata synchronization accepts sparse numeric-keyed
   `language_editions` responses as well as arrays. Comma-separated language
   values are matched to their labeled edition so affected work families can

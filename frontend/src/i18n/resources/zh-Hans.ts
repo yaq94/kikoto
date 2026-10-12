@@ -873,6 +873,9 @@ export const zhHansResource = {
         screenCaptureCover: "录屏或投屏时隐藏",
         screenCaptureCoverDescription:
           "屏幕录制、AirPlay 镜像或其他屏幕捕获进行时，遮挡 Kikoto 并关闭屏幕歌词。不会阻止截屏。",
+        screenCaptureHide: "截屏和录屏时隐藏",
+        screenCaptureHideDescription:
+          "截屏得到的是空白页面，而不是 Kikoto。屏幕录制、AirPlay 镜像或其他屏幕捕获进行时，遮挡 Kikoto 并关闭屏幕歌词。",
         nowPlayingContent: "正在播放信息",
         nowPlayingContentDescription: "锁屏、控制中心以及已连接的蓝牙或车载屏幕为当前曲目显示的内容。",
         recentsShield: "在最近任务中隐藏内容",

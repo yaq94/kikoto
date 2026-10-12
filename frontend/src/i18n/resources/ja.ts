@@ -913,6 +913,9 @@ export const japaneseResource = {
         screenCaptureCover: "画面収録やミラーリング中は隠す",
         screenCaptureCoverDescription:
           "画面収録、AirPlay ミラーリングなどの画面キャプチャ中は Kikoto を覆い、画面歌詞を閉じます。スクリーンショットは防げません。",
+        screenCaptureHide: "スクリーンショットや画面収録で隠す",
+        screenCaptureHideDescription:
+          "スクリーンショットには Kikoto の代わりに空白のページが写ります。画面収録、AirPlay ミラーリングなどの画面キャプチャ中は Kikoto を覆い、画面歌詞を閉じます。",
         nowPlayingContent: "再生中の情報",
         nowPlayingContentDescription:
           "ロック画面、コントロールセンター、接続中の Bluetooth や車載ディスプレイに表示する、再生中のトラックの内容です。",
