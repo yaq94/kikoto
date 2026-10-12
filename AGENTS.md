@@ -141,7 +141,9 @@ there. Where each topic belongs is in
   ("`/maintenance` redirects to Settings"), not as a story.
 - History belongs only in `docs/history/` (release notes, with pending changes
   and per-release upgrade steps in `unreleased.md`) and in the context of ADRs
-  in `docs/decisions/`.
+  in `docs/decisions/`. Release notes and `unreleased.md` fold each area's
+  changes under its title; follow
+  [Release Notes](docs/development/commit-and-release.md#release-notes).
 - Reference docs contain no TODOs, plans, roadmaps, or dated measurement logs.
 - State each rule or fact in one place and link to it instead of restating it.
 - When an English user page changes, update the matching locale pages in the

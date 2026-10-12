@@ -1,18 +1,37 @@
 # Unreleased
 
-- The metadata editor's language tabs list **All languages**, Japanese,
-  Simplified Chinese, Traditional Chinese, English, and Korean for every work.
-  **More** opens the work's editions in other languages and names the chosen
-  one, such as `More - German`. The Tags section lists the work's tags one per
-  row and follows the selected language: each row shows the tag's name in that
-  language with its other names beneath, and its language button opens that
-  language's name inside the row.
+<details>
+<summary><strong>Library and work detail</strong></summary>
+
 - A work opens inside the page it was opened from. Opening a work from
   Favorites, Circles, or Voice Actors keeps that destination selected in the
   navigation, Back returns to it, and on phones each bottom tab resumes its own
   open work. Tapping the selected tab again returns to its list. A work address
   opened directly belongs to Library. On phones, double-tapping the Full
   player's cover returns to the tab the playback started from.
+- Library display options replace the phone-only **Compact cards** switch with
+  a **Cards** choice of **Full**, **Compact**, and **Mini**, available on
+  phones and wide screens and remembered separately for each. Compact on wide
+  screens uses short tiles, and Mini shows only the cover and title so a large
+  library can be scanned by its artwork. A device that had Compact cards on
+  keeps compact phone cards.
+- Local and Tracked can show 96 works per page.
+- On wide screens the Library sort control is one button that names the
+  current order and its direction. Its popover holds the orders and the
+  direction, and the Recommended and Random orders keep a refresh button
+  beside it.
+- The Favorites resource filter offers All, Available, Local, Remote, and
+  Missing in a narrower popover, in place of the cached and per-source
+  choices. It follows the availability each card shows, so a work whose files
+  belong to another language edition, or whose local folder has no indexed
+  tracks, is filtered as Local instead of Missing. The grid or list view moved
+  into display options.
+
+</details>
+
+<details>
+<summary><strong>Circles and voice actors</strong></summary>
+
 - **Circles** and **Voice Actors** list each creator as a cover tile with an
   availability bar for local, remote-only, and missing works, and show the
   latest release date in place of the latest work code. Their views are
@@ -25,13 +44,12 @@
   of the Library, and can show 96 works per page. The order and page size are
   remembered on the device. Voice actor works follow the chosen order instead
   of listing local works first.
-- Library display options replace the phone-only **Compact cards** switch with
-  a **Cards** choice of **Full**, **Compact**, and **Mini**, available on
-  phones and wide screens and remembered separately for each. Compact on wide
-  screens uses short tiles, and Mini shows only the cover and title so a large
-  library can be scanned by its artwork. A device that had Compact cards on
-  keeps compact phone cards.
-- Local and Tracked can show 96 works per page.
+
+</details>
+
+<details>
+<summary><strong>Insights and listening</strong></summary>
+
 - **Insights** is a sidebar page for the account's own listening. It opens
   with a calendar of the past year, keeps the 30-day, 12-month, and all-time
   listening report, and ranks tags, voices, and circles by preference (share
@@ -54,22 +72,33 @@
   Listening recorded before the upgrade, or before a time zone change,
   keeps the day it was counted on. Schema migration `067` adds the per-account
   setting.
+
+</details>
+
+<details>
+<summary><strong>Metadata and scans</strong></summary>
+
+- The metadata editor's language tabs list **All languages**, Japanese,
+  Simplified Chinese, Traditional Chinese, English, and Korean for every work.
+  **More** opens the work's editions in other languages and names the chosen
+  one, such as `More - German`. The Tags section lists the work's tags one per
+  row and follows the selected language: each row shows the tag's name in that
+  language with its other names beneath, and its language button opens that
+  language's name inside the row.
+- DLsite metadata synchronization accepts sparse numeric-keyed
+  `language_editions` responses as well as arrays. Comma-separated language
+  values are matched to their labeled edition so affected work families can
+  synchronize normally.
+
+</details>
+
+<details>
+<summary><strong>Apps and device privacy</strong></summary>
+
 - With **Hide from screenshots and recordings** on, a screenshot taken in the
   iOS app shows a blank page in place of Kikoto. The setting replaces **Hide
   while the screen is recorded or mirrored** and keeps the stored choice.
 - The media controls choice under **Privacy on this device** is a segmented
   control that shows its three options at once.
-- DLsite metadata synchronization accepts sparse numeric-keyed
-  `language_editions` responses as well as arrays. Comma-separated language
-  values are matched to their labeled edition so affected work families can
-  synchronize normally.
-- On wide screens the Library sort control is one button that names the
-  current order and its direction. Its popover holds the orders and the
-  direction, and the Recommended and Random orders keep a refresh button
-  beside it.
-- The Favorites resource filter offers All, Available, Local, Remote, and
-  Missing in a narrower popover, in place of the cached and per-source
-  choices. It follows the availability each card shows, so a work whose files
-  belong to another language edition, or whose local folder has no indexed
-  tracks, is filtered as Local instead of Missing. The grid or list view moved
-  into display options.
+
+</details>
