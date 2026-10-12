@@ -196,6 +196,13 @@ export const collectionHans = {
   columnsHeading: "列数",
   displayOptions: "显示选项",
   displayOptionsValue: "显示选项（{{value}}）",
+  viewMode: "视图",
+  gridView: "网格视图",
+  listView: "列表视图",
+  viewModes: {
+    grid: "网格",
+    list: "列表",
+  },
   column_one: "{{count}} 列",
   column_other: "{{count}} 列",
   loadingWorks: "正在加载作品",

@@ -244,6 +244,30 @@ test("recommended sorting refreshes its stable seed", async ({ page }) => {
   await expect(refresh).toBeEnabled();
 });
 
+test("@desktop the wide toolbar sorts from one labeled control", async ({ page }) => {
+  const requests: URL[] = [];
+  await mockApplication(page, (url) => requests.push(url), false, 8);
+  await page.goto("/");
+
+  // The seeded orders keep a one-click refresh beside the sort button.
+  const sort = page.getByRole("button", { name: "Sort: Recommended", exact: true });
+  await expect(sort).toHaveText("Recommended");
+  await expect(page.getByRole("button", { name: "Refresh recommendations", exact: true })).toBeVisible();
+
+  await sort.click();
+  const popover = page.getByRole("dialog", { name: "Sort" });
+  await popover.getByRole("button", { name: "Ascending", exact: true }).click();
+  await expect.poll(() => requests.at(-1)?.searchParams.get("direction")).toBe("asc");
+  await popover.getByRole("button", { name: "Title", exact: true }).click();
+  await expect(popover).toBeHidden();
+
+  await expect(page.getByRole("button", { name: "Sort: Title", exact: true })).toHaveText("Title");
+  await expect.poll(() => requests.at(-1)?.searchParams.get("sort")).toBe("title");
+  // An order without a seed has nothing to refresh, and its direction lives in the popover.
+  await expect(page.getByRole("button", { name: "Refresh recommendations", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Ascending", exact: true })).toHaveCount(0);
+});
+
 test("recommendation badge refresh keeps the result grid fixed while the request is pending", async ({ page }) => {
   const requestedURLs: URL[] = [];
   let holdWorksResponse = false;

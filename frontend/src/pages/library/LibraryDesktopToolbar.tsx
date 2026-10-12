@@ -1,8 +1,5 @@
 import type { TFunction } from "i18next";
 import {
-  ArrowDownAZ,
-  ArrowDownZA,
-  ArrowUpDown,
   BookmarkPlus,
   CheckCircle2,
   Circle,
@@ -10,7 +7,6 @@ import {
   Headphones,
   PauseCircle,
   Plus,
-  RefreshCw,
   Repeat2,
   Search,
   X,
@@ -26,7 +22,7 @@ import { useDismissiblePopover } from "@/hooks/useDismissiblePopover";
 import type { ListeningStatus, Work } from "@/lib/api";
 import { dismissKeyboardOnEnter } from "@/lib/keyboard";
 
-import type { MobileLibrarySortProps } from "./MobileLibraryToolbar";
+import { LibrarySortButton, type LibrarySortProps } from "./LibrarySortButton";
 import { RecentlyPlayedPicker } from "./RecentlyPlayedPicker";
 
 /**
@@ -56,7 +52,7 @@ export function LibraryDesktopToolbar({
   onOpenRecent: (work: Work) => void;
   displayPicker: ReactNode;
   recommendationAction: ReactNode;
-  sort: MobileLibrarySortProps;
+  sort: LibrarySortProps;
   /** Set when the active view selects works instead of filtering by quick mark. */
   selectionToggle: ReactNode | null;
   statusFilter: ListeningStatus | "all";
@@ -100,7 +96,7 @@ export function LibraryDesktopToolbar({
           <RecentlyPlayedPicker onOpen={onOpenRecent} />
           {displayPicker}
           {recommendationAction}
-          <SortPicker {...sort} />
+          <LibrarySortButton {...sort} variant="toolbar" />
           {selectionToggle ?? (
             <FilterPicker value={statusFilter} activeCount={activeFilterCount} onChange={onStatusFilterChange} />
           )}
@@ -122,76 +118,6 @@ export function LibraryDesktopToolbar({
         </div>
       )}
     </>
-  );
-}
-
-function SortPicker({ options, value, direction, onChange, onDirectionChange, onReshuffle }: MobileLibrarySortProps) {
-  const { t } = useTranslation();
-  const [open, setOpen] = useState(false);
-  const popoverRef = useRef<HTMLDivElement | null>(null);
-  const label = options.find((option) => option.value === value)?.label ?? t("library.sort");
-  const localizedLabel = t(`library.sortOptions.${value}`, { defaultValue: label });
-  useDismissiblePopover(open, popoverRef, () => setOpen(false));
-  const nextDirection = direction === "asc" ? "desc" : "asc";
-  return (
-    <div className="relative" ref={popoverRef}>
-      <div className="inline-flex rounded-md border bg-background">
-        <button
-          className="relative inline-flex h-8 w-8 items-center justify-center rounded-l-md text-muted-foreground hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
-          title={t("library.sortLabel", { label: localizedLabel })}
-          aria-label={t("library.sortLabel", { label: localizedLabel })}
-          onClick={() => setOpen((current) => !current)}
-        >
-          <ArrowUpDown className="h-4 w-4" />
-        </button>
-        <button
-          className="relative inline-flex h-8 w-8 items-center justify-center rounded-r-md border-l text-muted-foreground hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
-          title={
-            value === "random"
-              ? t("library.reshuffle")
-              : direction === "asc"
-                ? t("library.ascending")
-                : t("library.descending")
-          }
-          aria-label={
-            value === "random"
-              ? t("library.reshuffle")
-              : direction === "asc"
-                ? t("library.ascending")
-                : t("library.descending")
-          }
-          onClick={() => (value === "random" ? onReshuffle() : onDirectionChange(nextDirection))}
-        >
-          {value === "random" ? (
-            <RefreshCw className="h-4 w-4" />
-          ) : direction === "asc" ? (
-            <ArrowDownAZ className="h-4 w-4" />
-          ) : (
-            <ArrowDownZA className="h-4 w-4" />
-          )}
-        </button>
-      </div>
-      <AnchoredPopover
-        open={open}
-        anchorRef={popoverRef}
-        onOpenChange={setOpen}
-        className="w-[min(11rem,calc(100vw-1.5rem))] p-1 text-sm"
-      >
-        {options.map((option) => (
-          <button
-            key={option.value}
-            className={`flex min-h-10 w-full items-center rounded-md px-3 py-2 text-left hover:bg-muted ${value === option.value ? "bg-primary/10 font-medium text-primary ring-1 ring-inset ring-primary/15" : "text-muted-foreground"}`}
-            aria-pressed={value === option.value}
-            onClick={() => {
-              onChange(option.value);
-              setOpen(false);
-            }}
-          >
-            {t(`library.sortOptions.${option.value}`, { defaultValue: option.label })}
-          </button>
-        ))}
-      </AnchoredPopover>
-    </div>
   );
 }
 

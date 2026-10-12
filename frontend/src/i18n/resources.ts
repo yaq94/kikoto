@@ -190,6 +190,13 @@ export const collectionEnglish = {
   columnsHeading: "Columns",
   displayOptions: "Display options",
   displayOptionsValue: "Display options ({{value}})",
+  viewMode: "View",
+  gridView: "Grid view",
+  listView: "List view",
+  viewModes: {
+    grid: "Grid",
+    list: "List",
+  },
   column_one: "{{count}} column",
   column_other: "{{count}} columns",
   loadingWorks: "Loading works",
