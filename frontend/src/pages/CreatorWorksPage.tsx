@@ -24,12 +24,17 @@ import { CatalogSyncBadge } from "@/components/creator/CatalogSyncBadge";
 import { CreatorActionMenu } from "@/components/creator/CreatorActionMenu";
 import { CreatorDetailHeader } from "@/components/creator/CreatorDetailHeader";
 import { CatalogWorkToolbar } from "@/components/creator/CatalogWorkToolbar";
+import { CompactWorkCardShell, type CompactWorkCardLayout } from "@/components/work-card/CompactWorkCard";
 import { WorkCollectionLoadingState } from "@/components/work-collection/WorkCollectionLoadingState";
 import { WorkCollectionPagination } from "@/components/work-collection/WorkCollectionPagination";
 import { WorkSelectionAction, WorkSelectionBar } from "@/components/work-collection/WorkSelectionBar";
 import { FetchConfirmDialog } from "@/components/work-collection/FetchConfirmDialog";
 import { retainVisibleSelection, withSelection } from "@/components/work-collection/workSelectionModel";
 import { VoiceWorkOptionsSheet, type VoiceWorkFilter } from "@/pages/VoiceWorkOptionsSheet";
+import { useCreatorWorksBrowse } from "@/pages/creator/useCreatorWorksBrowse";
+import { LibrarySortButton } from "@/pages/library/LibrarySortButton";
+import { creatorWorkPageSizeOptions } from "@/lib/creatorWorksBrowse";
+import { useMobileNavigationLayout } from "@/hooks/useMobileNavigationLayout";
 import { openWorkflowPath, workflowActivityRunPath, workflowRunFormPath } from "@/features/workflows/workflowLinks";
 import { useAuth } from "@/auth/AuthProvider";
 import { DemoContentNotice } from "@/components/DemoReadOnlyNotice";
@@ -66,6 +71,7 @@ import { LazyRemoteFetchWorkspaceDialog } from "@/features/work-detail/workflows
 import { useRemoteFetchWorkspace } from "@/features/work-detail/workflows/useRemoteFetchWorkspace";
 import {
   workCollectionClassName,
+  workCardLayout,
   workCollectionStyle,
   useWorkCollectionLayout,
 } from "@/components/work-collection/WorkCollectionLayout";
@@ -108,6 +114,7 @@ import {
   voiceWorkObservedSourceTags,
   voiceWorkRemoteTarget,
   type VoiceWorkView,
+  sortVoiceWorks,
 } from "@/pages/voiceWorkModel";
 import { voiceWorkIsExplicitlyUnavailable } from "@/pages/voiceWorkAvailabilityModel";
 
@@ -124,7 +131,6 @@ const voiceFilterOptions: readonly { value: VoiceFilter; label: string }[] = [
   { value: "missing", label: "Missing" },
 ];
 const voiceFilters: readonly VoiceFilter[] = voiceFilterOptions.map((option) => option.value);
-const workPageSizeOptions = [24, 48] as const;
 // A stable fallback keeps the works-derived memos, and the selection sync
 // effect that depends on them, from re-running while the detail is absent.
 const emptyKnownWorks: VoiceKnownWork[] = [];
@@ -216,10 +222,8 @@ const VoiceCard = memo(function VoiceCard({
       favorite={voice.favorite}
       userTags={voice.userTags}
       syncState={voice.syncState}
-      workCount={voice.knownWorks}
+      availability={{ total: voice.knownWorks, local: voice.localWorks, available: voice.playableWorks }}
       availabilityCounts={{ local: voice.localWorks, remote: voice.remoteWorks }}
-      unavailableCount={Math.max(0, voice.knownWorks - voice.playableWorks)}
-      sources={voice.sourceSummaries}
       onOpen={() => openVoiceRoute(voice.personId)}
       onFavoriteToggle={() => void onFavoriteToggle(voice)}
       onTagsSave={(tags) => onTagsSave(voice, tags)}
@@ -313,8 +317,30 @@ function VoiceDetailPage({ personId, active }: { personId: number; active: boole
   const [filter, setFilter] = useState<VoiceWorkFilter>("all");
   const [workOptionsOpen, setWorkOptionsOpen] = useState(false);
   const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState<(typeof workPageSizeOptions)[number]>(24);
-  const { mobileColumns, desktopColumns, setMobileColumns, setDesktopColumns } = useWorkCollectionLayout();
+  // The order and page size are one stored choice shared by every voice actor.
+  const {
+    sort: workSort,
+    direction: workSortDirection,
+    pageSize,
+    sortProps,
+    changePageSize: changeWorkPageSize,
+  } = useCreatorWorksBrowse("voice", voiceListStorageScope, () => setPage(1));
+  const {
+    mobileColumns,
+    desktopColumns,
+    mobileCardMode,
+    desktopCardMode,
+    setMobileColumns,
+    setDesktopColumns,
+    setMobileCardMode,
+    setDesktopCardMode,
+  } = useWorkCollectionLayout();
+  const mobileNavigationLayout = useMobileNavigationLayout();
+  const cardLayout = workCardLayout(
+    mobileNavigationLayout ? mobileCardMode : desktopCardMode,
+    !mobileNavigationLayout,
+    mobileColumns,
+  );
   const [selectedWorkKeys, setSelectedWorkKeys] = useState<Set<string>>(new Set());
   const [selectionMode, setSelectionMode] = useState(false);
   const [isBulkBusy, setIsBulkBusy] = useState(false);
@@ -527,7 +553,7 @@ function VoiceDetailPage({ personId, active }: { personId: number; active: boole
   const mergedWorks = useMemo(() => mergeVoiceWorks(knownWorks, remoteMatches), [knownWorks, remoteMatches]);
   const filteredWorks = useMemo(() => {
     const needle = query.trim().toLowerCase();
-    return mergedWorks.filter((work) => {
+    const matching = mergedWorks.filter((work) => {
       const userTagNames = "userTags" in work ? work.userTags.map((tag) => tag.name) : [];
       const matchesQuery =
         !needle ||
@@ -551,7 +577,8 @@ function VoiceDetailPage({ personId, active }: { personId: number; active: boole
           return true;
       }
     });
-  }, [filter, mergedWorks, query]);
+    return sortVoiceWorks(matching, workSort, workSortDirection);
+  }, [filter, mergedWorks, query, workSort, workSortDirection]);
   const totalPages = Math.max(1, Math.ceil(filteredWorks.length / pageSize));
   const currentPage = Math.min(page, totalPages);
   const pageWorks = filteredWorks.slice((currentPage - 1) * pageSize, currentPage * pageSize);
@@ -561,10 +588,6 @@ function VoiceDetailPage({ personId, active }: { personId: number; active: boole
   };
   const changeWorkQuery = (value: string) => {
     setQuery(value);
-    setPage(1);
-  };
-  const changeWorkPageSize = (value: number) => {
-    setPageSize(value as (typeof workPageSizeOptions)[number]);
     setPage(1);
   };
   useEffect(() => setPage(1), [filter, pageSize, query]);
@@ -930,13 +953,21 @@ function VoiceDetailPage({ personId, active }: { personId: number; active: boole
           query={query}
           searchLabel={t("sheets.searchVoiceWorks")}
           onQueryChange={changeWorkQuery}
+          sort={<LibrarySortButton {...sortProps} variant="toolbar" />}
+          mobileSort={<LibrarySortButton {...sortProps} />}
+          cardModes={{
+            mobile: mobileCardMode,
+            desktop: desktopCardMode,
+            onMobileChange: setMobileCardMode,
+            onDesktopChange: setDesktopCardMode,
+          }}
           filterLabel={t("sheets.voiceWorkAvailability")}
           filter={filter}
           defaultFilter="all"
           filterOptions={voiceWorkFilterOptions(t)}
           onFilterChange={changeWorkFilter}
           pageSize={pageSize}
-          pageSizeOptions={workPageSizeOptions}
+          pageSizeOptions={creatorWorkPageSizeOptions}
           onPageSizeChange={changeWorkPageSize}
           mobileColumns={mobileColumns}
           desktopColumns={desktopColumns}
@@ -986,10 +1017,12 @@ function VoiceDetailPage({ personId, active }: { personId: number; active: boole
           query={query}
           onQueryChange={changeWorkQuery}
           pageSize={pageSize}
-          pageSizeOptions={workPageSizeOptions}
+          pageSizeOptions={creatorWorkPageSizeOptions}
           onPageSizeChange={changeWorkPageSize}
           mobileColumns={mobileColumns}
           onMobileColumnsChange={setMobileColumns}
+          cardMode={mobileCardMode}
+          onCardModeChange={setMobileCardMode}
           selectionMode={selectionMode}
           onSelectWorks={() => {
             setWorkOptionsOpen(false);
@@ -1029,13 +1062,14 @@ function VoiceDetailPage({ personId, active }: { personId: number; active: boole
         {pageWorks.length > 0 ? (
           <div
             className={workCollectionClassName()}
-            style={workCollectionStyle(mobileColumns, desktopColumns)}
+            style={workCollectionStyle(mobileColumns, desktopColumns, cardLayout)}
             aria-busy={isWorksLoading || isRemoteLoading || catalogRefreshActive}
           >
             {pageWorks.map((work) => (
               <div key={`${"sourceId" in work ? work.sourceId : "known"}:${work.primaryCode}`}>
                 <VoiceWorkCard
                   work={work}
+                  layout={cardLayout}
                   selected={selectedWorkKeys.has(voiceWorkSelectionKey(work))}
                   selectable={isVoiceBulkSelectable(work)}
                   selectionActive={selectionMode}
@@ -1101,6 +1135,7 @@ function VoiceDetailPage({ personId, active }: { personId: number; active: boole
 
 function VoiceWorkCard({
   work,
+  layout,
   selected,
   selectable,
   selectionActive,
@@ -1113,6 +1148,8 @@ function VoiceWorkCard({
   onEnsureWork,
 }: {
   work: VoiceWorkView;
+  /** The reduced card layout of the chosen card mode, or null for the regular card. */
+  layout: CompactWorkCardLayout | null;
   selected: boolean;
   selectable: boolean;
   selectionActive: boolean;
@@ -1133,9 +1170,11 @@ function VoiceWorkCard({
   const isUnavailable = voiceWorkIsExplicitlyUnavailable(work);
   const canOpen = Boolean((isKnown && workId) || (!isKnown && work.primaryCode));
   const view = voiceWorkCardView(work, t);
+  const Shell = layout ? CompactWorkCardShell : WorkCardShell;
 
   return (
-    <WorkCardShell
+    <Shell
+      layout={layout ?? "row"}
       work={view}
       selection={
         selectionActive ? (
@@ -1153,6 +1192,7 @@ function VoiceWorkCard({
       onTagOpen={(tag) => openLibraryTagSearch("tag", tag)}
       footer={
         <WorkCardFooter
+          className={layout === "row" ? "h-10 border-border/40" : undefined}
           left={<WorkCardDLsiteAction href={voiceWorkDLsiteURL(work)} />}
           right={
             <>

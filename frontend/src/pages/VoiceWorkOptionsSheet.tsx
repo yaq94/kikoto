@@ -1,8 +1,9 @@
-import { Check, Columns3, ListMusic, Search, X } from "lucide-react";
+import { Check, Columns3, LayoutGrid, ListMusic, Search, X } from "lucide-react";
 import { useEffect, type ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
-import type { WorkCollectionColumnSetting } from "@/components/work-collection/WorkCollectionLayout";
+import type { WorkCardMode, WorkCollectionColumnSetting } from "@/components/work-collection/WorkCollectionLayout";
+import { workCardModes } from "@/components/work-collection/workCollectionLayoutModel";
 import { dismissKeyboardOnEnter } from "@/lib/keyboard";
 import { useTranslation } from "react-i18next";
 
@@ -20,6 +21,8 @@ export function VoiceWorkOptionsSheet({
   onPageSizeChange,
   mobileColumns,
   onMobileColumnsChange,
+  cardMode,
+  onCardModeChange,
   selectionMode,
   onSelectWorks,
 }: {
@@ -34,6 +37,8 @@ export function VoiceWorkOptionsSheet({
   onPageSizeChange: (value: number) => void;
   mobileColumns: WorkCollectionColumnSetting;
   onMobileColumnsChange: (value: WorkCollectionColumnSetting) => void;
+  cardMode: WorkCardMode;
+  onCardModeChange: (value: WorkCardMode) => void;
   selectionMode: boolean;
   onSelectWorks: () => void;
 }) {
@@ -146,12 +151,28 @@ export function VoiceWorkOptionsSheet({
         </fieldset>
 
         <fieldset className="mt-4 space-y-2">
+          <legend className="text-sm font-medium">{t("collection.cardMode")}</legend>
+          <div className="grid grid-cols-3 gap-2" role="group" aria-label={t("collection.cardMode")}>
+            {workCardModes.map((mode) => (
+              <OptionButton
+                key={mode}
+                active={cardMode === mode}
+                label={t(`collection.cardModes.${mode}`)}
+                ariaLabel={t(`collection.cardModeOptions.${mode}`)}
+                icon={<LayoutGrid className="h-4 w-4" />}
+                onClick={() => onCardModeChange(mode)}
+              />
+            ))}
+          </div>
+        </fieldset>
+
+        <fieldset className="mt-4 space-y-2">
           <legend className="flex items-center gap-2 text-sm font-medium">
             <ListMusic className="h-4 w-4" aria-hidden="true" />
             {t("sheets.perPage")}
           </legend>
           <div
-            className="grid grid-cols-2 gap-2"
+            className="grid grid-cols-3 gap-2"
             role="group"
             aria-label={t("sheets.voiceWorkPageSize", { defaultValue: "Voice work page size" })}
           >
@@ -159,7 +180,8 @@ export function VoiceWorkOptionsSheet({
               <OptionButton
                 key={option}
                 active={pageSize === option}
-                label={t("sheets.perPageOption", { value: option })}
+                label={String(option)}
+                ariaLabel={t("sheets.perPageOption", { value: option })}
                 onClick={() => onPageSizeChange(option)}
               />
             ))}

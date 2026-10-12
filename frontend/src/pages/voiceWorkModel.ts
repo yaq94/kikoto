@@ -1,3 +1,5 @@
+import type { CreatorWorkSort } from "@/lib/creatorWorksBrowse";
+import type { SortDirection } from "@/lib/libraryApi";
 import type {
   CircleSourceStat,
   VoiceKnownWork,
@@ -9,6 +11,44 @@ import type {
 export type VoiceWorkView = (VoiceKnownWork | VoiceRemoteWork) & {
   remoteObservations?: VoiceRemoteObservation[];
 };
+
+/**
+ * Orders a voice actor's works like a circle catalog: by the chosen fact in
+ * either direction, with works that lack it last and the code breaking ties.
+ */
+export function sortVoiceWorks(
+  works: readonly VoiceWorkView[],
+  sort: CreatorWorkSort,
+  direction: SortDirection,
+): VoiceWorkView[] {
+  const sign = direction === "asc" ? 1 : -1;
+  const byCode = (left: VoiceWorkView, right: VoiceWorkView) =>
+    normalizedCode(left.primaryCode).localeCompare(normalizedCode(right.primaryCode));
+  // Missing values sort last whichever way the order runs.
+  const compareFact = <T>(left: T | null, right: T | null, compare: (a: T, b: T) => number) => {
+    if (left === null || right === null) return Number(left === null) - Number(right === null);
+    return sign * compare(left, right);
+  };
+  const number = (value: number | null | undefined) => (typeof value === "number" ? value : null);
+  const text = (value: string) => value.trim() || null;
+  return [...works].sort((left, right) => {
+    const primary =
+      sort === "code"
+        ? 0
+        : sort === "title"
+          ? compareFact(text(left.title), text(right.title), (a, b) =>
+              a.localeCompare(b, undefined, { sensitivity: "base" }),
+            )
+          : sort === "rating"
+            ? compareFact(number(left.rating), number(right.rating), (a, b) => a - b)
+            : sort === "sales"
+              ? compareFact(number(left.sales), number(right.sales), (a, b) => a - b)
+              : compareFact(text(voiceWorkSortDate(left)), text(voiceWorkSortDate(right)), (a, b) =>
+                  a.localeCompare(b),
+                );
+    return primary || sign * byCode(left, right);
+  });
+}
 
 export function mergeVoiceWorks(knownWorks: VoiceKnownWork[], sourceSets: VoiceRemoteSourceSet[]): VoiceWorkView[] {
   const remoteWorks = sourceSets

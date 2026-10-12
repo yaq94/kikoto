@@ -141,7 +141,8 @@ with a count of the rest, and keeps the 44px action row. The card's
 container query owns this breakpoint; tag measurement reads the row count from
 it, not from the viewport.
 
-The Library also offers a card mode as a display option, chosen separately for
+The Library and the circle and voice actor detail pages also offer a card mode
+as a display option, one choice shared by all of them and kept separately for
 phones and wide screens: full (the default), compact, and mini. Compact uses
 row cards in one phone column: a small cover beside the facts, one measured tag
 row with personal tags first, and the last listening position. Two phone
