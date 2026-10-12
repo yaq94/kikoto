@@ -89,7 +89,8 @@ export function MetadataLanguageScopeTabs({
         ref={listRef}
         role="tablist"
         aria-label={t("metadataEditor.languageScope")}
-        className={segmentedListClassName()}
+        // The strip scrolls sideways on a narrow screen without showing a scrollbar under the tabs.
+        className={segmentedListClassName("![scrollbar-width:none] [&::-webkit-scrollbar]:hidden")}
       >
         {scopes.primary.map((scope) => {
           const active = scope.key === selected;
