@@ -38,3 +38,13 @@
   `language_editions` responses as well as arrays. Comma-separated language
   values are matched to their labeled edition so affected work families can
   synchronize normally.
+- On wide screens the Library sort control is one button that names the
+  current order and its direction. Its popover holds the orders and the
+  direction, and the Recommended and Random orders keep a refresh button
+  beside it.
+- The Favorites resource filter offers All, Available, Local, Remote, and
+  Missing in a narrower popover, in place of the cached and per-source
+  choices. It follows the availability each card shows, so a work whose files
+  belong to another language edition, or whose local folder has no indexed
+  tracks, is filtered as Local instead of Missing. The grid or list view moved
+  into display options.

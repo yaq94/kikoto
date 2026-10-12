@@ -205,6 +205,13 @@ const collectionHant = {
   columnsHeading: "欄數",
   displayOptions: "顯示選項",
   displayOptionsValue: "顯示選項（{{value}}）",
+  viewMode: "檢視",
+  gridView: "網格檢視",
+  listView: "清單檢視",
+  viewModes: {
+    grid: "網格",
+    list: "清單",
+  },
   column_one: "{{count}} 欄",
   column_other: "{{count}} 欄",
   loadingWorks: "正在載入作品",

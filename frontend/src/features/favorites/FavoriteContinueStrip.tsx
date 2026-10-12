@@ -35,19 +35,7 @@ export function useFavoriteContinueListening({
     if (!enabled || loadedKeyRef.current === key) return;
     const controller = new AbortController();
     api
-      .listFavoriteWorksPage(
-        1,
-        continueLimit,
-        "",
-        listID,
-        "listening",
-        "all",
-        [],
-        "activity",
-        "desc",
-        1,
-        controller.signal,
-      )
+      .listFavoriteWorksPage(1, continueLimit, "", listID, "listening", "all", "activity", "desc", 1, controller.signal)
       .then((result) => {
         if (controller.signal.aborted) return;
         loadedKeyRef.current = key;

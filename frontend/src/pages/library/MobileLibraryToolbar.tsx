@@ -1,26 +1,16 @@
-import { ArrowDown, ArrowUp, ArrowUpDown, Check, Plus, RefreshCw, Search, X } from "lucide-react";
-import { useRef, useState, type ReactNode } from "react";
+import { Plus, Search, X } from "lucide-react";
+import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 
 import { quickMarkMeta } from "@/components/work-card/WorkCardShell";
-import { Button } from "@/components/ui/button";
-import { AnchoredPopover } from "@/components/ui/anchored-popover";
-import { segmentedItemClassName, segmentedListClassName } from "@/components/ui/segmented";
 import { listeningStatusOptions } from "@/features/work-detail/workDetailShared";
 import { numberFormat } from "@/i18n/format";
 import { useLocale } from "@/i18n/LocaleProvider";
-import type { LibrarySort, ListeningStatus, SortDirection } from "@/lib/api";
+import type { ListeningStatus } from "@/lib/api";
 import { dismissKeyboardOnEnter } from "@/lib/keyboard";
 import { cn } from "@/lib/tailwindClassNames";
 
-export type MobileLibrarySortProps = {
-  options: { value: LibrarySort; label: string }[];
-  value: LibrarySort;
-  direction: SortDirection;
-  onChange: (value: LibrarySort) => void;
-  onDirectionChange: (value: SortDirection) => void;
-  onReshuffle: () => void;
-};
+import { LibrarySortButton, type LibrarySortProps } from "./LibrarySortButton";
 
 /**
  * The phone Library header: an always-visible search field, the source rail,
@@ -50,7 +40,7 @@ export function MobileLibraryToolbar({
   resultCount: number | null;
   /** Shown beside the count when the results span more than one page. */
   resultPage: { page: number; totalPages: number };
-  sort: MobileLibrarySortProps;
+  sort: LibrarySortProps;
   actions: ReactNode;
   /** Null when the active view cannot filter by quick mark. */
   statusFilter: ListeningStatus | "all" | null;
@@ -103,7 +93,7 @@ export function MobileLibraryToolbar({
       </div>
       {children}
       <div className="flex min-h-9 items-center gap-2">
-        <MobileSortButton {...sort} />
+        <LibrarySortButton {...sort} />
         <div className="ml-auto flex shrink-0 items-center gap-2">{actions}</div>
       </div>
       {statusFilter !== null && <StatusChips value={statusFilter} onChange={onStatusFilterChange} />}
@@ -176,109 +166,6 @@ function StatusChips({
           </button>
         );
       })}
-    </div>
-  );
-}
-
-function MobileSortButton({
-  options,
-  value,
-  direction,
-  onChange,
-  onDirectionChange,
-  onReshuffle,
-}: MobileLibrarySortProps) {
-  const { t } = useTranslation();
-  const [open, setOpen] = useState(false);
-  const anchorRef = useRef<HTMLDivElement | null>(null);
-  const label = t(`library.sortOptions.${value}`, {
-    defaultValue: options.find((option) => option.value === value)?.label ?? t("library.sort"),
-  });
-  const random = value === "random";
-  const directionLabel = direction === "asc" ? t("library.ascending") : t("library.descending");
-  return (
-    <div className="relative min-w-0" ref={anchorRef}>
-      <button
-        type="button"
-        className="inline-flex h-9 max-w-full min-w-0 shrink items-center gap-1.5 rounded-full border bg-card px-3 text-xs font-medium text-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        aria-haspopup="dialog"
-        aria-expanded={open}
-        aria-label={t("library.sortLabel", { label })}
-        onClick={() => setOpen((current) => !current)}
-      >
-        <ArrowUpDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
-        <span className="truncate">{label}</span>
-        {!random &&
-          (direction === "asc" ? (
-            <ArrowUp className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
-          ) : (
-            <ArrowDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
-          ))}
-      </button>
-      <AnchoredPopover
-        open={open}
-        anchorRef={anchorRef}
-        onOpenChange={setOpen}
-        ariaLabel={t("library.sort")}
-        bottomCollisionPadding={168}
-        className="w-[min(15rem,calc(100vw-1.5rem))] space-y-1.5 p-1.5 text-sm"
-      >
-        {random ? (
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-9 w-full gap-2"
-            onClick={() => {
-              onReshuffle();
-              setOpen(false);
-            }}
-          >
-            <RefreshCw className="h-4 w-4" />
-            {t("library.reshuffle")}
-          </Button>
-        ) : (
-          <div className={segmentedListClassName("grid w-full grid-cols-2")} role="group" aria-label={directionLabel}>
-            {(["desc", "asc"] as const).map((item) => (
-              <button
-                key={item}
-                type="button"
-                className={segmentedItemClassName(direction === item, "justify-center gap-1.5 px-2 text-xs")}
-                aria-pressed={direction === item}
-                onClick={() => onDirectionChange(item)}
-              >
-                {item === "asc" ? <ArrowUp className="h-3.5 w-3.5" /> : <ArrowDown className="h-3.5 w-3.5" />}
-                {item === "asc" ? t("library.ascending") : t("library.descending")}
-              </button>
-            ))}
-          </div>
-        )}
-        <ul>
-          {options.map((option) => {
-            const selected = option.value === value;
-            return (
-              <li key={option.value}>
-                <button
-                  type="button"
-                  className={cn(
-                    "flex min-h-10 w-full items-center gap-2 rounded-md px-2.5 text-left transition-colors hover:bg-muted",
-                    selected ? "bg-primary/10 font-medium text-primary" : "text-foreground",
-                  )}
-                  aria-pressed={selected}
-                  onClick={() => {
-                    onChange(option.value);
-                    setOpen(false);
-                  }}
-                >
-                  <span className="min-w-0 flex-1">
-                    {t(`library.sortOptions.${option.value}`, { defaultValue: option.label })}
-                  </span>
-                  {selected && <Check className="h-4 w-4 shrink-0" aria-hidden="true" />}
-                </button>
-              </li>
-            );
-          })}
-        </ul>
-      </AnchoredPopover>
     </div>
   );
 }

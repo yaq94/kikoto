@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -62,9 +63,110 @@ func TestListFavoriteWorksFiltersByAnySelectedFileSourceAcrossLogicalFamily(t *t
 		t.Fatalf("cached source page = total %d works %#v", cachePage.Total, cachePage.Works)
 	}
 
+	availablePage := requestFavoriteWorksPage(t, server, "/api/favorite-works?page=1&pageSize=10&availability=available")
+	if availablePage.Total != 1 || len(availablePage.Works) != 1 || availablePage.Works[0].PrimaryCode != "RJ00000002" {
+		t.Fatalf("available page = total %d works %#v", availablePage.Total, availablePage.Works)
+	}
+
 	missingPage := requestFavoriteWorksPage(t, server, "/api/favorite-works?page=1&pageSize=10&availability=missing&sourceId=11")
 	if missingPage.Total != 1 || len(missingPage.Works) != 1 || missingPage.Works[0].PrimaryCode != "RJ00000001" {
 		t.Fatalf("presence-only source page = total %d works %#v", missingPage.Total, missingPage.Works)
+	}
+}
+
+func TestListFavoriteWorksFiltersAvailabilityByTheCardBadges(t *testing.T) {
+	db := openMigratedTestDB(t)
+	if _, err := db.Exec(`
+		INSERT INTO user_account (id, username, display_name, role) VALUES
+			(1, 'synthetic-user', 'Synthetic User', 'user');
+		INSERT INTO work (id, primary_code, title) VALUES
+			(1, 'RJ00000001', 'Own local files'),
+			(2, 'RJ00000002', 'Local folder without tracks'),
+			(3, 'RJ00000003', 'Files under another edition'),
+			(4, 'RJ00000004', 'Edition holding the files'),
+			(5, 'RJ00000005', 'Remote edition beside a local one'),
+			(6, 'RJ00000006', 'Local edition'),
+			(7, 'RJ00000007', 'Remote only'),
+			(8, 'RJ00000008', 'Cached only'),
+			(9, 'RJ00000009', 'No files'),
+			(10, 'RJ00000010', 'Tracked without files');
+		INSERT INTO logical_work (id, canonical_work_id, canonical_code) VALUES
+			(1, 3, 'RJ00000003'),
+			(2, 5, 'RJ00000005');
+		INSERT INTO work_edition (work_id, logical_work_id, primary_code, base_code, metadata_language, is_canonical) VALUES
+			(3, 1, 'RJ00000003', 'RJ00000003', 'JPN', 1),
+			(4, 1, 'RJ00000004', 'RJ00000003', 'CHI_HANS', 0),
+			(5, 2, 'RJ00000005', 'RJ00000005', 'JPN', 1),
+			(6, 2, 'RJ00000006', 'RJ00000005', 'CHI_HANS', 0);
+		INSERT INTO file_source (id, code, display_name, source_type) VALUES
+			(21, 'example_local', 'Example Local', 'local_folder'),
+			(22, 'example_remote', 'Example Remote', 'kikoeru_compatible');
+		INSERT INTO work_source_presence (work_id, file_source_id, presence_type, availability) VALUES
+			(2, 21, 'local', 'available'),
+			(10, 22, 'tracked', 'available');
+		INSERT INTO media_item (id, work_id, kind, title, fingerprint) VALUES
+			(31, 1, 'audio', 'Track 1', 'badge-own-local'),
+			(34, 4, 'audio', 'Track 1', 'badge-edition-local'),
+			(35, 5, 'audio', 'Track 1', 'badge-family-remote'),
+			(36, 6, 'audio', 'Track 1', 'badge-family-local'),
+			(37, 7, 'audio', 'Track 1', 'badge-remote'),
+			(38, 8, 'audio', 'Track 1', 'badge-cache');
+		INSERT INTO media_file_location (media_item_id, file_source_id, location_type, path, availability) VALUES
+			(31, 21, 'local', 'RJ00000001/track.mp3', 'available'),
+			(34, 21, 'local', 'RJ00000004/track.mp3', 'available'),
+			(35, 22, 'remote_stream', 'RJ00000005/track.mp3', 'available'),
+			(36, 21, 'local', 'RJ00000006/track.mp3', 'available'),
+			(37, 22, 'remote_stream', 'RJ00000007/track.mp3', 'available'),
+			(38, 22, 'cache', 'RJ00000008/track.mp3', 'available');
+		INSERT INTO favorite_list (id, user_id, name, kind) VALUES
+			(1, 1, 'Study', 'user');
+		INSERT INTO favorite_list_item (list_id, work_id) VALUES
+			(1, 1), (1, 2), (1, 3), (1, 5), (1, 7), (1, 8), (1, 9), (1, 10);
+	`); err != nil {
+		t.Fatal(err)
+	}
+
+	server := NewServer(db, config.Config{})
+	const target = "/api/favorite-works?page=1&pageSize=48&sort=code&direction=asc&availability="
+	all := requestFavoriteWorksPage(t, server, target+"all")
+	if all.Total != 8 {
+		t.Fatalf("all favorites = %d, want 8", all.Total)
+	}
+	withBadge := func(badges ...string) string {
+		codes := []string{}
+		for _, work := range all.Works {
+			for _, badge := range badges {
+				if slices.Contains(work.Availability, badge) {
+					codes = append(codes, work.PrimaryCode)
+					break
+				}
+			}
+		}
+		return strings.Join(codes, ",")
+	}
+	for _, filter := range []struct {
+		availability string
+		badges       []string
+		want         string
+	}{
+		{"local", []string{"local"}, "RJ00000001,RJ00000002,RJ00000003,RJ00000005"},
+		{"remote", []string{"remote"}, "RJ00000007"},
+		{"cache", []string{"cache"}, "RJ00000008"},
+		{"available", []string{"local", "cache", "remote"}, "RJ00000001,RJ00000002,RJ00000003,RJ00000005,RJ00000007,RJ00000008"},
+		{"missing", []string{"missing"}, "RJ00000009,RJ00000010"},
+	} {
+		page := requestFavoriteWorksPage(t, server, target+filter.availability)
+		codes := make([]string, 0, len(page.Works))
+		for _, work := range page.Works {
+			codes = append(codes, work.PrimaryCode)
+		}
+		got := strings.Join(codes, ",")
+		if got != filter.want || page.Total != len(codes) {
+			t.Errorf("%s filter = %s (total %d), want %s", filter.availability, got, page.Total, filter.want)
+		}
+		if badged := withBadge(filter.badges...); got != badged {
+			t.Errorf("%s filter = %s, but the cards with that badge are %s", filter.availability, got, badged)
+		}
 	}
 }
 

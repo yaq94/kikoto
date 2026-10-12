@@ -3,7 +3,6 @@ import { expect, test, type Page } from "@playwright/test";
 import type {
   FavoriteList,
   FavoriteWorksPage,
-  LibrarySource,
   ListeningStatus,
   SourceAvailabilityResponse,
   UserTag,
@@ -16,7 +15,6 @@ import {
   authenticatedStateFixture,
   circleSummaryPageFixture,
   favoriteListFixture,
-  librarySourceFixture,
   runtimeSettingsFixture,
   voiceSummaryPageFixture,
   workDetailFixture,
@@ -40,14 +38,11 @@ const baseWork = workFixture({
   favorite: true,
 });
 
-const exampleRemoteA = librarySourceFixture({ id: 11 });
-
 async function mockFavorites(
   page: Page,
   options: {
     delayedList?: { id: number; started: () => void; gate: Promise<void> };
-    sources?: LibrarySource[];
-    onFavoriteWorksRequest?: (sourceIDs: number[]) => void;
+    onFavoriteWorksRequest?: (availability: string) => void;
     interactiveQuickMark?: boolean;
     /** Gives each status filter its own covers, so filtered results look different. */
     statusCovers?: boolean;
@@ -116,7 +111,7 @@ async function mockFavorites(
       return;
     }
     if (url.pathname === "/api/favorite-works") {
-      options.onFavoriteWorksRequest?.(url.searchParams.getAll("sourceId").map(Number));
+      options.onFavoriteWorksRequest?.(url.searchParams.get("availability") ?? "");
       const delayedList = options.delayedList;
       if (delayedList && url.searchParams.get("listId") === String(delayedList.id)) {
         delayedList.started();
@@ -155,7 +150,7 @@ async function mockFavorites(
       return;
     }
     if (url.pathname === "/api/library-sources") {
-      await route.fulfill({ json: options.sources ?? [] });
+      await route.fulfill({ json: [] });
       return;
     }
     if (url.pathname === "/api/runtime-settings") {
@@ -227,15 +222,13 @@ async function mockFavorites(
 }
 
 test("@desktop favorites puts shelves in a collapsible rail beside search and work controls", async ({ page }) => {
-  await mockFavorites(page, {
-    sources: [exampleRemoteA],
-  });
+  await mockFavorites(page);
   await page.setViewportSize({ width: 1600, height: 900 });
   await page.goto("/favorites");
 
   const shelves = page.getByRole("navigation", { name: "Favorite shelves" });
   const search = page.getByPlaceholder("Search title, code, circle, tag, or creator");
-  const resource = page.getByRole("button", { name: "Resource: Any available" });
+  const resource = page.getByRole("button", { name: "Resource: All" });
   await expect(shelves.getByRole("button", { name: /^All Favorites/ })).toHaveAttribute("aria-pressed", "true");
   await expect(shelves.getByRole("button", { name: /^Marked/ })).toBeVisible();
   await expect(shelves.getByRole("button", { name: /^Circles/ })).toBeVisible();
@@ -243,7 +236,7 @@ test("@desktop favorites puts shelves in a collapsible rail beside search and wo
   await expect(resource).toBeVisible();
   await expect(page.getByRole("button", { name: "Sort: Marked or added" })).toBeVisible();
   await expect(
-    page.getByRole("button", { name: "Display options (Columns: Auto · Items per page: 24)" }),
+    page.getByRole("button", { name: "Display options (Grid view · Columns: Auto · Items per page: 24)" }),
   ).toBeVisible();
   const searchBox = await search.boundingBox();
   const resourceBox = await resource.boundingBox();
@@ -259,9 +252,9 @@ test("@desktop favorites puts shelves in a collapsible rail beside search and wo
   expect(statusTabsBox!.y).toBeLessThan(headingBox!.y + 2 * headingBox!.height);
 
   await resource.click();
-  await page.getByRole("menuitemradio", { name: "Example Remote A" }).click();
+  await expect(page.getByRole("menuitemradio")).toHaveText(["All", "Available", "Local", "Remote", "Missing"]);
+  await page.getByRole("menuitemradio", { name: "Remote" }).click();
   await expect.poll(() => page.evaluate(() => window.history.state?.favoritesBrowseState?.availability)).toBe("remote");
-  await expect.poll(() => page.evaluate(() => window.history.state?.favoritesBrowseState?.sourceIDs)).toEqual([11]);
 
   await page.getByRole("button", { name: "Select works", exact: true }).click();
   await expect(page.getByRole("button", { name: "Exit selection", exact: true })).toHaveAttribute(
@@ -390,18 +383,16 @@ test("the shelf artwork stays while quick mark filters change the works below", 
 });
 
 test("mobile favorites shows shelves as one row above search and icon controls", async ({ page }) => {
-  await mockFavorites(page, {
-    sources: [exampleRemoteA],
-  });
+  await mockFavorites(page);
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/favorites");
 
   const search = page.getByPlaceholder("Search title, code, circle, tag, or creator");
   await expect(search).toBeVisible();
   await expect(page.getByRole("navigation", { name: "Favorite shelves" })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Resource: Any available" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Resource: All" })).toBeVisible();
   await expect(
-    page.getByRole("button", { name: "Display options (Columns: Auto · Items per page: 24)" }),
+    page.getByRole("button", { name: "Display options (Grid view · Columns: Auto · Items per page: 24)" }),
   ).toBeVisible();
   await expect(page.getByRole("button", { name: "Sort: Marked or added" })).toBeVisible();
 
@@ -596,26 +587,19 @@ test("unmarking a work refreshes All Favorites and removes it immediately", asyn
   await expect(listTabs.locator("button").nth(1)).toContainText("0");
 });
 
-test("filters favorites by any selected file source and keeps the selection out of the canonical URL", async ({
-  page,
-}) => {
-  const sourceRequests: number[][] = [];
+test("filters favorites by availability and keeps the selection out of the canonical URL", async ({ page }) => {
+  const availabilityRequests: string[] = [];
   await mockFavorites(page, {
-    sources: [
-      exampleRemoteA,
-      librarySourceFixture({ id: 12, code: "example_remote_b", displayName: "Example Remote B", enabled: false }),
-    ],
-    onFavoriteWorksRequest: (sourceIDs) => sourceRequests.push(sourceIDs),
+    onFavoriteWorksRequest: (availability) => availabilityRequests.push(availability),
   });
   await page.goto("/favorites");
 
-  await page.getByRole("button", { name: "Resource: Any available" }).click();
-  await page.getByRole("menuitemradio", { name: "Example Remote A" }).click();
-  await expect.poll(() => sourceRequests.at(-1)).toEqual([11]);
+  await page.getByRole("button", { name: "Resource: All" }).click();
+  await page.getByRole("menuitemradio", { name: "Available" }).click();
+  await expect.poll(() => availabilityRequests.at(-1)).toBe("available");
 
   expect(new URL(page.url()).searchParams.size).toBe(0);
-  await expect.poll(() => page.evaluate(() => window.history.state?.favoritesBrowseState?.sourceIDs)).toEqual([11]);
-  await page.getByRole("button", { name: "Resource: Example Remote A" }).click();
-  await page.getByRole("menuitemradio", { name: "Any available" }).click();
-  await expect.poll(() => sourceRequests.at(-1)).toEqual([]);
+  await page.getByRole("button", { name: "Resource: Available" }).click();
+  await page.getByRole("menuitemradio", { name: "All", exact: true }).click();
+  await expect.poll(() => availabilityRequests.at(-1)).toBe("all");
 });

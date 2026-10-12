@@ -1,4 +1,4 @@
-import { Columns3Cog } from "lucide-react";
+import { Columns3Cog, LayoutGrid, List as ListIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { TFunction } from "i18next";
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
@@ -35,6 +35,8 @@ export type {
 const layoutStorageKey = "kikoto:work-collection-layout";
 const layoutChangeEvent = "kikoto:work-collection-layout-change";
 
+export type WorkCollectionViewMode = "grid" | "list";
+
 export function useWorkCollectionLayout(
   initial: WorkCollectionColumnDefaults = { mobileColumns: "auto", desktopColumns: "auto" },
 ) {
@@ -69,11 +71,11 @@ export function useWorkCollectionLayout(
 }
 
 /**
- * One toolbar control for how a work collection is displayed: grid columns,
- * card mode, and items per page share a popover so the toolbar spends a single
- * icon on them. Any group may be omitted (a list view has no columns; some
- * collections are not paged). The popover stays open after a choice so several
- * can be adjusted.
+ * One toolbar control for how a work collection is displayed: the grid or list
+ * view, grid columns, card mode, and items per page share a popover so the
+ * toolbar spends a single icon on them. Any group may be omitted (a list view
+ * has no columns; some collections have one view or are not paged). The
+ * popover stays open after a choice so several can be adjusted.
  */
 export function WorkCollectionDisplayPicker({
   mobileColumns,
@@ -81,6 +83,7 @@ export function WorkCollectionDisplayPicker({
   onMobileColumnsChange,
   onDesktopColumnsChange,
   showColumns = true,
+  view,
   cardModes,
   pageSize,
   pageSizeOptions,
@@ -92,6 +95,8 @@ export function WorkCollectionDisplayPicker({
   onMobileColumnsChange: (value: WorkCollectionColumnSetting) => void;
   onDesktopColumnsChange: (value: WorkCollectionColumnSetting) => void;
   showColumns?: boolean;
+  /** Passing it adds the grid or list choice for collections that draw both. */
+  view?: { mode: WorkCollectionViewMode; onChange: (mode: WorkCollectionViewMode) => void };
   /** Adds the card mode choice; like columns, it is kept apart for narrow and wide screens. */
   cardModes?: {
     mobile: WorkCardMode;
@@ -124,7 +129,12 @@ export function WorkCollectionDisplayPicker({
     else cardModes?.onMobileChange(value);
   };
   const paged = pageSize !== undefined && pageSizeOptions !== undefined && onPageSizeChange !== undefined;
+  const viewOptions = [
+    { value: "grid" as const, label: t("collection.gridView"), icon: LayoutGrid },
+    { value: "list" as const, label: t("collection.listView"), icon: ListIcon },
+  ];
   const summary = [
+    view ? viewOptions.find((option) => option.value === view.mode)?.label : null,
     showColumns ? t("collection.columns", { label: columnSettingLabel(currentColumns, t) }) : null,
     paged ? t("collection.pageSize", { value: pageSize }) : null,
   ]
@@ -154,6 +164,22 @@ export function WorkCollectionDisplayPicker({
         ariaLabel={t("collection.displayOptions")}
         className="flex w-[min(18rem,calc(100vw-1.5rem))] flex-col gap-3 p-3 text-sm"
       >
+        {view && (
+          <DisplayOptionGroup label={t("collection.viewMode")}>
+            {viewOptions.map((option) => (
+              <DisplayOptionButton
+                key={option.value}
+                checked={view.mode === option.value}
+                label={option.label}
+                className="gap-1.5"
+                onSelect={() => view.onChange(option.value)}
+              >
+                <option.icon className="h-4 w-4" aria-hidden="true" />
+                {t(`collection.viewModes.${option.value}`)}
+              </DisplayOptionButton>
+            ))}
+          </DisplayOptionGroup>
+        )}
         {showColumns && (
           <DisplayOptionGroup label={t("collection.columnsHeading")}>
             {columnOptions.map((option) => (

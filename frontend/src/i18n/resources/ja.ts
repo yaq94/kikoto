@@ -204,6 +204,13 @@ const collectionJapanese = {
   columnsHeading: "列数",
   displayOptions: "表示オプション",
   displayOptionsValue: "表示オプション（{{value}}）",
+  viewMode: "表示",
+  gridView: "グリッド表示",
+  listView: "リスト表示",
+  viewModes: {
+    grid: "グリッド",
+    list: "リスト",
+  },
   column_one: "{{count}}列",
   column_other: "{{count}}列",
   loadingWorks: "作品を読み込み中",

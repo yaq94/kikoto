@@ -204,6 +204,13 @@ const collectionKorean = {
   columnsHeading: "열",
   displayOptions: "표시 옵션",
   displayOptionsValue: "표시 옵션 ({{value}})",
+  viewMode: "보기",
+  gridView: "그리드 보기",
+  listView: "목록 보기",
+  viewModes: {
+    grid: "그리드",
+    list: "목록",
+  },
   column_one: "{{count}}열",
   column_other: "{{count}}열",
   loadingWorks: "작품을 불러오는 중",

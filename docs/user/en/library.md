@@ -104,6 +104,9 @@ The Library is the main browsing surface for works.
   scrollable row of source chips, a sort button that names the current order
   and opens the orders and direction in a popover, and a row of Quick mark
   filter chips. Selecting the active chip clears the filter.
+- On wide screens the toolbar's sort button also names the current order and
+  opens the orders and direction in a popover. The Recommended and Random
+  orders add a refresh button beside it.
 - Display options include **Cards**, a choice of **Full**, **Compact**, and
   **Mini** that is stored with the column settings, separately for phones and
   wide screens. **Full** is the default. **Compact** shows each work as a row
@@ -158,9 +161,10 @@ work card or on work detail can create a list in place and select it. Switching
 lists keeps the
 full favorite-list row stable while results load, and Shelved is the final
 listening-state option. Playback cursors alone never add a work to Favorites.
-The source picker can refine favorite works to any of several selected
-configured file sources without creating per-source work copies or requesting
-a live remote refresh.
+The resource filter narrows favorite works by the availability their cards
+show: Available (Local, Cached, or Remote), Local, Remote, or Missing. A work
+whose files belong to another language edition counts with that edition. The
+filter reads stored availability and does not request a live remote refresh.
 
 On wide screens a shelf rail beside the results lists All Favorites, Marked,
 your lists, and followed circles and voice actors with their counts. Like the
@@ -169,8 +173,8 @@ choice is remembered on that device. Each user list can show an icon chosen in
 Edit lists, which is what tells the lists apart in the icon rail; the list icon
 also appears in the add-to-list menus. Phones show the same shelves as one
 scrollable row. The open shelf has a header with a cover mosaic, its count, how
-many works are finished, and the works you are listening to. Works can be shown
-as cards or as a denser list with each work's resume point.
+many works are finished, and the works you are listening to. Display options
+switch works between cards and a denser list with each work's resume point.
 
 ## Identity
 

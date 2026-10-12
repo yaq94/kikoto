@@ -297,7 +297,6 @@ export const libraryApi = {
     listId: number | "all" = "all",
     status = "all",
     availability = "all",
-    sourceIDs: number[] = [],
     sort: FavoriteSort = "added",
     direction: SortDirection = "desc",
     seed = 1,
@@ -313,7 +312,6 @@ export const libraryApi = {
       direction,
       seed: String(seed),
     });
-    for (const sourceID of sourceIDs) params.append("sourceId", String(sourceID));
     if (query.trim()) params.set("q", query.trim());
     return getJSON<FavoriteWorksPage>(`/api/favorite-works?${params.toString()}`, signal);
   },
