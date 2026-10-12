@@ -8,7 +8,9 @@ import {
   listeningStreaks,
   periodStart,
   reportDayCount,
+  rhythmDays,
   sharePercent,
+  weekPartAverages,
   weekdayAverages,
 } from "./listeningHistoryModel";
 
@@ -92,6 +94,28 @@ describe("listening history presentation", () => {
     expect(sharePercent(250, 1000)).toBe(25);
     expect(sharePercent(0, 1000)).toBe(0);
     expect(sharePercent(10, 0)).toBe(0);
+  });
+});
+
+describe("listening rhythm", () => {
+  it("averages Monday to Friday and the weekend over all of their days", () => {
+    // Monday 2026-03-02 through Sunday 2026-03-15.
+    const series = days([600, 0, 0, 0, 400, 1200, 0, 0, 0, 0, 0, 0, 600, 600]);
+    expect(weekPartAverages(series)).toEqual({ workdaySeconds: 100, weekendSeconds: 600 });
+    expect(weekPartAverages([])).toEqual({ workdaySeconds: 0, weekendSeconds: 0 });
+  });
+
+  it("reads a daily report's own series and the calendar's days for a longer one", () => {
+    const calendarDays = days([60, 0, 120, 0], "2026-02-27");
+    const daily = days([30, 30]);
+    expect(rhythmDays(daily, "day", null)).toEqual({ days: daily, pastYearOnly: false });
+    const monthly = [{ period: "2026-03", listenedSeconds: 120, listenCount: 1 }];
+    expect(rhythmDays(monthly, "month", null)).toBeNull();
+    // Only the calendar days of the report's range count.
+    expect(rhythmDays(monthly, "month", calendarDays)).toEqual({ days: calendarDays.slice(2), pastYearOnly: false });
+    // A report that starts long before the calendar is described by the calendar alone.
+    const yearly = [{ period: "2024", listenedSeconds: 180, listenCount: 2 }];
+    expect(rhythmDays(yearly, "year", calendarDays)).toEqual({ days: calendarDays, pastYearOnly: true });
   });
 });
 

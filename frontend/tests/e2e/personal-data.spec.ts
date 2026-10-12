@@ -112,7 +112,14 @@ async function mockPersonalData(
     }
     if (url.pathname === "/api/listening-breakdown") {
       await route.fulfill({
-        json: { range: url.searchParams.get("range") ?? "all", listenedSeconds: 0, tags: [], voices: [], circles: [] },
+        json: {
+          range: url.searchParams.get("range") ?? "all",
+          rank: url.searchParams.get("rank") ?? "time",
+          listenedSeconds: 0,
+          tags: [],
+          voices: [],
+          circles: [],
+        },
       });
       return;
     }

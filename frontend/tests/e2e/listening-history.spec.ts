@@ -67,13 +67,19 @@ async function mockListeningServer(page: Page, options: { failFirstReport?: bool
       },
     }),
   );
-  await page.route("**/api/listening-breakdown*", (route) =>
-    route.fulfill({
+  await page.route("**/api/listening-breakdown*", (route) => {
+    const params = new URL(route.request().url()).searchParams;
+    const rank = params.get("rank") ?? "time";
+    // A preference ranking also reports how much of the library each entry covers.
+    const library = rank === "preference" ? { libraryWorkCount: 2 } : {};
+    return route.fulfill({
       json: {
-        range: new URL(route.request().url()).searchParams.get("range") ?? "all",
+        range: params.get("range") ?? "all",
+        rank,
         listenedSeconds: 600,
-        tags: [{ id: 3, name: "Example Tag", listenedSeconds: 600, listenCount: 2, workCount: 1 }],
-        voices: [{ id: 7, name: "Example Voice", listenedSeconds: 600, listenCount: 2, workCount: 1 }],
+        ...(rank === "preference" ? { libraryWorkCount: 10 } : {}),
+        tags: [{ id: 3, name: "Example Tag", listenedSeconds: 600, listenCount: 2, workCount: 1, ...library }],
+        voices: [{ id: 7, name: "Example Voice", listenedSeconds: 600, listenCount: 2, workCount: 1, ...library }],
         circles: [
           {
             id: 5,
@@ -82,12 +88,13 @@ async function mockListeningServer(page: Page, options: { failFirstReport?: bool
             listenedSeconds: 600,
             listenCount: 2,
             workCount: 1,
+            ...library,
           },
-          { id: 6, name: "Example Circle 2", listenedSeconds: 60, listenCount: 1, workCount: 1 },
+          { id: 6, name: "Example Circle 2", listenedSeconds: 60, listenCount: 1, workCount: 1, ...library },
         ],
       },
-    }),
-  );
+    });
+  });
   await page.route("**/api/listening-history*", async (route) => {
     if (route.request().method() === "DELETE") {
       server.generation += 1;
@@ -341,10 +348,10 @@ test("@desktop the listening report switches between its ranges", async ({ page 
 
   const ranges = page.getByRole("group", { name: "Report period" });
   await expect(ranges.getByRole("button", { name: "30 days" })).toHaveAttribute("aria-pressed", "true");
-  await expect(page.getByRole("table", { name: "Daily listening time (UTC)" })).toBeAttached();
+  await expect(page.getByRole("table", { name: "Daily listening time" })).toBeAttached();
   await ranges.getByRole("button", { name: "12 months" }).click();
   await expect(ranges.getByRole("button", { name: "12 months" })).toHaveAttribute("aria-pressed", "true");
-  await expect(page.getByRole("table", { name: "Monthly listening time (UTC)" })).toBeAttached();
+  await expect(page.getByRole("table", { name: "Monthly listening time" })).toBeAttached();
   expect(requestedRanges.at(-1)).toBe("12m");
 });
 
@@ -363,6 +370,14 @@ test("@desktop the listening dashboard ranks tags, voices, and circles and links
     "href",
     /^\/\?.*Example/,
   );
+  // Preference is the default ranking: a share of listening time against a share of the library.
+  const tags = page.getByRole("list", { name: "Top tags" });
+  await expect(tags.getByText("100% of time")).toBeVisible();
+  await expect(tags.getByText("20% of library")).toBeVisible();
+  await page.getByRole("group", { name: "Ranking" }).getByRole("button", { name: "Listening time" }).click();
+  await expect(tags.getByText("10 min")).toBeVisible();
+  await expect(tags.getByText("1 work", { exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Your data" })).toHaveAttribute("href", "/settings?tab=data");
   const circles = page.getByRole("list", { name: "Top circles" });
   await expect(circles.getByRole("link", { name: /Example Circle/ })).toHaveAttribute("href", "/circles/RG00000000");
   // A circle without a provider id has no page to open.
@@ -381,7 +396,7 @@ test("@desktop the listening report's screen reader table adds no scroll space b
   await page.goto("/insights");
 
   // Thirty daily rows are far taller than the page when the table is not clipped.
-  await expect(page.getByRole("table", { name: "Daily listening time (UTC)" }).getByRole("row")).toHaveCount(31);
+  await expect(page.getByRole("table", { name: "Daily listening time" }).getByRole("row")).toHaveCount(31);
   const overflow = await page.evaluate(() => {
     const records = document.querySelector("[aria-labelledby='listening-history-heading']")!;
     const contentBottom = records.getBoundingClientRect().bottom + window.scrollY;

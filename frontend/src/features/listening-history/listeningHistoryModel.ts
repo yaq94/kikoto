@@ -1,4 +1,9 @@
-import type { ListeningCalendar, ListeningPeriodStatistic, ListeningStatisticsRange } from "@/lib/listeningApi";
+import type {
+  ListeningCalendar,
+  ListeningGranularity,
+  ListeningPeriodStatistic,
+  ListeningStatisticsRange,
+} from "@/lib/listeningApi";
 
 export const LISTENING_HISTORY_PAGE_SIZE = 30;
 
@@ -87,6 +92,46 @@ export function weekdayAverages(series: readonly ListeningPeriodStatistic[]) {
     weekday,
     averageSeconds: total.days > 0 ? Math.round(total.seconds / total.days) : 0,
   }));
+}
+
+/**
+ * Mean listening per day from Monday to Friday and per weekend day of a daily
+ * series, counting the days without listening.
+ */
+export function weekPartAverages(series: readonly ListeningPeriodStatistic[]) {
+  const workdays = { seconds: 0, days: 0 };
+  const weekend = { seconds: 0, days: 0 };
+  for (const entry of series) {
+    const part = (periodStart(entry.period).getUTCDay() + 6) % 7 < 5 ? workdays : weekend;
+    part.seconds += entry.listenedSeconds;
+    part.days += 1;
+  }
+  return {
+    workdaySeconds: workdays.days > 0 ? Math.round(workdays.seconds / workdays.days) : 0,
+    weekendSeconds: weekend.days > 0 ? Math.round(weekend.seconds / weekend.days) : 0,
+  };
+}
+
+/**
+ * The daily listening a report's weekly rhythm reads: the report's own series
+ * when it is daily, else the calendar's days from the report's first period
+ * on. `pastYearOnly` says the report starts more than a week before the
+ * calendar does. Null while a monthly or yearly report has no calendar yet.
+ */
+export function rhythmDays(
+  series: readonly ListeningPeriodStatistic[],
+  granularity: ListeningGranularity,
+  calendarDays: readonly ListeningPeriodStatistic[] | null,
+) {
+  if (granularity === "day") return { days: series, pastYearOnly: false };
+  if (!calendarDays) return null;
+  const start = series[0] ? periodStart(series[0].period) : null;
+  const earliest = calendarDays[0] ? periodStart(calendarDays[0].period) : null;
+  const startDay = start ? start.toISOString().slice(0, 10) : "";
+  return {
+    days: calendarDays.filter((day) => day.period >= startDay),
+    pastYearOnly: start !== null && earliest !== null && earliest.getTime() - start.getTime() > 7 * 86_400_000,
+  };
 }
 
 /** UTC calendar days a report covers, from its first period's start through today. */

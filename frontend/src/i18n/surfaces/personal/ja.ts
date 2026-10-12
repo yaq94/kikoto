@@ -58,13 +58,12 @@ export const personalJapanese = {
       works: "作品",
       activeDays: "聴取した日数",
       chartTitle: {
-        day: "日別の聴取時間（UTC）",
-        month: "月別の聴取時間（UTC）",
-        year: "年別の聴取時間（UTC）",
+        day: "日別の聴取時間",
+        month: "月別の聴取時間",
+        year: "年別の聴取時間",
       },
       periodReadout_one: "{{period}} · {{duration}} · {{count}} 回再生",
       periodReadout_other: "{{period}} · {{duration}} · {{count}} 回再生",
-      periodHint: "バーにポインターを合わせるかタップすると合計が表示されます。",
       averageLine: "平均 {{duration}}",
       average: {
         day: "聴取日あたりの平均",
@@ -78,14 +77,13 @@ export const personalJapanese = {
       },
       busiestValue: "{{period}} · {{duration}}",
       noListeningInPeriod: "この期間の聴取はありません。",
-      period: "期間（UTC）",
+      period: "期間",
       rangeLabel: "レポート期間",
       ranges: {
         "30d": "30 日",
         "12m": "12 か月",
         all: "すべて",
       },
-      rangeNote: "日付のないインポート済みの合計は「すべて」にのみ含まれます。",
       topWorks: "よく聴いた作品",
       topWorksBasis: "聴取時間順",
       recent: "聴取履歴",
@@ -107,18 +105,13 @@ export const personalJapanese = {
       periodCount: {
         day_one: "{{count}} 日",
         day_other: "{{count}} 日",
-        month_one: "{{count}} か月",
-        month_other: "{{count}} か月",
-        year_one: "{{count}} 年",
-        year_other: "{{count}} 年",
       },
+      workdayAverage: "月〜金の 1 日平均",
+      weekendAverage: "週末の 1 日平均",
+      rhythmPastYear: "過去 1 年に基づきます。",
+      notes:
+        "日付は UTC で数えます。実際に音声が再生されている時間だけを記録します。一時停止、読み込み待ち、シーク中は含みません。日付のないインポート済みの合計は「すべて」にのみ含まれます。",
       weekdayAverage: "曜日別の平均",
-      activePeriods: {
-        day: "聴取した日",
-        month: "聴取した月",
-        year: "聴取した年",
-      },
-      activePeriodsValue: "{{total}} 中 {{active}}",
       rank: "{{rank}} 位",
       search: "履歴を検索",
       clearSearch: "履歴検索をクリア",
@@ -137,7 +130,7 @@ export const personalJapanese = {
       clearFailed: "聴取履歴を消去できませんでした。",
       calendar: {
         title: "聴取カレンダー",
-        basis: "過去 1 年 · UTC の日単位",
+        basis: "過去 1 年",
         hint: "日にポインターを合わせるかタップすると合計が表示されます。",
         noListening: "{{date}} · 聴取なし",
         summary_one: "過去 1 年で {{count}} 日聴取、合計 {{duration}}。",
@@ -147,8 +140,19 @@ export const personalJapanese = {
         failed: "聴取カレンダーを読み込めませんでした。",
       },
       breakdown: {
+        basis: {
+          preference:
+            "聴取時間に占める割合が、ライブラリの作品に占める割合をどれだけ上回るかの順です。バーが前者、縦線が後者です。1 つの作品の時間は、その作品のすべてのタグと声優にそのまま計上されます。",
+          time: "作品の聴取時間順です。1 つの作品の時間は、その作品のすべてのタグと声優にそのまま計上されます。",
+        },
+        rankLabel: "並び順",
+        ranks: {
+          preference: "好み",
+          time: "聴取時間",
+        },
+        libraryShare: "ライブラリの {{percent}}%",
+        emptyPreference: "この期間にライブラリの割合を上回る項目はありません。",
         heading: "タグ・声優・サークル",
-        basis: "作品の聴取時間順です。1 つの作品の時間は、その作品のすべてのタグと声優にそのまま計上されます。",
         titles: {
           tags: "よく聴いたタグ",
           voices: "よく聴いた声優",
@@ -169,7 +173,6 @@ export const personalJapanese = {
         showAll: "上位 {{count}} 件を表示",
         failed: "ランキングを読み込めませんでした。",
       },
-      recordingNote: "実際に音声が再生されている時間だけを記録します。一時停止、読み込み待ち、シーク中は含みません。",
     },
     insights: {
       dataHint: "マーク、評価、進行状況、タグ、リストをエクスポートまたはインポートします。",

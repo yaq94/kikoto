@@ -57,13 +57,12 @@ export const personalHant = {
       works: "作品",
       activeDays: "收聽天數",
       chartTitle: {
-        day: "每日收聽時長（UTC）",
-        month: "每月收聽時長（UTC）",
-        year: "每年收聽時長（UTC）",
+        day: "每日收聽時長",
+        month: "每月收聽時長",
+        year: "每年收聽時長",
       },
       periodReadout_one: "{{period}} · {{duration}} · 播放 {{count}} 次",
       periodReadout_other: "{{period}} · {{duration}} · 播放 {{count}} 次",
-      periodHint: "指向或輕觸長條即可查看合計。",
       averageLine: "平均 {{duration}}",
       average: {
         day: "收聽日平均",
@@ -77,14 +76,13 @@ export const personalHant = {
       },
       busiestValue: "{{period}} · {{duration}}",
       noListeningInPeriod: "這段期間沒有收聽記錄。",
-      period: "期間（UTC）",
+      period: "期間",
       rangeLabel: "報表時間範圍",
       ranges: {
         "30d": "30 天",
         "12m": "12 個月",
         all: "全部",
       },
-      rangeNote: "沒有日期的匯入時長只計入「全部」。",
       topWorks: "最常收聽",
       topWorksBasis: "依收聽時長",
       recent: "收聽歷史",
@@ -106,18 +104,12 @@ export const personalHant = {
       periodCount: {
         day_one: "{{count}} 天",
         day_other: "{{count}} 天",
-        month_one: "{{count}} 個月",
-        month_other: "{{count}} 個月",
-        year_one: "{{count}} 年",
-        year_other: "{{count}} 年",
       },
+      workdayAverage: "週一至週五日均",
+      weekendAverage: "週末日均",
+      rhythmPastYear: "基於過去一年。",
+      notes: "日期依 UTC 計算。只記錄音訊實際播放的時間，不包括暫停、緩衝和跳轉。沒有日期的匯入時長只計入「全部」。",
       weekdayAverage: "依星期平均",
-      activePeriods: {
-        day: "有收聽的日子",
-        month: "有收聽的月份",
-        year: "有收聽的年份",
-      },
-      activePeriodsValue: "{{active}} / {{total}}",
       rank: "第 {{rank}} 名",
       search: "搜尋歷史",
       clearSearch: "清除歷史搜尋",
@@ -136,7 +128,7 @@ export const personalHant = {
       clearFailed: "無法清除收聽歷史。",
       calendar: {
         title: "收聽日曆",
-        basis: "過去一年 · 依 UTC 日",
+        basis: "過去一年",
         hint: "指向或輕觸某一天即可查看合計。",
         noListening: "{{date}} · 沒有收聽",
         summary_one: "過去一年有 {{count}} 天收聽，共 {{duration}}。",
@@ -146,8 +138,19 @@ export const personalHant = {
         failed: "無法載入收聽日曆。",
       },
       breakdown: {
+        basis: {
+          preference:
+            "依收聽時間占比高出資料庫作品占比的幅度排名；長條是前者，直線是後者。一部作品會完整計入它的每個標籤和聲優。",
+          time: "依其作品的收聽時長排名。一部作品會完整計入它的每個標籤和聲優。",
+        },
+        rankLabel: "排名方式",
+        ranks: {
+          preference: "偏好度",
+          time: "收聽時長",
+        },
+        libraryShare: "占資料庫 {{percent}}%",
+        emptyPreference: "這段時間沒有高於資料庫占比的項目。",
         heading: "標籤、聲優和社團",
-        basis: "依其作品的收聽時長排名。一部作品會完整計入它的每個標籤和聲優。",
         titles: {
           tags: "常聽標籤",
           voices: "常聽聲優",
@@ -168,7 +171,6 @@ export const personalHant = {
         showAll: "顯示前 {{count}} 項",
         failed: "無法載入排行。",
       },
-      recordingNote: "只記錄音訊實際播放的時間，不包括暫停、緩衝和跳轉。",
     },
     insights: {
       dataHint: "匯出或匯入你的標記、評分、進度、標籤和清單。",

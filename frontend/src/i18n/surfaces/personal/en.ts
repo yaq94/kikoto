@@ -58,13 +58,12 @@ export const personalEnglish = {
       works: "Works",
       activeDays: "Active days",
       chartTitle: {
-        day: "Daily listening time (UTC)",
-        month: "Monthly listening time (UTC)",
-        year: "Yearly listening time (UTC)",
+        day: "Daily listening time",
+        month: "Monthly listening time",
+        year: "Yearly listening time",
       },
       periodReadout_one: "{{period}} · {{duration}} · {{count}} play",
       periodReadout_other: "{{period}} · {{duration}} · {{count}} plays",
-      periodHint: "Point at or tap a bar to see its total.",
       averageLine: "Avg {{duration}}",
       average: {
         day: "Average per listening day",
@@ -78,14 +77,13 @@ export const personalEnglish = {
       },
       busiestValue: "{{period}} · {{duration}}",
       noListeningInPeriod: "No listening in this period.",
-      period: "Period (UTC)",
+      period: "Period",
       rangeLabel: "Report period",
       ranges: {
         "30d": "30 days",
         "12m": "12 months",
         all: "All time",
       },
-      rangeNote: "Imported totals without dates count only in All time.",
       topWorks: "Most listened",
       topWorksBasis: "By listening time",
       recent: "Listening history",
@@ -107,18 +105,13 @@ export const personalEnglish = {
       periodCount: {
         day_one: "{{count}} day",
         day_other: "{{count}} days",
-        month_one: "{{count}} month",
-        month_other: "{{count}} months",
-        year_one: "{{count}} year",
-        year_other: "{{count}} years",
       },
+      workdayAverage: "Monday to Friday, per day",
+      weekendAverage: "Weekend, per day",
+      rhythmPastYear: "Based on the past year.",
+      notes:
+        "Days are counted in UTC. Only time while audio is actually playing is counted; pauses, buffering, and seeking are not. Imported totals without dates count only in All time.",
       weekdayAverage: "Average per weekday",
-      activePeriods: {
-        day: "Days with listening",
-        month: "Months with listening",
-        year: "Years with listening",
-      },
-      activePeriodsValue: "{{active}} of {{total}}",
       rank: "Rank {{rank}}",
       search: "Search history",
       clearSearch: "Clear history search",
@@ -138,7 +131,7 @@ export const personalEnglish = {
       clearFailed: "Listening history could not be cleared.",
       calendar: {
         title: "Listening calendar",
-        basis: "Past year · UTC days",
+        basis: "Past year",
         hint: "Point at or tap a day to see its total.",
         noListening: "{{date}} · No listening",
         summary_one: "{{count}} day with listening in the past year, {{duration}} in total.",
@@ -148,8 +141,19 @@ export const personalEnglish = {
         failed: "The listening calendar could not be loaded.",
       },
       breakdown: {
+        basis: {
+          preference:
+            "Ranked by how far their share of your listening time exceeds their share of the library's works; the bar is the first and the mark is the second. A work counts in full toward each of its tags and voices.",
+          time: "Ranked by the listening time of their works. A work counts in full toward each of its tags and voices.",
+        },
+        rankLabel: "Ranking",
+        ranks: {
+          preference: "Preference",
+          time: "Listening time",
+        },
+        libraryShare: "{{percent}}% of library",
+        emptyPreference: "Nothing stands out from the library in this period.",
         heading: "Tags, voices, and circles",
-        basis: "Ranked by the listening time of their works. A work counts in full toward each of its tags and voices.",
         titles: {
           tags: "Top tags",
           voices: "Top voices",
@@ -170,7 +174,6 @@ export const personalEnglish = {
         showAll: "Show top {{count}}",
         failed: "The rankings could not be loaded.",
       },
-      recordingNote: "Only time while audio is actually playing is counted; pauses, buffering, and seeking are not.",
     },
     insights: {
       dataHint: "Export or import your marks, ratings, progress, tags, and lists.",

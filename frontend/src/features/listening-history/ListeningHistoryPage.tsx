@@ -1,5 +1,5 @@
 import { CalendarDays, ChevronDown, Clock, Disc3, History, Loader2, PlayCircle, Search, Trash2, X } from "lucide-react";
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 
 import { CollectionPagination } from "@/components/collection/CollectionPagination";
@@ -15,6 +15,7 @@ import { announceListeningHistoryCleared } from "@/lib/listeningHistoryEvents";
 import {
   listeningApi,
   type ListeningBreakdown,
+  type ListeningBreakdownRank,
   type ListeningCalendar as ListeningCalendarData,
   type ListeningHistoryPage as ListeningHistoryResult,
   type ListeningStatistics,
@@ -29,8 +30,10 @@ import { ListeningCalendar } from "./ListeningCalendar";
 import {
   LISTENING_HISTORY_PAGE_SIZE,
   LISTENING_REPORT_RANGES,
+  listeningCalendarWeeks,
   listeningDurationParts,
   reportDayCount,
+  rhythmDays,
   sharePercent,
 } from "./listeningHistoryModel";
 import { ListeningRhythm } from "./ListeningRhythm";
@@ -48,6 +51,9 @@ const TOP_WORK_COUNT = 5;
 
 const BREAKDOWN_KINDS = ["tags", "voices", "circles"] as const;
 
+/** Breakdown rankings in switcher order; the first is the default. */
+const BREAKDOWN_RANKS: readonly ListeningBreakdownRank[] = ["preference", "time"];
+
 function useDurationFormatter() {
   const { t } = useTranslation();
   return useCallback(
@@ -64,19 +70,23 @@ function useDurationFormatter() {
  * a chosen range with totals, activity over time, the most listened works,
  * listening rhythm, and the leading tags, voices, and circles, with the full
  * per-work history collapsed below it. The history is a record rather than a
- * summary, so it loads only once opened.
+ * summary, so it loads only once opened. Works are the library's canonical
+ * works throughout.
  */
 export function ListeningHistoryPage({
   canClear,
   storageScope,
   workLink,
   entityLink,
+  actions,
 }: {
   canClear: boolean;
   /** Server and principal scope; players in this scope drop unreported pre-clear sessions. */
   storageScope: string;
   workLink: ListeningHistoryWorkLinkFactory;
   entityLink: ListeningEntityLinkFactory;
+  /** Further data actions of the composing page, shown beside clearing history. */
+  actions?: ReactNode;
 }) {
   const { t } = useTranslation();
   const toast = useToast();
@@ -86,6 +96,7 @@ export function ListeningHistoryPage({
   const [statistics, setStatistics] = useState<LoadState<ListeningStatistics>>({ status: "loading", data: null });
   const [calendar, setCalendar] = useState<LoadState<ListeningCalendarData>>({ status: "loading", data: null });
   const [breakdown, setBreakdown] = useState<LoadState<ListeningBreakdown>>({ status: "loading", data: null });
+  const [rank, setRank] = useState<ListeningBreakdownRank>(BREAKDOWN_RANKS[0]);
   const [history, setHistory] = useState<LoadState<ListeningHistoryResult>>({ status: "loading", data: null });
   const [recordsOpen, setRecordsOpen] = useState(false);
   const [allTopWorks, setAllTopWorks] = useState(false);
@@ -135,13 +146,13 @@ export function ListeningHistoryPage({
     const controller = new AbortController();
     setBreakdown((current) => ({ status: "loading", data: current.data }));
     listeningApi
-      .breakdown(range, controller.signal)
+      .breakdown(range, rank, controller.signal)
       .then((data) => setBreakdown({ status: "ready", data }))
       .catch(() => {
         if (!controller.signal.aborted) setBreakdown((current) => ({ status: "error", data: current.data }));
       });
     return () => controller.abort();
-  }, [range, statisticsToken]);
+  }, [range, rank, statisticsToken]);
 
   useEffect(() => {
     if (!recordsOpen) return;
@@ -197,6 +208,12 @@ export function ListeningHistoryPage({
     return t("personal.history.recordDetail", { plays, date });
   };
 
+  const calendarDays = useMemo(
+    () => (calendar.data ? listeningCalendarWeeks(calendar.data).days : null),
+    [calendar.data],
+  );
+  const rhythm = stats ? rhythmDays(stats.series, stats.granularity, calendarDays) : null;
+
   return (
     <div className="mx-auto w-full max-w-6xl space-y-5">
       <section
@@ -218,12 +235,9 @@ export function ListeningHistoryPage({
 
       <section aria-labelledby="listening-summary-heading" className="space-y-4">
         <div className="flex flex-wrap items-end justify-between gap-3">
-          <div className="min-w-0 px-1">
-            <h2 id="listening-summary-heading" className="text-base font-semibold">
-              {t("personal.history.summary")}
-            </h2>
-            <p className="mt-0.5 text-xs leading-5 text-muted-foreground">{t("personal.history.recordingNote")}</p>
-          </div>
+          <h2 id="listening-summary-heading" className="min-w-0 px-1 text-base font-semibold">
+            {t("personal.history.summary")}
+          </h2>
           <div className="flex flex-wrap items-center gap-2">
             <div className={segmentedListClassName()} role="group" aria-label={t("personal.history.rangeLabel")}>
               {LISTENING_REPORT_RANGES.map((option) => (
@@ -244,9 +258,9 @@ export function ListeningHistoryPage({
                 {t("personal.history.clear")}
               </Button>
             )}
+            {actions}
           </div>
         </div>
-        {range !== "all" && <p className="px-1 text-2xs text-muted-foreground">{t("personal.history.rangeNote")}</p>}
         {statistics.status === "error" && (
           <InlineRetry
             message={t("personal.history.statisticsFailed")}
@@ -365,12 +379,15 @@ export function ListeningHistoryPage({
                 <h3 id="listening-rhythm-heading" className="mb-3 text-sm font-semibold">
                   {t("personal.history.rhythm")}
                 </h3>
-                <ListeningRhythm
-                  key={stats.range}
-                  series={stats.series}
-                  granularity={stats.granularity}
-                  formatDuration={formatDuration}
-                />
+                {rhythm ? (
+                  <ListeningRhythm
+                    days={rhythm.days}
+                    pastYearOnly={rhythm.pastYearOnly}
+                    formatDuration={formatDuration}
+                  />
+                ) : (
+                  <div className="h-48 animate-pulse rounded-lg bg-muted" />
+                )}
               </section>
             </div>
           )}
@@ -378,11 +395,28 @@ export function ListeningHistoryPage({
       </section>
 
       <section aria-labelledby="listening-breakdown-heading" className="space-y-3">
-        <div className="min-w-0 px-1">
-          <h2 id="listening-breakdown-heading" className="text-base font-semibold">
-            {t("personal.history.breakdown.heading")}
-          </h2>
-          <p className="mt-0.5 text-xs leading-5 text-muted-foreground">{t("personal.history.breakdown.basis")}</p>
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div className="min-w-0 px-1">
+            <h2 id="listening-breakdown-heading" className="text-base font-semibold">
+              {t("personal.history.breakdown.heading")}
+            </h2>
+            <p className="mt-0.5 max-w-3xl text-xs leading-5 text-muted-foreground">
+              {t(`personal.history.breakdown.basis.${rank}`)}
+            </p>
+          </div>
+          <div className={segmentedListClassName()} role="group" aria-label={t("personal.history.breakdown.rankLabel")}>
+            {BREAKDOWN_RANKS.map((option) => (
+              <button
+                key={option}
+                type="button"
+                className={segmentedItemClassName(rank === option)}
+                aria-pressed={rank === option}
+                onClick={() => setRank(option)}
+              >
+                {t(`personal.history.breakdown.ranks.${option}`)}
+              </button>
+            ))}
+          </div>
         </div>
         {breakdown.status === "error" && (
           <InlineRetry
@@ -400,9 +434,9 @@ export function ListeningHistoryPage({
           {BREAKDOWN_KINDS.map((kind) =>
             breakdown.data ? (
               <ListeningBreakdownCard
-                key={`${breakdown.data.range}:${kind}`}
+                key={`${breakdown.data.range}:${breakdown.data.rank}:${kind}`}
                 kind={kind}
-                entries={breakdown.data[kind]}
+                breakdown={breakdown.data}
                 formatDuration={formatDuration}
                 link={entityLink}
               />
@@ -515,6 +549,8 @@ export function ListeningHistoryPage({
           )}
         </SettingsDisclosure>
       </section>
+
+      <p className="px-1 text-2xs leading-5 text-muted-foreground">{t("personal.history.notes")}</p>
 
       {confirmClear && (
         <Dialog

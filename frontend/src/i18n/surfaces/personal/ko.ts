@@ -58,13 +58,12 @@ export const personalKorean = {
       works: "작품",
       activeDays: "청취한 날",
       chartTitle: {
-        day: "일별 청취 시간(UTC)",
-        month: "월별 청취 시간(UTC)",
-        year: "연도별 청취 시간(UTC)",
+        day: "일별 청취 시간",
+        month: "월별 청취 시간",
+        year: "연도별 청취 시간",
       },
       periodReadout_one: "{{period}} · {{duration}} · {{count}}회 재생",
       periodReadout_other: "{{period}} · {{duration}} · {{count}}회 재생",
-      periodHint: "막대를 가리키거나 탭하면 합계가 표시됩니다.",
       averageLine: "평균 {{duration}}",
       average: {
         day: "청취한 날 평균",
@@ -78,14 +77,13 @@ export const personalKorean = {
       },
       busiestValue: "{{period}} · {{duration}}",
       noListeningInPeriod: "이 기간에는 청취 기록이 없습니다.",
-      period: "기간(UTC)",
+      period: "기간",
       rangeLabel: "리포트 기간",
       ranges: {
         "30d": "30일",
         "12m": "12개월",
         all: "전체",
       },
-      rangeNote: "날짜가 없는 가져온 합계는 '전체'에만 포함됩니다.",
       topWorks: "가장 많이 들은 작품",
       topWorksBasis: "청취 시간순",
       recent: "청취 기록",
@@ -107,18 +105,13 @@ export const personalKorean = {
       periodCount: {
         day_one: "{{count}}일",
         day_other: "{{count}}일",
-        month_one: "{{count}}개월",
-        month_other: "{{count}}개월",
-        year_one: "{{count}}년",
-        year_other: "{{count}}년",
       },
+      workdayAverage: "월~금 하루 평균",
+      weekendAverage: "주말 하루 평균",
+      rhythmPastYear: "지난 1년 기준입니다.",
+      notes:
+        "날짜는 UTC 기준입니다. 실제로 오디오가 재생되는 시간만 기록합니다. 일시 정지, 버퍼링, 탐색은 포함하지 않습니다. 날짜가 없는 가져온 합계는 '전체'에만 포함됩니다.",
       weekdayAverage: "요일별 평균",
-      activePeriods: {
-        day: "청취한 날",
-        month: "청취한 달",
-        year: "청취한 해",
-      },
-      activePeriodsValue: "{{total}} 중 {{active}}",
       rank: "{{rank}}위",
       search: "기록 검색",
       clearSearch: "기록 검색 지우기",
@@ -138,7 +131,7 @@ export const personalKorean = {
       clearFailed: "청취 기록을 지우지 못했습니다.",
       calendar: {
         title: "청취 달력",
-        basis: "지난 1년 · UTC 기준 일",
+        basis: "지난 1년",
         hint: "날짜를 가리키거나 탭하면 합계가 표시됩니다.",
         noListening: "{{date}} · 청취 없음",
         summary_one: "지난 1년 동안 {{count}}일 청취, 총 {{duration}}.",
@@ -148,8 +141,19 @@ export const personalKorean = {
         failed: "청취 달력을 불러오지 못했습니다.",
       },
       breakdown: {
+        basis: {
+          preference:
+            "청취 시간에서 차지하는 비율이 라이브러리 작품에서 차지하는 비율을 얼마나 넘는지 순입니다. 막대가 앞의 비율, 세로선이 뒤의 비율입니다. 한 작품의 시간은 그 작품의 모든 태그와 성우에 그대로 반영됩니다.",
+          time: "작품의 청취 시간순입니다. 한 작품의 시간은 그 작품의 모든 태그와 성우에 그대로 반영됩니다.",
+        },
+        rankLabel: "정렬 기준",
+        ranks: {
+          preference: "선호도",
+          time: "청취 시간",
+        },
+        libraryShare: "라이브러리의 {{percent}}%",
+        emptyPreference: "이 기간에 라이브러리 비율을 넘는 항목이 없습니다.",
         heading: "태그, 성우, 서클",
-        basis: "작품의 청취 시간순입니다. 한 작품의 시간은 그 작품의 모든 태그와 성우에 그대로 반영됩니다.",
         titles: {
           tags: "가장 많이 들은 태그",
           voices: "가장 많이 들은 성우",
@@ -170,7 +174,6 @@ export const personalKorean = {
         showAll: "상위 {{count}}개 보기",
         failed: "순위를 불러오지 못했습니다.",
       },
-      recordingNote: "실제로 오디오가 재생되는 시간만 기록합니다. 일시 정지, 버퍼링, 탐색은 포함하지 않습니다.",
     },
     insights: {
       dataHint: "표시, 평점, 진행 상황, 태그, 목록을 내보내거나 가져옵니다.",

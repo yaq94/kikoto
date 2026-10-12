@@ -3,10 +3,10 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
-import type { ListeningBreakdownEntry, ListeningBreakdownKind } from "@/lib/listeningApi";
+import type { ListeningBreakdown, ListeningBreakdownEntry, ListeningBreakdownKind } from "@/lib/listeningApi";
 import { cn } from "@/lib/tailwindClassNames";
 
-import { barPercent } from "./listeningHistoryModel";
+import { barPercent, sharePercent } from "./listeningHistoryModel";
 import { openLinkInPlace, type ListeningHistoryWorkLink } from "./ListeningWorkRow";
 
 /** Where a ranked tag, voice, or circle opens, composed by the app shell; null when it has no destination. */
@@ -19,28 +19,40 @@ export type ListeningEntityLinkFactory = (
 const TOP_ENTRY_COUNT = 5;
 
 /**
- * One dimension of a listening report: tags, voices, or circles ranked by the
- * listening time of their works, each with a bar relative to the leader. An
- * entry with a destination opens it in place on a plain primary click.
+ * One dimension of a listening report: tags, voices, or circles in the
+ * report's ranking. Ranked by time, an entry shows its listening time on a bar
+ * relative to the leader. Ranked by preference, it shows its share of
+ * listening time on the bar and its share of the library's works as a mark on
+ * the same scale. An entry with a destination opens it in place on a plain
+ * primary click.
  */
 export function ListeningBreakdownCard({
   kind,
-  entries,
+  breakdown,
   formatDuration,
   link,
 }: {
   kind: ListeningBreakdownKind;
-  entries: readonly ListeningBreakdownEntry[];
+  breakdown: ListeningBreakdown;
   formatDuration: (seconds: number) => string;
   link: ListeningEntityLinkFactory;
 }) {
   const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
+  const entries = breakdown[kind];
+  const byPreference = breakdown.rank === "preference";
+  const libraryWorks = breakdown.libraryWorkCount ?? 0;
   const headingId = `listening-breakdown-${kind}-heading`;
   const title = t(`personal.history.breakdown.titles.${kind}`);
   const shown = expanded ? entries : entries.slice(0, TOP_ENTRY_COUNT);
   const hasMore = entries.length > TOP_ENTRY_COUNT;
-  const leaderSeconds = entries[0]?.listenedSeconds ?? 0;
+  const leaderSeconds = Math.max(0, ...entries.map((entry) => entry.listenedSeconds));
+  const libraryShare = (entry: ListeningBreakdownEntry) =>
+    libraryWorks > 0 ? (entry.libraryWorkCount ?? 0) / libraryWorks : 0;
+  const listeningShare = (entry: ListeningBreakdownEntry) =>
+    breakdown.listenedSeconds > 0 ? entry.listenedSeconds / breakdown.listenedSeconds : 0;
+  // Both shares of a preference ranking sit on one scale, the largest of them.
+  const shareScale = Math.max(0, ...entries.flatMap((entry) => [listeningShare(entry), libraryShare(entry)]));
   const rowClassName = "group flex min-h-11 min-w-0 items-center gap-3 rounded-lg px-2 py-1.5";
 
   return (
@@ -73,19 +85,39 @@ export function ListeningBreakdownCard({
                     >
                       {entry.name}
                     </span>
-                    <span className="mt-1 block h-1.5 overflow-hidden rounded-full bg-muted" aria-hidden="true">
+                    <span className="relative mt-1 block h-1.5 rounded-full bg-muted" aria-hidden="true">
                       <span
                         className="block h-full rounded-full bg-primary/80"
-                        style={{ width: `${barPercent(entry.listenedSeconds, leaderSeconds)}%` }}
+                        style={{
+                          width: `${
+                            byPreference
+                              ? barPercent(listeningShare(entry), shareScale)
+                              : barPercent(entry.listenedSeconds, leaderSeconds)
+                          }%`,
+                        }}
                       />
+                      {byPreference && (
+                        <span
+                          className="absolute -top-1 h-3.5 w-0.5 -translate-x-1/2 rounded-full bg-foreground/55"
+                          style={{ left: `${shareScale > 0 ? (libraryShare(entry) / shareScale) * 100 : 0}%` }}
+                        />
+                      )}
                     </span>
                   </span>
                   <span className="shrink-0 text-right">
                     <span className="block text-sm font-medium tabular-nums">
-                      {formatDuration(entry.listenedSeconds)}
+                      {byPreference
+                        ? t("personal.history.shareOfTime", {
+                            percent: sharePercent(entry.listenedSeconds, breakdown.listenedSeconds),
+                          })
+                        : formatDuration(entry.listenedSeconds)}
                     </span>
                     <span className="block text-2xs tabular-nums text-muted-foreground">
-                      {t("personal.history.breakdown.workCount", { count: entry.workCount })}
+                      {byPreference
+                        ? t("personal.history.breakdown.libraryShare", {
+                            percent: sharePercent(entry.libraryWorkCount ?? 0, libraryWorks),
+                          })
+                        : t("personal.history.breakdown.workCount", { count: entry.workCount })}
                     </span>
                   </span>
                 </>
@@ -131,7 +163,9 @@ export function ListeningBreakdownCard({
         </>
       ) : (
         <p className="py-6 text-center text-xs text-muted-foreground">
-          {t(`personal.history.breakdown.empty.${kind}`)}
+          {byPreference
+            ? t("personal.history.breakdown.emptyPreference")
+            : t(`personal.history.breakdown.empty.${kind}`)}
         </p>
       )}
     </section>

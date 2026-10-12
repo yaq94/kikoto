@@ -5,6 +5,8 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	"github.com/yexca/kikoto/backend/internal/testfixture"
 )
 
 func TestListeningCalendarCoversWholeWeeksOfDatedListening(t *testing.T) {
@@ -52,8 +54,8 @@ func TestListeningBreakdownRanksTagsVoicesAndCirclesPerRange(t *testing.T) {
 	}
 	execFixture(t, s.DB, `INSERT INTO party_external_id (party_id,provider_id,id_type,external_id,is_primary) VALUES (1,?,'maker_id','RG00000000',1)`, provider)
 
-	recent, err := s.BreakdownFor(ctx, 1, RangeLast30Days, now)
-	if err != nil || recent.Range != RangeLast30Days || recent.ListenedSeconds != 2400 {
+	recent, err := s.BreakdownFor(ctx, 1, RangeLast30Days, RankTime, now)
+	if err != nil || recent.Range != RangeLast30Days || recent.Rank != RankTime || recent.ListenedSeconds != 2400 || recent.LibraryWorkCount != 0 {
 		t.Fatalf("30d = %+v, %v", recent, err)
 	}
 	if len(recent.Tags) != 1 || recent.Tags[0] != (BreakdownEntry{ID: 1, Name: "Example Tag A", ListenedSeconds: 2400, ListenCount: 3, WorkCount: 2}) {
@@ -67,17 +69,77 @@ func TestListeningBreakdownRanksTagsVoicesAndCirclesPerRange(t *testing.T) {
 		t.Fatalf("30d circles = %+v", recent.Circles)
 	}
 
-	year, err := s.BreakdownFor(ctx, 1, RangeLast12Months, now)
+	year, err := s.BreakdownFor(ctx, 1, RangeLast12Months, RankTime, now)
 	if err != nil || year.ListenedSeconds != 6000 || len(year.Tags) != 2 || year.Tags[0].ID != 2 || year.Tags[0].ListenedSeconds != 3600 || len(year.Circles) != 2 || year.Circles[0].ExternalID != "" {
 		t.Fatalf("12m = %+v, %v", year, err)
 	}
 
 	// All time ranks lifetime totals, which include undated imports.
-	all, err := s.BreakdownFor(ctx, 1, RangeAll, now)
+	all, err := s.BreakdownFor(ctx, 1, RangeAll, RankTime, now)
 	if err != nil || all.ListenedSeconds != 100 || len(all.Tags) != 1 || all.Tags[0].ID != 2 || len(all.Voices) != 0 || len(all.Circles) != 1 || all.Circles[0].ID != 2 {
 		t.Fatalf("all = %+v, %v", all, err)
 	}
-	if _, err = s.BreakdownFor(ctx, 1, StatisticsRange("7d"), now); !errors.Is(err, ErrInvalid) {
+	if _, err = s.BreakdownFor(ctx, 1, StatisticsRange("7d"), RankTime, now); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("unknown range = %v", err)
+	}
+
+	// Preference keeps what takes a larger share of listening time than of the
+	// three library works, and reports the library share it compares against.
+	preferred, err := s.BreakdownFor(ctx, 1, RangeLast30Days, RankPreference, now)
+	if err != nil || preferred.Rank != RankPreference || preferred.LibraryWorkCount != 3 {
+		t.Fatalf("30d preference = %+v, %v", preferred, err)
+	}
+	if len(preferred.Tags) != 1 || preferred.Tags[0].ID != 1 || preferred.Tags[0].LibraryWorkCount != 2 {
+		t.Fatalf("30d preferred tags = %+v", preferred.Tags)
+	}
+	// Voice B takes a quarter of the time on a third of the library.
+	if len(preferred.Voices) != 1 || preferred.Voices[0].ID != 1 || len(preferred.Circles) != 1 || preferred.Circles[0].LibraryWorkCount != 2 {
+		t.Fatalf("30d preferred voices and circles = %+v, %+v", preferred.Voices, preferred.Circles)
+	}
+	// Over the year the tag on two of three works falls behind its library share.
+	preferred, err = s.BreakdownFor(ctx, 1, RangeLast12Months, RankPreference, now)
+	if err != nil || len(preferred.Tags) != 1 || preferred.Tags[0].ID != 2 || len(preferred.Voices) != 0 || len(preferred.Circles) != 1 || preferred.Circles[0].ID != 2 {
+		t.Fatalf("12m preference = %+v, %v", preferred, err)
+	}
+	if rank, err := ParseBreakdownRank(""); err != nil || rank != RankTime {
+		t.Fatalf("default rank = %q, %v", rank, err)
+	}
+	if _, err = ParseBreakdownRank("share"); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("unknown rank = %v", err)
+	}
+}
+
+func TestListeningReportsFoldAnEditionIntoItsCanonicalWork(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	now := time.Date(2026, time.March, 2, 23, 0, 0, 0, time.UTC)
+	execFixture(t, s.DB, `INSERT INTO work (id,primary_code,title) VALUES (4,?,'Example Edition')`, testfixture.WorkCode(testfixture.PrefixRJ, 3))
+	execFixture(t, s.DB, `INSERT INTO logical_work (id,canonical_work_id,canonical_code) VALUES (1,1,?)`, testfixture.WorkCode(testfixture.PrefixRJ, 0))
+	execFixture(t, s.DB, `INSERT INTO work_edition (work_id,logical_work_id,primary_code,is_canonical) VALUES (1,1,?,1)`, testfixture.WorkCode(testfixture.PrefixRJ, 0))
+	execFixture(t, s.DB, `INSERT INTO work_edition (work_id,logical_work_id,primary_code,is_canonical) VALUES (4,1,?,0)`, testfixture.WorkCode(testfixture.PrefixRJ, 3))
+	for _, statement := range []string{
+		`INSERT INTO tag (id,namespace,normalized_name,display_name) VALUES (1,'metadata','example-a','Example Tag A'),(2,'metadata','example-b','Example Tag B')`,
+		`INSERT INTO work_tag (work_id,tag_id,source) VALUES (1,1,'dlsite_snapshot'),(4,2,'dlsite_snapshot')`,
+		// Listening stored against the edition, as before the family was linked.
+		`INSERT INTO user_listening_day (user_id,work_id,day,listened_seconds,listen_count) VALUES (1,4,'2026-03-01',900,1),(1,1,'2026-03-02',300,1)`,
+		`INSERT INTO user_listening_session (user_id,session_id,work_id,listened_seconds) VALUES (1,'synthetic-edition',4,900),(1,'synthetic-canonical',1,300)`,
+	} {
+		execFixture(t, s.DB, statement)
+	}
+
+	for _, period := range []StatisticsRange{RangeLast30Days, RangeAll} {
+		stats, err := s.StatisticsFor(ctx, 1, period, now)
+		if err != nil || stats.WorkCount != 1 || len(stats.TopWorks) != 1 || stats.TopWorks[0].WorkID != 1 || stats.TopWorks[0].ListenedSeconds != 1200 || stats.TopWorks[0].ListenCount != 2 {
+			t.Fatalf("%s statistics = %+v, %v", period, stats, err)
+		}
+		// The canonical work's tags describe the listening, and the edition is not a library work.
+		breakdown, err := s.BreakdownFor(ctx, 1, period, RankPreference, now)
+		if err != nil || breakdown.LibraryWorkCount != 3 || len(breakdown.Tags) != 1 || breakdown.Tags[0] != (BreakdownEntry{ID: 1, Name: "Example Tag A", ListenedSeconds: 1200, ListenCount: 2, WorkCount: 1, LibraryWorkCount: 1}) {
+			t.Fatalf("%s breakdown = %+v, %v", period, breakdown, err)
+		}
+	}
+	history, err := s.History(ctx, 1, "", 1, 10)
+	if err != nil || history.Total != 1 || history.Items[0].WorkID != 1 || history.Items[0].ListenedSeconds != 1200 {
+		t.Fatalf("history = %+v, %v", history, err)
 	}
 }

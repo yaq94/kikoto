@@ -108,12 +108,12 @@ func (s Store) StatisticsFor(ctx context.Context, user int64, period StatisticsR
 
 	var err error
 	if period == RangeAll {
-		err = s.DB.QueryRowContext(ctx, historyCTE+`SELECT COALESCE(SUM(listened_seconds),0),COALESCE(SUM(listen_count),0),COUNT(*) FROM history`, user, user).Scan(&result.ListenedSeconds, &result.ListenCount, &result.WorkCount)
+		err = s.DB.QueryRowContext(ctx, reportHistoryCTE+`SELECT COALESCE(SUM(listened_seconds),0),COALESCE(SUM(listen_count),0),COUNT(*) FROM history`, user, user).Scan(&result.ListenedSeconds, &result.ListenCount, &result.WorkCount)
 		if err == nil {
 			err = s.DB.QueryRowContext(ctx, `SELECT COUNT(DISTINCT day) FROM user_listening_day WHERE user_id = ?`, user).Scan(&result.ActiveDays)
 		}
 	} else {
-		err = s.DB.QueryRowContext(ctx, `SELECT COALESCE(SUM(listened_seconds),0),COALESCE(SUM(listen_count),0),COUNT(DISTINCT work_id),COUNT(DISTINCT day) FROM user_listening_day WHERE user_id = ? AND day >= ?`, user, from.Format(time.DateOnly)).Scan(&result.ListenedSeconds, &result.ListenCount, &result.WorkCount, &result.ActiveDays)
+		err = s.DB.QueryRowContext(ctx, `SELECT COALESCE(SUM(listened_seconds),0),COALESCE(SUM(listen_count),0),COUNT(DISTINCT work_id),COUNT(DISTINCT day) FROM `+reportDays+` WHERE day >= ?`, user, from.Format(time.DateOnly)).Scan(&result.ListenedSeconds, &result.ListenCount, &result.WorkCount, &result.ActiveDays)
 	}
 	if err != nil {
 		return result, err
@@ -234,9 +234,9 @@ func (s Store) topWorks(ctx context.Context, user int64, period StatisticsRange,
 	var rows *sql.Rows
 	var err error
 	if period == RangeAll {
-		rows, err = s.DB.QueryContext(ctx, historyCTE+`SELECT w.id,w.primary_code,w.title,h.listened_seconds,h.listen_count,h.last_played_at FROM history h JOIN work w ON w.id = h.work_id ORDER BY h.listened_seconds DESC,h.listen_count DESC,w.id LIMIT ?`, user, user, topWorkLimit)
+		rows, err = s.DB.QueryContext(ctx, reportHistoryCTE+`SELECT w.id,w.primary_code,w.title,h.listened_seconds,h.listen_count,h.last_played_at FROM history h JOIN work w ON w.id = h.work_id ORDER BY h.listened_seconds DESC,h.listen_count DESC,w.id LIMIT ?`, user, user, topWorkLimit)
 	} else {
-		rows, err = s.DB.QueryContext(ctx, historyCTE+`, period AS (SELECT work_id,SUM(listened_seconds) listened_seconds,SUM(listen_count) listen_count FROM user_listening_day WHERE user_id = ? AND day >= ? GROUP BY work_id)
+		rows, err = s.DB.QueryContext(ctx, reportHistoryCTE+`, period AS (SELECT work_id,SUM(listened_seconds) listened_seconds,SUM(listen_count) listen_count FROM `+reportDays+` WHERE day >= ? GROUP BY work_id)
  SELECT w.id,w.primary_code,w.title,p.listened_seconds,p.listen_count,COALESCE(h.last_played_at,'') FROM period p JOIN work w ON w.id = p.work_id LEFT JOIN history h ON h.work_id = p.work_id ORDER BY p.listened_seconds DESC,p.listen_count DESC,w.id LIMIT ?`, user, user, user, from.Format(time.DateOnly), topWorkLimit)
 	}
 	if err != nil {

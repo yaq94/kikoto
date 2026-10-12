@@ -202,6 +202,23 @@ const historyCTE = `WITH history AS (
  ) GROUP BY work_id
 ) `
 
+// A stored work is reported as its family's canonical work, the one the
+// library lists, even when it was recorded before the family was linked.
+const canonicalWorkJoin = ` LEFT JOIN work_edition family_edition ON family_edition.work_id = stored.work_id LEFT JOIN logical_work family ON family.id = family_edition.logical_work_id `
+
+const canonicalWorkID = `COALESCE(family.canonical_work_id,stored.work_id)`
+
+// reportHistoryCTE is historyCTE per canonical work, for listening reports.
+const reportHistoryCTE = `WITH history AS (
+ SELECT ` + canonicalWorkID + ` work_id, SUM(stored.listened_seconds) listened_seconds, SUM(stored.listen_count) listen_count, MAX(stored.last_played_at) last_played_at FROM (
+  SELECT work_id, listened_seconds, 1 listen_count, updated_at last_played_at FROM user_listening_session WHERE user_id = ?
+  UNION ALL SELECT work_id, listened_seconds, listen_count, last_played_at FROM user_listening_import WHERE user_id = ?
+ ) stored` + canonicalWorkJoin + `GROUP BY 1
+) `
+
+// reportDays is one account's dated listening per canonical work; it binds the user id.
+const reportDays = `(SELECT ` + canonicalWorkID + ` work_id,stored.day,stored.listened_seconds,stored.listen_count FROM user_listening_day stored` + canonicalWorkJoin + `WHERE stored.user_id = ?)`
+
 type HistoryItem struct {
 	WorkID          int64   `json:"workId"`
 	PrimaryCode     string  `json:"primaryCode"`
@@ -241,10 +258,10 @@ func (s Store) History(ctx context.Context, user int64, query string, page, size
 	}
 	query = strings.TrimSpace(query)
 	where := ` FROM history h JOIN work w ON w.id = h.work_id WHERE instr(LOWER(w.primary_code || ' ' || w.title),LOWER(?)) > 0`
-	if err := s.DB.QueryRowContext(ctx, historyCTE+`SELECT COUNT(*)`+where, user, user, query).Scan(&result.Total); err != nil {
+	if err := s.DB.QueryRowContext(ctx, reportHistoryCTE+`SELECT COUNT(*)`+where, user, user, query).Scan(&result.Total); err != nil {
 		return result, err
 	}
-	rows, err := s.DB.QueryContext(ctx, historyCTE+`SELECT w.id,w.primary_code,w.title,h.listened_seconds,h.listen_count,h.last_played_at`+where+` ORDER BY h.last_played_at DESC,w.id DESC LIMIT ? OFFSET ?`, user, user, query, size, (page-1)*size)
+	rows, err := s.DB.QueryContext(ctx, reportHistoryCTE+`SELECT w.id,w.primary_code,w.title,h.listened_seconds,h.listen_count,h.last_played_at`+where+` ORDER BY h.last_played_at DESC,w.id DESC LIMIT ? OFFSET ?`, user, user, query, size, (page-1)*size)
 	if err != nil {
 		return result, err
 	}

@@ -57,13 +57,12 @@ export const personalHans = {
       works: "作品",
       activeDays: "收听天数",
       chartTitle: {
-        day: "每日收听时长（UTC）",
-        month: "每月收听时长（UTC）",
-        year: "每年收听时长（UTC）",
+        day: "每日收听时长",
+        month: "每月收听时长",
+        year: "每年收听时长",
       },
       periodReadout_one: "{{period}} · {{duration}} · 播放 {{count}} 次",
       periodReadout_other: "{{period}} · {{duration}} · 播放 {{count}} 次",
-      periodHint: "指向或轻点柱形即可查看合计。",
       averageLine: "平均 {{duration}}",
       average: {
         day: "收听日平均",
@@ -77,14 +76,13 @@ export const personalHans = {
       },
       busiestValue: "{{period}} · {{duration}}",
       noListeningInPeriod: "这段时间没有收听记录。",
-      period: "时段（UTC）",
+      period: "时段",
       rangeLabel: "报表时间范围",
       ranges: {
         "30d": "30 天",
         "12m": "12 个月",
         all: "全部",
       },
-      rangeNote: "没有日期的导入时长只计入「全部」。",
       topWorks: "最常收听",
       topWorksBasis: "按收听时长",
       recent: "收听历史",
@@ -106,18 +104,12 @@ export const personalHans = {
       periodCount: {
         day_one: "{{count}} 天",
         day_other: "{{count}} 天",
-        month_one: "{{count}} 个月",
-        month_other: "{{count}} 个月",
-        year_one: "{{count}} 年",
-        year_other: "{{count}} 年",
       },
+      workdayAverage: "周一至周五日均",
+      weekendAverage: "周末日均",
+      rhythmPastYear: "基于过去一年。",
+      notes: "日期按 UTC 计算。只记录音频实际播放的时间，不包括暂停、缓冲和跳转。没有日期的导入时长只计入「全部」。",
       weekdayAverage: "按星期平均",
-      activePeriods: {
-        day: "有收听的天",
-        month: "有收听的月份",
-        year: "有收听的年份",
-      },
-      activePeriodsValue: "{{active}} / {{total}}",
       rank: "第 {{rank}} 名",
       search: "搜索历史",
       clearSearch: "清除历史搜索",
@@ -136,7 +128,7 @@ export const personalHans = {
       clearFailed: "无法清除收听历史。",
       calendar: {
         title: "收听日历",
-        basis: "过去一年 · 按 UTC 日",
+        basis: "过去一年",
         hint: "指向或轻点某一天即可查看合计。",
         noListening: "{{date}} · 没有收听",
         summary_one: "过去一年有 {{count}} 天收听，共 {{duration}}。",
@@ -146,8 +138,19 @@ export const personalHans = {
         failed: "无法加载收听日历。",
       },
       breakdown: {
+        basis: {
+          preference:
+            "按收听时间占比高出资料库作品占比的幅度排名；条形是前者，竖线是后者。一部作品会完整计入它的每个标签和声优。",
+          time: "按其作品的收听时长排名。一部作品会完整计入它的每个标签和声优。",
+        },
+        rankLabel: "排名方式",
+        ranks: {
+          preference: "偏好度",
+          time: "收听时长",
+        },
+        libraryShare: "占资料库 {{percent}}%",
+        emptyPreference: "这段时间没有高于资料库占比的项目。",
         heading: "标签、声优和社团",
-        basis: "按其作品的收听时长排名。一部作品会完整计入它的每个标签和声优。",
         titles: {
           tags: "常听标签",
           voices: "常听声优",
@@ -168,7 +171,6 @@ export const personalHans = {
         showAll: "显示前 {{count}} 项",
         failed: "无法加载排行。",
       },
-      recordingNote: "只记录音频实际播放的时间，不包括暂停、缓冲和跳转。",
     },
     insights: {
       dataHint: "导出或导入你的标记、评分、进度、标签和列表。",

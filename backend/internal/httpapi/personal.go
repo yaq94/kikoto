@@ -185,7 +185,12 @@ func (s *Server) getListeningBreakdown(w http.ResponseWriter, r *http.Request) {
 		writePersonalError(w, err)
 		return
 	}
-	result, err := (personal.Store{DB: s.db}).BreakdownFor(r.Context(), user.ID, period, time.Now())
+	rank, err := personal.ParseBreakdownRank(r.URL.Query().Get("rank"))
+	if err != nil {
+		writePersonalError(w, err)
+		return
+	}
+	result, err := (personal.Store{DB: s.db}).BreakdownFor(r.Context(), user.ID, period, rank, time.Now())
 	if err != nil {
 		writePersonalError(w, err)
 		return

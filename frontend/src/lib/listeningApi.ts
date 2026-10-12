@@ -75,6 +75,12 @@ export type ListeningCalendar = {
 
 export type ListeningBreakdownKind = "tags" | "voices" | "circles";
 
+/**
+ * How a breakdown orders its entries: by listening time, or by how far an
+ * entry's share of listening time exceeds its share of the library's works.
+ */
+export type ListeningBreakdownRank = "preference" | "time";
+
 /** The listening of every work that carries one tag, credits one voice, or belongs to one circle. */
 export type ListeningBreakdownEntry = {
   id: number;
@@ -84,6 +90,8 @@ export type ListeningBreakdownEntry = {
   listenedSeconds: number;
   listenCount: number;
   workCount: number;
+  /** How many of the library's works the entry covers; present in a preference ranking. */
+  libraryWorkCount?: number;
 };
 
 /**
@@ -93,7 +101,10 @@ export type ListeningBreakdownEntry = {
  */
 export type ListeningBreakdown = Record<ListeningBreakdownKind, ListeningBreakdownEntry[]> & {
   range: ListeningStatisticsRange;
+  rank: ListeningBreakdownRank;
   listenedSeconds: number;
+  /** The number of works the library lists; present in a preference ranking. */
+  libraryWorkCount?: number;
 };
 
 /** The server's error code for a report whose generation predates a history clear. */
@@ -128,7 +139,7 @@ export const listeningApi = {
   statistics: (range: ListeningStatisticsRange, signal?: AbortSignal) =>
     apiTransport.getJSON<ListeningStatistics>(`/api/listening-statistics?range=${range}`, signal),
   calendar: (signal?: AbortSignal) => apiTransport.getJSON<ListeningCalendar>("/api/listening-calendar", signal),
-  breakdown: (range: ListeningStatisticsRange, signal?: AbortSignal) =>
-    apiTransport.getJSON<ListeningBreakdown>(`/api/listening-breakdown?range=${range}`, signal),
+  breakdown: (range: ListeningStatisticsRange, rank: ListeningBreakdownRank, signal?: AbortSignal) =>
+    apiTransport.getJSON<ListeningBreakdown>(`/api/listening-breakdown?range=${range}&rank=${rank}`, signal),
   clearHistory: () => apiTransport.deleteJSON<unknown>("/api/listening-history"),
 };
