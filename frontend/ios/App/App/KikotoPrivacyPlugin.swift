@@ -19,7 +19,8 @@ struct KikotoPrivacySettings {
     var lockScreenContent: String
     /// Playback through the device speaker waits for a confirmation in the page.
     var speakerConfirm: Bool
-    /// Covers the app and closes Picture-in-Picture lyrics while the screen is captured.
+    /// Leaves the page out of screenshots, and covers the app and closes
+    /// Picture-in-Picture lyrics while the screen is captured.
     var screenSecure: Bool
 
     static func read() -> KikotoPrivacySettings {
@@ -53,17 +54,41 @@ struct KikotoPrivacySettings {
     }
 }
 
+/// A view the system leaves out of screenshots, screen recordings, and
+/// mirroring while `isSecure` is on. UIKit has no public way to exclude a view
+/// from capture; the system does it for the text canvas of a secure text
+/// field, together with everything placed inside that canvas.
+@MainActor
+final class KikotoCaptureCanvas {
+    private let field = UITextField()
+    /// Nil when this system's text field has no canvas to host a view in.
+    let view: UIView?
+
+    init() {
+        view = field.subviews.first { String(describing: type(of: $0)).contains("CanvasView") }
+        view?.isUserInteractionEnabled = true
+    }
+
+    var isSecure: Bool {
+        get { field.isSecureTextEntry }
+        set { field.isSecureTextEntry = newValue }
+    }
+}
+
 /// Covers the app with a blur while its scene is inactive, so the app switcher
 /// snapshot and the switch gesture do not show the page, and while the screen
-/// is recorded, mirrored, or otherwise captured. The choices come from
-/// `KikotoPrivacySettings`: the cover must be in place when the scene resigns
-/// active or a capture begins, without a round trip to the web view.
+/// is recorded, mirrored, or otherwise captured. A screenshot gives no warning
+/// to cover the page in time, so the page lives in a capture canvas that the
+/// screen capture choice turns secure. The choices come from
+/// `KikotoPrivacySettings`: the protection must be in place when the scene
+/// resigns active or a capture begins, without a round trip to the web view.
 @MainActor
 final class KikotoPrivacyShield {
     static let shared = KikotoPrivacyShield()
     /// Posted on the main queue when a screen capture begins while its cover is enabled.
     nonisolated static let screenCaptureDidBegin = Notification.Name("KikotoScreenCaptureDidBegin")
 
+    private let canvas = KikotoCaptureCanvas()
     private weak var scene: UIWindowScene?
     private var captureObservation: Any?
     private var coverWindow: UIWindow?
@@ -71,6 +96,10 @@ final class KikotoPrivacyShield {
     private var inactive = false
     private var captured = false
     private var settings = KikotoPrivacySettings.read()
+
+    /// Where the page belongs so the screen capture choice keeps it out of
+    /// screenshots; nil when this system has no such view.
+    var pageCanvas: UIView? { canvas.view }
 
     /// Applies stored settings; turning on the capture cover during a capture also closes screen lyrics.
     func settingsChanged(_ next: KikotoPrivacySettings) {
@@ -118,6 +147,7 @@ final class KikotoPrivacyShield {
     }
 
     private func refresh() {
+        canvas.isSecure = settings.screenSecure
         let forCapture = captured && settings.screenSecure
         guard forCapture || (inactive && settings.recentsShield), let scene else {
             coverWindow?.isHidden = true
@@ -215,9 +245,16 @@ public class KikotoPrivacyPlugin: CAPPlugin, CAPBridgedPlugin {
         }
     }
 
-    /// The app lock is an Android shell feature.
+    /// The app lock is an Android shell feature. The screen capture choice
+    /// blanks screenshots only where the page sits in a capture canvas.
     @objc func status(_ call: CAPPluginCall) {
-        call.resolve(["appLockSupported": false, "appLockAvailable": false])
+        DispatchQueue.main.async {
+            call.resolve([
+                "appLockSupported": false,
+                "appLockAvailable": false,
+                "screenshotsHidden": KikotoPrivacyShield.shared.pageCanvas != nil,
+            ])
+        }
     }
 
     /// Part of the shared interface; iOS has no app lock prompt to label.

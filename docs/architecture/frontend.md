@@ -462,7 +462,13 @@ volatile queue with a diagnostic and a normal network loss window of up to
   everything.
 - The iOS privacy plugin covers the scene with a blur window while it is
   inactive (the recent apps choice) and while its scene capture state is
-  active (the screen capture choice, because iOS cannot block a screenshot).
+  active (the screen capture choice). iOS cannot block a screenshot and gives
+  no warning before one, so the window's root controller hosts the bridge
+  inside the text canvas of a secure text field, the view the system leaves
+  out of captures, and the screen capture choice switches that field's secure
+  entry: a screenshot shows the root background in place of the page. The
+  plugin's status declares whether the canvas exists; without it the choice
+  only covers captures, and Settings names it accordingly.
   A capture that begins also closes the Picture-in-Picture lyrics window. The
   same plugin pauses page media when the audio route loses its output device,
   as Android does on `ACTION_AUDIO_BECOMING_NOISY`, and reports whether the
