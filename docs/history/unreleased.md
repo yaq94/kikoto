@@ -1,5 +1,17 @@
 # Unreleased
 
+- **Circles** and **Voice Actors** list each creator as a cover tile with an
+  availability bar for local, remote-only, and missing works, and show the
+  latest release date in place of the latest work code. Their views are
+  one-tap chips beside the search field, which stays visible on a phone.
+- Circle detail opens with a cover-tinted summary of its **Available**,
+  **Local**, **Remote**, and **Unavailable** counts, and a circle that was
+  never pulled says that only works the library already knows are listed.
+- Circle and voice actor detail order their works by release date, code,
+  title, rating, or sales, offer the **Full**, **Compact**, and **Mini** cards
+  of the Library, and can show 96 works per page. The order and page size are
+  remembered on the device. Voice actor works follow the chosen order instead
+  of listing local works first.
 - Library display options replace the phone-only **Compact cards** switch with
   a **Cards** choice of **Full**, **Compact**, and **Mini**, available on
   phones and wide screens and remembered separately for each. Compact on wide

@@ -1,8 +1,9 @@
-import { Check, Columns3, ListMusic, Rows3, Search, X } from "lucide-react";
+import { Check, Columns3, LayoutGrid, ListMusic, Rows3, Search, X } from "lucide-react";
 import { useEffect, type ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
-import type { WorkCollectionColumnSetting } from "@/components/work-collection/WorkCollectionLayout";
+import type { WorkCardMode, WorkCollectionColumnSetting } from "@/components/work-collection/WorkCollectionLayout";
+import { workCardModes } from "@/components/work-collection/workCollectionLayoutModel";
 import { dismissKeyboardOnEnter } from "@/lib/keyboard";
 import { useTranslation } from "react-i18next";
 
@@ -22,6 +23,8 @@ export function CircleCatalogOptionsSheet({
   onPageSizeChange,
   mobileColumns,
   onMobileColumnsChange,
+  cardMode,
+  onCardModeChange,
   onSelectWorks,
 }: {
   open: boolean;
@@ -37,6 +40,8 @@ export function CircleCatalogOptionsSheet({
   onPageSizeChange: (value: number) => void;
   mobileColumns: WorkCollectionColumnSetting;
   onMobileColumnsChange: (value: WorkCollectionColumnSetting) => void;
+  cardMode: WorkCardMode;
+  onCardModeChange: (value: WorkCardMode) => void;
   onSelectWorks: () => void;
 }) {
   const { t } = useTranslation();
@@ -147,6 +152,22 @@ export function CircleCatalogOptionsSheet({
           </div>
         </fieldset>
 
+        <fieldset className="mt-4 space-y-2">
+          <legend className="text-sm font-medium">{t("collection.cardMode")}</legend>
+          <div className="grid grid-cols-3 gap-2" role="group" aria-label={t("collection.cardMode")}>
+            {workCardModes.map((mode) => (
+              <CatalogOptionButton
+                key={mode}
+                active={cardMode === mode}
+                label={t(`collection.cardModes.${mode}`)}
+                ariaLabel={t(`collection.cardModeOptions.${mode}`)}
+                icon={<LayoutGrid className="h-4 w-4" />}
+                onClick={() => onCardModeChange(mode)}
+              />
+            ))}
+          </div>
+        </fieldset>
+
         {!isSeriesView && (
           <fieldset className="mt-4 space-y-2">
             <legend className="flex items-center gap-2 text-sm font-medium">
@@ -154,7 +175,7 @@ export function CircleCatalogOptionsSheet({
               {t("sheets.perPage")}
             </legend>
             <div
-              className="grid grid-cols-2 gap-2"
+              className="grid grid-cols-3 gap-2"
               role="group"
               aria-label={t("sheets.catalogWorkPageSize", { defaultValue: "Catalog work page size" })}
             >
@@ -162,7 +183,8 @@ export function CircleCatalogOptionsSheet({
                 <CatalogOptionButton
                   key={option}
                   active={pageSize === option}
-                  label={t("sheets.perPageOption", { value: option })}
+                  label={String(option)}
+                  ariaLabel={t("sheets.perPageOption", { value: option })}
                   icon={<Rows3 className="h-4 w-4" />}
                   onClick={() => onPageSizeChange(option)}
                 />

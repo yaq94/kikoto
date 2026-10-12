@@ -9,17 +9,28 @@ Circles represent makers, circles, and related party catalog state.
   availability state.
 - Provides search, filters, URL-backed pagination, favorite state, user tags,
   rating, and notes.
-- Uses a Library-style first-row toolbar: search stays on the left and the
-  page-size and circle-filter actions (defaulting to `All circles`) stay on the
-  right; narrow layouts collapse search into the toolbar actions.
-- Shows the latest known DLsite work code and locally cached cover in compact
-  responsive creator cards, with a `No cover` fallback.
-- Summarizes each circle card with its sync state and one canonical
-  `Available N/total` badge instead of separate local and remote counts.
+- Keeps search, one-tap view chips, and the page-size action on one wrapping
+  toolbar row. The chips are `All circles`, `Favorite`, `Tagged`,
+  `Available`, `Local`, `Remote`, `Missing`, and `Attention`, and the
+  pressed chip names the current view. On a phone the search field keeps its
+  own row with page size beside it, and the chips scroll sideways below.
+- Shows each circle as a cover tile: the latest known DLsite work's locally
+  cached cover with a `No cover` fallback, the favorite control on the cover,
+  the name, the latest release date, and personal tags. Tiles fill the row on
+  wide layouts and form two columns on a phone.
+- Summarizes each circle tile with its sync state, one canonical
+  `Available N/total` count, and an availability bar: a solid segment for
+  works with a local copy, a lighter segment for works only a remote source
+  holds, and an empty track for the rest.
 - Shows circle detail by external id.
 - Paginates circle catalog works on the server. Catalog totals remain complete,
-  while search, availability, and series filters apply before pagination;
-  bulk selection covers the loaded page.
+  while search, availability, and series filters and the chosen order apply
+  before pagination; bulk selection covers the loaded page.
+- Orders catalog works by **Release date**, **Code**, **Title**, **Rating**, or
+  **Sales**, ascending or descending, newest release first by default. Works
+  without a rating or sales count stay last in either direction. The order and
+  the page size (24, 48, or 96) are remembered on the device for each account
+  and apply to every circle.
 - Supports catalog refresh in incremental or full mode.
 - Stores catalog rows separately from imported works.
 - Shows local/cache/remote source availability tags for catalog works.
@@ -27,8 +38,13 @@ Circles represent makers, circles, and related party catalog state.
   Library. This applies to both circle detail and circle series;
   the separate circle-entity list keeps its own controls. Selecting a DLsite
   tag or personal tag on a work card opens a local Library search for it.
-- Shows one `Available N` badge beside user-defined tags on circle detail. The
-  duplicated statistic tiles and circle aliases are omitted from circle UI.
+- Shows the circle detail summary on a cover-tinted panel with the circle's
+  aliases and personal tags. Its **Available**, **Local**, **Remote**, and
+  **Unavailable** counts sit beside an availability bar and describe the whole
+  catalog, whatever the works below are filtered to.
+  A circle that was never pulled states that only works the library already
+  knows are listed; otherwise the summary shows when the catalog was last
+  synced. Series cards carry the same availability bar.
 - Keeps the common refresh actions in the detail summary: **First pull** for a
   circle that was never pulled, then **Refresh circle**, which also checks the
   remote sources. **Retry metadata** appears only while catalog works still
@@ -42,12 +58,16 @@ Circles represent makers, circles, and related party catalog state.
 - Shortens the common detail actions on mobile, keeps icon-only Favorite,
   More, and DLsite controls accessible by name, and places DLsite last.
 - Uses the Library-style works toolbar on wide layouts: the Works/Series switch
-  and a bounded search on the left, with columns, page size, availability
-  filter, and selection as quiet icon actions on the right. The shared
-  collection pagination sits above and below the grid.
-- Keeps mobile work controls to the Works/Series switch, search, and one Catalog
-  options action. Availability, mobile columns, and selection mode live in that
-  sheet; wide layouts retain inline controls.
+  and a bounded search on the left, then the sort button that names the
+  current order, display options, the availability filter, and selection on
+  the right. Display options hold the columns, the **Cards** choice of
+  **Full**, **Compact**, and **Mini** shared with the Library, and the page
+  size. The shared collection pagination sits above and below the grid.
+- Keeps mobile work controls to the Works/Series switch with the sort button
+  beside it, search, and one Catalog options action. Availability, mobile
+  columns, the card mode, page size, and selection mode live in that sheet;
+  wide layouts retain inline controls. The series overview lists series and
+  offers no order.
 - Treats the mobile detail back control as Up to the last server-and-user-scoped
   Circles list location, including when the detail was opened from Library.
   Wide layouts keep the source-aware history return label and destination.

@@ -6,6 +6,7 @@ import { CollectionFilterPicker, type CollectionFilterOption } from "@/component
 import { Button } from "@/components/ui/button";
 import {
   WorkCollectionDisplayPicker,
+  type WorkCardMode,
   type WorkCollectionColumnSetting,
 } from "@/components/work-collection/WorkCollectionLayout";
 import { dismissKeyboardOnEnter } from "@/lib/keyboard";
@@ -13,9 +14,10 @@ import { dismissKeyboardOnEnter } from "@/lib/keyboard";
 /**
  * First-row toolbar for the works of one circle or voice actor. It mirrors the
  * Library and creator-list toolbars: optional view tabs on the left, a bounded
- * search field, and quiet icon actions (display options, availability filter,
- * selection) on the right. Narrow layouts keep their options sheet, so
- * the search and actions stay desktop-only unless `mobileSearch` opts in.
+ * search field, and the sort control with quiet icon actions (display options,
+ * availability filter, selection) on the right. Narrow layouts keep their
+ * options sheet, so the search and actions stay desktop-only unless
+ * `mobileSearch` opts in; `mobileSort` sits beside the view tabs there.
  */
 export function CatalogWorkToolbar<FilterValue extends string>({
   leading,
@@ -24,6 +26,9 @@ export function CatalogWorkToolbar<FilterValue extends string>({
   mobileSearch = false,
   mobileSearchAction,
   onQueryChange,
+  sort,
+  mobileSort,
+  cardModes,
   filterLabel,
   filter,
   defaultFilter,
@@ -45,6 +50,16 @@ export function CatalogWorkToolbar<FilterValue extends string>({
   mobileSearch?: boolean;
   mobileSearchAction?: ReactNode;
   onQueryChange: (value: string) => void;
+  /** The sort control of the wide action cluster. */
+  sort?: ReactNode;
+  /** The sort control shown beside the view tabs on narrow layouts. */
+  mobileSort?: ReactNode;
+  cardModes?: {
+    mobile: WorkCardMode;
+    desktop: WorkCardMode;
+    onMobileChange: (value: WorkCardMode) => void;
+    onDesktopChange: (value: WorkCardMode) => void;
+  };
   filterLabel: string;
   filter: FilterValue;
   defaultFilter: FilterValue;
@@ -61,12 +76,13 @@ export function CatalogWorkToolbar<FilterValue extends string>({
   onSelectionModeChange?: (value: boolean) => void;
 }) {
   const { t } = useTranslation();
-  const visibleOnMobile = Boolean(leading) || mobileSearch;
+  const visibleOnMobile = Boolean(leading) || mobileSearch || Boolean(mobileSort);
   const selectionLabel = selectionMode ? t("library.cancelSelection") : t("library.select");
 
   return (
     <section className={`${visibleOnMobile ? "flex" : "hidden lg:flex"} flex-wrap items-center gap-2`} data-toast-avoid>
       {leading && <div className="min-w-0 max-w-full">{leading}</div>}
+      {mobileSort && <div className={`min-w-0 lg:hidden ${leading ? "ml-auto" : ""}`}>{mobileSort}</div>}
       <div
         className={`search-field min-h-10 w-full min-w-0 items-center gap-2 rounded-lg border bg-card px-3 text-sm lg:flex lg:w-auto lg:min-w-[14rem] lg:max-w-xl lg:flex-1 ${
           mobileSearch ? "flex" : "hidden"
@@ -95,11 +111,13 @@ export function CatalogWorkToolbar<FilterValue extends string>({
         {mobileSearchAction && <div className="-mr-1.5 shrink-0 lg:hidden">{mobileSearchAction}</div>}
       </div>
       <div className="ml-auto hidden shrink-0 gap-2 lg:flex">
+        {sort}
         <WorkCollectionDisplayPicker
           mobileColumns={mobileColumns}
           desktopColumns={desktopColumns}
           onMobileColumnsChange={onMobileColumnsChange}
           onDesktopColumnsChange={onDesktopColumnsChange}
+          cardModes={cardModes}
           pageSize={pageSize}
           pageSizeOptions={pageSizeOptions}
           onPageSizeChange={onPageSizeChange}

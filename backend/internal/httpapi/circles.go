@@ -83,7 +83,11 @@ type circleWorksQuery struct {
 	Query        string
 	Availability string
 	Series       string
-	Legacy       bool
+	// Sort is release, code, title, rating, or sales; empty sorts by release.
+	Sort string
+	// Direction is asc or desc; empty sorts descending.
+	Direction string
+	Legacy    bool
 }
 
 func parseCircleWorksQuery(r *http.Request) circleWorksQuery {
@@ -111,13 +115,55 @@ func parseCircleWorksQuery(r *http.Request) circleWorksQuery {
 	if len(series) > 128 {
 		series = series[:128]
 	}
+	sortKey, direction := normalizeCircleWorksSort(r.URL.Query().Get("sort"), r.URL.Query().Get("direction"))
 	return circleWorksQuery{
 		Page:         page,
 		PageSize:     pageSize,
 		Query:        query,
 		Availability: availability,
 		Series:       series,
+		Sort:         sortKey,
+		Direction:    direction,
 		Legacy:       legacy,
+	}
+}
+
+// normalizeCircleWorksSort keeps the catalog orders a circle offers and falls
+// back to newest release first.
+func normalizeCircleWorksSort(sortKey, direction string) (string, string) {
+	sortKey = strings.ToLower(strings.TrimSpace(sortKey))
+	switch sortKey {
+	case "release", "code", "title", "rating", "sales":
+	default:
+		sortKey = "release"
+	}
+	if strings.EqualFold(strings.TrimSpace(direction), "asc") {
+		return sortKey, "asc"
+	}
+	return sortKey, "desc"
+}
+
+// circleWorksOrderBy orders the logical catalog candidates. Works without a
+// rating or sales count stay last in either direction, and the code breaks
+// ties so paging is stable.
+func circleWorksOrderBy(sortKey, direction string) string {
+	sortKey, direction = normalizeCircleWorksSort(sortKey, direction)
+	dir := "DESC"
+	if direction == "asc" {
+		dir = "ASC"
+	}
+	code := "candidates.logical_code " + dir
+	switch sortKey {
+	case "code":
+		return code
+	case "title":
+		return "candidates.sort_title COLLATE NOCASE " + dir + ", " + code
+	case "rating":
+		return "candidates.rating IS NULL ASC, candidates.rating " + dir + ", " + code
+	case "sales":
+		return "candidates.sales IS NULL ASC, candidates.sales " + dir + ", " + code
+	default:
+		return "candidates.release_date " + dir + ", " + code
 	}
 }
 

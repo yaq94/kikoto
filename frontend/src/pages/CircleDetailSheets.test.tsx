@@ -5,7 +5,7 @@ import "@/i18n";
 import { CircleCatalogOptionsSheet } from "./CircleDetailSheets";
 
 describe("CircleCatalogOptionsSheet", () => {
-  it("keeps catalog search and page size controls in the mobile options surface", () => {
+  it("keeps catalog search, card mode, and page size controls in the mobile options surface", () => {
     const rendered = renderToStaticMarkup(
       <CircleCatalogOptionsSheet
         open
@@ -17,10 +17,12 @@ describe("CircleCatalogOptionsSheet", () => {
         query="sample"
         onQueryChange={() => undefined}
         pageSize={24}
-        pageSizeOptions={[24, 48]}
+        pageSizeOptions={[24, 48, 96]}
         onPageSizeChange={() => undefined}
         mobileColumns={2}
         onMobileColumnsChange={() => undefined}
+        cardMode="compact"
+        onCardModeChange={() => undefined}
         onSelectWorks={() => undefined}
       />,
     );
@@ -30,6 +32,9 @@ describe("CircleCatalogOptionsSheet", () => {
     expect(rendered).toContain('aria-label="Clear circle catalog search"');
     expect(rendered).toContain('aria-label="Catalog work page size"');
     expect(rendered).toContain("24 per page");
+    expect(rendered).toContain("96 per page");
+    expect(rendered).toMatch(/aria-label="Compact cards with fewer details" aria-pressed="true"/);
+    expect(rendered).toMatch(/aria-label="Mini cards with the cover and title only" aria-pressed="false"/);
     expect(rendered).toContain('aria-pressed="true"');
   });
 });
