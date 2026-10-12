@@ -42,7 +42,7 @@ export function WorkTitleEditor({
   const [allLanguages, ...languages] = metadataTagLanguages;
   const visibleLanguages =
     languageScope && languageScope.key !== "all"
-      ? languages.filter(([language]) => scopeMatchesLanguage(languageScope, language))
+      ? languages.filter(([language]) => scopeMatchesLanguage(languageScope, language, language === markers.origin))
       : languages;
   const [advancedOpen, setAdvancedOpen] = useState(() => Boolean(manual[""] || drafts[""]));
   const universalDescriptionId = useId();

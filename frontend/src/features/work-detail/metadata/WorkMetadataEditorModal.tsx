@@ -72,8 +72,14 @@ export function WorkMetadataEditorModal({
   const [section, setSection] = useState(initialSection);
   const scopes = metadataLanguageScopes(work, selectedMetadataVariantKey);
   const [languageScopeKey, setLanguageScopeKey] = useState(() => {
-    const preferredKey = selectedMetadataVariantKey || work.metadataPresentation.defaultVariantKey;
-    const selected = scopes.find((scope) => scope.variant?.key === preferredKey);
+    // A caller only supplies `selectedMetadataVariantKey` when the editor is
+    // opened from a particular metadata presentation. The standalone
+    // maintenance editor should start with every language visible, even when
+    // the work has a default provider variant.
+    const preferredKey = selectedMetadataVariantKey?.trim();
+    const selected = preferredKey
+      ? scopes.find((scope) => scope.variant?.key === preferredKey)
+      : scopes.find((scope) => scope.key === "all");
     return selected?.key ?? scopes[0]?.key ?? "all";
   });
   const languageScope: MetadataLanguageScope = scopes.find((scope) => scope.key === languageScopeKey) ??
