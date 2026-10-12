@@ -140,7 +140,13 @@ export type MetadataTag = {
 
 export type MetadataTagOverride = { tagId: number; action: "add" | "remove" };
 
-export type EffectiveMetadataTag = { id: number; displayName: string; source: string };
+export type EffectiveMetadataTag = {
+  id: number;
+  displayName: string;
+  source: string;
+  /** Every known name, in the precedence order of `MetadataTag.names`; absent when the tag has none. */
+  names?: MetadataTag["names"];
+};
 
 export type WorkMetadataTags = {
   tags: EffectiveMetadataTag[];

@@ -18,7 +18,33 @@ docs(readme): reorganize public docs
 
 ## Release Notes
 
-Release notes should group changes by user-facing area:
+A release note shows its area titles and folds the changes under each one, so
+a reader sees what the release touches before expanding any detail. Its parts
+appear in this order:
+
+1. Upgrade notes as GitHub alerts (`> [!IMPORTANT]`, `> [!NOTE]`,
+   `> [!WARNING]`), when the release has any.
+2. A short summary paragraph.
+3. One folded block per user-facing area.
+4. A `## Known Issue` section, when the release has one.
+
+Only the area blocks are folded. Upgrade notes, the summary, and known issues
+stay expanded because a reader must not miss them. Each area is a `<details>`
+block whose summary is the area title, in place of a `##` heading:
+
+```markdown
+<details>
+<summary><strong>Library and work detail</strong></summary>
+
+- One change per bullet.
+
+</details>
+```
+
+Keep the blank line after `<summary>` and the one before `</details>`; GitHub
+renders the list as literal text without them.
+
+Group changes by user-facing area. The usual areas are:
 
 - Library and work detail.
 - Sources and remote fetch.
@@ -26,6 +52,12 @@ Release notes should group changes by user-facing area:
 - Playback.
 - Operations and reliability.
 - Development and docs.
+
+Name an area after what the release changes when none of these fits.
+
+`docs/history/unreleased.md` holds the pending changes in the same area blocks
+under its heading. Add a pending change as a bullet in the block of its area,
+and create the block when the area has none.
 
 Store each release note at `docs/history/<tag>.md`, for example
 `docs/history/v0.2.0.md`. The release workflow derives this path from the tag,
@@ -49,9 +81,11 @@ version.
    development baseline in `migrations/compat/`. Update the
    [Release To Schema Map](migrations.md#release-to-schema-map) and the
    accepted-ledger table in the same change.
-3. Move the content of `docs/history/unreleased.md` into
-   `docs/history/<tag>.md`, leave `unreleased.md` with only its heading, and
-   add the new page to the [history index](../history/index.md).
+3. Move the area blocks of `docs/history/unreleased.md` into
+   `docs/history/<tag>.md`, add the upgrade notes and summary above them as
+   described in [Release Notes](#release-notes), leave `unreleased.md` with
+   only its heading, and add the new page to the
+   [history index](../history/index.md).
 4. Run the validation targets, commit, and push the tag described in
    [Version Source](#version-source).
 

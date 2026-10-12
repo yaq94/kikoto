@@ -128,10 +128,8 @@ const FavoriteCircleCard = memo(function FavoriteCircleCard({
       favorite={circle.favorite}
       userTags={circle.userTags}
       syncState={circle.syncState}
-      workCount={circle.catalogWorks}
+      availability={{ total: circle.catalogWorks, local: circle.localWorks, available: circle.playableWorks }}
       availabilitySummary={{ available: circle.playableWorks, total: circle.catalogWorks }}
-      unavailableCount={circle.missingWorks}
-      sources={circle.sourceSummaries}
       onOpen={() => openCircleRoute(circle.externalId)}
       onFavoriteToggle={() => void removeFavorite()}
       onTagsSave={saveTags}
@@ -174,10 +172,8 @@ const FavoriteVoiceCard = memo(function FavoriteVoiceCard({
       favorite={voice.favorite}
       userTags={voice.userTags}
       syncState={voice.syncState}
-      workCount={voice.knownWorks}
+      availability={{ total: voice.knownWorks, local: voice.localWorks, available: voice.playableWorks }}
       availabilityCounts={{ local: voice.localWorks, remote: voice.remoteWorks }}
-      unavailableCount={Math.max(0, voice.knownWorks - voice.playableWorks)}
-      sources={voice.sourceSummaries}
       onOpen={() => openVoiceRoute(voice.personId)}
       onFavoriteToggle={() => void removeFavorite()}
       onTagsSave={saveTags}

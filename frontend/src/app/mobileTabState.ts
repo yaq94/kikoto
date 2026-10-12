@@ -1,9 +1,9 @@
+import { appPageForLocation } from "./appRoutes";
 import type { PageID } from "./navigation";
-import { workDetailCodeFromLocation } from "./workDetailNavigation";
-import { historyReturnEntry, historyReturnLocation, normalizeInternalLocation } from "../lib/browserHistory";
-import { normalizeLibraryBrowseLocation } from "../lib/libraryBrowseState";
+import { historyStateWithWorkDetailOwner, workDetailCodeFromLocation } from "./workDetailNavigation";
+import { normalizeInternalLocation } from "../lib/browserHistory";
 
-const storagePrefix = "kikoto:mobile-tab-state:v1:";
+const storagePrefix = "kikoto:mobile-tab-state:v2:";
 const maxSnapshotLength = 192 * 1024;
 
 export type MobileTabSnapshot = {
@@ -49,32 +49,17 @@ export function mobileTabSnapshotFromValue(value: unknown, expectedPage: PageID)
   const scrollY = Number(candidate.scrollY);
   if (candidate.page !== expectedPage || !location || !Number.isFinite(scrollY) || scrollY < 0) return null;
   const state = serializableState(candidate.state);
-  if (expectedPage === "library" && !belongsToLibraryWorkspace(location, state)) return null;
+  // A work detail entry belongs to the page it was opened from, not to Library.
+  if (appPageForLocation(location, state) !== expectedPage) return null;
+  const parsed = new URL(location, "https://kikoto.invalid");
+  const workDetail = workDetailCodeFromLocation(parsed.pathname, parsed.search) !== null;
   return {
     page: expectedPage,
     location,
-    state,
+    // Resuming pushes this entry from another page, so its owner stays explicit.
+    state: workDetail ? historyStateWithWorkDetailOwner(state, expectedPage) : state,
     scrollY,
   };
-}
-
-function belongsToLibraryWorkspace(location: string, state: Record<string, unknown>): boolean {
-  // Work routes share the Library renderer, but opening one from another
-  // workspace must not replace the user's own Library destination.
-  for (let depth = 0; depth < 8; depth += 1) {
-    const parsed = new URL(location, "https://kikoto.invalid");
-    if (workDetailCodeFromLocation(parsed.pathname, parsed.search) === null) return true;
-    const returnTo = historyReturnLocation(state);
-    if (!returnTo) return true;
-    const parent = new URL(returnTo, "https://kikoto.invalid");
-    if (normalizeLibraryBrowseLocation(`${parent.pathname}${parent.search}`)) return true;
-    if (workDetailCodeFromLocation(parent.pathname, parent.search) === null) return false;
-    const returnEntry = historyReturnEntry(state);
-    if (returnEntry?.location !== returnTo) return true;
-    location = returnEntry.location;
-    state = returnEntry.state;
-  }
-  return false;
 }
 
 function serializableState(value: unknown): Record<string, unknown> {

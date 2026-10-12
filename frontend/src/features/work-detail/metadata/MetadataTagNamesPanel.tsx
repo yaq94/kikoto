@@ -10,21 +10,32 @@ import { manualValueStatus } from "./metadataEditorModel";
 import type { WorkMetadataTagsEditor } from "./useWorkMetadataTagsEditor";
 
 /**
- * Edits one tag's name in every language, laid out like the title rows. A
+ * Edits one tag's name in every language inside its list row. A
  * shared tag's names apply to every work with that tag; a new tag's typed name
- * is its all-language name and its other names are created with it.
+ * is its all-language name and its other names are created with it. Under one
+ * language it shows that language's name first, then the all-language name it
+ * falls back to.
  */
 export function MetadataTagNamesPanel({
   tag,
+  title = tag.displayName,
+  language = "",
   editor,
   onDone,
 }: {
   tag: EffectiveMetadataTag;
+  /** The tag's name as its chip shows it. */
+  title?: string;
+  /** A supported language to edit alone; empty lists every language. */
+  language?: string;
   editor: WorkMetadataTagsEditor;
   onDone: () => void;
 }) {
   const { t } = useTranslation();
   const isNew = tag.id < 0;
+  const shownLanguages = language
+    ? [...metadataTagLanguages].filter(([value]) => value === language || value === "").reverse()
+    : metadataTagLanguages;
   const detail = editor.detail(tag.id);
   const loadDetail = useStableCallback(editor.loadDetail);
   // Load once per opened tag; a failed load offers its own retry.
@@ -33,30 +44,27 @@ export function MetadataTagNamesPanel({
   }, [tag.id, isNew, loadDetail]);
 
   const rows = () => {
-    if (isNew) {
-      const [allLanguages, ...languages] = metadataTagLanguages;
-      return (
-        <>
-          <div className="min-w-0 space-y-1.5">
-            <div className="flex min-h-7 items-center text-sm font-medium">{t(allLanguages[1])}</div>
+    if (isNew)
+      return shownLanguages.map(([language, label]) =>
+        language ? (
+          <NameRow
+            key={language}
+            id={`tag-name-${tag.id}-${language}`}
+            label={t(label)}
+            value={editor.nameValue(tag.id, language)}
+            status={manualValueStatus(editor.nameValue(tag.id, language), undefined)}
+            placeholder={tag.displayName}
+            onChange={(value) => editor.setName(tag.id, language, value)}
+          />
+        ) : (
+          <div key="all" className="min-w-0 space-y-1.5">
+            <div className="flex min-h-7 items-center text-sm font-medium">{t(label)}</div>
             <p className="flex h-9 items-center truncate rounded-md border border-dashed px-3 text-sm">
               {tag.displayName}
             </p>
           </div>
-          {languages.map(([language, label]) => (
-            <NameRow
-              key={language}
-              id={`tag-name-${tag.id}-${language}`}
-              label={t(label)}
-              value={editor.nameValue(tag.id, language)}
-              status={manualValueStatus(editor.nameValue(tag.id, language), undefined)}
-              placeholder={tag.displayName}
-              onChange={(value) => editor.setName(tag.id, language, value)}
-            />
-          ))}
-        </>
+        ),
       );
-    }
     if (!detail || detail.status === "loading")
       return <p className="text-sm text-muted-foreground">{t("common.loading")}</p>;
     if (detail.status === "failed")
@@ -68,7 +76,7 @@ export function MetadataTagNamesPanel({
           </Button>
         </div>
       );
-    return metadataTagLanguages.map(([language, label]) => {
+    return shownLanguages.map(([language, label]) => {
       const own = editor.savedName(tag.id, language);
       return (
         <NameRow
@@ -86,26 +94,20 @@ export function MetadataTagNamesPanel({
   };
 
   return (
-    <section
-      aria-label={t("metadataEditor.tagNamesFor", { name: tag.displayName })}
-      className="space-y-3 rounded-md border bg-card p-3"
-    >
-      <div className="flex flex-wrap items-start justify-between gap-2">
-        <div className="min-w-0">
-          <h5 className="truncate text-sm font-semibold">{tag.displayName}</h5>
-          <p className="text-xs text-muted-foreground">
-            {isNew
-              ? t("metadataEditor.tagNamesNew")
-              : detail?.status === "ready"
-                ? t("metadataEditor.tagNamesShared", { count: detail.tag.workCount })
-                : t("metadataEditor.tagNamesSharedUnknown")}
-          </p>
-        </div>
+    <section aria-label={t("metadataEditor.tagNamesFor", { name: title })} className="space-y-3">
+      <div className="grid gap-x-4 gap-y-3 sm:grid-cols-2">{rows()}</div>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="min-w-0 flex-1 text-xs text-muted-foreground">
+          {isNew
+            ? t("metadataEditor.tagNamesNew")
+            : detail?.status === "ready"
+              ? t("metadataEditor.tagNamesShared", { count: detail.tag.workCount })
+              : t("metadataEditor.tagNamesSharedUnknown")}
+        </p>
         <Button variant="outline" size="sm" className="shrink-0" onClick={onDone}>
           {t("metadataEditor.tagNamesDone")}
         </Button>
       </div>
-      <div className="grid gap-x-4 gap-y-3 sm:grid-cols-2">{rows()}</div>
     </section>
   );
 }

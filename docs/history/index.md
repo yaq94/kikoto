@@ -15,9 +15,13 @@ development docs.
 
 Avoid using history pages as the only source of truth for current behavior.
 
+Each release page lists its areas and folds the changes under them; the format
+is in [Release Notes](../development/commit-and-release.md#release-notes).
+
 ## Releases
 
 - [Unreleased changes](unreleased.md)
+- [v0.8.3](v0.8.3.md)
 - [v0.8.2](v0.8.2.md)
 - [v0.8.1](v0.8.1.md)
 - [v0.8.0](v0.8.0.md)

@@ -6,26 +6,36 @@ Voice pages present persisted person and credit data.
 ## Current Behavior
 
 - Lists voice actors from local provider credits and user-maintained person
-  data with Local and Remote availability badges on each creator card.
-- Uses server-paged, URL-backed list search and filters with shorter responsive
-  creator cards, dynamic user-tag rows, Library-style pagination, and the latest
-  known credited-work cover.
-- Uses a Library-style first-row toolbar with search on the left and the
-  page-size and existing voice-filter actions (defaulting to `All voices`) on
-  the right; narrow layouts collapse search into the toolbar actions. User tags
-  remain visible and searchable, but the list does not expose a tag filter for
-  now.
+  data as cover tiles with Local and Remote counts and an availability bar: a
+  solid segment for works with a local copy, a lighter segment for works only
+  a remote source holds, and an empty track for the rest.
+- Uses server-paged, URL-backed list search and filters. Each tile shows the
+  latest known credited-work cover with the favorite control on it, the name,
+  aliases, the latest release date, and a dynamic user-tag row, with
+  Library-style pagination. Tiles fill the row on wide layouts and form two
+  columns on a phone.
+- Keeps search, one-tap view chips, and the page-size action on one wrapping
+  toolbar row. The chips are `All voices`, `Favorite`, `Tagged`,
+  `Available`, `Local`, `Remote`, and `Missing`, and the pressed chip names
+  the current view. On a phone the search field keeps its own row with page
+  size beside it, and the chips scroll sideways below. User tags remain
+  visible and searchable, but the list does not expose a tag filter.
 - Shows favorite, rating, note, and user tag state.
 - Shows confirmed aliases under the detail title. Alias review, duplicate
   merge, and merge undo live in the Metadata page's **Voice actors** view;
   the detail **More** menu links there for users with `metadata:sync`.
 - Groups works with no provider voice credits under an `unknown` bucket.
-- Shows Local and Remote availability badges followed by user tags on voice
-  detail. Cache remains available to playback and filtering data, but is not
+- Shows Local and Remote availability badges followed by user tags on the
+  cover-tinted voice detail summary. Cache remains available to playback and filtering data, but is not
   presented as Local.
 - Presents known and remote works with the same responsive grid and shared work
   cards as the Library. Selecting a DLsite tag or personal tag on a work card
   opens a local Library search for it.
+- Orders the works by **Release date**, **Code**, **Title**, **Rating**, or
+  **Sales**, ascending or descending, newest release first by default. Works
+  without the chosen fact stay last in either direction. The order and the
+  page size (24, 48, or 96) are remembered on the device for each account and
+  apply to every voice actor.
 - Loads person detail, known works, and remote matches independently. Remote
   source searches use bounded concurrency, while voice counts and user tags are
   aggregated in batches.
@@ -38,10 +48,13 @@ Voice pages present persisted person and credit data.
   in Activity. **More** holds **Follow this voice actor…**, which opens the
   preset with this voice actor selected for source, filter, metadata, and tag
   choices, and **Manage aliases**. The works toolbar mirrors the Library: a bounded search on the
-  left with columns, page size, availability filter, and selection as quiet
-  icon actions on the right, and the shared collection pagination above and
-  below the grid. Mobile work search keeps one row and opens filter, column,
-  and selection controls from a separate options sheet.
+  left, then the sort button that names the current order, display options,
+  the availability filter, and selection on the right, with the shared
+  collection pagination above and below the grid. Display options hold the
+  columns, the **Cards** choice of **Full**, **Compact**, and **Mini** shared
+  with the Library, and the page size. A phone keeps the sort button above the
+  works and opens search, the filter, columns, the card mode, page size, and
+  selection from a separate options sheet.
 - Treats the mobile detail back control as Up to the last
   server-and-user-scoped Voice Actors list location, including when the detail
   was opened from Library or Favorites. Wide layouts keep the source-aware

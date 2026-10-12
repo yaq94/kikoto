@@ -34,6 +34,10 @@ export type PlayerTrack = {
   remotePath?: string;
   playbackKey?: string;
   locations?: PlayerTrackLocation[];
+  /** The app page the track was queued from; the player leads back to it. */
+  originPage?: string;
+  /** The work detail location the track was queued from, when it was queued from one. */
+  originWorkLocation?: string;
 };
 
 export type LyricsPreferenceTarget = {

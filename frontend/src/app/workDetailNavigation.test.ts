@@ -62,5 +62,6 @@ describe("workDetailCodeFromLocation", () => {
     expect(workDetailCodeFromLocation("/sample-source", "")).toBeNull();
     expect(workDetailCodeFromLocation("/REMOTE-SAMPLE", "?source=0")).toBeNull();
     expect(workDetailCodeFromLocation("/library/source/sample-source", "?source=4")).toBeNull();
+    expect(workDetailCodeFromLocation("/settings", "?tab=library&source=4")).toBeNull();
   });
 });

@@ -236,6 +236,11 @@ func TestWorkTagDraftCreationIsAtomicAndDeduplicatedByAnyKnownName(t *testing.T)
 	if len(state.Tags) != 1 || state.Tags[0].ID != tag {
 		t.Fatalf("language-name reuse = %+v", state)
 	}
+	// The editor shows a tag in one language at a time, so the state carries every name.
+	wantNames := []metadatatags.Name{{Language: "", Name: "Synthetic draft", Source: "manual"}, {Language: "zh-cn", Name: "合成草稿名称", Source: "manual"}}
+	if !reflect.DeepEqual(state.Tags[0].Names, wantNames) {
+		t.Fatalf("draft tag names = %+v, want %+v", state.Tags[0].Names, wantNames)
+	}
 	response = metadataReviewRequest(t, s, http.MethodPut, path, `{"newTags":["Synthetic rolled back"],"overrides":[{"tagId":999999,"action":"add"}]}`, user)
 	if response.Code < 400 {
 		t.Fatal("invalid override accepted")

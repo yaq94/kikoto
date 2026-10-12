@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -960,7 +961,10 @@ func (s *Server) circleCatalogLogicalPage(ctx context.Context, partyID int64, wo
 			COALESCE(catalog.release_date, '') AS release_date,
 			LOWER(COALESCE(catalog.primary_code, '') || ' ' || COALESCE(catalog.title, '') || ' ' ||
 				COALESCE(catalog.release_date, '') || ' ' || COALESCE(catalog.catalog_status, '') || ' ' ||
-				COALESCE(catalog_work.title, '') || ' ' || COALESCE(canonical_work.title, '')) AS search_text
+				COALESCE(catalog_work.title, '') || ' ' || COALESCE(canonical_work.title, '')) AS search_text,
+			COALESCE(canonical_work.title, catalog_work.title, catalog.title, '') AS sort_title,
+			COALESCE(canonical_work.rating_average, catalog_work.rating_average) AS rating,
+			COALESCE(canonical_work.sales_count, catalog_work.sales_count) AS sales
 		FROM ` + circleCatalogProjection + ` AS catalog
 		LEFT JOIN work AS catalog_work ON UPPER(catalog_work.primary_code) = UPPER(catalog.primary_code)
 		LEFT JOIN work_edition AS catalog_edition ON catalog_edition.work_id = catalog_work.id
@@ -1022,7 +1026,8 @@ func (s *Server) circleCatalogLogicalPage(ctx context.Context, partyID int64, wo
 		args = append(args, partyID, partyID, partyID)
 	}
 	query += `, logical_candidates AS (
-		SELECT logical_code, MAX(release_date) AS release_date, MAX(search_text) AS search_text
+		SELECT logical_code, MAX(release_date) AS release_date, MAX(search_text) AS search_text,
+			MAX(sort_title) AS sort_title, MAX(rating) AS rating, MAX(sales) AS sales
 		FROM projected_codes GROUP BY logical_code
 	)
 	SELECT candidates.logical_code
@@ -1075,7 +1080,7 @@ func (s *Server) circleCatalogLogicalPage(ctx context.Context, partyID int64, wo
 	if pageSize < 1 || pageSize > 100 {
 		pageSize = 24
 	}
-	pageQuery := query + " ORDER BY candidates.release_date DESC, candidates.logical_code DESC LIMIT ? OFFSET ?"
+	pageQuery := query + " ORDER BY " + circleWorksOrderBy(worksQuery.Sort, worksQuery.Direction) + " LIMIT ? OFFSET ?"
 	pageArgs := append(append([]any{}, args...), pageSize, (page-1)*pageSize)
 	rows, err := s.db.QueryContext(ctx, pageQuery, pageArgs...)
 	if err != nil {
@@ -1243,6 +1248,20 @@ func (s *Server) loadCircleWorksPage(ctx context.Context, userID int64, partyID 
 	if err != nil {
 		return nil, 0, err
 	}
+	// The enrichment query reads the page's editions in its own order; the
+	// page keeps the order its logical works were selected in.
+	position := make(map[string]int, len(logicalCodes))
+	for index, code := range logicalCodes {
+		position[strings.ToUpper(code)] = index
+	}
+	sort.SliceStable(works, func(left, right int) bool {
+		leftIndex, leftKnown := position[strings.ToUpper(works[left].PrimaryCode)]
+		rightIndex, rightKnown := position[strings.ToUpper(works[right].PrimaryCode)]
+		if leftKnown != rightKnown {
+			return leftKnown
+		}
+		return leftKnown && leftIndex < rightIndex
+	})
 	for index := range works {
 		if works[index].WorkID != nil {
 			if title, ok := titles[*works[index].WorkID]; ok {
