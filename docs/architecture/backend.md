@@ -181,7 +181,10 @@ after the SQLite setting and audit entry commit.
 checkpoints and 64 dated cumulative listening reports, and bounds JSON to
 128 KiB. Strict JSON/envelope errors reject the request before mutation.
 Finite nonnegative positions, matching media locations, valid session ids,
-bounded cumulative totals and sorted UTC date buckets are validated per item.
+bounded cumulative totals and sorted date buckets are validated per item. A
+bucket is a calendar date of the account's time zone as the client resolves
+it, so it may be one day before the session's first UTC date or one day after
+its last.
 Dates must sum to the cumulative total; accepted buckets cannot decrease or
 disappear. Occurrence timestamps cannot be more than five minutes in the future.
 All accepted items commit in one transaction; unexpected database errors or
@@ -199,9 +202,14 @@ submitted position. Acknowledgements without a stored cursor omit `identity`.
 
 `PATCH /api/media-items/{id}/progress` and `GET/POST /api/listening-sessions`
 serve web and native clients that do not send playback reports; their responses
-carry no `identity`. Undated sessions use receipt-date accounting. Dated
-sessions use occurrence UTC buckets and cannot switch to the undated format
-under the same session id. Resume and history are independent tables and are
+carry no `identity`. `GET /api/listening-sessions` returns the history
+generation with the time zone the account fixed, `null` while it follows the
+device. The listening statistics, calendar, and breakdown endpoints take the
+device's zone as a `timeZone` query parameter and count days in the account's
+zone as [User State](data-model.md#user-state) defines it; the calendar
+response names that zone and whether it follows the device. Undated sessions
+are credited to the receipt date in the account's zone. Dated sessions use the client's occurrence date
+buckets and cannot switch to the undated format under the same session id. Resume and history are independent tables and are
 never inferred from one another.
 
 When the backend serves the bundled frontend, content-hashed files under

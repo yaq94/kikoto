@@ -1,4 +1,5 @@
 import { apiTransport } from "@/lib/apiTransport";
+import { deviceTimeZone } from "@/lib/timeZone";
 
 /** One track play activation's cumulative wall-clock listening time. */
 export type ListeningSessionReport = {
@@ -35,7 +36,7 @@ export type ListeningStatisticsRange = "30d" | "12m" | "all";
 export type ListeningGranularity = "day" | "month" | "year";
 
 export type ListeningPeriodStatistic = {
-  /** UTC period: YYYY-MM-DD for a day, YYYY-MM for a month, or YYYY for a year. */
+  /** A period of the account's calendar: YYYY-MM-DD for a day, YYYY-MM for a month, or YYYY for a year. */
   period: string;
   listenedSeconds: number;
   listenCount: number;
@@ -52,13 +53,15 @@ export type ListeningStatistics = {
   workCount: number;
   activeDays: number;
   granularity: ListeningGranularity;
+  /** The calendar day the report ends on, in the account's time zone. */
+  today?: string;
   /** Every period of the range, oldest first; periods without listening are zero. */
   series: ListeningPeriodStatistic[];
   topWorks: ListeningHistoryItem[];
 };
 
 export type ListeningCalendarDay = {
-  /** UTC day, YYYY-MM-DD. */
+  /** A calendar day of the account's time zone, YYYY-MM-DD. */
   date: string;
   listenedSeconds: number;
   listenCount: number;
@@ -69,6 +72,10 @@ export type ListeningCalendar = {
   /** The Monday the calendar starts on. */
   from: string;
   to: string;
+  /** The IANA zone whose calendar the days follow. */
+  timeZone?: string;
+  /** Whether that zone is this device's because the account fixed none. */
+  followsDevice?: boolean;
   /** Sparse and oldest first; a day without listening is absent. */
   days: ListeningCalendarDay[];
 };
@@ -113,6 +120,18 @@ export const LISTENING_HISTORY_CLEARED_CODE = "listening_history_cleared";
 /** A listening request that has not completed by then is abandoned and retried later. */
 export const LISTENING_REPORT_TIMEOUT_MS = 20_000;
 
+/**
+ * A report's query with this device's time zone, which decides where the
+ * report's days start for an account that fixed no zone of its own.
+ */
+function reportQuery(values: Record<string, string> = {}) {
+  const search = new URLSearchParams(values);
+  const zone = deviceTimeZone();
+  if (zone) search.set("timeZone", zone);
+  const query = search.toString();
+  return query ? `?${query}` : "";
+}
+
 function timeoutSignal(ms: number) {
   if (typeof AbortSignal.timeout === "function") return AbortSignal.timeout(ms);
   const controller = new AbortController();
@@ -137,9 +156,10 @@ export const listeningApi = {
     return apiTransport.getJSON<ListeningHistoryPage>(`/api/listening-history?${search}`, signal);
   },
   statistics: (range: ListeningStatisticsRange, signal?: AbortSignal) =>
-    apiTransport.getJSON<ListeningStatistics>(`/api/listening-statistics?range=${range}`, signal),
-  calendar: (signal?: AbortSignal) => apiTransport.getJSON<ListeningCalendar>("/api/listening-calendar", signal),
+    apiTransport.getJSON<ListeningStatistics>(`/api/listening-statistics${reportQuery({ range })}`, signal),
+  calendar: (signal?: AbortSignal) =>
+    apiTransport.getJSON<ListeningCalendar>(`/api/listening-calendar${reportQuery()}`, signal),
   breakdown: (range: ListeningStatisticsRange, rank: ListeningBreakdownRank, signal?: AbortSignal) =>
-    apiTransport.getJSON<ListeningBreakdown>(`/api/listening-breakdown?range=${range}&rank=${rank}`, signal),
+    apiTransport.getJSON<ListeningBreakdown>(`/api/listening-breakdown${reportQuery({ range, rank })}`, signal),
   clearHistory: () => apiTransport.deleteJSON<unknown>("/api/listening-history"),
 };

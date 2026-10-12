@@ -110,7 +110,10 @@ export const personalJapanese = {
       weekendAverage: "週末の 1 日平均",
       rhythmPastYear: "過去 1 年に基づきます。",
       notes:
-        "日付は UTC で数えます。実際に音声が再生されている時間だけを記録します。一時停止、読み込み待ち、シーク中は含みません。日付のないインポート済みの合計は「すべて」にのみ含まれます。",
+        "実際に音声が再生されている時間だけを記録します。一時停止、読み込み待ち、シーク中は含みません。日付のないインポート済みの合計は「すべて」にのみ含まれます。",
+      timeZone: "1 日は {{zone}} の午前 0 時に始まります。",
+      timeZoneAuto: "1 日は {{zone}}（この端末のタイムゾーン）の午前 0 時に始まります。",
+      changeTimeZone: "タイムゾーンを変更",
       weekdayAverage: "曜日別の平均",
       rank: "{{rank}} 位",
       search: "履歴を検索",
@@ -353,5 +356,15 @@ export const personalJapanese = {
       previewFailed: "プレビューに失敗しました",
       importFailed: "インポートに失敗しました",
     },
+  },
+  timeZone: {
+    title: "タイムゾーン",
+    description:
+      "聴取レポートの 1 日は、このタイムゾーンの午前 0 時に始まります。「自動」は使用中の端末に合わせます。記録済みの聴取は、記録時の日付のままです。",
+    auto: "自動（{{zone}}）",
+    save: "タイムゾーンを保存",
+    saved: "タイムゾーンを保存しました。",
+    saveFailed: "タイムゾーンを保存できませんでした。",
+    loadFailed: "タイムゾーンを読み込めませんでした。",
   },
 } as const;

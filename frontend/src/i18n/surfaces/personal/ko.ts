@@ -110,7 +110,10 @@ export const personalKorean = {
       weekendAverage: "주말 하루 평균",
       rhythmPastYear: "지난 1년 기준입니다.",
       notes:
-        "날짜는 UTC 기준입니다. 실제로 오디오가 재생되는 시간만 기록합니다. 일시 정지, 버퍼링, 탐색은 포함하지 않습니다. 날짜가 없는 가져온 합계는 '전체'에만 포함됩니다.",
+        "실제로 오디오가 재생되는 시간만 기록합니다. 일시 정지, 버퍼링, 탐색은 포함하지 않습니다. 날짜가 없는 가져온 합계는 '전체'에만 포함됩니다.",
+      timeZone: "하루는 {{zone}}의 자정에 시작합니다.",
+      timeZoneAuto: "하루는 {{zone}}(이 기기의 시간대)의 자정에 시작합니다.",
+      changeTimeZone: "시간대 변경",
       weekdayAverage: "요일별 평균",
       rank: "{{rank}}위",
       search: "기록 검색",
@@ -349,5 +352,15 @@ export const personalKorean = {
       previewFailed: "미리 보기 실패",
       importFailed: "가져오기 실패",
     },
+  },
+  timeZone: {
+    title: "시간대",
+    description:
+      "청취 리포트의 하루는 이 시간대의 자정에 시작합니다. '자동'은 사용 중인 기기를 따릅니다. 이미 기록된 청취는 기록 당시의 날짜를 유지합니다.",
+    auto: "자동({{zone}})",
+    save: "시간대 저장",
+    saved: "시간대를 저장했습니다.",
+    saveFailed: "시간대를 저장하지 못했습니다.",
+    loadFailed: "시간대를 불러오지 못했습니다.",
   },
 } as const;

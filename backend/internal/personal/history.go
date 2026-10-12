@@ -20,6 +20,9 @@ type SessionInput struct {
 	StartedAt       string       `json:"startedAt,omitempty"`
 	LastListenedAt  string       `json:"lastListenedAt,omitempty"`
 	Days            []SessionDay `json:"days,omitempty"`
+	// Day is the account's current calendar day, which a report without Days
+	// is credited to; the server sets it, and empty means the UTC day.
+	Day string `json:"-"`
 }
 
 type SessionDay struct {
@@ -65,7 +68,9 @@ func validSession(input SessionInput) bool {
 	if e1 != nil || e2 != nil || end.Before(start) || end.After(time.Now().Add(5*time.Minute)) {
 		return false
 	}
-	first, last := start.UTC().Format("2006-01-02"), end.UTC().Format("2006-01-02")
+	// A client buckets by the account's time zone, whose calendar day is at
+	// most one day from the UTC day of the same instant.
+	first, last := start.UTC().AddDate(0, 0, -1).Format("2006-01-02"), end.UTC().AddDate(0, 0, 1).Format("2006-01-02")
 	previous := ""
 	total := 0.0
 	for _, day := range input.Days {
@@ -130,7 +135,11 @@ func recordSessionTx(ctx context.Context, tx *sql.Tx, user int64, input SessionI
 	if newSession {
 		count = 1
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO user_listening_day (user_id,work_id,day,listened_seconds,listen_count) VALUES (?,?,date('now'),?,?) ON CONFLICT(user_id,work_id,day) DO UPDATE SET listened_seconds = listened_seconds + excluded.listened_seconds, listen_count = listen_count + excluded.listen_count`, user, work, input.ListenedSeconds-previous, count)
+	day := input.Day
+	if day == "" {
+		day = time.Now().UTC().Format(time.DateOnly)
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO user_listening_day (user_id,work_id,day,listened_seconds,listen_count) VALUES (?,?,?,?,?) ON CONFLICT(user_id,work_id,day) DO UPDATE SET listened_seconds = listened_seconds + excluded.listened_seconds, listen_count = listen_count + excluded.listen_count`, user, work, day, input.ListenedSeconds-previous, count)
 	if err != nil {
 		return err
 	}
@@ -189,7 +198,8 @@ func recordDatedSession(ctx context.Context, tx *sql.Tx, user, work int64, input
 		}
 	}
 	if newSession {
-		_, err = tx.ExecContext(ctx, `INSERT INTO user_listening_day (user_id,work_id,day,listen_count) VALUES (?,?,?,1) ON CONFLICT(user_id,work_id,day) DO UPDATE SET listen_count=listen_count+1`, user, work, start.UTC().Format("2006-01-02"))
+		// The play counts on the day the client put the session's first listening.
+		_, err = tx.ExecContext(ctx, `INSERT INTO user_listening_day (user_id,work_id,day,listen_count) VALUES (?,?,?,1) ON CONFLICT(user_id,work_id,day) DO UPDATE SET listen_count=listen_count+1`, user, work, input.Days[0].Day)
 	}
 	return err
 }

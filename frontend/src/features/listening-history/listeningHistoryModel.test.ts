@@ -83,10 +83,9 @@ describe("listening history presentation", () => {
   });
 
   it("covers the days from the first period through today", () => {
-    const now = new Date("2026-03-15T22:00:00Z");
-    expect(reportDayCount(days(new Array(14).fill(0)), now)).toBe(14);
-    expect(reportDayCount([{ period: "2026-02", listenedSeconds: 0, listenCount: 0 }], now)).toBe(43);
-    expect(reportDayCount([], now)).toBe(0);
+    expect(reportDayCount(days(new Array(14).fill(0)), "2026-03-15")).toBe(14);
+    expect(reportDayCount([{ period: "2026-02", listenedSeconds: 0, listenCount: 0 }], "2026-03-15")).toBe(43);
+    expect(reportDayCount([], "2026-03-15")).toBe(0);
   });
 
   it("keeps a small nonzero share visible", () => {

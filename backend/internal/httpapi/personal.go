@@ -106,7 +106,13 @@ func (s *Server) getListeningGeneration(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, http.StatusOK, map[string]int64{"generation": generation})
+	// A client buckets listening by the calendar day of the account's time
+	// zone; null tells it to follow its own device.
+	var timeZone any
+	if name, ok := s.ownTimeZone(r.Context(), user.ID); ok {
+		timeZone = name
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"generation": generation, "timeZone": timeZone})
 }
 
 func (s *Server) recordListeningSession(w http.ResponseWriter, r *http.Request) {
@@ -118,6 +124,7 @@ func (s *Server) recordListeningSession(w http.ResponseWriter, r *http.Request) 
 	if !decodePersonalBody(w, r, &payload, 2048) {
 		return
 	}
+	payload.Day = s.accountNow(r, user.ID).Format(time.DateOnly)
 	if err := (personal.Store{DB: s.db}).RecordSession(r.Context(), user.ID, payload); err != nil {
 		writePersonalError(w, err)
 		return
@@ -151,7 +158,7 @@ func (s *Server) getListeningStatistics(w http.ResponseWriter, r *http.Request) 
 		writePersonalError(w, err)
 		return
 	}
-	result, err := (personal.Store{DB: s.db}).StatisticsFor(r.Context(), user.ID, period, time.Now())
+	result, err := (personal.Store{DB: s.db}).StatisticsFor(r.Context(), user.ID, period, s.accountNow(r, user.ID))
 	if err != nil {
 		writePersonalError(w, err)
 		return
@@ -166,12 +173,17 @@ func (s *Server) getListeningCalendar(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
-	result, err := (personal.Store{DB: s.db}).CalendarFor(r.Context(), user.ID, time.Now())
+	result, err := (personal.Store{DB: s.db}).CalendarFor(r.Context(), user.ID, s.accountNow(r, user.ID))
 	if err != nil {
 		writePersonalError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, result)
+	_, followsDevice := s.accountTimeZone(r, user.ID)
+	writeJSON(w, http.StatusOK, struct {
+		personal.Calendar
+		// FollowsDevice reports that the account fixed no zone of its own.
+		FollowsDevice bool `json:"followsDevice"`
+	}{result, followsDevice})
 }
 
 func (s *Server) getListeningBreakdown(w http.ResponseWriter, r *http.Request) {
@@ -190,7 +202,7 @@ func (s *Server) getListeningBreakdown(w http.ResponseWriter, r *http.Request) {
 		writePersonalError(w, err)
 		return
 	}
-	result, err := (personal.Store{DB: s.db}).BreakdownFor(r.Context(), user.ID, period, rank, time.Now())
+	result, err := (personal.Store{DB: s.db}).BreakdownFor(r.Context(), user.ID, period, rank, s.accountNow(r, user.ID))
 	if err != nil {
 		writePersonalError(w, err)
 		return

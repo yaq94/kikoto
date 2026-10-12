@@ -36,6 +36,7 @@ import { api, type CurrentUser } from "@/lib/api";
 import { validatePasswordChange, type PasswordChangeDraft } from "@/pages/accountSettings";
 import { CleanupPage } from "@/pages/CleanupPage";
 import { MaintenancePage } from "@/pages/MaintenancePage";
+import { AccountTimeZoneSection } from "@/features/time-zone/AccountTimeZoneSection";
 import { PersonalTabPanel, type PersonalTabProps } from "@/pages/PersonalTabPanel";
 import {
   getStoredPlaybackSeekPreferences,
@@ -56,7 +57,7 @@ const emptyPasswordDraft: PasswordChangeDraft = {
 
 type SettingsTab =
   "account" | "playback" | "recommendation" | "tags" | "library" | "cache" | "proxy" | "cleanup" | "users";
-type SettingsSectionTarget = "data";
+type SettingsSectionTarget = "data" | "time-zone";
 type SettingsLocation = { tab: SettingsTab; section?: SettingsSectionTarget };
 
 const adminSettingsTabs: SettingsTab[] = ["library", "cache", "proxy", "cleanup", "users"];
@@ -66,6 +67,7 @@ const allSettingsTabs: SettingsTab[] = ["account", "playback", "recommendation",
 // Alias tab ids keep existing links valid; each opens the tab that holds its content.
 const settingsTabAliases: Record<string, SettingsLocation> = {
   data: { tab: "account", section: "data" },
+  "time-zone": { tab: "account", section: "time-zone" },
   // The metadata tab id opens Library, which holds catalog freshness.
   metadata: { tab: "library" },
 };
@@ -462,6 +464,7 @@ export function SettingsPage({
                   </SettingsSection>
                 </form>
               )}
+              <AccountTimeZoneSection readOnly={readOnly} />
               {personal && (
                 <section
                   id="settings-section-data"

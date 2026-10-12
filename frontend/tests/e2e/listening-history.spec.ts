@@ -58,11 +58,14 @@ async function mockListeningServer(page: Page, options: { failFirstReport?: bool
   await page.route("**/api/listening-statistics*", (route) =>
     route.fulfill({ json: statisticsFixture(new URL(route.request().url()).searchParams.get("range") ?? "all") }),
   );
-  await page.route("**/api/listening-calendar", (route) =>
+  // The account fixed no zone, so the report follows the zone the device names.
+  await page.route("**/api/listening-calendar*", (route) =>
     route.fulfill({
       json: {
         from: "2026-02-23",
         to: "2026-03-04",
+        timeZone: new URL(route.request().url()).searchParams.get("timeZone") ?? "UTC",
+        followsDevice: true,
         days: [{ date: "2026-03-03", listenedSeconds: 600, listenCount: 2 }],
       },
     }),
@@ -353,6 +356,30 @@ test("@desktop the listening report switches between its ranges", async ({ page 
   await expect(ranges.getByRole("button", { name: "12 months" })).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByRole("table", { name: "Monthly listening time" })).toBeAttached();
   expect(requestedRanges.at(-1)).toBe("12m");
+});
+
+test.describe("on a device in another time zone", () => {
+  test.use({ timezoneId: "Asia/Tokyo" });
+
+  test("@desktop the listening dashboard names the time zone of its days and links to the setting", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await mockApplication(page, undefined, false, 1, 0, [], undefined, { authenticated: true });
+    await mockListeningServer(page);
+    const reportZones: Array<string | null> = [];
+    page.on("request", (request) => {
+      const url = new URL(request.url());
+      if (url.pathname === "/api/listening-statistics") reportZones.push(url.searchParams.get("timeZone"));
+    });
+    await page.goto("/insights");
+
+    await expect(page.getByText("Days start at midnight in Asia/Tokyo, this device's time zone.")).toBeVisible();
+    expect(reportZones.at(-1)).toBe("Asia/Tokyo");
+    await page.getByRole("link", { name: "Change time zone", exact: true }).click();
+    await expect(page).toHaveURL(/\/settings\?tab=time-zone$/);
+    await expect(page.getByRole("heading", { name: "Time zone", exact: true })).toBeVisible();
+  });
 });
 
 test("@desktop the listening dashboard ranks tags, voices, and circles and links each to its page", async ({

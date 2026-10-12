@@ -24,7 +24,7 @@ export function listeningDurationParts(totalSeconds: number): ListeningDurationP
   return { key: "hoursMinutes", values: { hours: Math.floor(totalMinutes / 60), minutes: totalMinutes % 60 } };
 }
 
-/** The UTC start of a series period: YYYY, YYYY-MM, or YYYY-MM-DD. */
+/** The start of a series period (YYYY, YYYY-MM, or YYYY-MM-DD) as a UTC instant for calendar arithmetic. */
 export function periodStart(period: string) {
   const [year, month = "01", day = "01"] = period.split("-");
   return new Date(Date.UTC(Number(year), Number(month) - 1, Number(day)));
@@ -134,12 +134,16 @@ export function rhythmDays(
   };
 }
 
-/** UTC calendar days a report covers, from its first period's start through today. */
-export function reportDayCount(series: readonly ListeningPeriodStatistic[], now = new Date()) {
+/**
+ * Calendar days a report covers, from its first period's start through
+ * `today`, the day the report ends on. A report that does not name its last
+ * day ends on the current UTC day.
+ */
+export function reportDayCount(series: readonly ListeningPeriodStatistic[], today?: string) {
   const first = series[0];
   if (!first) return 0;
-  const today = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
-  return Math.max(1, Math.round((today - periodStart(first.period).getTime()) / 86_400_000) + 1);
+  const last = periodStart(today ?? new Date().toISOString().slice(0, 10)).getTime();
+  return Math.max(1, Math.round((last - periodStart(first.period).getTime()) / 86_400_000) + 1);
 }
 
 /** A part of a total as a whole percent; a nonzero part never rounds down to zero. */

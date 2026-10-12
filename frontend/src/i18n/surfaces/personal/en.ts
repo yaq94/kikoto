@@ -110,7 +110,10 @@ export const personalEnglish = {
       weekendAverage: "Weekend, per day",
       rhythmPastYear: "Based on the past year.",
       notes:
-        "Days are counted in UTC. Only time while audio is actually playing is counted; pauses, buffering, and seeking are not. Imported totals without dates count only in All time.",
+        "Only time while audio is actually playing is counted; pauses, buffering, and seeking are not. Imported totals without dates count only in All time.",
+      timeZone: "Days start at midnight in {{zone}}.",
+      timeZoneAuto: "Days start at midnight in {{zone}}, this device's time zone.",
+      changeTimeZone: "Change time zone",
       weekdayAverage: "Average per weekday",
       rank: "Rank {{rank}}",
       search: "Search history",
@@ -351,5 +354,15 @@ export const personalEnglish = {
       previewFailed: "Preview failed",
       importFailed: "Import failed",
     },
+  },
+  timeZone: {
+    title: "Time zone",
+    description:
+      "A day in your listening report starts at midnight in this time zone. Automatic follows the device you are using. Listening already recorded keeps the day it was counted on.",
+    auto: "Automatic ({{zone}})",
+    save: "Save time zone",
+    saved: "Time zone saved.",
+    saveFailed: "The time zone could not be saved.",
+    loadFailed: "The time zone could not be loaded.",
   },
 } as const;

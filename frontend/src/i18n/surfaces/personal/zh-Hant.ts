@@ -108,7 +108,10 @@ export const personalHant = {
       workdayAverage: "週一至週五日均",
       weekendAverage: "週末日均",
       rhythmPastYear: "基於過去一年。",
-      notes: "日期依 UTC 計算。只記錄音訊實際播放的時間，不包括暫停、緩衝和跳轉。沒有日期的匯入時長只計入「全部」。",
+      notes: "只記錄音訊實際播放的時間，不包括暫停、緩衝和跳轉。沒有日期的匯入時長只計入「全部」。",
+      timeZone: "一天從 {{zone}} 的午夜開始。",
+      timeZoneAuto: "一天從 {{zone}}（此裝置的時區）的午夜開始。",
+      changeTimeZone: "變更時區",
       weekdayAverage: "依星期平均",
       rank: "第 {{rank}} 名",
       search: "搜尋歷史",
@@ -337,5 +340,15 @@ export const personalHant = {
       previewFailed: "預覽失敗",
       importFailed: "匯入失敗",
     },
+  },
+  timeZone: {
+    title: "時區",
+    description:
+      "收聽報表裡的一天從這個時區的午夜開始。「自動」跟隨你正在使用的裝置。已經記錄的收聽保留當時計入的日期。",
+    auto: "自動（{{zone}}）",
+    save: "儲存時區",
+    saved: "時區已儲存。",
+    saveFailed: "無法儲存時區。",
+    loadFailed: "無法載入時區。",
   },
 } as const;

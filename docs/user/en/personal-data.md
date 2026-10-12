@@ -2,10 +2,11 @@
 
 [English](../en/personal-data.md) · [简体中文](../zh-Hans/personal-data.md) · [繁體中文](../zh-Hant/personal-data.md) · [日本語](../ja/personal-data.md) · [한국어](../ko/personal-data.md)
 
-Sign in and open **Settings**: listening history is in the **History** tab,
-personal tags are in **Tags**, and **Your data** is the
-last section of **Account**. The account menu behind your avatar and Quick
-actions open each one directly. They show only your account's data.
+Sign in and open **Insights** in the sidebar for your listening calendar,
+report, and history. Personal tags are in **Settings → Tags**, and **Your
+data** is the last section of **Settings → Account**. The account menu behind
+your avatar and Quick actions open each one directly. They show only your
+account's data.
 
 ## Personal tags
 
@@ -18,25 +19,49 @@ New workflow tag defaults omit the date so repeated runs reuse a tag. Existing
 saved templates are preserved; remove `{date}` in Workflows if an older schedule
 should stop creating dated tags. Explicit date templates remain supported.
 
-## Listening history
+## Insights
 
-The listening report covers the last 30 days, the last 12 months, or all
-time. For the chosen range it shows:
+**Insights** opens with the **listening calendar**: the past year as one cell
+per day in week columns, shaded by listening time, with that year's listening
+days, listening time, and current and longest streaks. Point at or tap a day
+for its total.
+
+Below it, the listening report covers the last 30 days, the last 12 months, or
+all time. For the chosen range it shows:
 
 - Listening time, plays, works, and active days, with the time per active day,
   the time per play, the top work's share of the time, and the share of days in
   the range with listening.
-- A chart by UTC day, month, or year (all time switches to years after three
+- A chart by day, month, or year (all time switches to years after three
   years) with the average and busiest period.
 - The five most listened works, expandable to ten, each with its time and its
   share of the range's listening.
-- Rhythm: the current and longest runs of days, months, or years with
-  listening, and either the average listening per weekday (30 days) or how many
-  months or years had listening.
+- Rhythm: the average listening per day from Monday to Friday and per weekend
+  day, then the average per weekday. A 12-month or all-time report reads the
+  calendar's days for this, so an all-time report describes the past year.
+- **Tags, voices, and circles**: the leading five of each, expandable to ten,
+  and each opens its Library search, voice page, or circle page. **Preference**
+  ranks them by how far their share of your listening time exceeds their share
+  of the Library's works, and lists only those that exceed it: the bar is the
+  share of listening time and the mark on it is the share of the Library.
+  **Listening time** ranks them by the listening time of their works. A work
+  counts in full toward each of its tags and voices.
+
+Works are the ones the Library lists: listening to any edition of a work counts
+toward that work.
+
+A day starts at midnight in your time zone. **Automatic**, the initial
+setting, follows each device: listening counts toward the current day of the
+device that plays it, and a report ends on the current day of the device that
+shows it. Choose a zone in **Settings → Account → Time zone** to use one zone
+on every device. The foot of the page names the zone in use and links to that
+setting. Listening is credited to a day when it is recorded, so changing the
+time zone applies to later listening and leaves recorded days as they are.
 
 Imported totals have no dates, so they count only in All time. The full
 history, ordered by last listening time with each work's time, plays, and last
-listening date, is collapsed below the report and loads when opened.
+listening date, is collapsed at the bottom of the page and loads when opened.
+**Clear history** and the way to **Your data** are beside it.
 Time measures actual listening, excluding paused, buffering, and seek time;
 speed changes do not multiply it. Concurrent players count independently.
 Client interruptions or disconnection may leave some time unreported.

@@ -1,11 +1,15 @@
 import type { DatedListeningReport } from "@/lib/playbackReportApi";
+import { createZonedDays } from "@/lib/timeZone";
 
 export const MAX_LISTENING_SESSION_SECONDS = 86_400;
 export const LISTENING_MAX_OBSERVATION_GAP_MS = 60_000;
 const MAX_SESSION_DAYS = 32;
 export type ListeningTarget = { activationKey: string; workId: number };
 
-/** Measures actual advancing wall time. It owns neither storage nor networking. */
+/**
+ * Measures actual advancing wall time and credits it to calendar days of the
+ * account's time zone. It owns neither storage nor networking.
+ */
 export class ListeningClock {
   private target: ListeningTarget | null = null;
   private generation: number | null = null;
@@ -14,10 +18,14 @@ export class ListeningClock {
   private runningSince: number | null = null;
   private wallSince = 0;
   private publishedSeconds = 0;
+  private zone = "UTC";
+  private dayAt = createZonedDays("UTC");
 
   constructor(
     private readonly createId: () => string,
     private readonly checkpoint: (report: DatedListeningReport) => void,
+    /** The time zone whose calendar days listening is credited to. */
+    private readonly timeZone: () => string = () => "UTC",
   ) {}
 
   update(target: ListeningTarget | null, generation: number | null, advancing: boolean, now: number, wall: number) {
@@ -50,9 +58,16 @@ export class ListeningClock {
       return;
     }
     if (elapsed <= 0 || elapsed > LISTENING_MAX_OBSERVATION_GAP_MS) return;
+    const zone = this.timeZone();
+    if (zone !== this.zone) {
+      // One report keeps one zone's days.
+      this.closeReport();
+      this.zone = zone;
+      this.dayAt = createZonedDays(zone);
+    }
     let cursor = wall - elapsed;
     while (cursor < wall) {
-      const day = new Date(cursor).toISOString().slice(0, 10);
+      const { day, end: dayEnd } = this.dayAt(cursor);
       if (this.days.size >= MAX_SESSION_DAYS && !this.days.has(day)) this.closeReport();
       if (!this.report)
         this.report = {
@@ -64,9 +79,8 @@ export class ListeningClock {
           lastListenedAt: new Date(cursor).toISOString(),
           days: [],
         };
-      const midnight = Date.parse(`${day}T00:00:00Z`) + 86_400_000;
       const remaining = MAX_LISTENING_SESSION_SECONDS * 1000 - this.report.listenedSeconds * 1000;
-      const amount = Math.min(wall - cursor, midnight - cursor, remaining);
+      const amount = Math.min(wall - cursor, Math.max(1, dayEnd - cursor), remaining);
       this.days.set(day, (this.days.get(day) ?? 0) + amount);
       cursor += amount;
       this.report.listenedSeconds = [...this.days.values()].reduce((sum, value) => sum + value, 0) / 1000;

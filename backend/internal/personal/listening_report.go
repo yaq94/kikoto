@@ -49,8 +49,8 @@ type ListeningDay struct {
 	ListenCount     int64   `json:"listenCount"`
 }
 
-// ListeningPeriod is one series bucket: a UTC day (2006-01-02), month
-// (2006-01), or year (2006).
+// ListeningPeriod is one series bucket: a day (2006-01-02), month (2006-01),
+// or year (2006) of the account's calendar.
 type ListeningPeriod struct {
 	Period          string  `json:"period"`
 	ListenedSeconds float64 `json:"listenedSeconds"`
@@ -64,9 +64,11 @@ type Statistics struct {
 	WorkCount       int             `json:"workCount"`
 	ActiveDays      int             `json:"activeDays"`
 	Granularity     Granularity     `json:"granularity"`
+	// Today is the calendar day the report ends on.
+	Today string `json:"today"`
 	// Series covers the whole range oldest first; periods without listening are zero.
 	Series []ListeningPeriod `json:"series"`
-	// Daily is the sparse last 30 UTC days for clients that do not read Series.
+	// Daily is the sparse last 30 days for clients that do not read Series.
 	Daily    []ListeningDay `json:"daily"`
 	TopWorks []HistoryItem  `json:"topWorks"`
 }
@@ -76,13 +78,13 @@ func (s Store) Statistics(ctx context.Context, user int64) (Statistics, error) {
 	return s.StatisticsFor(ctx, user, RangeAll, time.Now())
 }
 
-// StatisticsFor reports one range ending at now (UTC). A bounded range counts
-// only dated listening; all time also includes imported per-work totals,
-// which have no dates and therefore never appear in the series.
+// StatisticsFor reports one range ending on now's calendar day, read in now's
+// own time zone. A bounded range counts only dated listening; all time also
+// includes imported per-work totals, which have no dates and therefore never
+// appear in the series.
 func (s Store) StatisticsFor(ctx context.Context, user int64, period StatisticsRange, now time.Time) (Statistics, error) {
-	now = now.UTC()
-	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
-	result := Statistics{Range: period, Series: []ListeningPeriod{}, Daily: []ListeningDay{}, TopWorks: []HistoryItem{}}
+	today := calendarDay(now)
+	result := Statistics{Range: period, Today: today.Format(time.DateOnly), Series: []ListeningPeriod{}, Daily: []ListeningDay{}, TopWorks: []HistoryItem{}}
 	var from time.Time
 	switch period {
 	case RangeLast30Days:
@@ -128,13 +130,20 @@ func (s Store) StatisticsFor(ctx context.Context, user int64, period StatisticsR
 	return result, err
 }
 
-// boundedRangeStart is the first UTC day of a range that does not depend on
+// boundedRangeStart is the first day of a range that does not depend on
 // the account's history: the last 30 days, or the last 12 calendar months.
 func boundedRangeStart(period StatisticsRange, today time.Time) time.Time {
 	if period == RangeLast12Months {
 		return time.Date(today.Year(), today.Month(), 1, 0, 0, 0, 0, time.UTC).AddDate(0, -11, 0)
 	}
 	return today.AddDate(0, 0, -29)
+}
+
+// calendarDay is the calendar day now falls on in its own time zone, as a
+// UTC midnight for day arithmetic. Listening days are stored as the calendar
+// day they were recorded under.
+func calendarDay(now time.Time) time.Time {
+	return time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
 }
 
 func (s Store) firstListeningDay(ctx context.Context, user int64, today time.Time) (time.Time, error) {

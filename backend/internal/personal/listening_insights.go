@@ -14,22 +14,23 @@ const breakdownLimit = 10
 
 // Calendar is the dated listening of the weeks ending with the current one.
 type Calendar struct {
-	// From is the Monday the calendar starts on and To is today, both UTC days.
+	// From is the Monday the calendar starts on and To is today.
 	From string `json:"from"`
 	To   string `json:"to"`
+	// TimeZone names the zone whose calendar the days follow.
+	TimeZone string `json:"timeZone"`
 	// Days is sparse and oldest first; a day without listening is absent.
 	Days []ListeningDay `json:"days"`
 }
 
-// CalendarFor reports dated listening per UTC day from the Monday 52 weeks
-// before the current week through now. Imported totals have no dates and
-// never appear.
+// CalendarFor reports dated listening per day from the Monday 52 weeks before
+// the current week through now's calendar day, read in now's own time zone.
+// Imported totals have no dates and never appear.
 func (s Store) CalendarFor(ctx context.Context, user int64, now time.Time) (Calendar, error) {
-	now = now.UTC()
-	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	today := calendarDay(now)
 	monday := today.AddDate(0, 0, -((int(today.Weekday()) + 6) % 7))
 	from := monday.AddDate(0, 0, -7*calendarWeeks)
-	result := Calendar{From: from.Format(time.DateOnly), To: today.Format(time.DateOnly)}
+	result := Calendar{From: from.Format(time.DateOnly), To: today.Format(time.DateOnly), TimeZone: now.Location().String()}
 	var err error
 	result.Days, err = s.recentListeningDays(ctx, user, from)
 	return result, err
@@ -120,12 +121,11 @@ var breakdownDimensions = []struct {
 	},
 }
 
-// BreakdownFor ranks the range ending at now (UTC) with the same scope as
+// BreakdownFor ranks the range ending on now's calendar day with the same scope as
 // StatisticsFor: a bounded range counts only dated listening, and all time
 // also includes imported per-work totals.
 func (s Store) BreakdownFor(ctx context.Context, user int64, period StatisticsRange, rank BreakdownRank, now time.Time) (Breakdown, error) {
-	now = now.UTC()
-	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	today := calendarDay(now)
 	result := Breakdown{Range: period, Rank: rank, Tags: []BreakdownEntry{}, Voices: []BreakdownEntry{}, Circles: []BreakdownEntry{}}
 	if rank != RankTime && rank != RankPreference {
 		return result, ErrInvalid

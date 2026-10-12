@@ -1,9 +1,20 @@
-import { CalendarDays, ChevronDown, Clock, Disc3, History, Loader2, PlayCircle, Search, Trash2, X } from "lucide-react";
+import {
+  CalendarDays,
+  ChevronDown,
+  ChevronRight,
+  Clock,
+  Disc3,
+  History,
+  Loader2,
+  PlayCircle,
+  Search,
+  Trash2,
+  X,
+} from "lucide-react";
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 
 import { CollectionPagination } from "@/components/collection/CollectionPagination";
-import { SettingsDisclosure } from "@/components/settings/SettingsSection";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogFooter, DialogHeader } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -37,7 +48,12 @@ import {
   sharePercent,
 } from "./listeningHistoryModel";
 import { ListeningRhythm } from "./ListeningRhythm";
-import { ListeningWorkRow, type ListeningHistoryWorkLinkFactory } from "./ListeningWorkRow";
+import {
+  ListeningWorkRow,
+  openLinkInPlace,
+  type ListeningHistoryWorkLink,
+  type ListeningHistoryWorkLinkFactory,
+} from "./ListeningWorkRow";
 
 export type { ListeningEntityLinkFactory } from "./ListeningBreakdownCard";
 export { openLinkInPlace } from "./ListeningWorkRow";
@@ -70,8 +86,9 @@ function useDurationFormatter() {
  * a chosen range with totals, activity over time, the most listened works,
  * listening rhythm, and the leading tags, voices, and circles, with the full
  * per-work history collapsed below it. The history is a record rather than a
- * summary, so it loads only once opened. Works are the library's canonical
- * works throughout.
+ * summary, so it loads only once opened, and the actions on the account's
+ * listening data sit beside it. Works are the library's canonical works
+ * throughout.
  */
 export function ListeningHistoryPage({
   canClear,
@@ -79,6 +96,7 @@ export function ListeningHistoryPage({
   workLink,
   entityLink,
   actions,
+  timeZoneLink,
 }: {
   canClear: boolean;
   /** Server and principal scope; players in this scope drop unreported pre-clear sessions. */
@@ -87,6 +105,8 @@ export function ListeningHistoryPage({
   entityLink: ListeningEntityLinkFactory;
   /** Further data actions of the composing page, shown beside clearing history. */
   actions?: ReactNode;
+  /** Where the account changes the time zone its days follow. */
+  timeZoneLink?: ListeningHistoryWorkLink;
 }) {
   const { t } = useTranslation();
   const toast = useToast();
@@ -196,7 +216,7 @@ export function ListeningHistoryPage({
   const topWorks = allTopWorks ? rankedWorks : rankedWorks.slice(0, TOP_WORK_COUNT);
   const hiddenTopWorks = rankedWorks.length > TOP_WORK_COUNT;
   const leaderSeconds = rankedWorks[0]?.listenedSeconds ?? 0;
-  const rangeDays = stats ? reportDayCount(stats.series) : 0;
+  const rangeDays = stats ? reportDayCount(stats.series, stats.today) : 0;
   const activeDayPercent = stats && rangeDays > 0 ? sharePercent(stats.activeDays, rangeDays) : null;
   const perActiveDay = stats && stats.activeDays > 0 ? stats.listenedSeconds / stats.activeDays : 0;
   const perPlay = stats && stats.listenCount > 0 ? stats.listenedSeconds / stats.listenCount : 0;
@@ -252,13 +272,6 @@ export function ListeningHistoryPage({
                 </button>
               ))}
             </div>
-            {canClear && hasHistory && (
-              <Button variant="ghost" size="sm" className="shrink-0" onClick={() => setConfirmClear(true)}>
-                <Trash2 className="h-4 w-4" aria-hidden="true" />
-                {t("personal.history.clear")}
-              </Button>
-            )}
-            {actions}
           </div>
         </div>
         {statistics.status === "error" && (
@@ -453,12 +466,43 @@ export function ListeningHistoryPage({
         aria-labelledby="listening-history-heading"
         className="theme-card-surface overflow-hidden rounded-xl border bg-card"
       >
-        <SettingsDisclosure
-          title={<span id="listening-history-heading">{t("personal.history.recent")}</span>}
-          description={t("personal.history.recentHint")}
-          open={recordsOpen}
-          onToggle={setRecordsOpen}
-        >
+        <div className="flex flex-wrap items-center gap-x-1 gap-y-0 pr-2">
+          <button
+            type="button"
+            className="flex min-w-[min(100%,16rem)] flex-1 cursor-pointer items-center gap-2 px-4 py-3.5 text-left text-sm font-medium hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+            aria-expanded={recordsOpen}
+            aria-controls="listening-history-records"
+            onClick={() => setRecordsOpen((value) => !value)}
+          >
+            <ChevronRight
+              className={cn("h-4 w-4 shrink-0 text-muted-foreground transition-transform", recordsOpen && "rotate-90")}
+              aria-hidden="true"
+            />
+            <span className="min-w-0 flex-1">
+              <span id="listening-history-heading" className="block">
+                {t("personal.history.recent")}
+              </span>
+              <span className="mt-0.5 block text-xs font-normal leading-5 text-muted-foreground">
+                {t("personal.history.recentHint")}
+              </span>
+            </span>
+          </button>
+          <div className="flex flex-wrap items-center gap-1 py-1.5 pl-2">
+            {canClear && hasHistory && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="shrink-0 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                onClick={() => setConfirmClear(true)}
+              >
+                <Trash2 className="h-4 w-4" aria-hidden="true" />
+                {t("personal.history.clear")}
+              </Button>
+            )}
+            {actions}
+          </div>
+        </div>
+        <div id="listening-history-records" className="border-t" hidden={!recordsOpen}>
           {recordsOpen && (
             <div className="space-y-3 p-4">
               <div className="relative w-full sm:w-72">
@@ -547,10 +591,29 @@ export function ListeningHistoryPage({
               )}
             </div>
           )}
-        </SettingsDisclosure>
+        </div>
       </section>
 
-      <p className="px-1 text-2xs leading-5 text-muted-foreground">{t("personal.history.notes")}</p>
+      <div className="space-y-0.5 px-1 text-2xs leading-5 text-muted-foreground">
+        {(calendar.data?.timeZone || timeZoneLink) && (
+          <p>
+            {calendar.data?.timeZone &&
+              t(calendar.data.followsDevice ? "personal.history.timeZoneAuto" : "personal.history.timeZone", {
+                zone: calendar.data.timeZone,
+              })}{" "}
+            {timeZoneLink && (
+              <a
+                href={timeZoneLink.href}
+                className="rounded-sm font-medium text-foreground underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                onClick={(event) => openLinkInPlace(event, timeZoneLink)}
+              >
+                {t("personal.history.changeTimeZone")}
+              </a>
+            )}
+          </p>
+        )}
+        <p>{t("personal.history.notes")}</p>
+      </div>
 
       {confirmClear && (
         <Dialog

@@ -46,6 +46,29 @@ describe("listening measurement", () => {
     });
   });
 
+  it("buckets by the account's time zone and opens a new session when the zone changes", () => {
+    const reports: DatedListeningReport[] = [];
+    let id = 0;
+    let zone = "Asia/Tokyo";
+    const clock = new ListeningClock(
+      () => `synthetic-session-${++id}`,
+      (r) => reports.push(r),
+      () => zone,
+    );
+    // 23:59:50 UTC on January 1 is the morning of January 2 in Tokyo, far from its midnight.
+    clock.update(target, 0, true, 0, wall);
+    clock.observe(30_000, wall + 30_000);
+    expect(reports[reports.length - 1]).toMatchObject({
+      listenedSeconds: 30,
+      days: [{ day: "2026-01-02", listenedSeconds: 30 }],
+    });
+    zone = "UTC";
+    clock.observe(40_000, wall + 40_000);
+    const last = reports[reports.length - 1];
+    expect(last.sessionId).not.toBe(reports[0].sessionId);
+    expect(last.days).toEqual([{ day: "2026-01-02", listenedSeconds: 10 }]);
+  });
+
   it("drops suspended and changed-clock gaps and resumes from the next observation", () => {
     const h = harness();
     h.update(0, true);

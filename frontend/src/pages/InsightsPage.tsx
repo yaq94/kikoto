@@ -4,18 +4,18 @@ import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
 import { ListeningHistoryPage, openLinkInPlace } from "@/features/listening-history/ListeningHistoryPage";
-import { personalTabPath } from "@/pages/personalTabs";
+import { personalTabPath, TIME_ZONE_SETTINGS_PATH } from "@/pages/personalTabs";
 
 /**
  * The account's own listening as one page: the listening dashboard, with the
  * way to Your data, where the same account exports and imports it, beside the
- * dashboard's other data actions.
+ * dashboard's other data actions, and the way to the account's time zone.
  */
 export function InsightsPage({
   listening,
   onOpenPath,
 }: {
-  listening: Omit<ComponentProps<typeof ListeningHistoryPage>, "actions">;
+  listening: Omit<ComponentProps<typeof ListeningHistoryPage>, "actions" | "timeZoneLink">;
   onOpenPath: (path: string) => void;
 }) {
   const { t } = useTranslation();
@@ -23,6 +23,7 @@ export function InsightsPage({
   return (
     <ListeningHistoryPage
       {...listening}
+      timeZoneLink={{ href: TIME_ZONE_SETTINGS_PATH, open: () => onOpenPath(TIME_ZONE_SETTINGS_PATH) }}
       actions={
         <Button asChild variant="ghost" size="sm" className="shrink-0">
           <a

@@ -651,10 +651,14 @@ policy, backup and database maintenance changes, with the acting user, target
 and a JSON detail.
 
 `user_preference` stores optional account overrides for folder routing rules,
-recommendation configuration, recommendation highlight threshold, and the personal metadata
-language priority (see [Metadata Language](#metadata-language)). A missing
+recommendation configuration, recommendation highlight threshold, the personal metadata
+language priority (see [Metadata Language](#metadata-language)), and the
+account's IANA time zone. A missing
 override uses the `app_setting` default, or the original language for
-metadata. New recommendation generations use the effective account
+metadata. A missing time zone follows the device: the client counts listening
+in its own zone and names that zone on each listening report request, and a
+request that names no usable zone is counted in the zone the server runs in,
+its `TZ` when that names a zone and UTC otherwise. New recommendation generations use the effective account
 configuration; existing session bindings remain immutable.
 
 Listening history is durable and separate from `recommendation_event`.
@@ -668,12 +672,22 @@ document, not a database or media backup.
 
 `user_listening_session.dated_report` marks whether a session reports by
 occurrence date; a report in the other form conflicts with the stored session.
-Undated reports credit only newly reported seconds to the current UTC day in
-`user_listening_day`. Dated reports keep cumulative per-session UTC buckets in
+A listening day is a calendar day of the account's time zone at the time the
+listening is recorded; a later time zone change leaves stored days unchanged.
+Undated reports credit only newly reported seconds to the account's current day in
+`user_listening_day`. Dated reports keep cumulative per-session date buckets in
 `user_listening_session_day`, with a cascading session foreign key; they credit
 only each bucket's increase to `user_listening_day`, count a session once on
-its actual start date, and keep occurrence time in the session's history
+its first reported date, and keep occurrence time in the session's history
 timestamps.
+
+Listening reports read these rows per canonical work: a row stored against an
+edition is reported as its family's canonical work, the one the Library lists.
+A report's ranges, calendar, and current day follow the account's time zone.
+The tag, voice, and circle rankings join the canonical work's shared tags,
+voice credits, and primary circle; their preference order compares an entry's
+share of the range's listening time with its share of the Library's canonical
+works.
 
 `favorite_list` distinguishes a system `marked` list from ordinary user lists.
 The system list has no stored items: it derives membership from a non-`none`

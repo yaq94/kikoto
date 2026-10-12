@@ -165,12 +165,14 @@ async function mockCacheSettings(
     ],
   };
   let metadataLanguages: string[] | null = null;
+  let timeZone: string | null = null;
   const currentPreferences = (): UserPreferences => ({
     directoryRoutingRules: currentSettings.directoryRoutingRules,
     recommendationConfig: currentSettings.recommendationConfig,
     recommendationThreshold: currentSettings.recommendationThreshold,
     recommendationDefaults: currentSettings.recommendationDefaults,
     metadataLanguages,
+    timeZone,
   });
   const replaceRemoteSource = (source: FileSource) => {
     currentSettings = { ...currentSettings, fileSources: [currentSettings.fileSources[0], source] };
@@ -200,6 +202,7 @@ async function mockCacheSettings(
         const { metadataLanguages: languages, ...payload } = route.request().postDataJSON() as PreferencesUpdate;
         onSettings(languages === undefined ? payload : { ...payload, metadataLanguages: languages });
         if (languages !== undefined) metadataLanguages = languages;
+        if (payload.timeZone !== undefined) timeZone = payload.timeZone;
         currentSettings = { ...currentSettings, ...payload };
       }
       await route.fulfill({ json: currentPreferences() });
@@ -578,6 +581,34 @@ test("personal settings expose administrator tabs only to administrators", async
   await expect(page.getByRole("button", { name: "Cache & Fetch", exact: true })).toHaveCount(0);
 
   await expect(page.getByRole("button", { name: "Users", exact: true })).toHaveCount(0);
+});
+
+test.describe("on a device in another time zone", () => {
+  test.use({ timezoneId: "Asia/Tokyo" });
+
+  test("an account follows its device's time zone until it fixes one", async ({ page }) => {
+    const updates: unknown[] = [];
+    await mockCacheSettings(
+      page,
+      () => undefined,
+      (payload) => updates.push(payload),
+    );
+    await page.goto("/settings");
+    const zone = page.getByRole("combobox", { name: "Time zone", exact: true });
+    await expect(zone.locator("option").first()).toHaveText("Automatic (Asia/Tokyo)");
+    await expect(zone).toHaveValue("");
+    await zone.selectOption("Europe/Berlin");
+    await page.getByRole("button", { name: "Save time zone", exact: true }).click();
+    await expect(page.getByText("Time zone saved.")).toBeVisible();
+    expect(updates.at(-1)).toEqual({ timeZone: "Europe/Berlin" });
+
+    // The fixed zone is the saved choice on the next visit, and automatic clears it.
+    await page.reload();
+    await expect(zone).toHaveValue("Europe/Berlin");
+    await zone.selectOption("");
+    await page.getByRole("button", { name: "Save time zone", exact: true }).click();
+    await expect.poll(() => updates.at(-1)).toEqual({ timeZone: null });
+  });
 });
 
 test("administrators see administration tabs after the personal tabs in one list", async ({ page }) => {

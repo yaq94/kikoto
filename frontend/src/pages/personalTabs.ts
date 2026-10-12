@@ -18,6 +18,9 @@ export function isPersonalTab(tab: string): tab is PersonalTab {
   return personalTabs.some((candidate) => candidate.id === tab);
 }
 
+/** Opens the Time zone section of Account. */
+export const TIME_ZONE_SETTINGS_PATH = "/settings?tab=time-zone";
+
 export function personalTabPath(tab: PersonalTab) {
   return `/settings?tab=${tab}`;
 }

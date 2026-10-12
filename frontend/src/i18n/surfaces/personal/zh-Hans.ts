@@ -108,7 +108,10 @@ export const personalHans = {
       workdayAverage: "周一至周五日均",
       weekendAverage: "周末日均",
       rhythmPastYear: "基于过去一年。",
-      notes: "日期按 UTC 计算。只记录音频实际播放的时间，不包括暂停、缓冲和跳转。没有日期的导入时长只计入「全部」。",
+      notes: "只记录音频实际播放的时间，不包括暂停、缓冲和跳转。没有日期的导入时长只计入「全部」。",
+      timeZone: "一天从 {{zone}} 的午夜开始。",
+      timeZoneAuto: "一天从 {{zone}}（此设备的时区）的午夜开始。",
+      changeTimeZone: "更改时区",
       weekdayAverage: "按星期平均",
       rank: "第 {{rank}} 名",
       search: "搜索历史",
@@ -337,5 +340,15 @@ export const personalHans = {
       previewFailed: "预览失败",
       importFailed: "导入失败",
     },
+  },
+  timeZone: {
+    title: "时区",
+    description:
+      "收听报表里的一天从这个时区的午夜开始。「自动」跟随你正在使用的设备。已经记录的收听保留当时计入的日期。",
+    auto: "自动（{{zone}}）",
+    save: "保存时区",
+    saved: "时区已保存。",
+    saveFailed: "无法保存时区。",
+    loadFailed: "无法加载时区。",
   },
 } as const;

@@ -1,5 +1,7 @@
 import { useEffect, useRef, type RefObject } from "react";
 
+import { listeningTimeZone } from "@/lib/timeZone";
+
 import { isMediaAdvancing, ListeningClock, type ListeningTarget } from "./listeningSession";
 import type { PlaybackReportScheduler } from "./playbackReportScheduler";
 import type { PlayerTrack } from "./playerTypes";
@@ -24,7 +26,7 @@ export function useListeningSessionRecorder(
     const media = mediaRef.current;
     const scheduler = schedulerRef.current;
     if (!media || !scheduler) return;
-    const clock = new ListeningClock(createReportId, (report) => scheduler.stageHistory(report));
+    const clock = new ListeningClock(createReportId, (report) => scheduler.stageHistory(report), listeningTimeZone);
     const sync = () =>
       clock.update(targetRef.current, scheduler.generation, isMediaAdvancing(media), performance.now(), Date.now());
     const observe = () => {
