@@ -778,7 +778,9 @@ test("circle detail keeps availability and primary actions compact on mobile", a
   await expect(page.getByRole("heading", { name: "Example Circle", exact: true })).toBeVisible();
   const summary = page.getByRole("region", { name: "Circle summary" });
   const catalogCounts = summary.getByRole("group", { name: "Catalog availability" });
-  await expect(catalogCounts.getByRole("button")).toHaveText(["Available 1", "Local 1", "Remote 0", "Unavailable 1"]);
+  await expect(catalogCounts.getByRole("term")).toHaveText(["Available", "Local", "Remote", "Unavailable"]);
+  await expect(catalogCounts.getByRole("definition")).toHaveText(["1", "1", "0", "1"]);
+  await expect(catalogCounts.getByRole("button")).toHaveCount(0);
   await expect(summary.getByText("Catalog synced", { exact: false })).toBeVisible();
   const actions = summary.getByRole("group", { name: "Circle actions" });
   await expect(actions.getByRole("button", { name: "Remove favorite" })).toBeVisible();
@@ -937,7 +939,8 @@ test("@desktop circle detail keeps a full-width compact summary and source-aware
     card: element.firstElementChild?.getBoundingClientRect().width ?? 0,
   }));
   expect(Math.abs(summaryWidths.region - summaryWidths.card)).toBeLessThanOrEqual(1);
-  await expect(summary.getByText("Available 1", { exact: true })).toBeVisible();
+  const catalogCounts = summary.getByRole("group", { name: "Catalog availability" });
+  await expect(catalogCounts.getByRole("definition")).toHaveText(["1", "1", "0", "1"]);
   const actions = summary.getByRole("group", { name: "Circle actions" });
   await expect(actions.getByText("Favorite", { exact: true })).toBeVisible();
   await expect(actions.getByText("Retry metadata", { exact: true })).toBeVisible();
@@ -954,15 +957,103 @@ test("@desktop circle detail keeps a full-width compact summary and source-aware
 
   await page.getByRole("button", { name: "Catalog availability filter" }).click();
   await page.getByRole("menuitemradio", { name: "Unavailable", exact: true }).click();
-  await expect(summary.getByText("Available 1", { exact: true })).toBeVisible();
-  // A catalog count is the same filter: the menu choice presses it, and pressing it again clears the filter.
-  const unavailableCount = summary.getByRole("button", { name: "Unavailable 1", exact: true });
-  await expect(unavailableCount).toHaveAttribute("aria-pressed", "true");
-  await unavailableCount.click();
-  await expect(unavailableCount).toHaveAttribute("aria-pressed", "false");
-  await expect(page.getByRole("button", { name: "Catalog availability filter: All works" })).toBeVisible();
+  // The summary counts describe the whole catalog, whatever the works below are filtered to.
+  await expect(catalogCounts.getByRole("definition")).toHaveText(["1", "1", "0", "1"]);
   await expect(page.getByRole("button", { name: "Catalog options" })).toBeHidden();
   await expect(page.getByRole("button", { name: "More circle actions" })).toBeVisible();
+});
+
+test("@desktop circle detail orders its works and switches card modes like the Library", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await mockCreatorDetails(page);
+  await page.goto("/circles/RG09999");
+  await expect(page.getByTestId("work-card").first()).toBeVisible();
+
+  const circleRequest = (expected: Record<string, string | null>) =>
+    page.waitForRequest((request) => {
+      const url = new URL(request.url());
+      return (
+        url.pathname === "/api/circles/RG09999" &&
+        Object.entries(expected).every(([key, value]) => url.searchParams.get(key) === value)
+      );
+    });
+
+  // Newest release first is the default, so the request names no order.
+  const salesRequest = circleRequest({ sort: "sales", direction: null });
+  await page.getByRole("button", { name: "Sort: Release date" }).click();
+  const sortDialog = page.getByRole("dialog", { name: "Sort" });
+  await expect(sortDialog.getByRole("button")).toHaveText([
+    "Descending",
+    "Ascending",
+    "Release date",
+    "Code",
+    "Title",
+    "Rating",
+    "Sales",
+  ]);
+  await sortDialog.getByRole("button", { name: "Sales" }).click();
+  await salesRequest;
+
+  const ascendingRequest = circleRequest({ sort: "sales", direction: "asc" });
+  await page.getByRole("button", { name: "Sort: Sales" }).click();
+  await page.getByRole("dialog", { name: "Sort" }).getByRole("button", { name: "Ascending" }).click();
+  await ascendingRequest;
+
+  await page.getByRole("button", { name: /^Display options/ }).click();
+  const display = page.getByRole("dialog", { name: "Display options" });
+  await expect(display.getByRole("radiogroup", { name: "Items per page" }).getByRole("radio")).toHaveText([
+    "24",
+    "48",
+    "96",
+  ]);
+  const largePageRequest = circleRequest({ pageSize: "96" });
+  await display.getByRole("radio", { name: "96 per page" }).click();
+  await largePageRequest;
+  await display.getByRole("radio", { name: "Mini cards with the cover and title only" }).click();
+  await expect(page.getByTestId("work-card").first()).toHaveAttribute("data-card-layout", "cover");
+  await display.getByRole("radio", { name: "Compact cards with fewer details" }).click();
+  await expect(page.getByTestId("work-card").first()).toHaveAttribute("data-card-layout", "tile");
+
+  // The order and page size stay chosen for the next visit.
+  const restoredRequest = circleRequest({ sort: "sales", direction: "asc", pageSize: "96" });
+  await page.reload();
+  await restoredRequest;
+  await expect(page.getByRole("button", { name: "Sort: Sales" })).toBeVisible();
+
+  // The series overview lists series, so it offers no order.
+  await page.getByRole("button", { name: /^Series/ }).click();
+  await expect(page).toHaveURL(/\/circles\/RG09999\/series$/);
+  await expect(page.getByRole("button", { name: /^Sort:/ })).toHaveCount(0);
+});
+
+test("mobile circle detail keeps the order beside the view tabs and card modes in the options sheet", async ({
+  page,
+}) => {
+  await mockCreatorDetails(page);
+  await page.goto("/circles/RG09999");
+  await expect(page.getByTestId("work-card").first()).toBeVisible();
+
+  const titleRequest = page.waitForRequest((request) => {
+    const url = new URL(request.url());
+    return url.pathname === "/api/circles/RG09999" && url.searchParams.get("sort") === "title";
+  });
+  await page.getByRole("button", { name: "Sort: Release date" }).click();
+  await page.getByRole("dialog", { name: "Sort" }).getByRole("button", { name: "Title" }).click();
+  await titleRequest;
+  await expect(page.getByRole("button", { name: "Sort: Title" })).toBeVisible();
+
+  await page.getByRole("button", { name: "Catalog options" }).click();
+  const optionsDialog = page.getByRole("dialog", { name: "Catalog options" });
+  await expect(optionsDialog.getByRole("group", { name: "Cards" }).getByRole("button")).toHaveText([
+    "Full",
+    "Compact",
+    "Mini",
+  ]);
+  await optionsDialog.getByRole("button", { name: "Compact cards with fewer details" }).click();
+  await expect(page.getByTestId("work-card").first()).toHaveAttribute("data-card-layout", "row");
+  await optionsDialog.getByRole("button", { name: "96 per page" }).click();
+  await expect(optionsDialog.getByRole("button", { name: "96 per page" })).toHaveAttribute("aria-pressed", "true");
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 });
 
 test("mobile circle detail returns to the circle list entry that opened it", async ({ page }) => {

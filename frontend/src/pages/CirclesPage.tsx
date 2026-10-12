@@ -44,8 +44,10 @@ import {
   userTagBadges,
   type WorkCardViewModel,
 } from "@/components/work-card/WorkCardShell";
+import { CompactWorkCardShell, type CompactWorkCardLayout } from "@/components/work-card/CompactWorkCard";
 import { circleSourceBadges } from "@/components/work-card/sourceBadges";
 import {
+  workCardLayout,
   workCollectionClassName,
   workCollectionStyle,
   useWorkCollectionLayout,
@@ -100,16 +102,24 @@ import {
 } from "@/lib/circleNavigationState";
 import { formatDateTime } from "@/i18n/format";
 import { useLocale } from "@/i18n/LocaleProvider";
+import { useMobileNavigationLayout } from "@/hooks/useMobileNavigationLayout";
+import {
+  circleWorkPageSizeOptions,
+  circleWorkSortValues,
+  readCircleWorksBrowse,
+  writeCircleWorksBrowse,
+  type CircleWorkPageSize,
+  type CircleWorksBrowse,
+} from "@/lib/circleWorksBrowse";
 import { openLibraryTagSearch } from "@/lib/libraryTagSearch";
 import { CircleCatalogOptionsSheet, type CircleAvailabilityFilter } from "@/pages/CircleDetailSheets";
 import { circleRefreshSettledMessage, useCircleRefreshRun } from "@/pages/circleRefreshRun";
 import { CreatorListPage } from "@/pages/creator/CreatorListPage";
+import { LibrarySortButton } from "@/pages/library/LibrarySortButton";
 import type { RemoteWorkTarget } from "@/pages/remoteBulkRunModel";
 import { creatorBulkCopy, useRemoteWorkActions } from "@/pages/useRemoteWorkActions";
 
 const circlePageSizeOptions = [24, 48, 96] as const;
-const catalogWorkPageSizeOptions = [24, 48] as const;
-type CatalogWorkPageSize = (typeof catalogWorkPageSizeOptions)[number];
 function circleAvailabilityOptions(t: TFunction): readonly { value: CircleAvailabilityFilter; label: string }[] {
   return [
     { value: "all", label: t("detailActions.allWorks") },
@@ -290,7 +300,23 @@ function CircleDetailPage({
   const [notFound, setNotFound] = useState<"missing" | "hidden" | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [queueingRefresh, setQueueingRefresh] = useState(false);
-  const { mobileColumns, desktopColumns, setMobileColumns, setDesktopColumns } = useWorkCollectionLayout();
+  const {
+    mobileColumns,
+    desktopColumns,
+    mobileCardMode,
+    desktopCardMode,
+    setMobileColumns,
+    setDesktopColumns,
+    setMobileCardMode,
+    setDesktopCardMode,
+  } = useWorkCollectionLayout();
+  const mobileNavigationLayout = useMobileNavigationLayout();
+  const cardLayout = workCardLayout(
+    mobileNavigationLayout ? mobileCardMode : desktopCardMode,
+    !mobileNavigationLayout,
+    mobileColumns,
+  );
+  const storageScope = currentClientStorageScope(auth.user?.id ?? null);
   const [deleteTarget, setDeleteTarget] = useState<CircleCatalogWork | null>(null);
   const [selectedWorkCodes, setSelectedWorkCodes] = useState<Set<string>>(new Set());
   const [selectionMode, setSelectionMode] = useState(false);
@@ -301,7 +327,9 @@ function CircleDetailPage({
   const [workQuery, setWorkQuery] = useState("");
   const [availabilityFilter, setAvailabilityFilter] = useState<CircleAvailabilityFilter>("all");
   const [workPage, setWorkPage] = useState(1);
-  const [workPageSize, setWorkPageSize] = useState<CatalogWorkPageSize>(24);
+  // The order and page size are one stored choice shared by every circle catalog.
+  const [worksBrowse, setWorksBrowse] = useState(() => readCircleWorksBrowse(storageScope));
+  const { sort: workSort, direction: workSortDirection, pageSize: workPageSize } = worksBrowse;
   const loadedExternalID = useRef("");
   const detailQuery = useMemo(
     () => ({
@@ -310,8 +338,10 @@ function CircleDetailPage({
       query: workQuery,
       availability: availabilityFilter,
       series: seriesCode ?? "",
+      sort: workSort,
+      direction: workSortDirection,
     }),
-    [availabilityFilter, seriesCode, workPage, workPageSize, workQuery],
+    [availabilityFilter, seriesCode, workPage, workPageSize, workQuery, workSort, workSortDirection],
   );
   const fetchWorkspace = useRemoteFetchWorkspace({
     onWorksChanged: async () => setDetail(await api.getCircle(externalId, detailQuery)),
@@ -406,8 +436,7 @@ function CircleDetailPage({
   const selectablePagedWorks = pagedWorks.filter(isCircleBulkSaveSelectable);
   const selectedWorks = circle.works.filter((work) => selectedWorkCodes.has(work.primaryCode));
   const selectedForkableWorks = selectedWorks.filter((work) => work.workId === null);
-  const circleListStorageScope = currentClientStorageScope(auth.user?.id ?? null);
-  const navigateToList = () => navigateToCirclesList(circleListStorageScope);
+  const navigateToList = () => navigateToCirclesList(storageScope);
   usePageHeaderBack({
     label: circleReturnLabel(),
     title: detail?.displayName,
@@ -419,23 +448,39 @@ function CircleDetailPage({
     setAvailabilityFilter(value);
     setWorkPage(1);
   };
-  // A count narrows the works; from the series overview it also returns to them.
-  const selectCatalogStat = (value: CircleAvailabilityFilter | null) => {
-    changeAvailabilityFilter(value ?? "all");
-    if (value && isSeriesView && !selectedSeries) openCircleRoute(circle.externalId);
-  };
   const changeWorkQuery = (value: string) => {
     setWorkQuery(value);
     setWorkPage(1);
   };
-  const changeWorkPageSize = (value: number) => {
-    setWorkPageSize(value as CatalogWorkPageSize);
+  const changeWorksBrowse = (patch: Partial<CircleWorksBrowse>) => {
+    const next = { ...worksBrowse, ...patch };
+    setWorksBrowse(next);
+    writeCircleWorksBrowse(storageScope, next);
     setWorkPage(1);
+  };
+  const changeWorkPageSize = (value: number) => changeWorksBrowse({ pageSize: value as CircleWorkPageSize });
+  const sortProps = {
+    options: circleWorkSortValues.map((value) => ({ value, label: t(`library.sortOptions.${value}`) })),
+    value: workSort,
+    direction: workSortDirection,
+    onChange: (value: string) => {
+      const sort = circleWorkSortValues.find((option) => option === value);
+      if (sort) changeWorksBrowse({ sort });
+    },
+    onDirectionChange: (direction: CircleWorksBrowse["direction"]) => changeWorksBrowse({ direction }),
+    // No circle catalog order draws from a seed.
+    onReshuffle: () => undefined,
+  };
+  const cardModes = {
+    mobile: mobileCardMode,
+    desktop: desktopCardMode,
+    onMobileChange: setMobileCardMode,
+    onDesktopChange: setDesktopCardMode,
   };
 
   useEffect(() => {
     setWorkPage(1);
-  }, [availabilityFilter, externalId, seriesCode, workPageSize, workQuery]);
+  }, [availabilityFilter, externalId, seriesCode, workPageSize, workQuery, workSort, workSortDirection]);
 
   useEffect(() => {
     setSelectedWorkCodes((current) => retainVisibleSelection(current, filteredWorks, (work) => work.primaryCode));
@@ -445,6 +490,8 @@ function CircleDetailPage({
     return code ? (circle.series.find((series) => series.titleId.toUpperCase() === code) ?? null) : null;
   }, [circle.series, seriesCode]);
   const isSeriesView = seriesCode !== undefined;
+  // The series overview lists series, so it has no order or page of works.
+  const showsWorks = !isSeriesView || selectedSeries !== null;
   const seriesWorks = useMemo(() => {
     if (!isSeriesView) return [];
     return filteredWorks;
@@ -836,13 +883,11 @@ function CircleDetailPage({
         <CatalogStatStrip
           label={t("sheets.catalogAvailability")}
           stats={[
-            { value: "available", label: t("content.available"), count: availableWorkCount },
-            { value: "local", label: t("detailActions.local"), count: circle.localWorks },
-            { value: "remote", label: t("detailActions.remote"), count: circle.remoteWorks },
-            { value: "unavailable", label: t("detailActions.unavailable"), count: circle.missingWorks },
+            { key: "available", label: t("content.available"), count: availableWorkCount },
+            { key: "local", label: t("detailActions.local"), count: circle.localWorks },
+            { key: "remote", label: t("detailActions.remote"), count: circle.remoteWorks },
+            { key: "unavailable", label: t("detailActions.unavailable"), count: circle.missingWorks },
           ]}
-          selected={availabilityFilter === "all" ? null : availabilityFilter}
-          onSelect={selectCatalogStat}
           availability={{ total: circle.catalogWorks, local: circle.localWorks, available: availableWorkCount }}
           availabilityLabel={t("creator.availabilityBreakdown", {
             local: circle.localWorks,
@@ -896,14 +941,17 @@ function CircleDetailPage({
             ) : undefined
           }
           onQueryChange={changeWorkQuery}
+          sort={showsWorks ? <LibrarySortButton {...sortProps} variant="toolbar" /> : undefined}
+          mobileSort={showsWorks ? <LibrarySortButton {...sortProps} /> : undefined}
+          cardModes={cardModes}
           filterLabel={t("detailActions.catalogAvailabilityFilter")}
           filter={availabilityFilter}
           defaultFilter="all"
           filterOptions={circleAvailabilityOptions(t)}
           onFilterChange={changeAvailabilityFilter}
-          pageSize={isSeriesView && !selectedSeries ? undefined : workPageSize}
-          pageSizeOptions={catalogWorkPageSizeOptions}
-          onPageSizeChange={isSeriesView && !selectedSeries ? undefined : changeWorkPageSize}
+          pageSize={showsWorks ? workPageSize : undefined}
+          pageSizeOptions={circleWorkPageSizeOptions}
+          onPageSizeChange={showsWorks ? changeWorkPageSize : undefined}
           mobileColumns={mobileColumns}
           desktopColumns={desktopColumns}
           onMobileColumnsChange={setMobileColumns}
@@ -974,10 +1022,12 @@ function CircleDetailPage({
           query={workQuery}
           onQueryChange={changeWorkQuery}
           pageSize={workPageSize}
-          pageSizeOptions={catalogWorkPageSizeOptions}
+          pageSizeOptions={circleWorkPageSizeOptions}
           onPageSizeChange={changeWorkPageSize}
           mobileColumns={mobileColumns}
           onMobileColumnsChange={setMobileColumns}
+          cardMode={mobileCardMode}
+          onCardModeChange={setMobileCardMode}
           onSelectWorks={() => {
             setCatalogOptionsOpen(false);
             setSelectionMode((value) => {
@@ -1031,12 +1081,16 @@ function CircleDetailPage({
               </div>
               {selectedSeries ? (
                 <>
-                  <div className={workCollectionClassName()} style={workCollectionStyle(mobileColumns, desktopColumns)}>
+                  <div
+                    className={workCollectionClassName()}
+                    style={workCollectionStyle(mobileColumns, desktopColumns, cardLayout)}
+                  >
                     {seriesWorks.length > 0 ? (
                       seriesWorks.map((work) => (
                         <div key={work.primaryCode}>
                           <CatalogWorkCard
                             work={work}
+                            layout={cardLayout}
                             busy={isBulkSaving || fetchWorkspace.isBusy}
                             selected={selectedWorkCodes.has(work.primaryCode)}
                             selectable={isCircleBulkSaveSelectable(work)}
@@ -1139,12 +1193,16 @@ function CircleDetailPage({
               </WorkSelectionBar>
             )}
 
-            <div className={workCollectionClassName()} style={workCollectionStyle(mobileColumns, desktopColumns)}>
+            <div
+              className={workCollectionClassName()}
+              style={workCollectionStyle(mobileColumns, desktopColumns, cardLayout)}
+            >
               {filteredWorks.length > 0 ? (
                 pagedWorks.map((work) => (
                   <div key={work.primaryCode}>
                     <CatalogWorkCard
                       work={work}
+                      layout={cardLayout}
                       busy={isBulkSaving || fetchWorkspace.isBusy}
                       selected={selectedWorkCodes.has(work.primaryCode)}
                       selectable={isCircleBulkSaveSelectable(work)}
@@ -1221,6 +1279,7 @@ function CircleDetailPage({
 
 function CatalogWorkCard({
   work,
+  layout,
   busy,
   selected,
   selectable,
@@ -1236,6 +1295,8 @@ function CatalogWorkCard({
   onSeriesOpen,
 }: {
   work: CircleCatalogWork;
+  /** The reduced card layout of the chosen card mode, or null for the regular card. */
+  layout: CompactWorkCardLayout | null;
   busy: boolean;
   selected: boolean;
   selectable: boolean;
@@ -1255,13 +1316,15 @@ function CatalogWorkCard({
   const directoryTarget = preferredDirectoryTarget(work);
   const isUnavailable = !work.local && !work.remote;
   const view = catalogWorkCardView(work, t);
+  const Shell = layout ? CompactWorkCardShell : WorkCardShell;
 
   const openTarget = () => {
     if (directoryTarget) openWorkDirectoryRoute(directoryTarget, work);
   };
 
   return (
-    <WorkCardShell
+    <Shell
+      layout={layout ?? "row"}
       work={view}
       selection={
         selectionActive ? (
@@ -1275,6 +1338,7 @@ function CatalogWorkCard({
       onTagOpen={(tag) => openLibraryTagSearch("tag", tag)}
       footer={
         <WorkCardFooter
+          className={layout === "row" ? "h-10 border-border/40" : undefined}
           left={<WorkCardDLsiteAction href={work.dlsiteUrl || dlsiteWorkURL(work.primaryCode)} />}
           right={
             <>

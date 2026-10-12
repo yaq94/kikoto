@@ -353,6 +353,9 @@ export const creatorApi = {
           query?: string;
           availability?: string;
           series?: string;
+          /** Omitted orders by newest release first. */
+          sort?: string;
+          direction?: "asc" | "desc";
           signal?: AbortSignal;
         }
       | AbortSignal = {},
@@ -365,6 +368,8 @@ export const creatorApi = {
     if (params.query?.trim()) search.set("q", params.query.trim());
     if (params.availability && params.availability !== "all") search.set("availability", params.availability);
     if (params.series?.trim()) search.set("series", params.series.trim());
+    if (params.sort && params.sort !== "release") search.set("sort", params.sort);
+    if (params.direction === "asc") search.set("direction", "asc");
     const suffix = search.toString() ? `?${search.toString()}` : "";
     const detail = normalizeCreatorSyncState(
       await getJSON<CircleDetail>(`/api/circles/${encodeURIComponent(externalId)}${suffix}`, signal),
