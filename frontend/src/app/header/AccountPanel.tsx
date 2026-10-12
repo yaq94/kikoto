@@ -2,6 +2,7 @@ import { useTranslation } from "react-i18next";
 import { Clipboard, LogIn, LogOut, RotateCcw, Server, Settings, Users } from "lucide-react";
 
 import { ActionItem, MenuSection } from "@/app/header/HeaderPopover";
+import { INSIGHTS_PATH, navItems } from "@/app/navigation";
 import { LanguageControls, type LanguageControl } from "@/app/header/LanguageControls";
 import { UserAvatar, userDisplayName } from "@/app/header/UserAvatar";
 import type { ServerConnection } from "@/app/header/useServerConnection";
@@ -12,6 +13,12 @@ import { versionLabel } from "@/lib/appInfo";
 import { getStoredServerURL } from "@/lib/serverConfig";
 import { cn } from "@/lib/tailwindClassNames";
 import { PERSONAL_TAB_PERMISSION, personalTabPath, personalTabs } from "@/pages/personalTabs";
+
+// Insights and the personal Settings tabs are one tap away on a phone, which has no sidebar.
+const personalDestinations = [
+  ...navItems.filter((item) => item.path === INSIGHTS_PATH),
+  ...personalTabs.map((tab) => ({ ...tab, path: personalTabPath(tab.id) })),
+];
 
 /**
  * The account surface behind the header avatar, or behind Sign in for anonymous
@@ -55,15 +62,15 @@ export function AccountPanel({
 
       {user && canView(PERSONAL_TAB_PERMISSION) && (
         <div className="grid grid-cols-3 gap-1.5 border-b p-2">
-          {personalTabs.map((tab) => (
+          {personalDestinations.map((destination) => (
             <button
-              key={tab.id}
+              key={destination.path}
               type="button"
               className="flex min-h-16 min-w-0 flex-col items-center justify-center gap-1.5 rounded-lg bg-muted/60 px-1 py-2.5 text-xs font-medium text-foreground transition-[background-color,transform] hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring active:scale-[var(--press-scale)] motion-reduce:active:scale-100"
-              onClick={() => onNavigate(personalTabPath(tab.id))}
+              onClick={() => onNavigate(destination.path)}
             >
-              <tab.icon className="h-5 w-5 text-muted-foreground" aria-hidden="true" />
-              <span className="w-full truncate text-center">{t(tab.labelKey)}</span>
+              <destination.icon className="h-5 w-5 text-muted-foreground" aria-hidden="true" />
+              <span className="w-full truncate text-center">{t(destination.labelKey)}</span>
             </button>
           ))}
         </div>

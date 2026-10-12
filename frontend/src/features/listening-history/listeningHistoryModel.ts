@@ -1,4 +1,4 @@
-import type { ListeningPeriodStatistic, ListeningStatisticsRange } from "@/lib/listeningApi";
+import type { ListeningCalendar, ListeningPeriodStatistic, ListeningStatisticsRange } from "@/lib/listeningApi";
 
 export const LISTENING_HISTORY_PAGE_SIZE = 30;
 
@@ -24,6 +24,9 @@ export function periodStart(period: string) {
   const [year, month = "01", day = "01"] = period.split("-");
   return new Date(Date.UTC(Number(year), Number(month) - 1, Number(day)));
 }
+
+// 2024-01-01 is a Monday, so day offsets from it name the weekdays in Monday-first order.
+export const MONDAY_UTC = Date.UTC(2024, 0, 1);
 
 /** Bar length as a share of the largest value; a nonzero value never renders invisible. */
 export function barPercent(value: number, maxValue: number) {
@@ -98,4 +101,41 @@ export function reportDayCount(series: readonly ListeningPeriodStatistic[], now 
 export function sharePercent(value: number, total: number) {
   if (value <= 0 || total <= 0) return 0;
   return Math.min(100, Math.max(1, Math.round((value / total) * 100)));
+}
+
+export type ListeningCalendarCell = ListeningPeriodStatistic & {
+  /** 0 for no listening, then 1 through 4 by quartile of the days with listening; the busiest day is 4. */
+  level: 0 | 1 | 2 | 3 | 4;
+};
+
+/**
+ * A listening calendar as whole weeks, Monday first, oldest week first. Every
+ * UTC day from the calendar's first Monday through its last day is a cell;
+ * the days of the last week that have not happened yet are null.
+ */
+export function listeningCalendarWeeks(calendar: ListeningCalendar) {
+  const listened = new Map(calendar.days.map((day) => [day.date, day]));
+  const levels = calendar.days
+    .map((day) => day.listenedSeconds)
+    .filter((seconds) => seconds > 0)
+    .sort((left, right) => left - right);
+  const quartile = (share: number) => levels[Math.min(levels.length - 1, Math.floor(levels.length * share))] ?? 0;
+  const thresholds = [quartile(0.25), quartile(0.5), quartile(0.75)];
+  const last = periodStart(calendar.to).getTime();
+  const days: ListeningCalendarCell[] = [];
+  const weeks: (ListeningCalendarCell | null)[][] = [];
+  for (let time = periodStart(calendar.from).getTime(), index = 0; time <= last; time += 86_400_000, index += 1) {
+    const period = new Date(time).toISOString().slice(0, 10);
+    const seconds = listened.get(period)?.listenedSeconds ?? 0;
+    const cell: ListeningCalendarCell = {
+      period,
+      listenedSeconds: seconds,
+      listenCount: listened.get(period)?.listenCount ?? 0,
+      level: seconds > 0 ? ((1 + thresholds.filter((threshold) => seconds >= threshold).length) as 1 | 2 | 3 | 4) : 0,
+    };
+    days.push(cell);
+    if (index % 7 === 0) weeks.push(Array.from({ length: 7 }, () => null));
+    weeks[weeks.length - 1][index % 7] = cell;
+  }
+  return { weeks, days };
 }

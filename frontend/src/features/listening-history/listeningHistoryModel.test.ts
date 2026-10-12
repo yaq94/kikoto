@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   barPercent,
+  listeningCalendarWeeks,
   listeningDurationParts,
   listeningPeriodInsights,
   listeningStreaks,
@@ -91,5 +92,59 @@ describe("listening history presentation", () => {
     expect(sharePercent(250, 1000)).toBe(25);
     expect(sharePercent(0, 1000)).toBe(0);
     expect(sharePercent(10, 0)).toBe(0);
+  });
+});
+
+describe("listening calendar", () => {
+  it("lays out whole Monday-first weeks and leaves days after the last one empty", () => {
+    const { weeks, days } = listeningCalendarWeeks({
+      from: "2026-02-23",
+      to: "2026-03-04",
+      days: [
+        { date: "2026-02-23", listenedSeconds: 600, listenCount: 1 },
+        { date: "2026-03-04", listenedSeconds: 60, listenCount: 2 },
+      ],
+    });
+    expect(days).toHaveLength(10);
+    expect(weeks).toHaveLength(2);
+    expect(weeks[0].map((day) => day?.period)).toEqual([
+      "2026-02-23",
+      "2026-02-24",
+      "2026-02-25",
+      "2026-02-26",
+      "2026-02-27",
+      "2026-02-28",
+      "2026-03-01",
+    ]);
+    expect(weeks[1].map((day) => day?.period ?? null)).toEqual([
+      "2026-03-02",
+      "2026-03-03",
+      "2026-03-04",
+      null,
+      null,
+      null,
+      null,
+    ]);
+    expect(weeks[1][2]).toMatchObject({ listenedSeconds: 60, listenCount: 2 });
+    expect(weeks[1][0]).toMatchObject({ listenedSeconds: 0, listenCount: 0, level: 0 });
+  });
+
+  it("shades days by quartile of the days with listening, with the busiest at the top level", () => {
+    const { days } = listeningCalendarWeeks({
+      from: "2026-03-02",
+      to: "2026-03-08",
+      days: [100, 200, 300, 400, 5000].map((listenedSeconds, index) => ({
+        date: `2026-03-0${index + 2}`,
+        listenedSeconds,
+        listenCount: 1,
+      })),
+    });
+    expect(days.map((day) => day.level)).toEqual([1, 2, 3, 4, 4, 0, 0]);
+    const single = listeningCalendarWeeks({
+      from: "2026-03-02",
+      to: "2026-03-02",
+      days: [{ date: "2026-03-02", listenedSeconds: 30, listenCount: 1 }],
+    });
+    expect(single.days[0].level).toBe(4);
   });
 });

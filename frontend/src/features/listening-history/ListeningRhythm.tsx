@@ -6,10 +6,7 @@ import { useLocale } from "@/i18n/LocaleProvider";
 import type { ListeningGranularity, ListeningPeriodStatistic } from "@/lib/listeningApi";
 import { cn } from "@/lib/tailwindClassNames";
 
-import { barPercent, listeningStreaks, sharePercent, weekdayAverages } from "./listeningHistoryModel";
-
-// 2024-01-01 is a Monday, so offsets from it name the weekdays in Monday-first order.
-const mondayUTC = Date.UTC(2024, 0, 1);
+import { MONDAY_UTC, barPercent, listeningStreaks, sharePercent, weekdayAverages } from "./listeningHistoryModel";
 
 /**
  * Listening regularity for a report: current and longest runs of periods with
@@ -33,7 +30,7 @@ export function ListeningRhythm({
   const activeShare = sharePercent(activePeriods, series.length);
   const weekdayMax = Math.max(0, ...weekdays.map((entry) => entry.averageSeconds));
   const weekdayName = (weekday: number) =>
-    dateTimeFormat(resolvedLocale, { weekday: "short", timeZone: "UTC" }).format(mondayUTC + weekday * 86_400_000);
+    dateTimeFormat(resolvedLocale, { weekday: "short", timeZone: "UTC" }).format(MONDAY_UTC + weekday * 86_400_000);
 
   return (
     <div className="space-y-4">

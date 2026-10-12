@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/yexca/kikoto/backend/internal/metadatatags"
 	"github.com/yexca/kikoto/backend/internal/personal"
 )
 
@@ -156,6 +157,56 @@ func (s *Server) getListeningStatistics(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	s.attachListeningCovers(result.TopWorks)
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) getListeningCalendar(w http.ResponseWriter, r *http.Request) {
+	user, ok := s.requirePermission(w, r, "library:read")
+	if !ok {
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	result, err := (personal.Store{DB: s.db}).CalendarFor(r.Context(), user.ID, time.Now())
+	if err != nil {
+		writePersonalError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) getListeningBreakdown(w http.ResponseWriter, r *http.Request) {
+	user, ok := s.requirePermission(w, r, "library:read")
+	if !ok {
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	period, err := personal.ParseStatisticsRange(r.URL.Query().Get("range"))
+	if err != nil {
+		writePersonalError(w, err)
+		return
+	}
+	result, err := (personal.Store{DB: s.db}).BreakdownFor(r.Context(), user.ID, period, time.Now())
+	if err != nil {
+		writePersonalError(w, err)
+		return
+	}
+	// Shared tags are named in the viewer's metadata language, like a work's own tags.
+	if languages := s.viewerTagLanguages(r.Context()); languages != nil && len(result.Tags) > 0 {
+		ids := make([]int64, len(result.Tags))
+		for index, tag := range result.Tags {
+			ids[index] = tag.ID
+		}
+		names, err := metadatatags.LocalizedNames(r.Context(), s.db, ids, languages)
+		if err != nil {
+			writePersonalError(w, err)
+			return
+		}
+		for index, tag := range result.Tags {
+			if name, ok := names[tag.ID]; ok {
+				result.Tags[index].Name = name
+			}
+		}
+	}
 	writeJSON(w, http.StatusOK, result)
 }
 

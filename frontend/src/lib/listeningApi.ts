@@ -57,6 +57,45 @@ export type ListeningStatistics = {
   topWorks: ListeningHistoryItem[];
 };
 
+export type ListeningCalendarDay = {
+  /** UTC day, YYYY-MM-DD. */
+  date: string;
+  listenedSeconds: number;
+  listenCount: number;
+};
+
+/** Dated listening for the 52 weeks before the current week through today. */
+export type ListeningCalendar = {
+  /** The Monday the calendar starts on. */
+  from: string;
+  to: string;
+  /** Sparse and oldest first; a day without listening is absent. */
+  days: ListeningCalendarDay[];
+};
+
+export type ListeningBreakdownKind = "tags" | "voices" | "circles";
+
+/** The listening of every work that carries one tag, credits one voice, or belongs to one circle. */
+export type ListeningBreakdownEntry = {
+  id: number;
+  name: string;
+  /** A circle's provider id; absent when it has none. */
+  externalId?: string;
+  listenedSeconds: number;
+  listenCount: number;
+  workCount: number;
+};
+
+/**
+ * One range ranked by tag, voice, and circle, with the scope of the listening
+ * report. A work counts in full toward each of its tags and voices, so a
+ * dimension's entries do not add up to the total.
+ */
+export type ListeningBreakdown = Record<ListeningBreakdownKind, ListeningBreakdownEntry[]> & {
+  range: ListeningStatisticsRange;
+  listenedSeconds: number;
+};
+
 /** The server's error code for a report whose generation predates a history clear. */
 export const LISTENING_HISTORY_CLEARED_CODE = "listening_history_cleared";
 
@@ -88,5 +127,8 @@ export const listeningApi = {
   },
   statistics: (range: ListeningStatisticsRange, signal?: AbortSignal) =>
     apiTransport.getJSON<ListeningStatistics>(`/api/listening-statistics?range=${range}`, signal),
+  calendar: (signal?: AbortSignal) => apiTransport.getJSON<ListeningCalendar>("/api/listening-calendar", signal),
+  breakdown: (range: ListeningStatisticsRange, signal?: AbortSignal) =>
+    apiTransport.getJSON<ListeningBreakdown>(`/api/listening-breakdown?range=${range}`, signal),
   clearHistory: () => apiTransport.deleteJSON<unknown>("/api/listening-history"),
 };

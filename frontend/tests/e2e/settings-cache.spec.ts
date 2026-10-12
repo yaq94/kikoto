@@ -574,7 +574,6 @@ test("personal settings expose administrator tabs only to administrators", async
   await expect(page.getByText("Manage your account and appearance preferences", { exact: true })).toBeHidden();
   await expect(page.getByRole("heading", { name: "Account", exact: true })).toBeVisible();
   await expect(page.getByRole("tab", { name: "Appearance", exact: true })).toHaveCount(0);
-  await expect(page.getByRole("tab", { name: "History", exact: true })).toBeVisible();
   await expect(page.getByRole("tab", { name: "Recommendations", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Cache & Fetch", exact: true })).toHaveCount(0);
 
@@ -588,7 +587,6 @@ test("administrators see administration tabs after the personal tabs in one list
   await expect(tabs.getByRole("tab")).toHaveText([
     "Account",
     "Playback",
-    "History",
     "Recommendations",
     "Tags",
     "Library",
@@ -604,7 +602,7 @@ test("administrators see administration tabs after the personal tabs in one list
 
   // Arrow keys select across the group boundary.
   await tabs.getByRole("tab", { name: "Playback", exact: true }).focus();
-  for (let step = 0; step < 4; step += 1) await page.keyboard.press("ArrowRight");
+  for (let step = 0; step < 3; step += 1) await page.keyboard.press("ArrowRight");
   await expect(tabs.getByRole("tab", { name: "Library", exact: true })).toBeFocused();
   await expect(tabs.getByRole("tab", { name: "Library", exact: true })).toHaveAttribute("aria-selected", "true");
   await expect(page).toHaveURL(/\/settings\?tab=library$/);
@@ -666,8 +664,8 @@ test("@desktop the Settings tabs can move into a row above the content and back"
     });
   const administration = ["Library", "Cache & Fetch", "Proxy", "Cleanup", "Users"];
   for (const [width, named] of [
-    [1920, ["Account", "Playback", "History", "Recommendations", "Tags", ...administration]],
-    [1366, administration],
+    [1920, ["Account", "Playback", "Recommendations", "Tags", ...administration]],
+    [1280, administration],
     [1024, ["Library"]],
   ] as const) {
     await page.setViewportSize({ width, height: 800 });
@@ -846,7 +844,7 @@ for (const layout of ["mobile", "@desktop"]) {
     );
     // A deep link to a later tab scrolls the compact row so the selected tab shows.
     await expect(navigation.getByRole("tab", { name: "Library", exact: true })).toBeInViewport({ ratio: 1 });
-    await expect(navigation.getByRole("tab")).toHaveCount(10);
+    await expect(navigation.getByRole("tab")).toHaveCount(9);
     const boxes = await navigation.getByRole("tab").evaluateAll((buttons) =>
       buttons.map((button) => {
         const box = button.getBoundingClientRect();

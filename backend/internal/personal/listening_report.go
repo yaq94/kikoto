@@ -86,10 +86,10 @@ func (s Store) StatisticsFor(ctx context.Context, user int64, period StatisticsR
 	var from time.Time
 	switch period {
 	case RangeLast30Days:
-		from = today.AddDate(0, 0, -29)
+		from = boundedRangeStart(period, today)
 		result.Granularity = GranularityDay
 	case RangeLast12Months:
-		from = time.Date(today.Year(), today.Month(), 1, 0, 0, 0, 0, time.UTC).AddDate(0, -11, 0)
+		from = boundedRangeStart(period, today)
 		result.Granularity = GranularityMonth
 	case RangeAll:
 		first, err := s.firstListeningDay(ctx, user, today)
@@ -126,6 +126,15 @@ func (s Store) StatisticsFor(ctx context.Context, user int64, period StatisticsR
 	}
 	result.TopWorks, err = s.topWorks(ctx, user, period, from)
 	return result, err
+}
+
+// boundedRangeStart is the first UTC day of a range that does not depend on
+// the account's history: the last 30 days, or the last 12 calendar months.
+func boundedRangeStart(period StatisticsRange, today time.Time) time.Time {
+	if period == RangeLast12Months {
+		return time.Date(today.Year(), today.Month(), 1, 0, 0, 0, 0, time.UTC).AddDate(0, -11, 0)
+	}
+	return today.AddDate(0, 0, -29)
 }
 
 func (s Store) firstListeningDay(ctx context.Context, user int64, today time.Time) (time.Time, error) {

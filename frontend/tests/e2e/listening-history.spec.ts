@@ -58,6 +58,36 @@ async function mockListeningServer(page: Page, options: { failFirstReport?: bool
   await page.route("**/api/listening-statistics*", (route) =>
     route.fulfill({ json: statisticsFixture(new URL(route.request().url()).searchParams.get("range") ?? "all") }),
   );
+  await page.route("**/api/listening-calendar", (route) =>
+    route.fulfill({
+      json: {
+        from: "2026-02-23",
+        to: "2026-03-04",
+        days: [{ date: "2026-03-03", listenedSeconds: 600, listenCount: 2 }],
+      },
+    }),
+  );
+  await page.route("**/api/listening-breakdown*", (route) =>
+    route.fulfill({
+      json: {
+        range: new URL(route.request().url()).searchParams.get("range") ?? "all",
+        listenedSeconds: 600,
+        tags: [{ id: 3, name: "Example Tag", listenedSeconds: 600, listenCount: 2, workCount: 1 }],
+        voices: [{ id: 7, name: "Example Voice", listenedSeconds: 600, listenCount: 2, workCount: 1 }],
+        circles: [
+          {
+            id: 5,
+            name: "Example Circle",
+            externalId: "RG00000000",
+            listenedSeconds: 600,
+            listenCount: 2,
+            workCount: 1,
+          },
+          { id: 6, name: "Example Circle 2", listenedSeconds: 60, listenCount: 1, workCount: 1 },
+        ],
+      },
+    }),
+  );
   await page.route("**/api/listening-history*", async (route) => {
     if (route.request().method() === "DELETE") {
       server.generation += 1;
@@ -141,7 +171,7 @@ test("clearing history during playback never reports pre-clear time again and ke
 
   // Navigate inside the app so the global player keeps playing.
   await page.getByRole("button", { name: "Account menu" }).click();
-  await page.getByRole("dialog", { name: "Account" }).getByRole("button", { name: "History", exact: true }).click();
+  await page.getByRole("dialog", { name: "Account" }).getByRole("button", { name: "Insights", exact: true }).click();
   await page.getByRole("button", { name: "Clear history" }).click();
   await page.getByRole("alertdialog").getByRole("button", { name: "Clear history" }).click();
   await expect(page.getByText("Listening history cleared.")).toBeVisible();
@@ -280,7 +310,7 @@ test("@desktop the history page opens a listed work in work detail", async ({ pa
   await page.setViewportSize({ width: 1280, height: 800 });
   await mockApplication(page, undefined, false, 1, 0, [], undefined, { authenticated: true });
   await mockListeningServer(page);
-  await page.goto("/settings?tab=history");
+  await page.goto("/insights");
   await page.evaluate(() => {
     (window as Window & { historyPageMarker?: boolean }).historyPageMarker = true;
   });
@@ -307,7 +337,7 @@ test("@desktop the listening report switches between its ranges", async ({ page 
     const url = new URL(request.url());
     if (url.pathname === "/api/listening-statistics") requestedRanges.push(url.searchParams.get("range") ?? "");
   });
-  await page.goto("/settings?tab=history");
+  await page.goto("/insights");
 
   const ranges = page.getByRole("group", { name: "Report period" });
   await expect(ranges.getByRole("button", { name: "30 days" })).toHaveAttribute("aria-pressed", "true");
@@ -318,11 +348,37 @@ test("@desktop the listening report switches between its ranges", async ({ page 
   expect(requestedRanges.at(-1)).toBe("12m");
 });
 
+test("@desktop the listening dashboard ranks tags, voices, and circles and links each to its page", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await mockApplication(page, undefined, false, 1, 0, [], undefined, { authenticated: true });
+  await mockListeningServer(page);
+  // A former History location opens the dashboard.
+  await page.goto("/settings?tab=history");
+  await expect(page).toHaveURL(/\/insights$/);
+
+  await expect(page.getByRole("region", { name: "Listening calendar" }).getByText("1 day").first()).toBeVisible();
+  await expect(page.getByRole("list", { name: "Top tags" }).getByRole("link", { name: /Example Tag/ })).toHaveAttribute(
+    "href",
+    /^\/\?.*Example/,
+  );
+  const circles = page.getByRole("list", { name: "Top circles" });
+  await expect(circles.getByRole("link", { name: /Example Circle/ })).toHaveAttribute("href", "/circles/RG00000000");
+  // A circle without a provider id has no page to open.
+  await expect(circles.getByRole("listitem").filter({ hasText: "Example Circle 2" }).getByRole("link")).toHaveCount(0);
+  await page
+    .getByRole("list", { name: "Top voices" })
+    .getByRole("link", { name: /Example Voice/ })
+    .click();
+  await expect(page).toHaveURL(/\/voices\/7$/);
+});
+
 test("@desktop the listening report's screen reader table adds no scroll space below the page", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
   await mockApplication(page, undefined, false, 1, 0, [], undefined, { authenticated: true });
   await mockListeningServer(page);
-  await page.goto("/settings?tab=history");
+  await page.goto("/insights");
 
   // Thirty daily rows are far taller than the page when the table is not clipped.
   await expect(page.getByRole("table", { name: "Daily listening time (UTC)" }).getByRole("row")).toHaveCount(31);

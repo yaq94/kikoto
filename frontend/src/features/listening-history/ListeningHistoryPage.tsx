@@ -14,6 +14,8 @@ import { useLocale } from "@/i18n/LocaleProvider";
 import { announceListeningHistoryCleared } from "@/lib/listeningHistoryEvents";
 import {
   listeningApi,
+  type ListeningBreakdown,
+  type ListeningCalendar as ListeningCalendarData,
   type ListeningHistoryPage as ListeningHistoryResult,
   type ListeningStatistics,
   type ListeningStatisticsRange,
@@ -22,6 +24,8 @@ import { parseServerTimestamp } from "@/lib/serverTimestamp";
 import { cn } from "@/lib/tailwindClassNames";
 
 import { ListeningActivityChart } from "./ListeningActivityChart";
+import { ListeningBreakdownCard, type ListeningEntityLinkFactory } from "./ListeningBreakdownCard";
+import { ListeningCalendar } from "./ListeningCalendar";
 import {
   LISTENING_HISTORY_PAGE_SIZE,
   LISTENING_REPORT_RANGES,
@@ -32,6 +36,8 @@ import {
 import { ListeningRhythm } from "./ListeningRhythm";
 import { ListeningWorkRow, type ListeningHistoryWorkLinkFactory } from "./ListeningWorkRow";
 
+export type { ListeningEntityLinkFactory } from "./ListeningBreakdownCard";
+export { openLinkInPlace } from "./ListeningWorkRow";
 export type { ListeningHistoryWorkLink, ListeningHistoryWorkLinkFactory } from "./ListeningWorkRow";
 
 type LoadState<T> =
@@ -39,6 +45,8 @@ type LoadState<T> =
 
 // The ranking opens with this many works; the rest of the server's ranking shows on request.
 const TOP_WORK_COUNT = 5;
+
+const BREAKDOWN_KINDS = ["tags", "voices", "circles"] as const;
 
 function useDurationFormatter() {
   const { t } = useTranslation();
@@ -52,8 +60,9 @@ function useDurationFormatter() {
 }
 
 /**
- * The listening report for a chosen range as a dashboard: totals, activity
- * over time, the most listened works, and listening rhythm, with the full
+ * Listening as a dashboard: the past year as a calendar, then the report for
+ * a chosen range with totals, activity over time, the most listened works,
+ * listening rhythm, and the leading tags, voices, and circles, with the full
  * per-work history collapsed below it. The history is a record rather than a
  * summary, so it loads only once opened.
  */
@@ -61,11 +70,13 @@ export function ListeningHistoryPage({
   canClear,
   storageScope,
   workLink,
+  entityLink,
 }: {
   canClear: boolean;
   /** Server and principal scope; players in this scope drop unreported pre-clear sessions. */
   storageScope: string;
   workLink: ListeningHistoryWorkLinkFactory;
+  entityLink: ListeningEntityLinkFactory;
 }) {
   const { t } = useTranslation();
   const toast = useToast();
@@ -73,6 +84,8 @@ export function ListeningHistoryPage({
   const formatDuration = useDurationFormatter();
   const [range, setRange] = useState<ListeningStatisticsRange>(LISTENING_REPORT_RANGES[0]);
   const [statistics, setStatistics] = useState<LoadState<ListeningStatistics>>({ status: "loading", data: null });
+  const [calendar, setCalendar] = useState<LoadState<ListeningCalendarData>>({ status: "loading", data: null });
+  const [breakdown, setBreakdown] = useState<LoadState<ListeningBreakdown>>({ status: "loading", data: null });
   const [history, setHistory] = useState<LoadState<ListeningHistoryResult>>({ status: "loading", data: null });
   const [recordsOpen, setRecordsOpen] = useState(false);
   const [allTopWorks, setAllTopWorks] = useState(false);
@@ -102,6 +115,30 @@ export function ListeningHistoryPage({
       .then((data) => setStatistics({ status: "ready", data }))
       .catch(() => {
         if (!controller.signal.aborted) setStatistics((current) => ({ status: "error", data: current.data }));
+      });
+    return () => controller.abort();
+  }, [range, statisticsToken]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setCalendar((current) => ({ status: "loading", data: current.data }));
+    listeningApi
+      .calendar(controller.signal)
+      .then((data) => setCalendar({ status: "ready", data }))
+      .catch(() => {
+        if (!controller.signal.aborted) setCalendar((current) => ({ status: "error", data: current.data }));
+      });
+    return () => controller.abort();
+  }, [statisticsToken]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setBreakdown((current) => ({ status: "loading", data: current.data }));
+    listeningApi
+      .breakdown(range, controller.signal)
+      .then((data) => setBreakdown({ status: "ready", data }))
+      .catch(() => {
+        if (!controller.signal.aborted) setBreakdown((current) => ({ status: "error", data: current.data }));
       });
     return () => controller.abort();
   }, [range, statisticsToken]);
@@ -161,7 +198,24 @@ export function ListeningHistoryPage({
   };
 
   return (
-    <div className="w-full max-w-4xl space-y-5">
+    <div className="mx-auto w-full max-w-6xl space-y-5">
+      <section
+        aria-label={t("personal.history.calendar.title")}
+        aria-busy={calendar.status === "loading"}
+        className="theme-card-surface rounded-xl border bg-card p-4"
+      >
+        {calendar.data ? (
+          <ListeningCalendar calendar={calendar.data} formatDuration={formatDuration} />
+        ) : calendar.status === "error" ? (
+          <InlineRetry
+            message={t("personal.history.calendar.failed")}
+            onRetry={() => setStatisticsToken((value) => value + 1)}
+          />
+        ) : (
+          <div className="h-48 animate-pulse rounded-lg bg-muted" />
+        )}
+      </section>
+
       <section aria-labelledby="listening-summary-heading" className="space-y-4">
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div className="min-w-0 px-1">
@@ -319,6 +373,44 @@ export function ListeningHistoryPage({
                 />
               </section>
             </div>
+          )}
+        </div>
+      </section>
+
+      <section aria-labelledby="listening-breakdown-heading" className="space-y-3">
+        <div className="min-w-0 px-1">
+          <h2 id="listening-breakdown-heading" className="text-base font-semibold">
+            {t("personal.history.breakdown.heading")}
+          </h2>
+          <p className="mt-0.5 text-xs leading-5 text-muted-foreground">{t("personal.history.breakdown.basis")}</p>
+        </div>
+        {breakdown.status === "error" && (
+          <InlineRetry
+            message={t("personal.history.breakdown.failed")}
+            onRetry={() => setStatisticsToken((value) => value + 1)}
+          />
+        )}
+        <div
+          aria-busy={breakdown.status === "loading"}
+          className={cn(
+            "grid gap-4 transition-opacity lg:grid-cols-3",
+            breakdown.status === "loading" && breakdown.data !== null && "opacity-60",
+          )}
+        >
+          {BREAKDOWN_KINDS.map((kind) =>
+            breakdown.data ? (
+              <ListeningBreakdownCard
+                key={`${breakdown.data.range}:${kind}`}
+                kind={kind}
+                entries={breakdown.data[kind]}
+                formatDuration={formatDuration}
+                link={entityLink}
+              />
+            ) : (
+              breakdown.status === "loading" && (
+                <div key={kind} className="h-64 animate-pulse rounded-xl border bg-muted/60" />
+              )
+            ),
           )}
         </div>
       </section>

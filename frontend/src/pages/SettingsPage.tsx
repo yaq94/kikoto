@@ -13,7 +13,6 @@ import {
   Eraser,
   FastForward,
   Folder,
-  History,
   KeyRound,
   LoaderCircle,
   Network,
@@ -56,21 +55,14 @@ const emptyPasswordDraft: PasswordChangeDraft = {
 };
 
 type SettingsTab =
-  "account" | "playback" | "history" | "recommendation" | "tags" | "library" | "cache" | "proxy" | "cleanup" | "users";
+  "account" | "playback" | "recommendation" | "tags" | "library" | "cache" | "proxy" | "cleanup" | "users";
 type SettingsSectionTarget = "data";
 type SettingsLocation = { tab: SettingsTab; section?: SettingsSectionTarget };
 
 const adminSettingsTabs: SettingsTab[] = ["library", "cache", "proxy", "cleanup", "users"];
-// Listening history and personal tags need library access; the other personal tabs do not.
-const libraryReaderTabs: SettingsTab[] = ["history", "tags"];
-const allSettingsTabs: SettingsTab[] = [
-  "account",
-  "playback",
-  "history",
-  "recommendation",
-  "tags",
-  ...adminSettingsTabs,
-];
+// Personal tags need library access; the other personal tabs do not.
+const libraryReaderTabs: SettingsTab[] = ["tags"];
+const allSettingsTabs: SettingsTab[] = ["account", "playback", "recommendation", "tags", ...adminSettingsTabs];
 // Alias tab ids keep existing links valid; each opens the tab that holds its content.
 const settingsTabAliases: Record<string, SettingsLocation> = {
   data: { tab: "account", section: "data" },
@@ -84,7 +76,6 @@ const settingsPanelClassName = "w-full max-w-4xl space-y-8";
 const settingsTabs: Array<{ id: SettingsTab; labelKey: string; icon: LucideIcon }> = [
   { id: "account", labelKey: "settings.account", icon: UserRound },
   { id: "playback", labelKey: "settings.playback", icon: FastForward },
-  { id: "history", labelKey: "nav.history", icon: History },
   { id: "recommendation", labelKey: "settings.recommendations", icon: Sparkles },
   { id: "tags", labelKey: "nav.tags", icon: Tags },
   { id: "library", labelKey: "maintenance.tabs.library", icon: Folder },
@@ -544,16 +535,6 @@ export function SettingsPage({
               <PlaybackSourcePreferences userId={user.id} />
               {supportsNativePrivacy() && <DevicePrivacyPreferences />}
               <UserPreferencePanels userId={user.id} section="playback" readOnly={readOnly} />
-            </div>
-          )}
-          {personal && activeTab === "history" && (
-            <div
-              className={settingsPanelClassName}
-              role="tabpanel"
-              id="settings-panel-history"
-              aria-labelledby="settings-tab-history"
-            >
-              <PersonalTabPanel tab="history" {...personal} />
             </div>
           )}
           {activeTab === "recommendation" && (

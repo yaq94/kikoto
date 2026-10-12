@@ -30,6 +30,8 @@ func TestPersonalRoutesRequireAuthenticationAndPermissions(t *testing.T) {
 		{"GET", "/api/listening-sessions", s.getListeningGeneration, "playback:use"},
 		{"GET", "/api/listening-history", s.getListeningHistory, "library:read"},
 		{"GET", "/api/listening-statistics", s.getListeningStatistics, "library:read"},
+		{"GET", "/api/listening-calendar", s.getListeningCalendar, "library:read"},
+		{"GET", "/api/listening-breakdown", s.getListeningBreakdown, "library:read"},
 		{"DELETE", "/api/listening-history", s.clearListeningHistory, "playback:use"},
 		{"GET", "/api/user-data/export", s.exportPersonalData, "library:read"},
 		{"POST", "/api/user-data/import", s.importPersonalData, "favorites:write"},
