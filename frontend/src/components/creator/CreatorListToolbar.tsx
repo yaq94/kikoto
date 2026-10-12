@@ -1,21 +1,23 @@
 import { Search, X } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { useEffect, useRef, useState, type ReactNode } from "react";
-
-import { CollectionFilterPicker, type CollectionFilterOption } from "@/components/collection/CollectionFilterPicker";
-import { PageSizePicker } from "@/components/collection/PageSizePicker";
-import { useMobileNavigationLayout } from "@/hooks/useMobileNavigationLayout";
-import { dismissKeyboardOnEnter } from "@/lib/keyboard";
 import { useTranslation } from "react-i18next";
+
+import { CollectionFilterChips } from "@/components/collection/CollectionFilterChips";
+import type { CollectionFilterOption } from "@/components/collection/CollectionFilterPicker";
+import { PageSizePicker } from "@/components/collection/PageSizePicker";
+import { dismissKeyboardOnEnter } from "@/lib/keyboard";
 
 export type CreatorListToolbarFilterOption<Value extends string> = CollectionFilterOption<Value>;
 
+/**
+ * Search, view chips, and page size for a creator list. A phone keeps the
+ * search field on its own row above a sideways-scrolling chip strip; wider
+ * layouts put search, chips, and page size on one wrapping row.
+ */
 export function CreatorListToolbar<FilterValue extends string>({
   label,
   query,
   placeholder,
   filter,
-  defaultFilter,
   filterOptions,
   pageSize,
   pageSizeOptions,
@@ -27,7 +29,6 @@ export function CreatorListToolbar<FilterValue extends string>({
   query: string;
   placeholder: string;
   filter: FilterValue;
-  defaultFilter: FilterValue;
   filterOptions: readonly CreatorListToolbarFilterOption<FilterValue>[];
   pageSize: number;
   pageSizeOptions: readonly number[];
@@ -36,30 +37,12 @@ export function CreatorListToolbar<FilterValue extends string>({
   onPageSizeChange: (value: number) => void;
 }) {
   const { t } = useTranslation();
-  const mobileNavigationLayout = useMobileNavigationLayout();
-  const [mobileSearchOpen, setMobileSearchOpen] = useState(() => Boolean(query.trim()));
-  const mobileSearchInputRef = useRef<HTMLInputElement | null>(null);
-
-  useEffect(() => {
-    if (query.trim()) setMobileSearchOpen(true);
-  }, [query]);
-
-  useEffect(() => {
-    if (!mobileNavigationLayout || !mobileSearchOpen) return;
-    const frame = window.requestAnimationFrame(() => mobileSearchInputRef.current?.focus());
-    return () => window.cancelAnimationFrame(frame);
-  }, [mobileNavigationLayout, mobileSearchOpen]);
 
   return (
-    <section className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between" data-toast-avoid>
-      <div
-        className={`search-field order-2 min-h-10 flex-1 items-center gap-2 rounded-lg border bg-card px-3 text-sm lg:order-1 lg:flex lg:max-w-xl ${
-          mobileSearchOpen ? "flex" : "hidden"
-        }`}
-      >
-        <Search className="h-4 w-4 shrink-0 text-muted-foreground" />
+    <section className="flex flex-wrap items-center gap-x-3 gap-y-2.5" data-toast-avoid>
+      <div className="search-field order-1 flex min-h-10 min-w-0 flex-1 items-center gap-2 rounded-lg border bg-card px-3 text-sm lg:w-72 lg:flex-none xl:w-80">
+        <Search className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
         <input
-          ref={mobileSearchInputRef}
           className="min-w-0 flex-1 bg-transparent outline-none placeholder:text-muted-foreground"
           value={query}
           onKeyDown={dismissKeyboardOnEnter}
@@ -70,72 +53,25 @@ export function CreatorListToolbar<FilterValue extends string>({
         {query.trim() && (
           <button
             type="button"
-            className="text-muted-foreground hover:text-foreground"
+            className="rounded-sm text-muted-foreground hover:text-foreground"
             onClick={() => onQueryChange("")}
             aria-label={t("collection.clearSearch")}
+            title={t("collection.clearSearch")}
           >
             <X className="h-4 w-4" />
           </button>
         )}
       </div>
-      <div className="order-1 flex w-full flex-wrap justify-end gap-2 lg:order-2 lg:w-auto">
-        {mobileNavigationLayout && (
-          <CreatorListToolbarIconButton
-            title={
-              query.trim()
-                ? t("collection.searchActive", { label })
-                : mobileSearchOpen
-                  ? t("collection.hideSearch", { label })
-                  : t("collection.search", { label })
-            }
-            disabled={Boolean(query.trim())}
-            onClick={() => {
-              if (mobileSearchOpen && !query.trim()) {
-                setMobileSearchOpen(false);
-                return;
-              }
-              setMobileSearchOpen(true);
-            }}
-          >
-            <Search className="h-4 w-4" />
-          </CreatorListToolbarIconButton>
-        )}
+      <div className="order-2 shrink-0 lg:order-3 lg:ml-auto">
         <PageSizePicker value={pageSize} options={pageSizeOptions} onChange={onPageSizeChange} />
-        <CollectionFilterPicker
-          label={t("collection.filters", { label })}
-          value={filter}
-          defaultValue={defaultFilter}
-          options={filterOptions}
-          onChange={onFilterChange}
-        />
       </div>
+      <CollectionFilterChips
+        label={t("collection.filters", { label })}
+        value={filter}
+        options={filterOptions}
+        onChange={onFilterChange}
+        className="order-3 -mx-4 w-[calc(100%+2rem)] px-4 lg:order-2 lg:mx-0 lg:w-auto lg:min-w-0 lg:flex-1 lg:px-0"
+      />
     </section>
-  );
-}
-
-function CreatorListToolbarIconButton({
-  title,
-  disabled,
-  children,
-  onClick,
-}: {
-  title: string;
-  disabled?: boolean;
-  children: ReactNode;
-  onClick: () => void;
-}) {
-  return (
-    <Button
-      type="button"
-      variant="toolbar"
-      size="icon-sm"
-      className="relative disabled:pointer-events-none disabled:opacity-50"
-      title={title}
-      aria-label={title}
-      disabled={disabled}
-      onClick={onClick}
-    >
-      {children}
-    </Button>
   );
 }

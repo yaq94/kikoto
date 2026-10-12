@@ -244,7 +244,6 @@ export function CreatorListPage<Item extends CreatorListItem, Filter extends str
           query={query}
           placeholder={copy.searchPlaceholder}
           filter={filter}
-          defaultFilter={"all" as Filter}
           filterOptions={filterOptions}
           pageSize={pageSize}
           pageSizeOptions={pageSizeOptions}

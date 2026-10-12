@@ -216,10 +216,8 @@ const VoiceCard = memo(function VoiceCard({
       favorite={voice.favorite}
       userTags={voice.userTags}
       syncState={voice.syncState}
-      workCount={voice.knownWorks}
+      availability={{ total: voice.knownWorks, local: voice.localWorks, available: voice.playableWorks }}
       availabilityCounts={{ local: voice.localWorks, remote: voice.remoteWorks }}
-      unavailableCount={Math.max(0, voice.knownWorks - voice.playableWorks)}
-      sources={voice.sourceSummaries}
       onOpen={() => openVoiceRoute(voice.personId)}
       onFavoriteToggle={() => void onFavoriteToggle(voice)}
       onTagsSave={(tags) => onTagsSave(voice, tags)}

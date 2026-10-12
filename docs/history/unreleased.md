@@ -1,5 +1,13 @@
 # Unreleased
 
+- **Circles** and **Voice Actors** list each creator as a cover tile with an
+  availability bar for local, remote-only, and missing works, and show the
+  latest release date in place of the latest work code. Their views are
+  one-tap chips beside the search field, which stays visible on a phone.
+- Circle detail opens with a cover-tinted summary. Its **Available**,
+  **Local**, **Remote**, and **Unavailable** counts filter the works when
+  pressed, and a circle that was never pulled says that only works the library
+  already knows are listed.
 - **Insights** is a sidebar page for the account's own listening. It opens
   with a calendar of the past year, keeps the 30-day, 12-month, and all-time
   listening report, and ranks tags, voices, and circles by preference (share

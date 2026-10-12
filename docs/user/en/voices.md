@@ -6,22 +6,27 @@ Voice pages present persisted person and credit data.
 ## Current Behavior
 
 - Lists voice actors from local provider credits and user-maintained person
-  data with Local and Remote availability badges on each creator card.
-- Uses server-paged, URL-backed list search and filters with shorter responsive
-  creator cards, dynamic user-tag rows, Library-style pagination, and the latest
-  known credited-work cover.
-- Uses a Library-style first-row toolbar with search on the left and the
-  page-size and existing voice-filter actions (defaulting to `All voices`) on
-  the right; narrow layouts collapse search into the toolbar actions. User tags
-  remain visible and searchable, but the list does not expose a tag filter for
-  now.
+  data as cover tiles with Local and Remote counts and an availability bar: a
+  solid segment for works with a local copy, a lighter segment for works only
+  a remote source holds, and an empty track for the rest.
+- Uses server-paged, URL-backed list search and filters. Each tile shows the
+  latest known credited-work cover with the favorite control on it, the name,
+  aliases, the latest release date, and a dynamic user-tag row, with
+  Library-style pagination. Tiles fill the row on wide layouts and form two
+  columns on a phone.
+- Keeps search, one-tap view chips, and the page-size action on one wrapping
+  toolbar row. The chips are `All voices`, `Favorite`, `Tagged`,
+  `Available`, `Local`, `Remote`, and `Missing`, and the pressed chip names
+  the current view. On a phone the search field keeps its own row with page
+  size beside it, and the chips scroll sideways below. User tags remain
+  visible and searchable, but the list does not expose a tag filter.
 - Shows favorite, rating, note, and user tag state.
 - Shows confirmed aliases under the detail title. Alias review, duplicate
   merge, and merge undo live in the Metadata page's **Voice actors** view;
   the detail **More** menu links there for users with `metadata:sync`.
 - Groups works with no provider voice credits under an `unknown` bucket.
-- Shows Local and Remote availability badges followed by user tags on voice
-  detail. Cache remains available to playback and filtering data, but is not
+- Shows Local and Remote availability badges followed by user tags on the
+  cover-tinted voice detail summary. Cache remains available to playback and filtering data, but is not
   presented as Local.
 - Presents known and remote works with the same responsive grid and shared work
   cards as the Library. Selecting a DLsite tag or personal tag on a work card

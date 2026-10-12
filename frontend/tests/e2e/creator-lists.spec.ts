@@ -329,15 +329,18 @@ async function mockCreatorDetails(
   });
 }
 
-test("circle list uses compact responsive cards and shared pagination", async ({ page }) => {
+test("circle list uses cover tiles, one-tap filters, and shared pagination", async ({ page }) => {
   await mockCreatorLists(page);
   await page.goto("/circles?pageSize=24");
 
   await expect(page.locator("footer").getByRole("button", { name: "Circles", exact: true })).toBeVisible();
-  await expect(page.getByText("Latest RJ00000000", { exact: true })).toBeVisible();
+  await expect(page.getByText("Latest 2026-07-01", { exact: true }).first()).toBeVisible();
   await expect(page.getByText("No cover", { exact: true })).toBeVisible();
   await expect(page.getByText("Synced", { exact: true }).first()).toBeVisible();
   await expect(page.getByText("Available 3/5", { exact: true }).first()).toBeVisible();
+  await expect(
+    page.getByRole("img", { name: "Local 2 · Remote only 1 · Unavailable 2", exact: true }).first(),
+  ).toBeVisible();
   await expect(page.getByText("Local 2", { exact: true })).toHaveCount(0);
   await expect(page.getByText("Remote 1", { exact: true })).toHaveCount(0);
   await expect(page.getByText("2 unavailable", { exact: true })).toHaveCount(0);
@@ -348,15 +351,15 @@ test("circle list uses compact responsive cards and shared pagination", async ({
   await expect(page.getByRole("navigation", { name: "Circle pages" })).toBeVisible();
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 
-  await page.getByRole("button", { name: "All circles" }).click();
-  await expect(page.getByRole("menu", { name: "Circles filters" })).toBeVisible();
-  await page.getByRole("menuitemradio", { name: "Missing" }).click();
+  const filters = page.getByRole("group", { name: "Circles filters" });
+  await expect(filters.getByRole("button", { name: "All circles" })).toHaveAttribute("aria-pressed", "true");
+  await filters.getByRole("button", { name: "Missing" }).click();
   await expect(page).toHaveURL(/filter=missing/);
+  await expect(filters.getByRole("button", { name: "Missing" })).toHaveAttribute("aria-pressed", "true");
+  await expect(filters.getByRole("button", { name: "All circles" })).toHaveAttribute("aria-pressed", "false");
 
-  await page.getByRole("button", { name: "Search circles" }).click();
-  await expect(page.getByPlaceholder("Search circles")).toBeVisible();
   await page.getByPlaceholder("Search circles").fill("Example");
-  await expect(page.getByRole("button", { name: "Circles search is active" })).toBeDisabled();
+  await expect(page).toHaveURL(/q=Example/);
 
   await page.getByRole("button", { name: "Items per page: 24" }).click();
   await expect(page.getByRole("menu", { name: "Items per page" })).toBeVisible();
@@ -369,7 +372,7 @@ test("voice list keeps latest work, tags, and availability visible on mobile", a
   await page.goto("/voices?pageSize=24");
 
   await expect(page.locator("footer").getByRole("button", { name: "Voice Actors", exact: true })).toBeVisible();
-  await expect(page.getByText("Latest RJ00000000", { exact: true })).toBeVisible();
+  await expect(page.getByText("Latest 2026-07-01", { exact: true }).first()).toBeVisible();
   await expect(page.getByText("Local 2", { exact: true }).first()).toBeVisible();
   await expect(page.getByText("Remote 1", { exact: true }).first()).toBeVisible();
   await expect(page.getByText("Cache 1", { exact: true })).toHaveCount(0);
@@ -458,6 +461,7 @@ test("creator detail does not auto-refresh and exposes First pull for a new cata
   await circleLoaded;
   const circleSummary = page.getByRole("region", { name: "Circle summary" });
   await expect(circleSummary.getByText("Never", { exact: true })).toBeVisible();
+  await expect(circleSummary.getByText(/First pull reads the full DLsite catalog/)).toBeVisible();
   await expect(circleSummary.getByRole("button", { name: "First pull" })).toBeVisible();
   expect(legacyAutoRefreshRequests).toEqual([]);
 
@@ -773,7 +777,9 @@ test("circle detail keeps availability and primary actions compact on mobile", a
 
   await expect(page.getByRole("heading", { name: "Example Circle", exact: true })).toBeVisible();
   const summary = page.getByRole("region", { name: "Circle summary" });
-  await expect(summary.getByText("Available 1", { exact: true })).toBeVisible();
+  const catalogCounts = summary.getByRole("group", { name: "Catalog availability" });
+  await expect(catalogCounts.getByRole("button")).toHaveText(["Available 1", "Local 1", "Remote 0", "Unavailable 1"]);
+  await expect(summary.getByText("Catalog synced", { exact: false })).toBeVisible();
   const actions = summary.getByRole("group", { name: "Circle actions" });
   await expect(actions.getByRole("button", { name: "Remove favorite" })).toBeVisible();
   await expect(actions.getByRole("button", { name: "Retry metadata" })).toBeVisible();
@@ -949,6 +955,12 @@ test("@desktop circle detail keeps a full-width compact summary and source-aware
   await page.getByRole("button", { name: "Catalog availability filter" }).click();
   await page.getByRole("menuitemradio", { name: "Unavailable", exact: true }).click();
   await expect(summary.getByText("Available 1", { exact: true })).toBeVisible();
+  // A catalog count is the same filter: the menu choice presses it, and pressing it again clears the filter.
+  const unavailableCount = summary.getByRole("button", { name: "Unavailable 1", exact: true });
+  await expect(unavailableCount).toHaveAttribute("aria-pressed", "true");
+  await unavailableCount.click();
+  await expect(unavailableCount).toHaveAttribute("aria-pressed", "false");
+  await expect(page.getByRole("button", { name: "Catalog availability filter: All works" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Catalog options" })).toBeHidden();
   await expect(page.getByRole("button", { name: "More circle actions" })).toBeVisible();
 });

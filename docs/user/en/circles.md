@@ -9,13 +9,19 @@ Circles represent makers, circles, and related party catalog state.
   availability state.
 - Provides search, filters, URL-backed pagination, favorite state, user tags,
   rating, and notes.
-- Uses a Library-style first-row toolbar: search stays on the left and the
-  page-size and circle-filter actions (defaulting to `All circles`) stay on the
-  right; narrow layouts collapse search into the toolbar actions.
-- Shows the latest known DLsite work code and locally cached cover in compact
-  responsive creator cards, with a `No cover` fallback.
-- Summarizes each circle card with its sync state and one canonical
-  `Available N/total` badge instead of separate local and remote counts.
+- Keeps search, one-tap view chips, and the page-size action on one wrapping
+  toolbar row. The chips are `All circles`, `Favorite`, `Tagged`,
+  `Available`, `Local`, `Remote`, `Missing`, and `Attention`, and the
+  pressed chip names the current view. On a phone the search field keeps its
+  own row with page size beside it, and the chips scroll sideways below.
+- Shows each circle as a cover tile: the latest known DLsite work's locally
+  cached cover with a `No cover` fallback, the favorite control on the cover,
+  the name, the latest release date, and personal tags. Tiles fill the row on
+  wide layouts and form two columns on a phone.
+- Summarizes each circle tile with its sync state, one canonical
+  `Available N/total` count, and an availability bar: a solid segment for
+  works with a local copy, a lighter segment for works only a remote source
+  holds, and an empty track for the rest.
 - Shows circle detail by external id.
 - Paginates circle catalog works on the server. Catalog totals remain complete,
   while search, availability, and series filters apply before pagination;
@@ -27,8 +33,13 @@ Circles represent makers, circles, and related party catalog state.
   Library. This applies to both circle detail and circle series;
   the separate circle-entity list keeps its own controls. Selecting a DLsite
   tag or personal tag on a work card opens a local Library search for it.
-- Shows one `Available N` badge beside user-defined tags on circle detail. The
-  duplicated statistic tiles and circle aliases are omitted from circle UI.
+- Shows the circle detail summary on a cover-tinted panel with the circle's
+  aliases and personal tags. Its **Available**, **Local**, **Remote**, and
+  **Unavailable** counts each filter the works when pressed and clear the
+  filter when pressed again, beside an availability bar for the whole catalog.
+  A circle that was never pulled states that only works the library already
+  knows are listed; otherwise the summary shows when the catalog was last
+  synced. Series cards carry the same availability bar.
 - Keeps the common refresh actions in the detail summary: **First pull** for a
   circle that was never pulled, then **Refresh circle**, which also checks the
   remote sources. **Retry metadata** appears only while catalog works still

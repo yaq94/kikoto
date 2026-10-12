@@ -26,6 +26,8 @@ import { Dialog, DialogFooter, DialogHeader } from "@/components/ui/dialog";
 import { UserTagRow } from "@/components/UserTagRow";
 import { BrowseLoadingIndicator } from "@/components/collection/BrowseLoadingIndicator";
 import { CreatorCard } from "@/components/creator/CreatorCard";
+import { AvailabilityMeter } from "@/components/creator/AvailabilityMeter";
+import { CatalogStatStrip } from "@/components/creator/CatalogStatStrip";
 import { CatalogSyncBadge } from "@/components/creator/CatalogSyncBadge";
 import { CreatorActionMenu } from "@/components/creator/CreatorActionMenu";
 import { CreatorDetailHeader } from "@/components/creator/CreatorDetailHeader";
@@ -96,6 +98,8 @@ import {
   readLastCircleListLocation,
   writeLastCircleListLocation,
 } from "@/lib/circleNavigationState";
+import { formatDateTime } from "@/i18n/format";
+import { useLocale } from "@/i18n/LocaleProvider";
 import { openLibraryTagSearch } from "@/lib/libraryTagSearch";
 import { CircleCatalogOptionsSheet, type CircleAvailabilityFilter } from "@/pages/CircleDetailSheets";
 import { circleRefreshSettledMessage, useCircleRefreshRun } from "@/pages/circleRefreshRun";
@@ -196,10 +200,8 @@ const CircleCard = memo(function CircleCard({
       favorite={circle.favorite}
       userTags={circle.userTags}
       syncState={circle.syncState}
-      workCount={circle.catalogWorks}
+      availability={{ total: circle.catalogWorks, local: circle.localWorks, available: circle.playableWorks }}
       availabilitySummary={{ available: circle.playableWorks, total: circle.catalogWorks }}
-      unavailableCount={circle.missingWorks}
-      sources={circle.sourceSummaries}
       onOpen={() => openCircleRoute(circle.externalId)}
       onFavoriteToggle={() => void onFavoriteToggle(circle)}
       onTagsSave={(tags) => onTagsSave(circle, tags)}
@@ -273,6 +275,7 @@ function CircleDetailPage({
   active: boolean;
 }) {
   const { t } = useTranslation();
+  const { resolvedLocale } = useLocale();
   const auth = useAuth();
   const toast = useToast();
   const requireBulkFetch = usePermissionGate(REMOTE_BULK_FETCH_PERMISSIONS);
@@ -416,6 +419,11 @@ function CircleDetailPage({
     setAvailabilityFilter(value);
     setWorkPage(1);
   };
+  // A count narrows the works; from the series overview it also returns to them.
+  const selectCatalogStat = (value: CircleAvailabilityFilter | null) => {
+    changeAvailabilityFilter(value ?? "all");
+    if (value && isSeriesView && !selectedSeries) openCircleRoute(circle.externalId);
+  };
   const changeWorkQuery = (value: string) => {
     setWorkQuery(value);
     setWorkPage(1);
@@ -501,6 +509,12 @@ function CircleDetailPage({
     );
 
   const firstPull = circle.syncState === "never";
+  const catalogSyncedTime = circle.lastSyncedAt ? formatDateTime(circle.lastSyncedAt, resolvedLocale) : "";
+  const catalogNote = firstPull
+    ? t("detailActions.catalogNotPulledHint")
+    : catalogSyncedTime
+      ? t("detailActions.catalogSyncedAt", { time: catalogSyncedTime })
+      : "";
   // First pull reads the whole catalog and fills its metadata; Refresh also
   // matches the circle's works on the remote sources.
   const runPrimaryRefresh = () =>
@@ -751,14 +765,7 @@ function CircleDetailPage({
             <CatalogSyncBadge state={circle.syncState} appearance="dot" />
           </>
         }
-        meta={
-          <div className="mt-2.5 flex min-w-0 flex-wrap items-center gap-1.5">
-            <Badge variant={availableWorkCount > 0 ? "success" : "warning"} className="tabular-nums">
-              {t("detailActions.availableCount", { count: availableWorkCount })}
-            </Badge>
-            <UserTagRow tags={circle.userTags} scope="circle" onSave={saveCircleTags} className="min-w-0 flex-1" />
-          </div>
-        }
+        meta={<UserTagRow tags={circle.userTags} scope="circle" onSave={saveCircleTags} className="mt-2.5" />}
         actions={
           <div
             className="flex shrink-0 flex-wrap gap-1.5 lg:gap-2"
@@ -825,7 +832,26 @@ function CircleDetailPage({
             />
           </div>
         }
-      />
+      >
+        <CatalogStatStrip
+          label={t("sheets.catalogAvailability")}
+          stats={[
+            { value: "available", label: t("content.available"), count: availableWorkCount },
+            { value: "local", label: t("detailActions.local"), count: circle.localWorks },
+            { value: "remote", label: t("detailActions.remote"), count: circle.remoteWorks },
+            { value: "unavailable", label: t("detailActions.unavailable"), count: circle.missingWorks },
+          ]}
+          selected={availabilityFilter === "all" ? null : availabilityFilter}
+          onSelect={selectCatalogStat}
+          availability={{ total: circle.catalogWorks, local: circle.localWorks, available: availableWorkCount }}
+          availabilityLabel={t("creator.availabilityBreakdown", {
+            local: circle.localWorks,
+            remote: Math.max(0, availableWorkCount - circle.localWorks),
+            missing: circle.missingWorks,
+          })}
+          note={catalogNote}
+        />
+      </CreatorDetailHeader>
 
       <section className="space-y-3">
         <CatalogWorkToolbar
@@ -1597,6 +1623,16 @@ function CircleSeriesSummaryCard({ externalId, series }: { externalId: string; s
             </span>
           ))}
         </div>
+        <AvailabilityMeter
+          total={series.works}
+          local={series.localWorks}
+          available={series.localWorks + series.remoteWorks}
+          label={t("creator.availabilityBreakdown", {
+            local: series.localWorks,
+            remote: series.remoteWorks,
+            missing: series.missingWorks,
+          })}
+        />
         <div className="mt-auto flex flex-wrap gap-1">
           {series.workCodes.slice(0, 8).map((code) => (
             <Badge key={code} variant="outline" className="font-mono text-2xs font-normal text-muted-foreground">
