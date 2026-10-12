@@ -20,6 +20,8 @@ export type UserPreferences = {
   recommendationDefaults: RecommendationConfig;
   /** The user's own metadata language priority; null shows each work's original language. */
   metadataLanguages: string[] | null;
+  /** The IANA time zone the user fixed; null follows the device in use. */
+  timeZone: string | null;
 };
 
 /** Account roles; behavior follows each role's permissions, never its name. */

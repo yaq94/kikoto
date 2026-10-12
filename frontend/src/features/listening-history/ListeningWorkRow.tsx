@@ -5,10 +5,18 @@ import { assetURL } from "@/lib/api";
 import type { ListeningHistoryItem } from "@/lib/listeningApi";
 import { cn } from "@/lib/tailwindClassNames";
 
-/** A work's detail location and in-app navigation, composed by the app shell. */
+/** A destination's location and in-app navigation, composed by the app shell. */
 export type ListeningHistoryWorkLink = { href: string | undefined; open: () => void };
 
 export type ListeningHistoryWorkLinkFactory = (primaryCode: string) => ListeningHistoryWorkLink;
+
+/** Opens a link in place on a plain primary click and leaves modified clicks to the browser. */
+export function openLinkInPlace(event: MouseEvent<HTMLAnchorElement>, link: ListeningHistoryWorkLink) {
+  if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey)
+    return;
+  event.preventDefault();
+  link.open();
+}
 
 /**
  * One work in a listening report: cover, title, code, and listening figures,
@@ -36,23 +44,10 @@ export function ListeningWorkRow({
 }) {
   const { t } = useTranslation();
   const title = item.title || item.primaryCode;
-  const open = (event: MouseEvent<HTMLAnchorElement>) => {
-    if (
-      event.defaultPrevented ||
-      event.button !== 0 ||
-      event.metaKey ||
-      event.ctrlKey ||
-      event.shiftKey ||
-      event.altKey
-    )
-      return;
-    event.preventDefault();
-    link.open();
-  };
   return (
     <a
       href={link.href}
-      onClick={open}
+      onClick={(event) => openLinkInPlace(event, link)}
       title={t("personal.history.openWork", { title })}
       className="group flex min-h-14 min-w-0 items-center gap-3 rounded-lg px-2 py-1.5 transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
     >

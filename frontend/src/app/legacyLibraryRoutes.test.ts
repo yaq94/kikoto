@@ -54,8 +54,12 @@ describe("legacyLibraryRedirect", () => {
     expect(legacyLibraryRedirect("/cleanup")).toBe("/settings?tab=cleanup");
   });
 
+  it("opens former listening history locations as Insights", () => {
+    expect(legacyLibraryRedirect("/history")).toBe("/insights");
+    expect(legacyLibraryRedirect("/settings", "?tab=history")).toBe("/insights");
+  });
+
   it("opens former personal pages as Settings tabs", () => {
-    expect(legacyLibraryRedirect("/history")).toBe("/settings?tab=history");
     expect(legacyLibraryRedirect("/tags/")).toBe("/settings?tab=tags");
     expect(legacyLibraryRedirect("/user-data")).toBe("/settings?tab=data");
   });

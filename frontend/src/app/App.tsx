@@ -30,6 +30,7 @@ import {
 
 import { AuthProvider, useAuth } from "@/auth/AuthProvider";
 import {
+  INSIGHTS_PATH,
   canAccessPage,
   navItems,
   navigationDescription,
@@ -58,8 +59,11 @@ import { isNativeApp } from "@/lib/serverConfig";
 import { currentClientStorageScope } from "@/lib/clientStorageScope";
 import { isWorkCodePath } from "@/lib/workCode";
 import { openWorkDetail, workDetailCodeFromLocation, workDetailRoute } from "@/app/workDetailNavigation";
-import type { ListeningHistoryWorkLinkFactory } from "@/features/listening-history/ListeningHistoryPage";
-import { PERSONAL_TAB_PERMISSION, personalTabPath } from "@/pages/personalTabs";
+import type {
+  ListeningEntityLinkFactory,
+  ListeningHistoryWorkLinkFactory,
+} from "@/features/listening-history/ListeningHistoryPage";
+import { PERSONAL_TAB_PERMISSION } from "@/pages/personalTabs";
 import { preloadWorkDetail } from "@/features/work-detail/lazyWorkDetail";
 import { LibraryOnboarding } from "@/features/library-setup/LibraryOnboarding";
 import { LibraryMigrationGate } from "@/features/library-setup/LibraryMigrationGate";
@@ -70,6 +74,7 @@ import {
   NAVIGATION_EVENT,
   currentInternalLocation,
   historyScrollY,
+  historyStateWithReturn,
   mobileTabResumeHistoryState,
   navigateToWorkspaceUp,
   requestHistoryScrollRestoration,
@@ -77,6 +82,7 @@ import {
 } from "@/lib/browserHistory";
 import { api, type RemoteTrackRunStatus } from "@/lib/api";
 import { normalizeLibraryBrowseLocation, readLastLibraryLocation } from "@/lib/libraryBrowseState";
+import { libraryTagSearchLocation } from "@/lib/libraryTagSearch";
 import { isCircleListLocation, readLastCircleListLocation } from "@/lib/circleNavigationState";
 import { isVoiceListLocation, readLastVoiceListLocation } from "@/lib/voiceNavigationState";
 import { legacyLibraryRedirect } from "@/app/legacyLibraryRoutes";
@@ -128,6 +134,7 @@ const WorkManagementPage = lazy(() =>
 );
 const WorkflowsPage = lazy(() => import("@/pages/WorkflowsPage").then((module) => ({ default: module.WorkflowsPage })));
 const AboutPage = lazy(() => import("@/pages/AboutPage").then((module) => ({ default: module.AboutPage })));
+const InsightsPage = lazy(() => import("@/pages/InsightsPage").then((module) => ({ default: module.InsightsPage })));
 // Preloaded with the browse workspaces so the first Quick actions tap opens at once.
 const commandPalette = preloadableComponent(() =>
   import("@/app/CommandPalette").then((module) => module.CommandPalette),
@@ -248,7 +255,28 @@ function AuthenticatedApp() {
       const intent = { kind: "known" as const, canonicalCode: primaryCode };
       return {
         href: workDetailRoute(intent) ?? undefined,
-        open: () => openWorkDetail(intent, { returnTo: personalTabPath("history"), returnLabel: t("nav.history") }),
+        open: () => openWorkDetail(intent, { returnTo: INSIGHTS_PATH, returnLabel: t("nav.insights") }),
+      };
+    },
+    [t],
+  );
+  const listeningEntityLink = useCallback<ListeningEntityLinkFactory>(
+    (kind, entry) => {
+      const route =
+        kind === "tags"
+          ? libraryTagSearchLocation("tag", entry.name, "/")
+          : kind === "voices"
+            ? `/voices/${entry.id}`
+            : entry.externalId
+              ? `/circles/${encodeURIComponent(entry.externalId)}`
+              : null;
+      if (!route) return null;
+      return {
+        href: route,
+        open: () => {
+          window.history.pushState(historyStateWithReturn(INSIGHTS_PATH, t("nav.insights")), "", route);
+          window.dispatchEvent(new Event(NAVIGATION_EVENT));
+        },
       };
     },
     [t],
@@ -597,11 +625,6 @@ function AuthenticatedApp() {
                     personal={
                       navigationHasPermission(PERSONAL_TAB_PERMISSION)
                         ? {
-                            history: {
-                              canClear: effectiveHasPermission("playback:use"),
-                              storageScope: clientStorageScope,
-                              workLink: listeningHistoryWorkLink,
-                            },
                             tags: { canEdit: effectiveHasPermission("tags:write"), demoMode: auth.demoMode },
                             data: {
                               canImportData:
@@ -639,6 +662,17 @@ function AuthenticatedApp() {
                     readOnly={auth.demoMode}
                   />
                 )}
+                {canAccessCurrentPage && page === "insights" && auth.user && (
+                  <InsightsPage
+                    listening={{
+                      canClear: effectiveHasPermission("playback:use"),
+                      storageScope: clientStorageScope,
+                      workLink: listeningHistoryWorkLink,
+                      entityLink: listeningEntityLink,
+                    }}
+                    onOpenPath={openPath}
+                  />
+                )}
                 {canAccessCurrentPage && page === "about" && <AboutPage />}
                 {![
                   "library",
@@ -648,6 +682,7 @@ function AuthenticatedApp() {
                   "settings",
                   "metadata",
                   "workflows",
+                  "insights",
                   "about",
                 ].includes(page) && (
                   <PlaceholderPage title={activeItem ? navigationLabel(activeItem, t) : t("app.pageReserved")} />
