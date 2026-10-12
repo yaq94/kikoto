@@ -65,6 +65,12 @@ Administrators manage the instance from the administration tabs in Settings:
 
 There is no instance-wide metadata language.
 
+Listening reports count days in each account's time zone, which follows the
+account's device unless the account chooses a zone in Settings → Account. A
+client that names no zone is counted in the server's: the container's `TZ` when
+that names an IANA zone, and UTC otherwise. The server carries its own zone
+database, so the image needs no `tzdata` package.
+
 Each signed-in user may choose an own preferred metadata language in the
 header account menu. Users who do not, anonymous visitors, stored titles and
 tag names, and background work use each work's original language. A request

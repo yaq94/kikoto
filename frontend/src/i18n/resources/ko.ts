@@ -655,6 +655,8 @@ export const koreanResource = {
         activity: "활동",
         settings: "설정",
         maintenance: "관리",
+        insights: "인사이트",
+        insightsDescription: "청취 달력, 통계, 기록을 확인합니다",
         about: "정보",
         libraryDescription: "설정된 모든 소스의 작품을 탐색하고 필터링하고 재생합니다",
         favoritesDescription: "즐겨찾기 작품, 서클, 성우와 목록을 탐색합니다",
@@ -662,10 +664,9 @@ export const koreanResource = {
         voiceActorsDescription: "성우와 참여 작품을 탐색합니다",
         workflowsDescription: "기본 작업과 프리셋 워크플로를 실행합니다",
         activityDescription: "워크플로 실행, 실패 및 검토 항목을 확인합니다",
-        settingsDescription: "계정, 환경설정, 청취 기록, 태그, 데이터를 관리합니다",
+        settingsDescription: "계정, 환경설정, 태그, 데이터를 관리합니다",
         maintenanceDescription: "소스, 캐시와 사용자를 설정합니다",
         aboutDescription: "버전, 라이선스 및 앱 정보",
-        history: "기록",
         tags: "태그",
         userData: "내 데이터",
       },
@@ -907,6 +908,9 @@ export const koreanResource = {
         screenCaptureCover: "화면 녹화나 미러링 중 숨기기",
         screenCaptureCoverDescription:
           "화면 녹화, AirPlay 미러링 등 화면 캡처가 진행되는 동안 Kikoto를 가리고 화면 가사를 닫습니다. 스크린샷은 막지 않습니다.",
+        screenCaptureHide: "스크린샷과 화면 녹화에서 숨기기",
+        screenCaptureHideDescription:
+          "스크린샷에는 Kikoto 대신 빈 페이지가 찍힙니다. 화면 녹화, AirPlay 미러링 등 화면 캡처가 진행되는 동안 Kikoto를 가리고 화면 가사를 닫습니다.",
         nowPlayingContent: "재생 중 정보",
         nowPlayingContentDescription:
           "잠금 화면, 제어 센터, 연결된 Bluetooth 또는 차량 디스플레이에 표시할 현재 트랙의 내용입니다.",

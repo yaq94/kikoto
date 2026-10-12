@@ -17,6 +17,9 @@ type userPreferences struct {
 	// MetadataLanguages is the user's own metadata language priority, or nil
 	// when the user has no preference and sees each work's original language.
 	MetadataLanguages []string `json:"metadataLanguages"`
+	// TimeZone is the time zone the user fixed, or nil when the user's days
+	// follow the device the account is used from.
+	TimeZone *string `json:"timeZone"`
 }
 
 func (s *Server) loadUserPreferences(r *http.Request, userID int64) (userPreferences, error) {
@@ -25,6 +28,9 @@ func (s *Server) loadUserPreferences(r *http.Request, userID int64) (userPrefere
 		RecommendationConfig:    s.libraryStore.LoadUserRecommendationConfig(r.Context(), userID),
 		RecommendationThreshold: s.settingInt(r, "recommendation_threshold", 50),
 		RecommendationDefaults:  library.DefaultRecommendationConfig(),
+	}
+	if zone, ok := s.ownTimeZone(r.Context(), userID); ok {
+		result.TimeZone = &zone
 	}
 	if languages, ok := s.ownMetadataLanguages(r.Context(), userID); ok {
 		result.MetadataLanguages = languages
@@ -73,6 +79,9 @@ func (s *Server) updateUserPreferences(w http.ResponseWriter, r *http.Request) {
 		// MetadataLanguages is a language priority, or null for no
 		// preference (original language). Omitting it keeps the current choice.
 		MetadataLanguages json.RawMessage `json:"metadataLanguages"`
+		// TimeZone is an IANA zone name, or null to follow the device.
+		// Omitting it keeps the current choice.
+		TimeZone json.RawMessage `json:"timeZone"`
 	}
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10))
 	decoder.DisallowUnknownFields()
@@ -132,6 +141,16 @@ func (s *Server) updateUserPreferences(w http.ResponseWriter, r *http.Request) {
 			metadataLanguagesJSON = string(encoded)
 		}
 	}
+	timeZoneChanged := len(payload.TimeZone) > 0
+	var timeZone any
+	if timeZoneChanged && string(payload.TimeZone) != "null" {
+		var name string
+		if err := json.Unmarshal(payload.TimeZone, &name); err != nil || !validTimeZone(name) {
+			writeAPIError(w, http.StatusBadRequest, "time_zone_invalid", "timeZone must be an IANA time zone name or null", false)
+			return
+		}
+		timeZone = name
+	}
 	_, err := s.db.ExecContext(r.Context(), `INSERT INTO user_preference (user_id, directory_routing_rules, recommendation_config, recommendation_threshold)
 		VALUES (?, ?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET
 		directory_routing_rules = COALESCE(excluded.directory_routing_rules, user_preference.directory_routing_rules),
@@ -140,6 +159,13 @@ func (s *Server) updateUserPreferences(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, err)
 		return
+	}
+	if timeZoneChanged {
+		if _, err := s.db.ExecContext(r.Context(), `INSERT INTO user_preference (user_id, time_zone) VALUES (?, ?)
+			ON CONFLICT(user_id) DO UPDATE SET time_zone = excluded.time_zone`, user.ID, timeZone); err != nil {
+			writeError(w, err)
+			return
+		}
 	}
 	if metadataLanguagesChanged {
 		if _, err := s.db.ExecContext(r.Context(), `INSERT INTO user_preference (user_id, metadata_languages) VALUES (?, ?)

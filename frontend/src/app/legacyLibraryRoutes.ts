@@ -15,6 +15,7 @@ export function legacyLibraryRedirect(pathname: string, search = "") {
     return `/metadata?${params}`;
   }
   if (path === "/settings" && new URLSearchParams(search).get("tab") === "appearance") return "/settings";
+  if (path === "/settings" && new URLSearchParams(search).get("tab") === "history") return "/insights";
   if (path === "/users") return "/settings?tab=users";
   if (path === "/cleanup") return "/settings?tab=cleanup";
   if (path === "/maintenance") {
@@ -43,7 +44,7 @@ export function legacyLibraryRedirect(pathname: string, search = "") {
       return `/metadata${params.size ? `?${params}` : ""}`;
     }
   }
-  if (path === "/history") return "/settings?tab=history";
+  if (path === "/history") return "/insights";
   if (path === "/tags") return "/settings?tab=tags";
   if (path === "/user-data") return "/settings?tab=data";
   if (path === "/library/all" || path === "/library/remote") {

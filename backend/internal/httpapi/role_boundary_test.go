@@ -101,6 +101,8 @@ func TestContributorKeepsNoAdministrativeSurface(t *testing.T) {
 		{http.MethodPost, "/api/workflow-runs/source-presence-check", `{}`},
 		{http.MethodPost, "/api/workflow-runs/dlsite-popular", `{}`},
 		{http.MethodPost, "/api/works/1/metadata-sync", `{}`},
+		{http.MethodPost, "/api/works/1/metadata-preview", `{}`},
+		{http.MethodPost, "/api/works/1/metadata-preview/apply", `{}`},
 		{http.MethodPatch, "/api/works/1/manual-overrides", `{}`},
 		{http.MethodPatch, "/api/settings", `{}`},
 		{http.MethodPost, "/api/file-sources", `{}`},

@@ -58,6 +58,73 @@ async function mockListeningServer(page: Page, options: { failFirstReport?: bool
   await page.route("**/api/listening-statistics*", (route) =>
     route.fulfill({ json: statisticsFixture(new URL(route.request().url()).searchParams.get("range") ?? "all") }),
   );
+  // The account fixed no zone, so the report follows the zone the device names.
+  await page.route("**/api/listening-calendar*", (route) => {
+    const year = new URL(route.request().url()).searchParams.get("range");
+    return route.fulfill({
+      json: {
+        // A year's calendar covers that year; any other range the weeks up to today.
+        from: year ? `${year}-01-01` : "2026-02-23",
+        to: year ? `${year}-12-31` : "2026-03-04",
+        timeZone: new URL(route.request().url()).searchParams.get("timeZone") ?? "UTC",
+        followsDevice: true,
+        days: year
+          ? [
+              { date: `${year}-03-10`, listenedSeconds: 2400, listenCount: 2 },
+              { date: `${year}-03-11`, listenedSeconds: 300, listenCount: 1 },
+            ]
+          : [{ date: "2026-03-03", listenedSeconds: 600, listenCount: 2 }],
+      },
+    });
+  });
+  await page.route("**/api/listening-profile*", (route) =>
+    route.fulfill({
+      json: {
+        range: new URL(route.request().url()).searchParams.get("range") ?? "all",
+        listenedSeconds: 600,
+        workCount: 4,
+        libraryWorkCount: 10,
+        tags: ["Example Tag", "Example Tag 2", "Example Tag 3"].map((name, index) => ({
+          id: index + 3,
+          name,
+          listenedSeconds: 600 - index * 120,
+          listenCount: 2,
+          workCount: 2,
+          libraryWorkCount: 2,
+        })),
+        duration: { value: 5400, libraryValue: 3600, position: 0.8, workCount: 4 },
+        marks: { works: 4, finished: 3, relisten: 1 },
+      },
+    }),
+  );
+  await page.route("**/api/listening-breakdown*", (route) => {
+    const params = new URL(route.request().url()).searchParams;
+    const rank = params.get("rank") ?? "time";
+    // A preference ranking also reports how much of the library each entry covers.
+    const library = rank === "preference" ? { libraryWorkCount: 2 } : {};
+    return route.fulfill({
+      json: {
+        range: params.get("range") ?? "all",
+        rank,
+        listenedSeconds: 600,
+        ...(rank === "preference" ? { libraryWorkCount: 10 } : {}),
+        tags: [{ id: 3, name: "Example Tag", listenedSeconds: 600, listenCount: 2, workCount: 1, ...library }],
+        voices: [{ id: 7, name: "Example Voice", listenedSeconds: 600, listenCount: 2, workCount: 1, ...library }],
+        circles: [
+          {
+            id: 5,
+            name: "Example Circle",
+            externalId: "RG00000000",
+            listenedSeconds: 600,
+            listenCount: 2,
+            workCount: 1,
+            ...library,
+          },
+          { id: 6, name: "Example Circle 2", listenedSeconds: 60, listenCount: 1, workCount: 1, ...library },
+        ],
+      },
+    });
+  });
   await page.route("**/api/listening-history*", async (route) => {
     if (route.request().method() === "DELETE") {
       server.generation += 1;
@@ -92,11 +159,28 @@ async function mockListeningServer(page: Page, options: { failFirstReport?: bool
 /** A listening report with one listened period, shaped like the server's for the requested range. */
 function statisticsFixture(range: string) {
   const granularity = range === "30d" ? "day" : "month";
+  const year = /^[0-9]{4}$/.test(range) ? range : null;
   const periods =
     range === "30d"
       ? Array.from({ length: 30 }, (_, index) => `2026-01-${String(index + 1).padStart(2, "0")}`)
-      : ["2025-12", "2026-01"];
+      : year
+        ? Array.from({ length: 12 }, (_, index) => `${year}-${String(index + 1).padStart(2, "0")}`)
+        : ["2025-12", "2026-01"];
+  // A calendar year also carries its highlights and the hours its listening was recorded with.
+  const yearReport = year
+    ? {
+        today: `${year}-12-31`,
+        hours: Array.from({ length: 24 }, (_, hour) => (hour === 22 ? 1800 : hour === 9 ? 600 : 0)),
+        highlights: {
+          newWorkCount: 3,
+          busiestDay: { date: `${year}-03-10`, listenedSeconds: 2400 },
+          topVoice: { id: 7, name: "Example Voice", listenedSeconds: 1800, listenCount: 2, workCount: 1 },
+        },
+      }
+    : {};
   return {
+    ...yearReport,
+    years: ["2026", "2025"],
     range,
     listenedSeconds: 16,
     listenCount: 1,
@@ -141,7 +225,7 @@ test("clearing history during playback never reports pre-clear time again and ke
 
   // Navigate inside the app so the global player keeps playing.
   await page.getByRole("button", { name: "Account menu" }).click();
-  await page.getByRole("dialog", { name: "Account" }).getByRole("button", { name: "History", exact: true }).click();
+  await page.getByRole("dialog", { name: "Account" }).getByRole("button", { name: "Insights", exact: true }).click();
   await page.getByRole("button", { name: "Clear history" }).click();
   await page.getByRole("alertdialog").getByRole("button", { name: "Clear history" }).click();
   await expect(page.getByText("Listening history cleared.")).toBeVisible();
@@ -280,7 +364,7 @@ test("@desktop the history page opens a listed work in work detail", async ({ pa
   await page.setViewportSize({ width: 1280, height: 800 });
   await mockApplication(page, undefined, false, 1, 0, [], undefined, { authenticated: true });
   await mockListeningServer(page);
-  await page.goto("/settings?tab=history");
+  await page.goto("/insights");
   await page.evaluate(() => {
     (window as Window & { historyPageMarker?: boolean }).historyPageMarker = true;
   });
@@ -307,25 +391,144 @@ test("@desktop the listening report switches between its ranges", async ({ page 
     const url = new URL(request.url());
     if (url.pathname === "/api/listening-statistics") requestedRanges.push(url.searchParams.get("range") ?? "");
   });
-  await page.goto("/settings?tab=history");
+  await page.goto("/insights");
 
   const ranges = page.getByRole("group", { name: "Report period" });
   await expect(ranges.getByRole("button", { name: "30 days" })).toHaveAttribute("aria-pressed", "true");
-  await expect(page.getByRole("table", { name: "Daily listening time (UTC)" })).toBeAttached();
+  await expect(page.getByRole("table", { name: "Daily listening time" })).toBeAttached();
   await ranges.getByRole("button", { name: "12 months" }).click();
   await expect(ranges.getByRole("button", { name: "12 months" })).toHaveAttribute("aria-pressed", "true");
-  await expect(page.getByRole("table", { name: "Monthly listening time (UTC)" })).toBeAttached();
+  await expect(page.getByRole("table", { name: "Monthly listening time" })).toBeAttached();
   expect(requestedRanges.at(-1)).toBe("12m");
+});
+
+test.describe("on a device in another time zone", () => {
+  test.use({ timezoneId: "Asia/Tokyo" });
+
+  test("@desktop the listening dashboard names the time zone of its days and links to the setting", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await mockApplication(page, undefined, false, 1, 0, [], undefined, { authenticated: true });
+    await mockListeningServer(page);
+    const reportZones: Array<string | null> = [];
+    page.on("request", (request) => {
+      const url = new URL(request.url());
+      if (url.pathname === "/api/listening-statistics") reportZones.push(url.searchParams.get("timeZone"));
+    });
+    await page.goto("/insights");
+
+    await expect(page.getByText("Days start at midnight in Asia/Tokyo, this device's time zone.")).toBeVisible();
+    expect(reportZones.at(-1)).toBe("Asia/Tokyo");
+    await page.getByRole("link", { name: "Change time zone", exact: true }).click();
+    await expect(page).toHaveURL(/\/settings\?tab=time-zone$/);
+    await expect(page.getByRole("heading", { name: "Time zone", exact: true })).toBeVisible();
+  });
+});
+
+test("@desktop a calendar year opens with its highlights, its own calendar, and its hours", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await mockApplication(page, undefined, false, 1, 0, [], undefined, { authenticated: true });
+  await mockListeningServer(page);
+  const requested: string[] = [];
+  page.on("request", (request) => {
+    const url = new URL(request.url());
+    if (url.pathname.startsWith("/api/listening-") && url.searchParams.get("range") === "2025")
+      requested.push(url.pathname);
+  });
+  await page.goto("/insights");
+  await expect(page.getByRole("heading", { name: "2025 highlights" })).toHaveCount(0);
+  // The last segment of the range switcher opens the years and names the chosen one.
+  const ranges = page.getByRole("group", { name: "Report period" });
+  const years = ranges.getByRole("combobox", { name: "Year", exact: true });
+  await expect(years).toHaveText("Year");
+
+  await years.click();
+  await page.getByRole("option", { name: "2025", exact: true }).click();
+  await expect(years).toHaveText("Year: 2025");
+  const highlights = page.getByRole("region", { name: "2025 highlights" });
+  await expect(highlights).toBeVisible();
+  // The streak comes from the year's own calendar: two listening days in a row.
+  await expect(highlights.getByText("2 days", { exact: true })).toBeVisible();
+  await expect(highlights.getByText("22:00–23:00", { exact: true })).toBeVisible();
+  await expect(highlights.getByRole("link", { name: "Example Voice", exact: true })).toBeVisible();
+  await expect(highlights.getByText("3 works", { exact: true })).toBeVisible();
+  await expect(page.getByText("Most at 22:00–23:00", { exact: true })).toBeVisible();
+  await expect(page.getByRole("table", { name: "Monthly listening time" })).toBeAttached();
+  await expect
+    .poll(() => [...new Set(requested)].sort())
+    .toEqual([
+      "/api/listening-breakdown",
+      "/api/listening-calendar",
+      "/api/listening-profile",
+      "/api/listening-statistics",
+    ]);
+
+  // A named range leaves the year, without highlights.
+  await ranges.getByRole("button", { name: "30 days" }).click();
+  await expect(highlights).toHaveCount(0);
+  await expect(years).toHaveText("Year");
+});
+
+test("@desktop the taste profile says what the listening leans toward", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await mockApplication(page, undefined, false, 1, 0, [], undefined, { authenticated: true });
+  await mockListeningServer(page);
+  await page.goto("/insights");
+
+  const profile = page.getByRole("region", { name: "Taste profile" });
+  await expect(profile.getByText("You lean most toward Example Tag and Example Tag 2.")).toBeVisible();
+  await expect(profile.getByText("You favor longer works.")).toBeVisible();
+  await expect(
+    profile.getByText("Of the 4 works you marked, 75% are finished and 25% are marked to relisten."),
+  ).toBeVisible();
+  await expect(profile.getByText("You 1 h 30 min · Library 1 h 0 min", { exact: true })).toBeVisible();
+  // The radar's figures are also a list for assistive technology.
+  await expect(profile.getByRole("listitem")).toHaveCount(3);
+});
+
+test("@desktop the listening dashboard ranks tags, voices, and circles and links each to its page", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await mockApplication(page, undefined, false, 1, 0, [], undefined, { authenticated: true });
+  await mockListeningServer(page);
+  // A former History location opens the dashboard.
+  await page.goto("/settings?tab=history");
+  await expect(page).toHaveURL(/\/insights$/);
+
+  await expect(page.getByRole("region", { name: "Listening calendar" }).getByText("1 day").first()).toBeVisible();
+  await expect(page.getByRole("list", { name: "Top tags" }).getByRole("link", { name: /Example Tag/ })).toHaveAttribute(
+    "href",
+    /^\/\?.*Example/,
+  );
+  // Preference is the default ranking: a share of listening time against a share of the library.
+  const tags = page.getByRole("list", { name: "Top tags" });
+  await expect(tags.getByText("100% of time")).toBeVisible();
+  await expect(tags.getByText("20% of library")).toBeVisible();
+  await page.getByRole("group", { name: "Ranking" }).getByRole("button", { name: "Listening time" }).click();
+  await expect(tags.getByText("10 min")).toBeVisible();
+  await expect(tags.getByText("1 work", { exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Your data" })).toHaveAttribute("href", "/settings?tab=data");
+  const circles = page.getByRole("list", { name: "Top circles" });
+  await expect(circles.getByRole("link", { name: /Example Circle/ })).toHaveAttribute("href", "/circles/RG00000000");
+  // A circle without a provider id has no page to open.
+  await expect(circles.getByRole("listitem").filter({ hasText: "Example Circle 2" }).getByRole("link")).toHaveCount(0);
+  await page
+    .getByRole("list", { name: "Top voices" })
+    .getByRole("link", { name: /Example Voice/ })
+    .click();
+  await expect(page).toHaveURL(/\/voices\/7$/);
 });
 
 test("@desktop the listening report's screen reader table adds no scroll space below the page", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
   await mockApplication(page, undefined, false, 1, 0, [], undefined, { authenticated: true });
   await mockListeningServer(page);
-  await page.goto("/settings?tab=history");
+  await page.goto("/insights");
 
   // Thirty daily rows are far taller than the page when the table is not clipped.
-  await expect(page.getByRole("table", { name: "Daily listening time (UTC)" }).getByRole("row")).toHaveCount(31);
+  await expect(page.getByRole("table", { name: "Daily listening time" }).getByRole("row")).toHaveCount(31);
   const overflow = await page.evaluate(() => {
     const records = document.querySelector("[aria-labelledby='listening-history-heading']")!;
     const contentBottom = records.getBoundingClientRect().bottom + window.scrollY;

@@ -320,6 +320,8 @@ export const englishResource = {
         activity: "Activity",
         settings: "Settings",
         maintenance: "Maintenance",
+        insights: "Insights",
+        insightsDescription: "Your listening calendar, statistics, and history",
         about: "About",
         libraryDescription: "Browse, filter, and play works from every configured source",
         favoritesDescription: "Browse your favorite works, circles, voices, and lists",
@@ -327,10 +329,9 @@ export const englishResource = {
         voiceActorsDescription: "Browse voices and their credited works",
         workflowsDescription: "Run built-in operations and preset workflows",
         activityDescription: "Inspect workflow runs, failures, and review items",
-        settingsDescription: "Manage your account, preferences, listening history, tags, and data",
+        settingsDescription: "Manage your account, preferences, tags, and data",
         maintenanceDescription: "Configure sources, caching, and users",
         aboutDescription: "Version, licensing, and application information",
-        history: "History",
         tags: "Tags",
         userData: "Your data",
       },
@@ -580,6 +581,9 @@ export const englishResource = {
         screenCaptureCover: "Hide while the screen is recorded or mirrored",
         screenCaptureCoverDescription:
           "Covers Kikoto and closes screen lyrics while a screen recording, AirPlay mirroring, or another capture is active. Screenshots are not blocked.",
+        screenCaptureHide: "Hide from screenshots and recordings",
+        screenCaptureHideDescription:
+          "A screenshot shows a blank page in place of Kikoto. While a screen recording, AirPlay mirroring, or another capture is active, Kikoto is covered and screen lyrics close.",
         nowPlayingContent: "Now Playing details",
         nowPlayingContentDescription:
           "What the lock screen, Control Center, and connected Bluetooth or car displays show for the current track.",

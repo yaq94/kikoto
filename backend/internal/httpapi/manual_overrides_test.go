@@ -169,6 +169,32 @@ func TestUpdateWorkManualOverridesPersistsNormalizedValuesAndRelations(t *testin
 	}
 }
 
+func TestUpdateWorkManualOverridesPersistsScalarMetadata(t *testing.T) {
+	fixture := newManualOverrideFixture(t, config.Config{})
+	response := updateManualOverridesRequest(t, fixture, `{
+		"description": "  Authored description  ",
+		"releaseDate": " 2026-10-11 ",
+		"ageRating": "  general "
+	}`)
+	if response.Code != http.StatusOK {
+		t.Fatalf("update status = %d, body = %s", response.Code, response.Body.String())
+	}
+	var got workManualOverrides
+	if err := json.NewDecoder(response.Body).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Description == nil || *got.Description != "Authored description" || got.ReleaseDate == nil || *got.ReleaseDate != "2026-10-11" || got.AgeRating == nil || *got.AgeRating != "general" {
+		t.Fatalf("scalar overrides = %+v", got)
+	}
+	detail, err := fixture.server.loadWorkDetail(context.Background(), fixture.userID, fixture.workID, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if detail.Description != "Authored description" || detail.ReleaseDate == nil || *detail.ReleaseDate != "2026-10-11" || detail.AgeRating != "general" {
+		t.Fatalf("detail scalar overrides = description %q release %v age %q", detail.Description, detail.ReleaseDate, detail.AgeRating)
+	}
+}
+
 func TestDeleteWorkManualOverrideRemovesCanonicalRelations(t *testing.T) {
 	fixture := newManualOverrideFixture(t, config.Config{})
 	if response := updateManualOverridesRequest(t, fixture, `{

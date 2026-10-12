@@ -5,6 +5,8 @@ import type { WorkDetail } from "@/lib/api";
 import { languageLabel } from "../workDetailHelpers";
 import { workVersionKindLabel, workVersionMediaState } from "../workVersionModel";
 import { workFamilyEditions } from "./metadataEditorModel";
+import type { MetadataLanguageScope } from "./metadataLanguageScope";
+import { scopeMatchesLanguage } from "./metadataLanguageScope";
 
 /**
  * Lists what belongs to this work's family: its language editions and the
@@ -13,11 +15,16 @@ import { workFamilyEditions } from "./metadataEditorModel";
  */
 export function MetadataEditorFamilySection({
   work,
+  languageScope,
 }: {
   work: Pick<WorkDetail, "primaryCode" | "title" | "translations" | "purchaseBonuses">;
+  languageScope?: MetadataLanguageScope;
 }) {
   const { t } = useTranslation();
-  const editions = workFamilyEditions(work.translations ?? []);
+  const allEditions = workFamilyEditions(work.translations ?? []);
+  const editions = allEditions.filter((edition) =>
+    languageScope ? scopeMatchesLanguage(languageScope, edition.metadataLanguage, edition.origin) : true,
+  );
   const bonuses = work.purchaseBonuses ?? [];
   const currentCode = work.primaryCode.trim().toUpperCase();
   return (
@@ -30,7 +37,9 @@ export function MetadataEditorFamilySection({
       </div>
       {editions.length === 0 ? (
         <p className="rounded-md border bg-card px-3 py-2 text-sm text-muted-foreground">
-          {t("metadataEditor.family.alone", { code: work.primaryCode })}
+          {allEditions.length === 0
+            ? t("metadataEditor.family.alone", { code: work.primaryCode })
+            : t("metadataEditor.family.noMatchingLanguage")}
         </p>
       ) : (
         <ul className="divide-y rounded-md border bg-card text-sm" aria-label={t("metadataEditor.family.editions")}>

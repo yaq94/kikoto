@@ -165,12 +165,14 @@ async function mockCacheSettings(
     ],
   };
   let metadataLanguages: string[] | null = null;
+  let timeZone: string | null = null;
   const currentPreferences = (): UserPreferences => ({
     directoryRoutingRules: currentSettings.directoryRoutingRules,
     recommendationConfig: currentSettings.recommendationConfig,
     recommendationThreshold: currentSettings.recommendationThreshold,
     recommendationDefaults: currentSettings.recommendationDefaults,
     metadataLanguages,
+    timeZone,
   });
   const replaceRemoteSource = (source: FileSource) => {
     currentSettings = { ...currentSettings, fileSources: [currentSettings.fileSources[0], source] };
@@ -200,6 +202,7 @@ async function mockCacheSettings(
         const { metadataLanguages: languages, ...payload } = route.request().postDataJSON() as PreferencesUpdate;
         onSettings(languages === undefined ? payload : { ...payload, metadataLanguages: languages });
         if (languages !== undefined) metadataLanguages = languages;
+        if (payload.timeZone !== undefined) timeZone = payload.timeZone;
         currentSettings = { ...currentSettings, ...payload };
       }
       await route.fulfill({ json: currentPreferences() });
@@ -574,11 +577,38 @@ test("personal settings expose administrator tabs only to administrators", async
   await expect(page.getByText("Manage your account and appearance preferences", { exact: true })).toBeHidden();
   await expect(page.getByRole("heading", { name: "Account", exact: true })).toBeVisible();
   await expect(page.getByRole("tab", { name: "Appearance", exact: true })).toHaveCount(0);
-  await expect(page.getByRole("tab", { name: "History", exact: true })).toBeVisible();
   await expect(page.getByRole("tab", { name: "Recommendations", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Cache & Fetch", exact: true })).toHaveCount(0);
 
   await expect(page.getByRole("button", { name: "Users", exact: true })).toHaveCount(0);
+});
+
+test.describe("on a device in another time zone", () => {
+  test.use({ timezoneId: "Asia/Tokyo" });
+
+  test("an account follows its device's time zone until it fixes one", async ({ page }) => {
+    const updates: unknown[] = [];
+    await mockCacheSettings(
+      page,
+      () => undefined,
+      (payload) => updates.push(payload),
+    );
+    await page.goto("/settings");
+    const zone = page.getByRole("combobox", { name: "Time zone", exact: true });
+    await expect(zone.locator("option").first()).toHaveText("Automatic (Asia/Tokyo)");
+    await expect(zone).toHaveValue("");
+    await zone.selectOption("Europe/Berlin");
+    await page.getByRole("button", { name: "Save time zone", exact: true }).click();
+    await expect(page.getByText("Time zone saved.")).toBeVisible();
+    expect(updates.at(-1)).toEqual({ timeZone: "Europe/Berlin" });
+
+    // The fixed zone is the saved choice on the next visit, and automatic clears it.
+    await page.reload();
+    await expect(zone).toHaveValue("Europe/Berlin");
+    await zone.selectOption("");
+    await page.getByRole("button", { name: "Save time zone", exact: true }).click();
+    await expect.poll(() => updates.at(-1)).toEqual({ timeZone: null });
+  });
 });
 
 test("administrators see administration tabs after the personal tabs in one list", async ({ page }) => {
@@ -588,7 +618,6 @@ test("administrators see administration tabs after the personal tabs in one list
   await expect(tabs.getByRole("tab")).toHaveText([
     "Account",
     "Playback",
-    "History",
     "Recommendations",
     "Tags",
     "Library",
@@ -604,7 +633,7 @@ test("administrators see administration tabs after the personal tabs in one list
 
   // Arrow keys select across the group boundary.
   await tabs.getByRole("tab", { name: "Playback", exact: true }).focus();
-  for (let step = 0; step < 4; step += 1) await page.keyboard.press("ArrowRight");
+  for (let step = 0; step < 3; step += 1) await page.keyboard.press("ArrowRight");
   await expect(tabs.getByRole("tab", { name: "Library", exact: true })).toBeFocused();
   await expect(tabs.getByRole("tab", { name: "Library", exact: true })).toHaveAttribute("aria-selected", "true");
   await expect(page).toHaveURL(/\/settings\?tab=library$/);
@@ -666,8 +695,8 @@ test("@desktop the Settings tabs can move into a row above the content and back"
     });
   const administration = ["Library", "Cache & Fetch", "Proxy", "Cleanup", "Users"];
   for (const [width, named] of [
-    [1920, ["Account", "Playback", "History", "Recommendations", "Tags", ...administration]],
-    [1366, administration],
+    [1920, ["Account", "Playback", "Recommendations", "Tags", ...administration]],
+    [1280, administration],
     [1024, ["Library"]],
   ] as const) {
     await page.setViewportSize({ width, height: 800 });
@@ -846,7 +875,7 @@ for (const layout of ["mobile", "@desktop"]) {
     );
     // A deep link to a later tab scrolls the compact row so the selected tab shows.
     await expect(navigation.getByRole("tab", { name: "Library", exact: true })).toBeInViewport({ ratio: 1 });
-    await expect(navigation.getByRole("tab")).toHaveCount(10);
+    await expect(navigation.getByRole("tab")).toHaveCount(9);
     const boxes = await navigation.getByRole("tab").evaluateAll((buttons) =>
       buttons.map((button) => {
         const box = button.getBoundingClientRect();

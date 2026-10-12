@@ -106,6 +106,36 @@ async function mockPersonalData(
       });
       return;
     }
+    if (url.pathname === "/api/listening-calendar") {
+      await route.fulfill({ json: { from: "2025-12-29", to: "2026-01-02", days: [] } });
+      return;
+    }
+    if (url.pathname === "/api/listening-profile") {
+      await route.fulfill({
+        json: {
+          range: url.searchParams.get("range") ?? "all",
+          listenedSeconds: 0,
+          workCount: 0,
+          libraryWorkCount: 0,
+          tags: [],
+          marks: { works: 0, finished: 0, relisten: 0 },
+        },
+      });
+      return;
+    }
+    if (url.pathname === "/api/listening-breakdown") {
+      await route.fulfill({
+        json: {
+          range: url.searchParams.get("range") ?? "all",
+          rank: url.searchParams.get("rank") ?? "time",
+          listenedSeconds: 0,
+          tags: [],
+          voices: [],
+          circles: [],
+        },
+      });
+      return;
+    }
     if (url.pathname === "/api/listening-history") {
       await route.fulfill({
         json: {
@@ -184,9 +214,9 @@ test("mobile reaches personal pages from the account menu without adding bottom 
 
   await page.getByRole("button", { name: "Account menu" }).click();
   const account = page.getByRole("dialog", { name: "Account" });
-  await account.getByRole("button", { name: "History", exact: true }).click();
-  await expect(page).toHaveURL(/\/settings\?tab=history$/);
-  await expect(page.getByRole("tab", { name: "History", selected: true })).toBeVisible();
+  await account.getByRole("button", { name: "Insights", exact: true }).click();
+  await expect(page).toHaveURL(/\/insights$/);
+  await expect(page.getByRole("heading", { name: "Listening summary" })).toBeVisible();
   await expect(page.getByText("1 h 30 min").first()).toBeVisible();
   await page.getByText("Listening history", { exact: true }).click();
   await expect(page.getByRole("link", { name: /Example Work 1/ })).toHaveAttribute(
@@ -217,7 +247,7 @@ test("@desktop personal pages are Settings tabs instead of sidebar entries", asy
   await sidebar.getByRole("button", { name: "Settings", exact: true }).click();
   const tabs = page.getByRole("tablist", { name: "Settings", exact: true });
   // Your data is a section of Account, and a listener sees no administration tabs.
-  await expect(tabs.getByRole("tab")).toHaveText(["Account", "Playback", "History", "Recommendations", "Tags"]);
+  await expect(tabs.getByRole("tab")).toHaveText(["Account", "Playback", "Recommendations", "Tags"]);
   await expect(page.getByRole("button", { name: "Download export" })).toBeVisible();
 
   await tabs.getByRole("tab", { name: "Tags" }).click();

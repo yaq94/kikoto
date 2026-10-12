@@ -663,6 +663,8 @@ export const japaneseResource = {
         activity: "アクティビティ",
         settings: "設定",
         maintenance: "メンテナンス",
+        insights: "インサイト",
+        insightsDescription: "聴取カレンダー、統計、履歴を確認",
         about: "情報",
         libraryDescription: "すべての設定済みソースから作品を閲覧、絞り込み、再生",
         favoritesDescription: "お気に入りの作品、サークル、声優、リストを閲覧",
@@ -670,10 +672,9 @@ export const japaneseResource = {
         voiceActorsDescription: "声優と参加作品を閲覧",
         workflowsDescription: "組み込み操作とプリセットワークフローを実行",
         activityDescription: "ワークフローの実行、失敗、レビュー項目を確認",
-        settingsDescription: "アカウント、設定、聴取履歴、タグ、データを管理",
+        settingsDescription: "アカウント、設定、タグ、データを管理",
         maintenanceDescription: "ソース、キャッシュ、ユーザーを設定",
         aboutDescription: "バージョン、ライセンス、アプリ情報",
-        history: "履歴",
         tags: "タグ",
         userData: "データ",
       },
@@ -920,6 +921,9 @@ export const japaneseResource = {
         screenCaptureCover: "画面収録やミラーリング中は隠す",
         screenCaptureCoverDescription:
           "画面収録、AirPlay ミラーリングなどの画面キャプチャ中は Kikoto を覆い、画面歌詞を閉じます。スクリーンショットは防げません。",
+        screenCaptureHide: "スクリーンショットや画面収録で隠す",
+        screenCaptureHideDescription:
+          "スクリーンショットには Kikoto の代わりに空白のページが写ります。画面収録、AirPlay ミラーリングなどの画面キャプチャ中は Kikoto を覆い、画面歌詞を閉じます。",
         nowPlayingContent: "再生中の情報",
         nowPlayingContentDescription:
           "ロック画面、コントロールセンター、接続中の Bluetooth や車載ディスプレイに表示する、再生中のトラックの内容です。",

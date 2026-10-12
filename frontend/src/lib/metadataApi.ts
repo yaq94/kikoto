@@ -103,6 +103,9 @@ export type ManualOverrideCover = {
 export type WorkManualOverrides = {
   titles?: Record<string, string>;
   title?: string;
+  description?: string;
+  releaseDate?: string;
+  ageRating?: string;
   circle?: ManualOverrideEntity;
   series?: ManualOverrideSeries;
   voiceActors?: ManualOverridePerson[];
@@ -112,6 +115,9 @@ export type WorkManualOverrides = {
 export type WorkManualOverridePayload = {
   titles?: Record<string, string | null>;
   title?: string | null;
+  description?: string | null;
+  releaseDate?: string | null;
+  ageRating?: string | null;
   circle?: ManualOverrideEntity | null;
   series?: ManualOverrideSeries | null;
   voiceActors?: ManualOverridePerson[];
@@ -242,6 +248,60 @@ export type WorkMetadataSyncRunResult = {
   deduplicated: boolean;
 };
 
+export type WorkMetadataPreviewFamilyEdition = {
+  code: string;
+  language: string;
+  label: string;
+  origin: boolean;
+  available: boolean;
+};
+
+export type WorkMetadataPreviewTag = { id: number; name: string };
+
+export type WorkMetadataPreviewValues = {
+  title: string;
+  titleLanguage: string;
+  description: string;
+  releaseDate: string | null;
+  ageRating: string;
+  series: string;
+  rating: number | null;
+  sales: number | null;
+  regularPrice: number | null;
+  price: number | null;
+  priceCurrency: string;
+  permanentlyFree: boolean | null;
+  circle: string;
+  circleExternalId: string;
+  tags: string[];
+  tagItems: WorkMetadataPreviewTag[];
+  voiceActors: string[];
+  coverAvailable: boolean;
+  family: WorkMetadataPreviewFamilyEdition[];
+};
+
+export type WorkMetadataPreview = {
+  previewId: string;
+  workId: number;
+  primaryCode: string;
+  provider: string;
+  sourceCode: string;
+  sourceName: string;
+  baseUpdatedAt: string;
+  current: WorkMetadataPreviewValues;
+  fetched: WorkMetadataPreviewValues;
+};
+
+export type WorkMetadataPreviewApply = {
+  previewId: string;
+  baseUpdatedAt: string;
+  sourceId?: number;
+  selections: Record<string, "current" | "fetched" | "manual" | "merged">;
+  values: WorkMetadataPreviewValues;
+  currentTags: WorkMetadataPreviewTag[];
+  fetchedTags: WorkMetadataPreviewTag[];
+};
+
 export const metadataApi = {
   listMetadataTags: ({
     query = "",
@@ -341,6 +401,12 @@ export const metadataApi = {
     sourceId === undefined
       ? postJSON<WorkMetadataSyncRunResult>(`/api/works/${workId}/metadata-sync`)
       : postJSONBody<WorkMetadataSyncRunResult>(`/api/works/${workId}/metadata-sync`, { sourceId }),
+  previewWorkMetadata: (workId: number, sourceId?: number) =>
+    sourceId === undefined
+      ? postJSON<WorkMetadataPreview>(`/api/works/${workId}/metadata-preview`)
+      : postJSONBody<WorkMetadataPreview>(`/api/works/${workId}/metadata-preview`, { sourceId }),
+  applyWorkMetadataPreview: (workId: number, payload: WorkMetadataPreviewApply) =>
+    postJSONBody<{ ok: boolean; updatedAt: string }>(`/api/works/${workId}/metadata-preview/apply`, payload),
   listMetadataIssues: (page: number, query: string, status: string, runId: number | null, signal?: AbortSignal) => {
     const params = new URLSearchParams({ page: String(page), q: query, status });
     if (runId) params.set("runId", String(runId));

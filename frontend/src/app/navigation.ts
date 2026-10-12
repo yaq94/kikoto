@@ -1,4 +1,4 @@
-import { Database, Heart, Info, Library, MicVocal, Settings, Users, Workflow } from "lucide-react";
+import { ChartColumn, Database, Heart, Info, Library, MicVocal, Settings, Users, Workflow } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
 type NavItem = {
@@ -14,6 +14,8 @@ type NavItem = {
   /** Visual grouping in the sidebar: listening, administration, and account/app-level pages. */
   group: "browse" | "manage" | "app";
 };
+
+export const INSIGHTS_PATH = "/insights";
 
 export const navItems = [
   {
@@ -92,12 +94,24 @@ export const navItems = [
     id: "settings",
     label: "Settings",
     labelKey: "nav.settings",
-    description: "Manage your account, preferences, listening history, tags, and data",
+    description: "Manage your account, preferences, tags, and data",
     descriptionKey: "nav.settingsDescription",
     path: "/settings",
     icon: Settings,
     audience: "authenticated",
     permission: undefined,
+    group: "app",
+  },
+  {
+    id: "insights",
+    label: "Insights",
+    labelKey: "nav.insights",
+    description: "Your listening calendar, statistics, and history",
+    descriptionKey: "nav.insightsDescription",
+    path: INSIGHTS_PATH,
+    icon: ChartColumn,
+    audience: "authenticated",
+    permission: "library:read",
     group: "app",
   },
   {

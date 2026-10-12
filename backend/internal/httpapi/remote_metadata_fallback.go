@@ -159,6 +159,10 @@ func (s *Server) requestWorkMetadataFromRemoteSource(ctx context.Context, workID
 			return remoteFallbackFailed, false, err
 		}
 	}
+	return s.applyRemoteWorkMetadataRaw(ctx, workID, code, source, raw, cached)
+}
+
+func (s *Server) applyRemoteWorkMetadataRaw(ctx context.Context, workID int64, code string, source remoteSourceForUse, raw []byte, cached bool) (string, bool, error) {
 	work, err := remotemetadata.Decode(raw)
 	if err != nil {
 		return remoteFallbackFailed, cached, err

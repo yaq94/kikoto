@@ -793,7 +793,9 @@ export function PersistedWorkDetailController({
       <PersistedMetadataEditorOverlay
         section={metadataEditorSection}
         work={work}
+        sources={sources}
         selectedMetadataVariantKey={selectedMetadataVariantKey}
+        canSyncMetadata={canSyncMetadata}
         refreshActions={
           canSyncMetadata || auth.demoMode ? (
             <WorkMetadataRefreshControl

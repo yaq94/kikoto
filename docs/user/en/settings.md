@@ -1,13 +1,13 @@
 # Settings
 [English](../en/settings.md) · [简体中文](../zh-Hans/settings.md) · [繁體中文](../zh-Hant/settings.md) · [日本語](../ja/settings.md) · [한국어](../ko/settings.md)
 
-Settings holds account controls, personal playback, history, recommendation, and tag preferences, and, for administrators, instance administration. Appearance is in the header appearance menu; UI language and the preferred metadata language are in the account menu behind your avatar, or behind **Sign in**.
+Settings holds account controls, personal playback, recommendation, and tag preferences, and, for administrators, instance administration. Appearance is in the header appearance menu; UI language and the preferred metadata language are in the account menu behind your avatar, or behind **Sign in**.
 
 ## Tabs
 
-Settings uses Account, Playback, History, Recommendations, and Tags tabs, shown as icons: hover or focus an icon for its name, and phones also name the active tab. Administrators, and Demo, also see the administration tabs (Library, Cache & Fetch, Proxy, Cleanup, and Users) after a divider, so the elevated scope stays separate. Wide screens show the tabs in a column beside the settings, with every tab named; phones show them as one row that scrolls sideways. Below the column, **Hide tab names** collapses it to icons and **Show tab names** expands it again. **Show tabs above** moves the tabs into one row above the settings. The row names every tab when there is room; otherwise it names the group holding the open tab (the personal or the administration tabs) and shows the other group as icons, and on the narrowest wide screens it names only the open tab. If even that does not fit, the row wraps onto a second line. The icon at the end of that row, **Show tabs beside**, returns them to the column. Settings remembers both choices on that device.
+Settings uses Account, Playback, Recommendations, and Tags tabs, shown as icons: hover or focus an icon for its name, and phones also name the active tab. Administrators, and Demo, also see the administration tabs (Library, Cache & Fetch, Proxy, Cleanup, and Users) after a divider, so the elevated scope stays separate. Wide screens show the tabs in a column beside the settings, with every tab named; phones show them as one row that scrolls sideways. Below the column, **Hide tab names** collapses it to icons and **Show tab names** expands it again. **Show tabs above** moves the tabs into one row above the settings. The row names every tab when there is room; otherwise it names the group holding the open tab (the personal or the administration tabs) and shows the other group as icons, and on the narrowest wide screens it names only the open tab. If even that does not fit, the row wraps onto a second line. The icon at the end of that row, **Show tabs beside**, returns them to the column. Settings remembers both choices on that device.
 
-`/maintenance`, `/users`, `/cleanup`, `/history`, `/tags`, and `/user-data` links open the matching Settings tab.
+`/maintenance`, `/users`, `/cleanup`, `/tags`, and `/user-data` links open the matching Settings tab. `/history` and `/settings?tab=history` open [Insights](personal-data.md#insights).
 
 ## Account
 
@@ -15,6 +15,9 @@ Settings uses Account, Playback, History, Recommendations, and Tags tabs, shown 
 - Change an account-managed user's password after verifying the current
   password and confirming the replacement.
 - Username and role are visible but read-only.
+- **Time zone** decides where a day starts in your listening report.
+  **Automatic** follows the device you are using; choosing a zone uses it on
+  every device. See [Insights](personal-data.md#insights).
 - **Your data** at the end of Account exports and imports personal data; see
   [Personal data](personal-data.md).
 
@@ -29,7 +32,7 @@ whose password comes from `KIKOTO_ROOT_PASSWORD`. A forgotten administrator
 password is reset from the server host; see
 [Administrator setup and recovery](../../operations/security.md#administrator-setup-and-recovery).
 
-## Playback, History, And Recommendations
+## Playback And Recommendations
 
 - **Playback** contains the backward and forward seek intervals, **Playback
   sources**, and **Folder preference**. Seek intervals default to 10 and 30
@@ -43,8 +46,6 @@ password is reset from the server host; see
   immediately.
 - **Folder preference** holds ordered folder matching and exclusion rules.
   Saving updates subsequent directory selection without stopping the player.
-- **History** shows the listening report (30 days, 12 months, or all time) as
-  a dashboard above a collapsed full listening history.
 - **Recommendations** starts with the **Your recommendation activity** report
   of the signed-in user's own last 30 days (how impressions turned into opens
   and plays, the marks and reshuffles given, and the affinity score
@@ -58,8 +59,8 @@ password is reset from the server host; see
   recommendation session for the current tab; other open tabs keep their
   snapshots until a new session is created.
 
-Folder preferences and recommendation settings are stored per authenticated
-account on the server and shared across devices; changing them never changes
+Folder preferences, recommendation settings, and a chosen time zone are stored per
+authenticated account on the server and shared across devices; changing them never changes
 another account. Accounts without their own values, and anonymous browsing,
 use the instance defaults. Failed saves keep the draft and the persisted
 values.
@@ -75,7 +76,7 @@ Kikoto uses the first preferred metadata language that has its own manual title 
 ## Demo Mode
 
 Demo mode keeps account-backed Settings read-only. The administration tabs, the
-History, Recommendations, and Tags tabs, and the Your data section of Account
+Recommendations and Tags tabs, and the Your data section of Account
 stay visible for inspection even though the Demo identity is not an
 administrator, and every change in them is disabled. Appearance and playback
 controls remain available because theme mode, style, color, seek intervals, and

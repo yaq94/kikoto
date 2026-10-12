@@ -180,6 +180,7 @@ test("@desktop personal metadata language refreshes the current list and preserv
         recommendationDefaults: settings.recommendationDefaults,
         recommendationThreshold: settings.recommendationThreshold,
         metadataLanguages: languages,
+        timeZone: null,
       } satisfies ApiResponse<"getUserPreferences">,
     });
   });

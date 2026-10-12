@@ -1,11 +1,23 @@
-import { CalendarDays, ChevronDown, Clock, Disc3, History, Loader2, PlayCircle, Search, Trash2, X } from "lucide-react";
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import {
+  CalendarDays,
+  ChevronDown,
+  ChevronRight,
+  Clock,
+  Disc3,
+  History,
+  Loader2,
+  PlayCircle,
+  Search,
+  Trash2,
+  X,
+} from "lucide-react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 
 import { CollectionPagination } from "@/components/collection/CollectionPagination";
-import { SettingsDisclosure } from "@/components/settings/SettingsSection";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogFooter, DialogHeader } from "@/components/ui/dialog";
+import { FloatingSelect } from "@/components/ui/floating-select";
 import { Input } from "@/components/ui/input";
 import { segmentedItemClassName, segmentedListClassName } from "@/components/ui/segmented";
 import { toastFromError, useToast } from "@/components/ui/toast";
@@ -14,7 +26,11 @@ import { useLocale } from "@/i18n/LocaleProvider";
 import { announceListeningHistoryCleared } from "@/lib/listeningHistoryEvents";
 import {
   listeningApi,
+  type ListeningBreakdown,
+  type ListeningBreakdownRank,
+  type ListeningCalendar as ListeningCalendarData,
   type ListeningHistoryPage as ListeningHistoryResult,
+  type ListeningProfile,
   type ListeningStatistics,
   type ListeningStatisticsRange,
 } from "@/lib/listeningApi";
@@ -22,16 +38,32 @@ import { parseServerTimestamp } from "@/lib/serverTimestamp";
 import { cn } from "@/lib/tailwindClassNames";
 
 import { ListeningActivityChart } from "./ListeningActivityChart";
+import { ListeningBreakdownCard, type ListeningEntityLinkFactory } from "./ListeningBreakdownCard";
+import { ListeningCalendar } from "./ListeningCalendar";
 import {
   LISTENING_HISTORY_PAGE_SIZE,
   LISTENING_REPORT_RANGES,
+  listeningCalendarWeeks,
   listeningDurationParts,
+  listeningRangeYear,
+  listeningStreaks,
   reportDayCount,
+  rhythmDays,
   sharePercent,
 } from "./listeningHistoryModel";
+import { ListeningHours } from "./ListeningHours";
+import { ListeningProfileCard } from "./ListeningProfileCard";
 import { ListeningRhythm } from "./ListeningRhythm";
-import { ListeningWorkRow, type ListeningHistoryWorkLinkFactory } from "./ListeningWorkRow";
+import { ListeningYearHighlights } from "./ListeningYearHighlights";
+import {
+  ListeningWorkRow,
+  openLinkInPlace,
+  type ListeningHistoryWorkLink,
+  type ListeningHistoryWorkLinkFactory,
+} from "./ListeningWorkRow";
 
+export type { ListeningEntityLinkFactory } from "./ListeningBreakdownCard";
+export { openLinkInPlace } from "./ListeningWorkRow";
 export type { ListeningHistoryWorkLink, ListeningHistoryWorkLinkFactory } from "./ListeningWorkRow";
 
 type LoadState<T> =
@@ -39,6 +71,11 @@ type LoadState<T> =
 
 // The ranking opens with this many works; the rest of the server's ranking shows on request.
 const TOP_WORK_COUNT = 5;
+
+const BREAKDOWN_KINDS = ["tags", "voices", "circles"] as const;
+
+/** Breakdown rankings in switcher order; the first is the default. */
+const BREAKDOWN_RANKS: readonly ListeningBreakdownRank[] = ["preference", "time"];
 
 function useDurationFormatter() {
   const { t } = useTranslation();
@@ -52,27 +89,45 @@ function useDurationFormatter() {
 }
 
 /**
- * The listening report for a chosen range as a dashboard: totals, activity
- * over time, the most listened works, and listening rhythm, with the full
+ * Listening as a dashboard for a range the page's switcher picks: a named
+ * range ending today, or a calendar year, which opens with its highlights.
+ * The past year, or the chosen one, as a calendar, then the report for
+ * a chosen range with totals, activity over time, the most listened works,
+ * listening rhythm, and the leading tags, voices, and circles, with the full
  * per-work history collapsed below it. The history is a record rather than a
- * summary, so it loads only once opened.
+ * summary, so it loads only once opened, and the actions on the account's
+ * listening data sit beside it. Works are the library's canonical works
+ * throughout.
  */
 export function ListeningHistoryPage({
   canClear,
   storageScope,
   workLink,
+  entityLink,
+  actions,
+  timeZoneLink,
 }: {
   canClear: boolean;
   /** Server and principal scope; players in this scope drop unreported pre-clear sessions. */
   storageScope: string;
   workLink: ListeningHistoryWorkLinkFactory;
+  entityLink: ListeningEntityLinkFactory;
+  /** Further data actions of the composing page, shown beside clearing history. */
+  actions?: ReactNode;
+  /** Where the account changes the time zone its days follow. */
+  timeZoneLink?: ListeningHistoryWorkLink;
 }) {
   const { t } = useTranslation();
   const toast = useToast();
   const { resolvedLocale } = useLocale();
   const formatDuration = useDurationFormatter();
   const [range, setRange] = useState<ListeningStatisticsRange>(LISTENING_REPORT_RANGES[0]);
+  const year = listeningRangeYear(range);
   const [statistics, setStatistics] = useState<LoadState<ListeningStatistics>>({ status: "loading", data: null });
+  const [calendar, setCalendar] = useState<LoadState<ListeningCalendarData>>({ status: "loading", data: null });
+  const [breakdown, setBreakdown] = useState<LoadState<ListeningBreakdown>>({ status: "loading", data: null });
+  const [profile, setProfile] = useState<LoadState<ListeningProfile>>({ status: "loading", data: null });
+  const [rank, setRank] = useState<ListeningBreakdownRank>(BREAKDOWN_RANKS[0]);
   const [history, setHistory] = useState<LoadState<ListeningHistoryResult>>({ status: "loading", data: null });
   const [recordsOpen, setRecordsOpen] = useState(false);
   const [allTopWorks, setAllTopWorks] = useState(false);
@@ -105,6 +160,42 @@ export function ListeningHistoryPage({
       });
     return () => controller.abort();
   }, [range, statisticsToken]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setCalendar((current) => ({ status: "loading", data: current.data }));
+    listeningApi
+      .calendar(year, controller.signal)
+      .then((data) => setCalendar({ status: "ready", data }))
+      .catch(() => {
+        if (!controller.signal.aborted) setCalendar((current) => ({ status: "error", data: current.data }));
+      });
+    return () => controller.abort();
+  }, [statisticsToken, year]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setProfile((current) => ({ status: "loading", data: current.data }));
+    listeningApi
+      .profile(range, controller.signal)
+      .then((data) => setProfile({ status: "ready", data }))
+      .catch(() => {
+        if (!controller.signal.aborted) setProfile((current) => ({ status: "error", data: current.data }));
+      });
+    return () => controller.abort();
+  }, [range, statisticsToken]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setBreakdown((current) => ({ status: "loading", data: current.data }));
+    listeningApi
+      .breakdown(range, rank, controller.signal)
+      .then((data) => setBreakdown({ status: "ready", data }))
+      .catch(() => {
+        if (!controller.signal.aborted) setBreakdown((current) => ({ status: "error", data: current.data }));
+      });
+    return () => controller.abort();
+  }, [range, rank, statisticsToken]);
 
   useEffect(() => {
     if (!recordsOpen) return;
@@ -148,7 +239,7 @@ export function ListeningHistoryPage({
   const topWorks = allTopWorks ? rankedWorks : rankedWorks.slice(0, TOP_WORK_COUNT);
   const hiddenTopWorks = rankedWorks.length > TOP_WORK_COUNT;
   const leaderSeconds = rankedWorks[0]?.listenedSeconds ?? 0;
-  const rangeDays = stats ? reportDayCount(stats.series) : 0;
+  const rangeDays = stats ? reportDayCount(stats.series, stats.today) : 0;
   const activeDayPercent = stats && rangeDays > 0 ? sharePercent(stats.activeDays, rangeDays) : null;
   const perActiveDay = stats && stats.activeDays > 0 ? stats.listenedSeconds / stats.activeDays : 0;
   const perPlay = stats && stats.listenCount > 0 ? stats.listenedSeconds / stats.listenCount : 0;
@@ -160,39 +251,92 @@ export function ListeningHistoryPage({
     return t("personal.history.recordDetail", { plays, date });
   };
 
+  // While a year's calendar loads, the one on screen still belongs to the previous range.
+  const shownCalendar = calendar.data && (!year || calendar.data.from === `${year}-01-01`) ? calendar.data : null;
+  const calendarDays = useMemo(
+    () => (shownCalendar ? listeningCalendarWeeks(shownCalendar).days : null),
+    [shownCalendar],
+  );
+  const rhythm = stats ? rhythmDays(stats.series, stats.granularity, calendarDays) : null;
+  const longestStreak = useMemo(() => (calendarDays ? listeningStreaks(calendarDays).longest : null), [calendarDays]);
+  // A year stays selectable while it is the range, even once its listening is gone.
+  const years = [...new Set([...(year ? [year] : []), ...(stats?.years ?? [])])].sort().reverse();
+
   return (
-    <div className="w-full max-w-4xl space-y-5">
-      <section aria-labelledby="listening-summary-heading" className="space-y-4">
-        <div className="flex flex-wrap items-end justify-between gap-3">
-          <div className="min-w-0 px-1">
-            <h2 id="listening-summary-heading" className="text-base font-semibold">
-              {t("personal.history.summary")}
-            </h2>
-            <p className="mt-0.5 text-xs leading-5 text-muted-foreground">{t("personal.history.recordingNote")}</p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <div className={segmentedListClassName()} role="group" aria-label={t("personal.history.rangeLabel")}>
-              {LISTENING_REPORT_RANGES.map((option) => (
-                <button
-                  key={option}
-                  type="button"
-                  className={segmentedItemClassName(range === option)}
-                  aria-pressed={range === option}
-                  onClick={() => setRange(option)}
-                >
-                  {t(`personal.history.ranges.${option}`)}
-                </button>
-              ))}
-            </div>
-            {canClear && hasHistory && (
-              <Button variant="ghost" size="sm" className="shrink-0" onClick={() => setConfirmClear(true)}>
-                <Trash2 className="h-4 w-4" aria-hidden="true" />
-                {t("personal.history.clear")}
-              </Button>
-            )}
-          </div>
+    <div className="mx-auto w-full max-w-6xl space-y-5">
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        <div className={segmentedListClassName()} role="group" aria-label={t("personal.history.rangeLabel")}>
+          {LISTENING_REPORT_RANGES.map((option) => (
+            <button
+              key={option}
+              type="button"
+              className={segmentedItemClassName(range === option)}
+              aria-pressed={range === option}
+              onClick={() => setRange(option)}
+            >
+              {t(`personal.history.ranges.${option}`)}
+            </button>
+          ))}
+          {years.length > 0 && (
+            // The last segment opens the years with dated listening and names the chosen one.
+            <span className="shrink-0">
+              <FloatingSelect
+                value={year ?? ""}
+                options={years.map((option) => ({ value: option, label: option }))}
+                onValueChange={(value) => setRange(value as ListeningStatisticsRange)}
+                ariaLabel={t("personal.history.yearLabel")}
+                triggerLabel={year ? t("personal.history.yearValue", { year }) : t("personal.history.yearLabel")}
+                className={cn(
+                  segmentedItemClassName(year !== null),
+                  "w-auto justify-start gap-1 border-0 py-0 focus-visible:ring-offset-0",
+                  year === null && "bg-transparent",
+                )}
+                contentClassName="min-w-24"
+              />
+            </span>
+          )}
         </div>
-        {range !== "all" && <p className="px-1 text-2xs text-muted-foreground">{t("personal.history.rangeNote")}</p>}
+      </div>
+
+      {year && stats && stats.range === year && (
+        <ListeningYearHighlights
+          year={year}
+          statistics={stats}
+          longestStreak={longestStreak}
+          formatDuration={formatDuration}
+          workLink={workLink}
+          entityLink={entityLink}
+        />
+      )}
+
+      <section
+        aria-label={t("personal.history.calendar.title")}
+        aria-busy={calendar.status === "loading"}
+        className={cn(
+          "theme-card-surface rounded-xl border bg-card p-4 transition-opacity",
+          calendar.status === "loading" && calendar.data !== null && "opacity-60",
+        )}
+      >
+        {calendar.data ? (
+          <ListeningCalendar
+            calendar={calendar.data}
+            year={shownCalendar ? year : null}
+            formatDuration={formatDuration}
+          />
+        ) : calendar.status === "error" ? (
+          <InlineRetry
+            message={t("personal.history.calendar.failed")}
+            onRetry={() => setStatisticsToken((value) => value + 1)}
+          />
+        ) : (
+          <div className="h-48 animate-pulse rounded-lg bg-muted" />
+        )}
+      </section>
+
+      <section aria-labelledby="listening-summary-heading" className="space-y-4">
+        <h2 id="listening-summary-heading" className="min-w-0 px-1 text-base font-semibold">
+          {t("personal.history.summary")}
+        </h2>
         {statistics.status === "error" && (
           <InlineRetry
             message={t("personal.history.statisticsFailed")}
@@ -311,14 +455,102 @@ export function ListeningHistoryPage({
                 <h3 id="listening-rhythm-heading" className="mb-3 text-sm font-semibold">
                   {t("personal.history.rhythm")}
                 </h3>
-                <ListeningRhythm
-                  key={stats.range}
-                  series={stats.series}
-                  granularity={stats.granularity}
-                  formatDuration={formatDuration}
-                />
+                {rhythm ? (
+                  <div className="space-y-4">
+                    <ListeningRhythm
+                      days={rhythm.days}
+                      pastYearOnly={rhythm.pastYearOnly}
+                      formatDuration={formatDuration}
+                    />
+                    {stats.hours && <ListeningHours hours={stats.hours} formatDuration={formatDuration} />}
+                  </div>
+                ) : (
+                  <div className="h-48 animate-pulse rounded-lg bg-muted" />
+                )}
               </section>
             </div>
+          )}
+        </div>
+      </section>
+
+      <section aria-labelledby="listening-profile-heading" className="space-y-3">
+        <div className="min-w-0 px-1">
+          <h2 id="listening-profile-heading" className="text-base font-semibold">
+            {t("personal.history.profile.heading")}
+          </h2>
+          <p className="mt-0.5 max-w-3xl text-xs leading-5 text-muted-foreground">
+            {t("personal.history.profile.basis")}
+          </p>
+        </div>
+        {profile.status === "error" && (
+          <InlineRetry
+            message={t("personal.history.profile.failed")}
+            onRetry={() => setStatisticsToken((value) => value + 1)}
+          />
+        )}
+        <div
+          aria-busy={profile.status === "loading"}
+          className={cn("transition-opacity", profile.status === "loading" && profile.data !== null && "opacity-60")}
+        >
+          {profile.data ? (
+            <ListeningProfileCard profile={profile.data} formatDuration={formatDuration} />
+          ) : (
+            profile.status === "loading" && <div className="h-64 animate-pulse rounded-xl border bg-muted/60" />
+          )}
+        </div>
+      </section>
+
+      <section aria-labelledby="listening-breakdown-heading" className="space-y-3">
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div className="min-w-0 px-1">
+            <h2 id="listening-breakdown-heading" className="text-base font-semibold">
+              {t("personal.history.breakdown.heading")}
+            </h2>
+            <p className="mt-0.5 max-w-3xl text-xs leading-5 text-muted-foreground">
+              {t(`personal.history.breakdown.basis.${rank}`)}
+            </p>
+          </div>
+          <div className={segmentedListClassName()} role="group" aria-label={t("personal.history.breakdown.rankLabel")}>
+            {BREAKDOWN_RANKS.map((option) => (
+              <button
+                key={option}
+                type="button"
+                className={segmentedItemClassName(rank === option)}
+                aria-pressed={rank === option}
+                onClick={() => setRank(option)}
+              >
+                {t(`personal.history.breakdown.ranks.${option}`)}
+              </button>
+            ))}
+          </div>
+        </div>
+        {breakdown.status === "error" && (
+          <InlineRetry
+            message={t("personal.history.breakdown.failed")}
+            onRetry={() => setStatisticsToken((value) => value + 1)}
+          />
+        )}
+        <div
+          aria-busy={breakdown.status === "loading"}
+          className={cn(
+            "grid gap-4 transition-opacity lg:grid-cols-3",
+            breakdown.status === "loading" && breakdown.data !== null && "opacity-60",
+          )}
+        >
+          {BREAKDOWN_KINDS.map((kind) =>
+            breakdown.data ? (
+              <ListeningBreakdownCard
+                key={`${breakdown.data.range}:${breakdown.data.rank}:${kind}`}
+                kind={kind}
+                breakdown={breakdown.data}
+                formatDuration={formatDuration}
+                link={entityLink}
+              />
+            ) : (
+              breakdown.status === "loading" && (
+                <div key={kind} className="h-64 animate-pulse rounded-xl border bg-muted/60" />
+              )
+            ),
           )}
         </div>
       </section>
@@ -327,12 +559,43 @@ export function ListeningHistoryPage({
         aria-labelledby="listening-history-heading"
         className="theme-card-surface overflow-hidden rounded-xl border bg-card"
       >
-        <SettingsDisclosure
-          title={<span id="listening-history-heading">{t("personal.history.recent")}</span>}
-          description={t("personal.history.recentHint")}
-          open={recordsOpen}
-          onToggle={setRecordsOpen}
-        >
+        <div className="flex flex-wrap items-center gap-x-1 gap-y-0 pr-2">
+          <button
+            type="button"
+            className="flex min-w-[min(100%,16rem)] flex-1 cursor-pointer items-center gap-2 px-4 py-3.5 text-left text-sm font-medium hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+            aria-expanded={recordsOpen}
+            aria-controls="listening-history-records"
+            onClick={() => setRecordsOpen((value) => !value)}
+          >
+            <ChevronRight
+              className={cn("h-4 w-4 shrink-0 text-muted-foreground transition-transform", recordsOpen && "rotate-90")}
+              aria-hidden="true"
+            />
+            <span className="min-w-0 flex-1">
+              <span id="listening-history-heading" className="block">
+                {t("personal.history.recent")}
+              </span>
+              <span className="mt-0.5 block text-xs font-normal leading-5 text-muted-foreground">
+                {t("personal.history.recentHint")}
+              </span>
+            </span>
+          </button>
+          <div className="flex flex-wrap items-center gap-1 py-1.5 pl-2">
+            {canClear && hasHistory && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="shrink-0 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                onClick={() => setConfirmClear(true)}
+              >
+                <Trash2 className="h-4 w-4" aria-hidden="true" />
+                {t("personal.history.clear")}
+              </Button>
+            )}
+            {actions}
+          </div>
+        </div>
+        <div id="listening-history-records" className="border-t" hidden={!recordsOpen}>
           {recordsOpen && (
             <div className="space-y-3 p-4">
               <div className="relative w-full sm:w-72">
@@ -421,8 +684,29 @@ export function ListeningHistoryPage({
               )}
             </div>
           )}
-        </SettingsDisclosure>
+        </div>
       </section>
+
+      <div className="space-y-0.5 px-1 text-2xs leading-5 text-muted-foreground">
+        {(calendar.data?.timeZone || timeZoneLink) && (
+          <p>
+            {calendar.data?.timeZone &&
+              t(calendar.data.followsDevice ? "personal.history.timeZoneAuto" : "personal.history.timeZone", {
+                zone: calendar.data.timeZone,
+              })}{" "}
+            {timeZoneLink && (
+              <a
+                href={timeZoneLink.href}
+                className="rounded-sm font-medium text-foreground underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                onClick={(event) => openLinkInPlace(event, timeZoneLink)}
+              >
+                {t("personal.history.changeTimeZone")}
+              </a>
+            )}
+          </p>
+        )}
+        <p>{t("personal.history.notes")}</p>
+      </div>
 
       {confirmClear && (
         <Dialog

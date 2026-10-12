@@ -79,12 +79,13 @@ to one destination and reads that user's reviews and playlists:
 
 ### Remote metadata fallback
 
-Explicit detail-editor refreshes from a selected source use this same transport
-and persistence boundary, bypass cached descriptions, and require
-`metadata:sync`. They validate the source's enabled state and declared metadata
-capability at submission and execution, and use the existing workflow's bounded
-retry budget. Only the requested existing work is updated; no file presence,
-media location, or catalog crawl is created.
+Explicit detail-editor refreshes and Fetch for edit previews from a selected
+source use this same transport and persistence boundary, bypass cached
+descriptions, and require `metadata:sync`. They validate the source's enabled
+state and declared metadata capability at submission and execution. A preview
+keeps the bounded validated response privately for a short period and writes
+only when the user applies it; no file presence, media location, or catalog
+crawl is created by the preview.
 
 Metadata sync run and trigger options can select that same source for existing
 works. Codes are validated, normalized and limited to 100 for explicit lists;
