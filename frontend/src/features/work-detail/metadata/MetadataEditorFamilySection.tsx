@@ -5,8 +5,7 @@ import type { WorkDetail } from "@/lib/api";
 import { languageLabel } from "../workDetailHelpers";
 import { workVersionKindLabel, workVersionMediaState } from "../workVersionModel";
 import { workFamilyEditions } from "./metadataEditorModel";
-import type { MetadataLanguageScope } from "./metadataLanguageScope";
-import { scopeMatchesLanguage } from "./metadataLanguageScope";
+import { scopeMatchesLanguage, type MetadataLanguageScope } from "./metadataLanguageScope";
 
 /**
  * Lists what belongs to this work's family: its language editions and the

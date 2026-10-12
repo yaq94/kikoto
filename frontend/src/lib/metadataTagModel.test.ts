@@ -6,7 +6,10 @@ import {
   providerMetadataTagName,
   metadataTagOverrideKey,
   exactMetadataTag,
+  metadataTagAlternateNames,
+  metadataTagHasName,
   metadataTagLanguageName,
+  metadataTagNameIn,
   otherMetadataTagNames,
   sameMetadataTagName,
 } from "./metadataTagModel";
@@ -90,6 +93,31 @@ describe("metadata tag names by language", () => {
     const universal = { names: [...tag.names, { language: "", name: "Synthetic universal", source: "manual" }] };
     expect(metadataTagLanguageName(universal, "en-us")?.name).toBe("Synthetic universal");
     expect(metadataTagLanguageName(universal, "ja-jp")?.name).toBe("Synthetic authored Japanese");
+  });
+
+  it("shows a tag in one language with unsaved names applied, falling back to its display name", () => {
+    const shown = { ...tag, displayName: "Synthetic display" };
+    expect(metadataTagNameIn(shown, "ja-jp")).toEqual({ name: "Synthetic authored Japanese", own: true });
+    expect(metadataTagNameIn(shown, "ko-kr")).toEqual({ name: "Synthetic display", own: false });
+    // A drafted name replaces the saved one; clearing it shows the dictionary name again.
+    expect(metadataTagNameIn(shown, "ja-jp", { "ja-jp": " Synthetic draft " }).name).toBe("Synthetic draft");
+    expect(metadataTagNameIn(shown, "ja-jp", { "ja-jp": "" }).name).toBe("Synthetic Japanese");
+    expect(metadataTagNameIn(shown, "ko-kr", { "": "Synthetic universal" })).toEqual({
+      name: "Synthetic universal",
+      own: false,
+    });
+    // A row lists the display name and each language's own name apart from the one it shows.
+    expect(metadataTagAlternateNames(shown, "Synthetic authored Japanese")).toEqual([
+      "Synthetic display",
+      "Synthetic remote Chinese",
+      "Synthetic English",
+    ]);
+    expect(metadataTagAlternateNames(shown, "Synthetic display", { "en-us": "synthetic DISPLAY" })).toEqual([
+      "Synthetic authored Japanese",
+      "Synthetic remote Chinese",
+    ]);
+    expect(metadataTagHasName(shown, " SYNTHETIC ENGLISH ")).toBe(true);
+    expect(metadataTagHasName({ displayName: "Synthetic display" }, "Synthetic English")).toBe(false);
   });
 
   it("lists every name no language shows once, including a stored name without records", () => {

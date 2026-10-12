@@ -1,32 +1,76 @@
 import { describe, expect, it } from "vitest";
-import { metadataLanguageScopes } from "./metadataLanguageScope";
+import {
+  metadataLanguageScopeForVariant,
+  metadataLanguageScopeLabel,
+  metadataLanguageScopes,
+  scopeMatchesLanguage,
+} from "./metadataLanguageScope";
+
+const variant = (key: string, language: string, origin = false) => ({
+  key,
+  language,
+  title: `Example ${key}`,
+  tags: [],
+  origin,
+});
+const label = (key: string) => key;
 
 describe("metadata editor language scopes", () => {
-  it("labels the actual canonical language as Original", () => {
+  it("offers every language and each supported language whatever editions the work has", () => {
+    const scopes = metadataLanguageScopes({
+      metadataPresentation: { defaultVariantKey: "origin", variants: [variant("origin", "", true)] },
+    });
+    expect(scopes.primary.map((scope) => scope.key)).toEqual([
+      "all",
+      "language:ja-jp",
+      "language:zh-cn",
+      "language:zh-tw",
+      "language:en-us",
+      "language:ko-kr",
+    ]);
+    expect(scopes.primary.every((scope) => scope.variant === null)).toBe(true);
+  });
+
+  it("keeps editions in other languages for the More menu, original first", () => {
     const scopes = metadataLanguageScopes(
       {
         metadataPresentation: {
           defaultVariantKey: "en",
-          variants: [
-            { key: "en", language: "en-us", title: "Example original", tags: [], origin: true },
-            { key: "ja", language: "ja-jp", title: "Example Japanese", tags: [], origin: false },
-          ],
+          variants: [variant("de", "ger"), variant("en", "en-us"), variant("origin", "", true), variant("es", "spa")],
         },
       },
       "en",
     );
-    expect(scopes.map((scope) => scope.label)).toEqual(["All", "Original · English", "Japanese"]);
-    expect(scopes[1].origin).toBe(true);
+    expect(scopes.more.map((scope) => [scope.key, scope.language, scope.origin])).toEqual([
+      ["edition:origin", "", true],
+      ["language:ger", "ger", false],
+      ["language:spa", "spa", false],
+    ]);
+    expect(scopes.more.map((scope) => metadataLanguageScopeLabel(scope, label, "en"))).toEqual([
+      "libraryDetail.original",
+      "German",
+      "Spanish",
+    ]);
+    expect(metadataLanguageScopeLabel(scopes.more[1], label, "zh-Hans")).toBe("德语");
+    expect(metadataLanguageScopeForVariant(scopes, "en")?.key).toBe("language:en-us");
+    expect(metadataLanguageScopeForVariant(scopes, "es")?.key).toBe("language:spa");
   });
 
-  it("uses only the origin scope when a work has one variant", () => {
+  it("matches an edition's raw provider language against a scope", () => {
     const scopes = metadataLanguageScopes({
       metadataPresentation: {
         defaultVariantKey: "origin",
-        variants: [{ key: "origin", language: "", title: "Example", tags: [], origin: true }],
+        variants: [variant("origin", "", true), variant("zh", "zh-cn"), variant("de", "ger")],
       },
     });
-    expect(scopes).toHaveLength(1);
-    expect(scopes[0].key).toBe("edition:origin");
+    const [original, german] = scopes.more;
+    const simplifiedChinese = scopes.primary.find((scope) => scope.language === "zh-cn")!;
+    expect(scopeMatchesLanguage(simplifiedChinese, "CHI_HANS")).toBe(true);
+    expect(scopeMatchesLanguage(simplifiedChinese, "CHI_HANT")).toBe(false);
+    expect(scopeMatchesLanguage(german, "GER")).toBe(true);
+    // An undeclared original stands for the original edition, never for a language.
+    expect(scopeMatchesLanguage(original, "JPN", true)).toBe(true);
+    expect(scopeMatchesLanguage(original, "", false)).toBe(false);
+    expect(scopeMatchesLanguage(scopes.primary[0], "THA")).toBe(true);
   });
 });

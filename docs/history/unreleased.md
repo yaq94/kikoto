@@ -1,5 +1,12 @@
 # Unreleased
 
+- The metadata editor's language tabs list **All languages**, Japanese,
+  Simplified Chinese, Traditional Chinese, English, and Korean for every work.
+  **More** opens the work's editions in other languages and names the chosen
+  one, such as `More - German`. The Tags section lists the work's tags one per
+  row and follows the selected language: each row shows the tag's name in that
+  language with its other names beneath, and its language button opens that
+  language's name inside the row.
 - A work opens inside the page it was opened from. Opening a work from
   Favorites, Circles, or Voice Actors keeps that destination selected in the
   navigation, Back returns to it, and on phones each bottom tab resumes its own

@@ -14,7 +14,12 @@ import { MetadataEditorPurchaseBonusSection, type StagedPurchaseBonus } from "./
 import { WorkMetadataTagsSection } from "./WorkMetadataTagsSection";
 import { WorkTitleEditor } from "./WorkTitleEditor";
 import { MetadataLanguageScopeTabs } from "./MetadataLanguageScopeTabs";
-import { metadataLanguageScopes, type MetadataLanguageScope } from "./metadataLanguageScope";
+import {
+  allMetadataLanguagesScope,
+  findMetadataLanguageScope,
+  metadataLanguageScopeForVariant,
+  metadataLanguageScopes,
+} from "./metadataLanguageScope";
 import { MetadataPreviewDialog, type MetadataPreviewSelections } from "./MetadataPreviewDialog";
 import type { WorkMetadataPreview, WorkMetadataPreviewValues } from "@/lib/api";
 import {
@@ -77,13 +82,10 @@ export function WorkMetadataEditorModal({
     // maintenance editor should start with every language visible, even when
     // the work has a default provider variant.
     const preferredKey = selectedMetadataVariantKey?.trim();
-    const selected = preferredKey
-      ? scopes.find((scope) => scope.variant?.key === preferredKey)
-      : scopes.find((scope) => scope.key === "all");
-    return selected?.key ?? scopes[0]?.key ?? "all";
+    const selected = preferredKey ? metadataLanguageScopeForVariant(scopes, preferredKey) : undefined;
+    return (selected ?? allMetadataLanguagesScope).key;
   });
-  const languageScope: MetadataLanguageScope = scopes.find((scope) => scope.key === languageScopeKey) ??
-    scopes[0] ?? { key: "all", language: "", origin: false, label: "All", variant: null };
+  const languageScope = findMetadataLanguageScope(scopes, languageScopeKey) ?? allMetadataLanguagesScope;
   const [initialState] = useState(() => metadataEditorInitialState(work));
   const manual = initialState.manual;
   const [titleDrafts, setTitleDrafts] = useState<Record<string, string>>({});
@@ -333,7 +335,7 @@ export function WorkMetadataEditorModal({
                 onSelect={selectCover}
               />
             )}
-            {section === "tags" && <WorkMetadataTagsSection editor={tagEditor} />}
+            {section === "tags" && <WorkMetadataTagsSection editor={tagEditor} languageScope={languageScope} />}
             {section === "credits" && <MetadataEditorCreditsSection editor={credits} />}
             {section === "source" && (
               <div className="space-y-4">

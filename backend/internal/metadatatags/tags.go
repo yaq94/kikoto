@@ -47,6 +47,8 @@ type EffectiveTag struct {
 	ID          int64  `json:"id"`
 	DisplayName string `json:"displayName"`
 	Source      string `json:"source"`
+	// Names is filled only by WithNames, for editors that show a tag per language.
+	Names []Name `json:"names,omitempty"`
 }
 type Override struct {
 	TagID  int64  `json:"tagId"`

@@ -10,8 +10,8 @@ import {
   changeMetadataTagOverride,
   changedMetadataTagNames,
   manualMetadataTagNames,
+  metadataTagHasName,
   metadataTagOverrideKey,
-  sameMetadataTagName,
 } from "@/lib/metadataTagModel";
 
 /** A custom tag this save creates: its typed name is the all-language name. */
@@ -97,6 +97,9 @@ export function useWorkMetadataTagsEditor(workId: number) {
         : (nameDrafts[id]?.[language] ?? savedNames(id)[language] ?? ""),
     savedName: (id: number, language: string): string | undefined => savedNames(id)[language],
     draftName: (id: number, language: string): string | undefined => nameDrafts[id]?.[language],
+    /** A tag's unsaved manual names by language, for showing it in one language. */
+    draftNames: (id: number): Record<string, string> =>
+      id < 0 ? (drafts.find((tag) => tag.id === id)?.names ?? {}) : (nameDrafts[id] ?? {}),
     setName: (id: number, language: string, name: string) => {
       if (id < 0) {
         setDrafts((current) =>
@@ -112,15 +115,18 @@ export function useWorkMetadataTagsEditor(workId: number) {
       setTags((current) =>
         current.some((entry) => entry.id === tag.id)
           ? current
-          : [...current, { id: tag.id, displayName: tag.displayName, source: "manual" }],
+          : [...current, { id: tag.id, displayName: tag.displayName, source: "manual", names: tag.names }],
       );
     },
     stage: (name: string) => {
       name = name.trim();
-      if (!name || tags.some((tag) => sameMetadataTagName(tag.displayName, name))) return;
+      if (!name || tags.some((tag) => metadataTagHasName(tag, name))) return;
       const id = nextDraftID.current--;
       setDrafts((current) => [...current, { id, name, names: {} }]);
-      setTags((current) => [...current, { id, displayName: name, source: "manual" }]);
+      setTags((current) => [
+        ...current,
+        { id, displayName: name, source: "manual", names: [{ language: "", name, source: "manual" }] },
+      ]);
     },
     remove: (id: number) => {
       if (id < 0) setDrafts((current) => current.filter((tag) => tag.id !== id));
@@ -138,6 +144,7 @@ export function useWorkMetadataTagsEditor(workId: number) {
       for (const tag of renamedTags) {
         const saved = await api.updateMetadataTag(tag.id, { names: nameChanges(tag.id) });
         setDetails((current) => ({ ...current, [tag.id]: { status: "ready", tag: saved } }));
+        setTags((current) => current.map((entry) => (entry.id === tag.id ? { ...entry, names: saved.names } : entry)));
         setNameDrafts((current) => {
           const next = { ...current };
           delete next[tag.id];
