@@ -88,7 +88,7 @@ export type WorkCardViewModel = {
   recommendationHighlighted?: boolean;
   recommendationScore?: number;
   recommendationRevealDelay?: number;
-  /** Last listening position, shown by the compact phone layouts. */
+  /** Last listening position, shown by the compact layouts. */
   progress?: WorkCardProgress | null;
 };
 

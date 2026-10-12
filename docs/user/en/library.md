@@ -107,23 +107,29 @@ The Library is the main browsing surface for works.
 - On wide screens the toolbar's sort button also names the current order and
   opens the orders and direction in a popover. The Recommended and Random
   orders add a refresh button beside it.
-- Display options on phones include **Compact cards**, off by default and
-  stored with the column settings. With it on, one column shows each work as a
-  row: the cover beside the code, title, circle and voice names, rating,
-  sales, and price, then one row of tags with personal tags first and the last
-  listening position when there is one. Two columns show short tiles with the
-  price on the cover and no tag row. Compact cards apply to Local, Tracked,
-  and remote sources in the Library, including the remote loading
-  placeholders.
+- Display options include **Cards**, a choice of **Full**, **Compact**, and
+  **Mini** that is stored with the column settings, separately for phones and
+  wide screens. **Full** is the default. **Compact** shows each work as a row
+  in one phone column: the cover beside the code, title, circle and voice
+  names, rating, sales, and price, then one row of tags with personal tags
+  first and the last listening position when there is one. Two phone columns
+  and wide screens show short tiles with the price on the cover and no tag
+  row. **Mini** shows only the cover and up to two lines of the title, without
+  the code, credits, tags, ratings, price, recommendation score, or action
+  row, and automatic columns on phones show two covers in a row. Cover source
+  marks follow their own display option in every mode, and a card opens its
+  work the same way in every mode. The choice applies to Local, Tracked, and
+  remote sources in the Library, including the remote loading placeholders.
 - Uses one shared query across Local, Tracked, and configured remote sources.
   Each source retains its own pagination, sort, and scroll state, while grid
   column settings remain shared. A source cannot restore stale query text after
   the user clears it elsewhere.
 - Keeps the active Local, Tracked, or remote-source page size in the toolbar's
-  display options. Wide screens show a compact top pagination with result
-  context and page navigation. Phones show the result count and the current
-  page as a caption above the works and change pages from the bottom
-  pagination.
+  display options. Local and Tracked offer 24, 48, or 96 works per page, and
+  remote sources also offer 12. Wide screens show a compact top pagination
+  with result context and page navigation. Phones show the result count and
+  the current page as a caption above the works and change pages from the
+  bottom pagination.
 - Keeps database cleanup out of Library. Metadata -> No available source
   provides paged search, source checks, and confirmed local-information
   deletion for logical families with no available source or media location.

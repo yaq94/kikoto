@@ -513,7 +513,7 @@ test("phone mark filter chips filter the library and clear when tapped again", a
   await expect.poll(() => statuses.at(-1)).toBe("all");
 });
 
-test("compact cards switch turns phone cards into rows or tiles and is remembered", async ({ page }) => {
+test("compact card mode turns phone cards into rows or tiles and is remembered", async ({ page }) => {
   await mockApplication(page);
   await page.goto("/");
   const card = page.getByTestId("work-card").first();
@@ -521,13 +521,38 @@ test("compact cards switch turns phone cards into rows or tiles and is remembere
   await expect(card).not.toHaveAttribute("data-card-layout");
 
   await page.getByRole("button", { name: /^Display options/ }).click();
-  await page.getByRole("switch", { name: "Compact cards" }).click();
+  await page.getByRole("radio", { name: /^Compact cards/ }).click();
   await expect(card).toHaveAttribute("data-card-layout", "row");
   await page.getByRole("radio", { name: "2 columns" }).click();
   await expect(card).toHaveAttribute("data-card-layout", "tile");
 
   await page.reload();
   await expect(page.getByTestId("work-card").first()).toHaveAttribute("data-card-layout", "tile");
+});
+
+test("@desktop mini card mode leaves the cover and title and is remembered", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await mockApplication(page);
+  await page.goto("/");
+  const card = page.getByTestId("work-card").first();
+  await expect(card).toBeVisible();
+  await expect(card.getByRole("button", { name: work.circle, exact: true })).toBeVisible();
+  await expect(card.getByRole("button", { name: "Add to list" })).toBeVisible();
+
+  await page.getByRole("button", { name: /^Display options/ }).click();
+  await page.getByRole("radio", { name: /^Compact cards/ }).click();
+  await expect(card).toHaveAttribute("data-card-layout", "tile");
+  await page.getByRole("radio", { name: /^Mini cards/ }).click();
+  await expect(card).toHaveAttribute("data-card-layout", "cover");
+  await expect(card.getByRole("heading", { name: work.title })).toBeVisible();
+  await expect(card.getByRole("button", { name: work.circle, exact: true })).toHaveCount(0);
+  await expect(card.getByRole("button", { name: "Add to list" })).toHaveCount(0);
+
+  await page.reload();
+  const restored = page.getByTestId("work-card").first();
+  await expect(restored).toHaveAttribute("data-card-layout", "cover");
+  await restored.getByRole("heading", { name: work.title }).click();
+  await expect(page).toHaveURL(new RegExp(`/${work.primaryCode}(?:\\?|$)`));
 });
 
 test("favorite list popovers use measured mobile placement and stay inside the usable viewport", async ({ page }) => {
