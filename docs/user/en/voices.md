@@ -31,6 +31,11 @@ Voice pages present persisted person and credit data.
 - Presents known and remote works with the same responsive grid and shared work
   cards as the Library. Selecting a DLsite tag or personal tag on a work card
   opens a local Library search for it.
+- Orders the works by **Release date**, **Code**, **Title**, **Rating**, or
+  **Sales**, ascending or descending, newest release first by default. Works
+  without the chosen fact stay last in either direction. The order and the
+  page size (24, 48, or 96) are remembered on the device for each account and
+  apply to every voice actor.
 - Loads person detail, known works, and remote matches independently. Remote
   source searches use bounded concurrency, while voice counts and user tags are
   aggregated in batches.
@@ -43,10 +48,13 @@ Voice pages present persisted person and credit data.
   in Activity. **More** holds **Follow this voice actor…**, which opens the
   preset with this voice actor selected for source, filter, metadata, and tag
   choices, and **Manage aliases**. The works toolbar mirrors the Library: a bounded search on the
-  left with columns, page size, availability filter, and selection as quiet
-  icon actions on the right, and the shared collection pagination above and
-  below the grid. Mobile work search keeps one row and opens filter, column,
-  and selection controls from a separate options sheet.
+  left, then the sort button that names the current order, display options,
+  the availability filter, and selection on the right, with the shared
+  collection pagination above and below the grid. Display options hold the
+  columns, the **Cards** choice of **Full**, **Compact**, and **Mini** shared
+  with the Library, and the page size. A phone keeps the sort button above the
+  works and opens search, the filter, columns, the card mode, page size, and
+  selection from a separate options sheet.
 - Treats the mobile detail back control as Up to the last
   server-and-user-scoped Voice Actors list location, including when the detail
   was opened from Library or Favorites. Wide layouts keep the source-aware

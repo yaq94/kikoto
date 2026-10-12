@@ -20,6 +20,7 @@ import {
   sourceStatFixture,
   voiceCatalogRefreshFixture,
   voiceDetailFixture,
+  voiceKnownWorkFixture,
   voiceSummaryFixture,
   type ApiErrorBody,
   type ApiResponse,
@@ -750,8 +751,17 @@ test("voice detail keeps compact statistics and secondary panels closed on mobil
   );
   await optionsDialog.getByRole("button", { name: "2 columns" }).click();
   await expect(optionsDialog.getByRole("button", { name: "2 columns" })).toHaveAttribute("aria-pressed", "true");
+  await expect(optionsDialog.getByRole("group", { name: "Cards" }).getByRole("button")).toHaveText([
+    "Full",
+    "Compact",
+    "Mini",
+  ]);
+  await optionsDialog.getByRole("button", { name: "96 per page" }).click();
+  await expect(optionsDialog.getByRole("button", { name: "96 per page" })).toHaveAttribute("aria-pressed", "true");
   await optionsDialog.getByRole("button", { name: "Select works" }).click();
   await expect(optionsDialog).toHaveCount(0);
+  // The order sits above the works on a phone, outside the options sheet.
+  await expect(page.getByRole("button", { name: "Sort: Release date" })).toBeVisible();
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 });
 
@@ -769,6 +779,59 @@ test("@desktop voice detail keeps full action labels and inline work controls", 
   await expect(page.getByRole("button", { name: "Open voice work options" })).toBeHidden();
   await expect(page.getByLabel("Voice work availability")).toBeVisible();
   await expect(page.getByRole("button", { name: /^Display options \(Columns:/ })).toBeVisible();
+});
+
+test("@desktop voice detail orders its works and switches card modes like the Library", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await mockCreatorDetails(page);
+  const voiceWork = (index: number, title: string, releaseDate: string, sales: number) =>
+    voiceKnownWorkFixture({
+      workId: 20 + index,
+      primaryCode: `RJ0000001${index}`,
+      title,
+      releaseDate,
+      sales,
+      local: true,
+    });
+  await page.route("**/api/voices/7/works", (route) =>
+    route.fulfill({
+      json: {
+        personId: 7,
+        works: [
+          voiceWork(0, "Beta work", "2026-03-01", 300),
+          voiceWork(1, "Alpha work", "2026-01-01", 100),
+          voiceWork(2, "Gamma work", "2026-02-01", 200),
+        ],
+      } satisfies ApiResponse<"getVoiceWorks">,
+    }),
+  );
+  await page.goto("/voices/7");
+
+  const titles = page.getByTestId("work-card").getByRole("heading");
+  // Newest release first is the default order.
+  await expect(titles).toHaveText(["Beta work", "Gamma work", "Alpha work"]);
+
+  await page.getByRole("button", { name: "Sort: Release date" }).click();
+  await page.getByRole("dialog", { name: "Sort" }).getByRole("button", { name: "Title" }).click();
+  await expect(titles).toHaveText(["Gamma work", "Beta work", "Alpha work"]);
+  await page.getByRole("button", { name: "Sort: Title" }).click();
+  await page.getByRole("dialog", { name: "Sort" }).getByRole("button", { name: "Ascending" }).click();
+  await expect(titles).toHaveText(["Alpha work", "Beta work", "Gamma work"]);
+
+  await page.getByRole("button", { name: /^Display options/ }).click();
+  const display = page.getByRole("dialog", { name: "Display options" });
+  await expect(display.getByRole("radiogroup", { name: "Items per page" }).getByRole("radio")).toHaveText([
+    "24",
+    "48",
+    "96",
+  ]);
+  await display.getByRole("radio", { name: "Mini cards with the cover and title only" }).click();
+  await expect(page.getByTestId("work-card").first()).toHaveAttribute("data-card-layout", "cover");
+
+  // The order stays chosen for the next visit and for every voice actor.
+  await page.reload();
+  await expect(page.getByRole("button", { name: "Sort: Title" })).toBeVisible();
+  await expect(titles).toHaveText(["Alpha work", "Beta work", "Gamma work"]);
 });
 
 test("circle detail keeps availability and primary actions compact on mobile", async ({ page }) => {

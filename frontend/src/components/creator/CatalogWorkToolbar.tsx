@@ -82,7 +82,7 @@ export function CatalogWorkToolbar<FilterValue extends string>({
   return (
     <section className={`${visibleOnMobile ? "flex" : "hidden lg:flex"} flex-wrap items-center gap-2`} data-toast-avoid>
       {leading && <div className="min-w-0 max-w-full">{leading}</div>}
-      {mobileSort && <div className="ml-auto min-w-0 lg:hidden">{mobileSort}</div>}
+      {mobileSort && <div className={`min-w-0 lg:hidden ${leading ? "ml-auto" : ""}`}>{mobileSort}</div>}
       <div
         className={`search-field min-h-10 w-full min-w-0 items-center gap-2 rounded-lg border bg-card px-3 text-sm lg:flex lg:w-auto lg:min-w-[14rem] lg:max-w-xl lg:flex-1 ${
           mobileSearch ? "flex" : "hidden"

@@ -7,10 +7,11 @@
 - Circle detail opens with a cover-tinted summary of its **Available**,
   **Local**, **Remote**, and **Unavailable** counts, and a circle that was
   never pulled says that only works the library already knows are listed.
-- Circle detail orders its works by release date, code, title, rating, or
-  sales, offers the **Full**, **Compact**, and **Mini** cards of the Library,
-  and can show 96 works per page. The order and page size are remembered on
-  the device.
+- Circle and voice actor detail order their works by release date, code,
+  title, rating, or sales, offer the **Full**, **Compact**, and **Mini** cards
+  of the Library, and can show 96 works per page. The order and page size are
+  remembered on the device. Voice actor works follow the chosen order instead
+  of listing local works first.
 - Library display options replace the phone-only **Compact cards** switch with
   a **Cards** choice of **Full**, **Compact**, and **Mini**, available on
   phones and wide screens and remembered separately for each. Compact on wide

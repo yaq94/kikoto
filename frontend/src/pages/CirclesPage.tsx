@@ -103,18 +103,12 @@ import {
 import { formatDateTime } from "@/i18n/format";
 import { useLocale } from "@/i18n/LocaleProvider";
 import { useMobileNavigationLayout } from "@/hooks/useMobileNavigationLayout";
-import {
-  circleWorkPageSizeOptions,
-  circleWorkSortValues,
-  readCircleWorksBrowse,
-  writeCircleWorksBrowse,
-  type CircleWorkPageSize,
-  type CircleWorksBrowse,
-} from "@/lib/circleWorksBrowse";
+import { creatorWorkPageSizeOptions } from "@/lib/creatorWorksBrowse";
 import { openLibraryTagSearch } from "@/lib/libraryTagSearch";
 import { CircleCatalogOptionsSheet, type CircleAvailabilityFilter } from "@/pages/CircleDetailSheets";
 import { circleRefreshSettledMessage, useCircleRefreshRun } from "@/pages/circleRefreshRun";
 import { CreatorListPage } from "@/pages/creator/CreatorListPage";
+import { useCreatorWorksBrowse } from "@/pages/creator/useCreatorWorksBrowse";
 import { LibrarySortButton } from "@/pages/library/LibrarySortButton";
 import type { RemoteWorkTarget } from "@/pages/remoteBulkRunModel";
 import { creatorBulkCopy, useRemoteWorkActions } from "@/pages/useRemoteWorkActions";
@@ -328,8 +322,13 @@ function CircleDetailPage({
   const [availabilityFilter, setAvailabilityFilter] = useState<CircleAvailabilityFilter>("all");
   const [workPage, setWorkPage] = useState(1);
   // The order and page size are one stored choice shared by every circle catalog.
-  const [worksBrowse, setWorksBrowse] = useState(() => readCircleWorksBrowse(storageScope));
-  const { sort: workSort, direction: workSortDirection, pageSize: workPageSize } = worksBrowse;
+  const {
+    sort: workSort,
+    direction: workSortDirection,
+    pageSize: workPageSize,
+    sortProps,
+    changePageSize: changeWorkPageSize,
+  } = useCreatorWorksBrowse("circle", storageScope, () => setWorkPage(1));
   const loadedExternalID = useRef("");
   const detailQuery = useMemo(
     () => ({
@@ -451,25 +450,6 @@ function CircleDetailPage({
   const changeWorkQuery = (value: string) => {
     setWorkQuery(value);
     setWorkPage(1);
-  };
-  const changeWorksBrowse = (patch: Partial<CircleWorksBrowse>) => {
-    const next = { ...worksBrowse, ...patch };
-    setWorksBrowse(next);
-    writeCircleWorksBrowse(storageScope, next);
-    setWorkPage(1);
-  };
-  const changeWorkPageSize = (value: number) => changeWorksBrowse({ pageSize: value as CircleWorkPageSize });
-  const sortProps = {
-    options: circleWorkSortValues.map((value) => ({ value, label: t(`library.sortOptions.${value}`) })),
-    value: workSort,
-    direction: workSortDirection,
-    onChange: (value: string) => {
-      const sort = circleWorkSortValues.find((option) => option === value);
-      if (sort) changeWorksBrowse({ sort });
-    },
-    onDirectionChange: (direction: CircleWorksBrowse["direction"]) => changeWorksBrowse({ direction }),
-    // No circle catalog order draws from a seed.
-    onReshuffle: () => undefined,
   };
   const cardModes = {
     mobile: mobileCardMode,
@@ -950,7 +930,7 @@ function CircleDetailPage({
           filterOptions={circleAvailabilityOptions(t)}
           onFilterChange={changeAvailabilityFilter}
           pageSize={showsWorks ? workPageSize : undefined}
-          pageSizeOptions={circleWorkPageSizeOptions}
+          pageSizeOptions={creatorWorkPageSizeOptions}
           onPageSizeChange={showsWorks ? changeWorkPageSize : undefined}
           mobileColumns={mobileColumns}
           desktopColumns={desktopColumns}
@@ -1022,7 +1002,7 @@ function CircleDetailPage({
           query={workQuery}
           onQueryChange={changeWorkQuery}
           pageSize={workPageSize}
-          pageSizeOptions={circleWorkPageSizeOptions}
+          pageSizeOptions={creatorWorkPageSizeOptions}
           onPageSizeChange={changeWorkPageSize}
           mobileColumns={mobileColumns}
           onMobileColumnsChange={setMobileColumns}

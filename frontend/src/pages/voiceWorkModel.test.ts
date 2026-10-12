@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { VoiceKnownWork, VoiceRemoteSourceSet, VoiceRemoteWork } from "@/lib/api";
 import { workDetailRoute } from "../app/workDetailNavigation";
 
-import { mergeVoiceWorks, voiceWorkRemoteTarget } from "./voiceWorkModel";
+import { mergeVoiceWorks, sortVoiceWorks, voiceWorkRemoteTarget } from "./voiceWorkModel";
 
 describe("mergeVoiceWorks", () => {
   it("keeps known identity while retaining the exact live remote observation", () => {
@@ -120,6 +120,38 @@ describe("mergeVoiceWorks", () => {
     expect(result.primaryCode).toBe("RJ00000009");
     expect(result.remoteObservations).toContainEqual(expect.objectContaining({ status: "not_found" }));
     expect(voiceWorkRemoteTarget(result)).toBeNull();
+  });
+});
+
+describe("sortVoiceWorks", () => {
+  const works = [
+    { ...knownWork(), primaryCode: "RJ00000000", title: "Beta", releaseDate: "2024-03-01", rating: 4.1, sales: 300 },
+    { ...knownWork(), primaryCode: "RJ00000001", title: "alpha", releaseDate: "2024-01-01", rating: 4.9, sales: 100 },
+    { ...knownWork(), primaryCode: "RJ00000002", title: "Gamma", releaseDate: "2024-02-01", rating: 4.5, sales: 200 },
+    // A remote match can arrive without a release date, rating, or sales count.
+    { ...remoteWork(), primaryCode: "RJ00000003", title: "Delta" },
+  ];
+  const order = (...args: Parameters<typeof sortVoiceWorks> extends [unknown, ...infer Rest] ? Rest : never) =>
+    sortVoiceWorks(works, ...args).map((work) => work.primaryCode.slice(-1));
+
+  it("orders by the chosen fact in either direction", () => {
+    expect(order("code", "asc")).toEqual(["0", "1", "2", "3"]);
+    expect(order("code", "desc")).toEqual(["3", "2", "1", "0"]);
+    expect(order("title", "asc")).toEqual(["1", "0", "3", "2"]);
+    expect(order("sales", "desc")).toEqual(["0", "2", "1", "3"]);
+  });
+
+  it("keeps works without the fact last in both directions", () => {
+    expect(order("release", "desc")).toEqual(["0", "2", "1", "3"]);
+    expect(order("release", "asc")).toEqual(["1", "2", "0", "3"]);
+    expect(order("rating", "desc")).toEqual(["1", "2", "0", "3"]);
+    expect(order("rating", "asc")).toEqual(["0", "2", "1", "3"]);
+  });
+
+  it("leaves the given works untouched", () => {
+    const before = works.map((work) => work.primaryCode);
+    sortVoiceWorks(works, "sales", "asc");
+    expect(works.map((work) => work.primaryCode)).toEqual(before);
   });
 });
 
