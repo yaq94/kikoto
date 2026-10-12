@@ -278,15 +278,8 @@ func favoriteWorksWhere(status string, availability string, queryText string, us
 		clauses = append(clauses, sourceWhere)
 		args = append(args, sourceArgs...)
 	}
-	switch strings.ToLower(strings.TrimSpace(availability)) {
-	case "local":
-		clauses = append(clauses, favoriteAvailabilityExists("'local'", false))
-	case "cache":
-		clauses = append(clauses, favoriteAvailabilityExists("'cache'", false))
-	case "remote":
-		clauses = append(clauses, favoriteAvailabilityExists("'remote_stream','remote_download'", false))
-	case "missing":
-		clauses = append(clauses, favoriteAvailabilityExists("'local','cache','remote_stream','remote_download'", true))
+	if badgeWhere := library.AvailabilityBadgeWhere(strings.ToLower(strings.TrimSpace(availability))); badgeWhere != "" {
+		clauses = append(clauses, badgeWhere)
 	}
 	searchWhere, searchArgs := librarySearchWhere(queryText, userID)
 	if searchWhere != "" {
@@ -376,21 +369,6 @@ func favoriteSourceWhere(sourceIDs []int64) (string, []any) {
 				)
 		)
 	)`, args
-}
-
-func favoriteAvailabilityExists(locationTypes string, negated bool) string {
-	prefix := "EXISTS"
-	if negated {
-		prefix = "NOT EXISTS"
-	}
-	return prefix + ` (
-		SELECT 1
-		FROM media_file_location AS favorite_location
-		INNER JOIN media_item AS favorite_item ON favorite_item.id = favorite_location.media_item_id
-		WHERE favorite_item.work_id = work.id
-			AND favorite_location.availability = 'available'
-			AND favorite_location.location_type IN (` + locationTypes + `)
-	)`
 }
 
 func (s *Server) loadFavoriteListCounts(ctx context.Context, userID int64) (map[int64]int, error) {

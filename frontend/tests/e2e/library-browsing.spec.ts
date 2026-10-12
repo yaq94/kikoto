@@ -244,6 +244,30 @@ test("recommended sorting refreshes its stable seed", async ({ page }) => {
   await expect(refresh).toBeEnabled();
 });
 
+test("@desktop the wide toolbar sorts from one labeled control", async ({ page }) => {
+  const requests: URL[] = [];
+  await mockApplication(page, (url) => requests.push(url), false, 8);
+  await page.goto("/");
+
+  // The seeded orders keep a one-click refresh beside the sort button.
+  const sort = page.getByRole("button", { name: "Sort: Recommended", exact: true });
+  await expect(sort).toHaveText("Recommended");
+  await expect(page.getByRole("button", { name: "Refresh recommendations", exact: true })).toBeVisible();
+
+  await sort.click();
+  const popover = page.getByRole("dialog", { name: "Sort" });
+  await popover.getByRole("button", { name: "Ascending", exact: true }).click();
+  await expect.poll(() => requests.at(-1)?.searchParams.get("direction")).toBe("asc");
+  await popover.getByRole("button", { name: "Title", exact: true }).click();
+  await expect(popover).toBeHidden();
+
+  await expect(page.getByRole("button", { name: "Sort: Title", exact: true })).toHaveText("Title");
+  await expect.poll(() => requests.at(-1)?.searchParams.get("sort")).toBe("title");
+  // An order without a seed has nothing to refresh, and its direction lives in the popover.
+  await expect(page.getByRole("button", { name: "Refresh recommendations", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Ascending", exact: true })).toHaveCount(0);
+});
+
 test("recommendation badge refresh keeps the result grid fixed while the request is pending", async ({ page }) => {
   const requestedURLs: URL[] = [];
   let holdWorksResponse = false;
@@ -489,7 +513,7 @@ test("phone mark filter chips filter the library and clear when tapped again", a
   await expect.poll(() => statuses.at(-1)).toBe("all");
 });
 
-test("compact cards switch turns phone cards into rows or tiles and is remembered", async ({ page }) => {
+test("compact card mode turns phone cards into rows or tiles and is remembered", async ({ page }) => {
   await mockApplication(page);
   await page.goto("/");
   const card = page.getByTestId("work-card").first();
@@ -497,13 +521,38 @@ test("compact cards switch turns phone cards into rows or tiles and is remembere
   await expect(card).not.toHaveAttribute("data-card-layout");
 
   await page.getByRole("button", { name: /^Display options/ }).click();
-  await page.getByRole("switch", { name: "Compact cards" }).click();
+  await page.getByRole("radio", { name: /^Compact cards/ }).click();
   await expect(card).toHaveAttribute("data-card-layout", "row");
   await page.getByRole("radio", { name: "2 columns" }).click();
   await expect(card).toHaveAttribute("data-card-layout", "tile");
 
   await page.reload();
   await expect(page.getByTestId("work-card").first()).toHaveAttribute("data-card-layout", "tile");
+});
+
+test("@desktop mini card mode leaves the cover and title and is remembered", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await mockApplication(page);
+  await page.goto("/");
+  const card = page.getByTestId("work-card").first();
+  await expect(card).toBeVisible();
+  await expect(card.getByRole("button", { name: work.circle, exact: true })).toBeVisible();
+  await expect(card.getByRole("button", { name: "Add to list" })).toBeVisible();
+
+  await page.getByRole("button", { name: /^Display options/ }).click();
+  await page.getByRole("radio", { name: /^Compact cards/ }).click();
+  await expect(card).toHaveAttribute("data-card-layout", "tile");
+  await page.getByRole("radio", { name: /^Mini cards/ }).click();
+  await expect(card).toHaveAttribute("data-card-layout", "cover");
+  await expect(card.getByRole("heading", { name: work.title })).toBeVisible();
+  await expect(card.getByRole("button", { name: work.circle, exact: true })).toHaveCount(0);
+  await expect(card.getByRole("button", { name: "Add to list" })).toHaveCount(0);
+
+  await page.reload();
+  const restored = page.getByTestId("work-card").first();
+  await expect(restored).toHaveAttribute("data-card-layout", "cover");
+  await restored.getByRole("heading", { name: work.title }).click();
+  await expect(page).toHaveURL(new RegExp(`/${work.primaryCode}(?:\\?|$)`));
 });
 
 test("favorite list popovers use measured mobile placement and stay inside the usable viewport", async ({ page }) => {

@@ -171,9 +171,17 @@ export const collectionHans = {
   pageSize: "每页数量：{{value}}",
   itemsPerPage: "每页数量",
 
-  compactCards: "紧凑卡片",
-
-  compactCardsHint: "手机上使用更小的作品卡片",
+  cardMode: "卡片",
+  cardModes: {
+    full: "完整",
+    compact: "紧凑",
+    mini: "极简",
+  },
+  cardModeOptions: {
+    full: "完整卡片，显示全部信息",
+    compact: "紧凑卡片，显示较少信息",
+    mini: "极简卡片，只显示封面和标题",
+  },
   coverSources: "封面来源标记",
   coverSourceModes: {
     auto: "自动：只显示与当前来源不同或异常的标记",
@@ -193,6 +201,13 @@ export const collectionHans = {
   columnsHeading: "列数",
   displayOptions: "显示选项",
   displayOptionsValue: "显示选项（{{value}}）",
+  viewMode: "视图",
+  gridView: "网格视图",
+  listView: "列表视图",
+  viewModes: {
+    grid: "网格",
+    list: "列表",
+  },
   column_one: "{{count}} 列",
   column_other: "{{count}} 列",
   loadingWorks: "正在加载作品",

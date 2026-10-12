@@ -14,9 +14,9 @@ import { MetadataOnboardingNotice } from "@/components/MetadataOnboardingNotice"
 import { AnchoredPopover } from "@/components/ui/anchored-popover";
 import { IconButton } from "@/components/ui/icon-button";
 import { toastFromError, useToast } from "@/components/ui/toast";
-import type { MobileWorkCardLayout } from "@/components/work-card/MobileWorkCard";
 import {
   useWorkCollectionLayout,
+  workCardLayout,
   WorkCollectionDisplayPicker,
 } from "@/components/work-collection/WorkCollectionLayout";
 import { preloadWorkDetail } from "@/features/work-detail/lazyWorkDetail";
@@ -187,11 +187,19 @@ export function LibraryPage({ active = true }: { active?: boolean }) {
   // The clause editor floats next to whichever control opened it: the add
   // button in the search field or the edited clause badge.
   const clauseEditorAnchorRef = useRef<HTMLElement | null>(null);
-  const { mobileColumns, desktopColumns, mobileCompact, setMobileColumns, setDesktopColumns, setMobileCompact } =
-    useWorkCollectionLayout({
-      mobileColumns: initialBrowseState.mobileColumns,
-      desktopColumns: initialBrowseState.desktopColumns,
-    });
+  const {
+    mobileColumns,
+    desktopColumns,
+    mobileCardMode,
+    desktopCardMode,
+    setMobileColumns,
+    setDesktopColumns,
+    setMobileCardMode,
+    setDesktopCardMode,
+  } = useWorkCollectionLayout({
+    mobileColumns: initialBrowseState.mobileColumns,
+    desktopColumns: initialBrowseState.desktopColumns,
+  });
   const [librarySort, setLibrarySort] = useState<LibrarySort>(initialBrowseState.sort);
   const remoteInlineRecommendations = auth.demoMode && recommendBadgesEnabled;
   const [sortDirection, setSortDirection] = useState<SortDirection>(initialBrowseState.direction);
@@ -984,6 +992,7 @@ export function LibraryPage({ active = true }: { active?: boolean }) {
     onChange: changeLibrarySort,
     onDirectionChange: changeSortDirection,
     onReshuffle: reshuffle,
+    reshuffling: librarySort === "recommend" && localWorks.isLoading,
   };
   const displayPicker = (
     <WorkCollectionDisplayPicker
@@ -991,8 +1000,12 @@ export function LibraryPage({ active = true }: { active?: boolean }) {
       desktopColumns={desktopColumns}
       onMobileColumnsChange={setMobileColumns}
       onDesktopColumnsChange={setDesktopColumns}
-      mobileCompact={mobileCompact}
-      onMobileCompactChange={setMobileCompact}
+      cardModes={{
+        mobile: mobileCardMode,
+        desktop: desktopCardMode,
+        onMobileChange: setMobileCardMode,
+        onDesktopChange: setDesktopCardMode,
+      }}
       pageSize={activePageSize}
       pageSizeOptions={activePageSizeOptions}
       onPageSizeChange={(value) => {
@@ -1006,12 +1019,9 @@ export function LibraryPage({ active = true }: { active?: boolean }) {
       coverSources={{ mode: coverSourceMode, onChange: setCoverSourceMode }}
     />
   );
-  const recommendationAction =
-    librarySort === "recommend" ? (
-      <IconButton title={t("library.refreshRecommendations")} disabled={localWorks.isLoading} onClick={reshuffle}>
-        <RefreshCw className={`h-4 w-4 ${localWorks.isLoading ? "animate-spin" : ""}`} />
-      </IconButton>
-    ) : (
+  // The recommended order scores every work, so it has no badge switch.
+  const recommendationBadgeToggle =
+    librarySort === "recommend" ? null : (
       <IconButton
         title={recommendBadgesEnabled ? t("library.hideRecommendationBadges") : t("library.showRecommendationBadges")}
         onClick={recommendations.toggleBadges}
@@ -1019,6 +1029,12 @@ export function LibraryPage({ active = true }: { active?: boolean }) {
         <Sparkles className={`h-4 w-4 ${recommendBadgesEnabled ? "fill-current text-primary" : ""}`} />
       </IconButton>
     );
+  // The wide toolbar refreshes recommendations from its sort control instead.
+  const mobileRecommendationAction = recommendationBadgeToggle ?? (
+    <IconButton title={t("library.refreshRecommendations")} disabled={localWorks.isLoading} onClick={reshuffle}>
+      <RefreshCw className={`h-4 w-4 ${localWorks.isLoading ? "animate-spin" : ""}`} />
+    </IconButton>
+  );
   const selectionToggle =
     activeTab.kind === "source" ? (
       <IconButton
@@ -1031,9 +1047,11 @@ export function LibraryPage({ active = true }: { active?: boolean }) {
     ) : null;
   const showContinueListening =
     activeTab.kind !== "source" && searchClauses.length === 0 && statusFilter === "all" && currentWorkPage === 1;
-  // Phones with compact cards on: one column reads as rows, two as short tiles.
-  const mobileCardLayout: MobileWorkCardLayout | null =
-    mobileNavigationLayout && mobileCompact ? (mobileColumns === 2 ? "tile" : "row") : null;
+  const cardLayout = workCardLayout(
+    mobileNavigationLayout ? mobileCardMode : desktopCardMode,
+    !mobileNavigationLayout,
+    mobileColumns,
+  );
   const browseContent = (
     <div className="relative space-y-5" hidden={!showBrowse}>
       {auth.demoMode &&
@@ -1065,7 +1083,7 @@ export function LibraryPage({ active = true }: { active?: boolean }) {
           sort={sort}
           actions={
             <>
-              {recommendationAction}
+              {mobileRecommendationAction}
               {displayPicker}
               {selectionToggle}
             </>
@@ -1084,7 +1102,7 @@ export function LibraryPage({ active = true }: { active?: boolean }) {
           addClauseOpen={clauseEditor?.mode === "add"}
           onOpenRecent={openRecentWork}
           displayPicker={displayPicker}
-          recommendationAction={recommendationAction}
+          recommendationAction={recommendationBadgeToggle}
           sort={sort}
           selectionToggle={selectionToggle}
           statusFilter={statusFilter}
@@ -1130,7 +1148,7 @@ export function LibraryPage({ active = true }: { active?: boolean }) {
             searchClauses={searchClauses}
             mobileColumns={mobileColumns}
             desktopColumns={desktopColumns}
-            mobileCardLayout={mobileCardLayout}
+            cardLayout={cardLayout}
             coverSourceMode={coverSourceMode}
             onClearSearch={() => setSearchQuery("")}
             onPageChange={(page) => {
@@ -1182,7 +1200,7 @@ export function LibraryPage({ active = true }: { active?: boolean }) {
           }
           mobileColumns={mobileColumns}
           desktopColumns={desktopColumns}
-          mobileCardLayout={mobileCardLayout}
+          cardLayout={cardLayout}
           coverSourceMode={coverSourceMode}
           onOpen={openCardWork}
           onRecommendationOpen={openCardRecommendation}

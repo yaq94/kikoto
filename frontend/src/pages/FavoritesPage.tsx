@@ -42,8 +42,6 @@ import {
   FavoriteSearchInput,
   FavoriteSelectionToggle,
   FavoriteSortControls,
-  FavoriteViewToggle,
-  type FavoriteResourceSelection,
 } from "@/features/favorites/FavoriteWorksControls";
 import {
   favoriteShelfKind,
@@ -73,7 +71,6 @@ import {
   type CircleSummary,
   type FavoriteList,
   type FavoriteSort,
-  type LibrarySource,
   type ListeningStatus,
   type SortDirection,
   type VoiceSummary,
@@ -125,8 +122,6 @@ export function FavoritesPage({ active = true }: { active?: boolean }) {
   const [works, setWorks] = useState<Work[]>([]);
   const [favoriteLists, setFavoriteLists] = useState<FavoriteList[]>([]);
   const [areFavoriteListsLoading, setAreFavoriteListsLoading] = useState(true);
-  const [fileSources, setFileSources] = useState<LibrarySource[]>([]);
-  const [areFileSourcesLoading, setAreFileSourcesLoading] = useState(true);
   const [favoriteEntity, setFavoriteEntity] = useState<FavoriteEntity>(initialBrowseState.entity);
   const [circles, setCircles] = useState<CircleSummary[]>([]);
   const [voices, setVoices] = useState<VoiceSummary[]>([]);
@@ -137,7 +132,6 @@ export function FavoritesPage({ active = true }: { active?: boolean }) {
   const [query, setQuery] = useState(initialBrowseState.query);
   const [statusFilter, setStatusFilter] = useState<ListeningStatus | "all">(initialBrowseState.status);
   const [availabilityFilter, setAvailabilityFilter] = useState<AvailabilityFilter>(initialBrowseState.availability);
-  const [sourceIDs, setSourceIDs] = useState<number[]>(initialBrowseState.sourceIDs);
   const [activeList, setActiveList] = useState<"all" | number>(initialBrowseState.list);
   const [page, setPage] = useState(initialBrowseState.page);
   const [pageSize, setPageSize] = useState<PageSize>(initialBrowseState.pageSize);
@@ -167,7 +161,6 @@ export function FavoritesPage({ active = true }: { active?: boolean }) {
   const [listManagerOpen, setListManagerOpen] = useState(false);
   const requestSeq = useRef(0);
   const favoriteListsLoadedFor = useRef<number | null>(null);
-  const fileSourcesLoadedFor = useRef<number | null>(null);
   const entitiesLoadedRequestKey = useRef("");
   const worksLoadedRequestKey = useRef("");
   const mobileNavigationLayout = useMobileNavigationLayout();
@@ -176,7 +169,6 @@ export function FavoritesPage({ active = true }: { active?: boolean }) {
     query,
     status: statusFilter,
     availability: availabilityFilter,
-    sourceIDs,
     list: activeList,
     page,
     pageSize,
@@ -192,7 +184,6 @@ export function FavoritesPage({ active = true }: { active?: boolean }) {
     activeList,
     statusFilter,
     availabilityFilter,
-    sourceIDs,
     sort,
     sortDirection,
     randomSeed,
@@ -218,11 +209,6 @@ export function FavoritesPage({ active = true }: { active?: boolean }) {
       setQuery(browse.query);
       setStatusFilter(browse.status);
       setAvailabilityFilter(browse.availability);
-      setSourceIDs((current) =>
-        current.length === browse.sourceIDs.length && current.every((id, index) => id === browse.sourceIDs[index])
-          ? current
-          : browse.sourceIDs,
-      );
       setActiveList(browse.list);
       setPage(browse.page);
       setPageSize(browse.pageSize);
@@ -259,41 +245,6 @@ export function FavoritesPage({ active = true }: { active?: boolean }) {
       })
       .finally(() => {
         if (!cancelled) setAreFavoriteListsLoading(false);
-      });
-    return () => {
-      cancelled = true;
-      controller.abort();
-    };
-  }, [active, auth.user, notifyUnavailable, principalID]);
-
-  useEffect(() => {
-    if (!auth.user) {
-      fileSourcesLoadedFor.current = null;
-      setFileSources([]);
-      setAreFileSourcesLoading(false);
-      return;
-    }
-    if (!active || fileSourcesLoadedFor.current === principalID) return;
-    const controller = new AbortController();
-    let cancelled = false;
-    setAreFileSourcesLoading(true);
-    api
-      .listLibrarySources(controller.signal)
-      .then((sources) => {
-        if (cancelled) return;
-        fileSourcesLoadedFor.current = principalID;
-        setFileSources(sources);
-        const availableSourceIDs = new Set(sources.map((source) => source.id));
-        setSourceIDs((current) => {
-          const available = current.filter((sourceID) => availableSourceIDs.has(sourceID));
-          return available.length === current.length ? current : available;
-        });
-      })
-      .catch((error) => {
-        if (!cancelled) notifyUnavailable(error);
-      })
-      .finally(() => {
-        if (!cancelled) setAreFileSourcesLoading(false);
       });
     return () => {
       cancelled = true;
@@ -389,7 +340,6 @@ export function FavoritesPage({ active = true }: { active?: boolean }) {
         activeList,
         statusFilter,
         availabilityFilter,
-        sourceIDs,
         sort,
         sortDirection,
         randomSeed,
@@ -428,7 +378,6 @@ export function FavoritesPage({ active = true }: { active?: boolean }) {
     randomSeed,
     sort,
     sortDirection,
-    sourceIDs,
     statusFilter,
     worksReloadToken,
     worksRequestKey,
@@ -446,7 +395,6 @@ export function FavoritesPage({ active = true }: { active?: boolean }) {
       query,
       status: statusFilter,
       availability: availabilityFilter,
-      sourceIDs,
       list: activeList,
       page,
       pageSize,
@@ -480,7 +428,6 @@ export function FavoritesPage({ active = true }: { active?: boolean }) {
     selectionMode,
     sort,
     sortDirection,
-    sourceIDs,
     statusFilter,
   ]);
 
@@ -495,8 +442,7 @@ export function FavoritesPage({ active = true }: { active?: boolean }) {
 
   const totalPages = Math.max(1, Math.ceil(totalWorks / pageSize));
   const currentPage = Math.min(page, totalPages);
-  const hasWorkFilters =
-    Boolean(query.trim()) || statusFilter !== "all" || availabilityFilter !== "all" || sourceIDs.length > 0;
+  const hasWorkFilters = Boolean(query.trim()) || statusFilter !== "all" || availabilityFilter !== "all";
   const markedList = favoriteLists.find((list) => list.kind === "marked") ?? null;
   const userFavoriteLists = favoriteLists.filter((list) => list.kind !== "marked");
   const selectedWorks = works.filter((work) => selectedWorkIDs.has(work.id));
@@ -514,7 +460,7 @@ export function FavoritesPage({ active = true }: { active?: boolean }) {
     if (shelfCountsUserID === principalID) return;
     const controller = new AbortController();
     api
-      .listFavoriteWorksPage(1, 1, "", "all", "all", "all", [], "added", "desc", 1, controller.signal)
+      .listFavoriteWorksPage(1, 1, "", "all", "all", "all", "added", "desc", 1, controller.signal)
       .then((result) => {
         if (controller.signal.aborted) return;
         setFavoriteTotal(result.shelfTotal);
@@ -554,7 +500,6 @@ export function FavoritesPage({ active = true }: { active?: boolean }) {
       query,
       status: statusFilter,
       availability: availabilityFilter,
-      sourceIDs,
       list: activeList,
       page,
       pageSize,
@@ -599,13 +544,11 @@ export function FavoritesPage({ active = true }: { active?: boolean }) {
     setQuery("");
     setStatusFilter("all");
     setAvailabilityFilter("all");
-    setSourceIDs([]);
     setPage(1);
   };
 
-  const changeResourceSelection = ({ availability, sourceIDs }: FavoriteResourceSelection) => {
-    setAvailabilityFilter(availability);
-    setSourceIDs(sourceIDs);
+  const changeAvailabilityFilter = (value: AvailabilityFilter) => {
+    setAvailabilityFilter(value);
     setPage(1);
   };
 
@@ -690,7 +633,6 @@ export function FavoritesPage({ active = true }: { active?: boolean }) {
       activeList,
       statusFilter,
       availabilityFilter,
-      sourceIDs,
       sort,
       sortDirection,
       randomSeed,
@@ -957,12 +899,9 @@ export function FavoritesPage({ active = true }: { active?: boolean }) {
                 {favoriteEntity === "works" && (
                   <div className="ml-auto flex shrink-0 items-center gap-1.5">
                     <FavoriteResourceFilter
-                      availability={availabilityFilter}
-                      sources={fileSources}
-                      selectedSourceIDs={sourceIDs}
-                      loading={areFileSourcesLoading}
+                      value={availabilityFilter}
                       compact={mobileNavigationLayout}
-                      onChange={changeResourceSelection}
+                      onChange={changeAvailabilityFilter}
                     />
                     <FavoriteSortControls
                       value={sort}
@@ -973,13 +912,13 @@ export function FavoritesPage({ active = true }: { active?: boolean }) {
                       onDirectionChange={changeFavoriteSortDirection}
                       onReshuffle={reshuffleFavorites}
                     />
-                    <FavoriteViewToggle value={viewMode} onChange={setViewMode} />
                     <WorkCollectionDisplayPicker
                       mobileColumns={mobileColumns}
                       desktopColumns={desktopColumns}
                       onMobileColumnsChange={setMobileColumns}
                       onDesktopColumnsChange={setDesktopColumns}
                       showColumns={viewMode === "grid"}
+                      view={{ mode: viewMode, onChange: setViewMode }}
                       pageSize={pageSize}
                       pageSizeOptions={pageSizeOptions}
                       onPageSizeChange={(value) => changePageSize(value as PageSize)}

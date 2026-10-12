@@ -2,7 +2,7 @@ import { GitFork, HardDriveDownload } from "lucide-react";
 
 import { useAuth } from "@/auth/AuthProvider";
 import type { SourceVisibilityMode } from "@/components/source-visibility/sourceVisibility";
-import { MobileWorkCardShell, type MobileWorkCardLayout } from "@/components/work-card/MobileWorkCard";
+import { CompactWorkCardShell, type CompactWorkCardLayout } from "@/components/work-card/CompactWorkCard";
 import {
   dlsiteTagBadges,
   WorkCardActionButton,
@@ -39,7 +39,7 @@ export function RemoteWorkCard({
   onSave,
   onEnsureWork,
   onListSaved,
-  mobileLayout,
+  layout,
 }: {
   work: RemoteWork;
   recommendationScored: boolean;
@@ -60,9 +60,9 @@ export function RemoteWorkCard({
   onSave: () => void;
   onEnsureWork: () => Promise<number | null>;
   onListSaved: (workId: number, favorite: boolean) => void;
-  mobileLayout: MobileWorkCardLayout | null;
+  layout: CompactWorkCardLayout | null;
 }) {
-  const Shell = mobileLayout ? MobileWorkCardShell : WorkCardShell;
+  const Shell = layout ? CompactWorkCardShell : WorkCardShell;
   const baseView = remoteWorkCardView(work, source, recommendationScored, useAuth().recommendationThreshold);
   const view: WorkCardViewModel = {
     ...baseView,
@@ -73,7 +73,7 @@ export function RemoteWorkCard({
 
   return (
     <Shell
-      layout={mobileLayout ?? "row"}
+      layout={layout ?? "row"}
       work={view}
       selection={
         selectionActive ? (
@@ -85,7 +85,7 @@ export function RemoteWorkCard({
       canOpen={Boolean(work.primaryCode)}
       footer={
         <WorkCardFooter
-          className={mobileLayout === "row" ? "h-10 border-border/40" : undefined}
+          className={layout === "row" ? "h-10 border-border/40" : undefined}
           left={<WorkCardDLsiteAction href={dlsiteWorkURL(work.primaryCode)} />}
           right={
             <>

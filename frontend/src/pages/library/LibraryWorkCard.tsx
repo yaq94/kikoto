@@ -5,7 +5,7 @@ import { useTranslation } from "react-i18next";
 import { useAuth } from "@/auth/AuthProvider";
 import type { SourceVisibilityMode } from "@/components/source-visibility/sourceVisibility";
 import { AnchoredPopover } from "@/components/ui/anchored-popover";
-import { MobileWorkCardShell, type MobileWorkCardLayout } from "@/components/work-card/MobileWorkCard";
+import { CompactWorkCardShell, type CompactWorkCardLayout } from "@/components/work-card/CompactWorkCard";
 import { sourcePresenceBadges } from "@/components/work-card/sourceBadges";
 import {
   dlsiteTagBadges,
@@ -43,7 +43,7 @@ export const LibraryWorkCard = memo(function LibraryWorkCard({
   isUntracking = false,
   onFetch,
   isFetchBusy,
-  mobileLayout = null,
+  layout = null,
 }: {
   work: Work;
   showRecommendationScore: boolean;
@@ -61,10 +61,10 @@ export const LibraryWorkCard = memo(function LibraryWorkCard({
   isUntracking?: boolean;
   onFetch?: (work: Work, source: SourcePresenceItem) => void;
   isFetchBusy?: boolean;
-  mobileLayout?: MobileWorkCardLayout | null;
+  layout?: CompactWorkCardLayout | null;
 }) {
   const { t } = useTranslation();
-  const Shell = mobileLayout ? MobileWorkCardShell : WorkCardShell;
+  const Shell = layout ? CompactWorkCardShell : WorkCardShell;
   const baseView = libraryWorkCardView(work, onUserTagOpen, showRecommendationScore, useAuth().recommendationThreshold);
   const view: WorkCardViewModel = {
     ...baseView,
@@ -78,7 +78,7 @@ export const LibraryWorkCard = memo(function LibraryWorkCard({
 
   return (
     <Shell
-      layout={mobileLayout ?? "row"}
+      layout={layout ?? "row"}
       work={view}
       onOpen={() => onOpen(work)}
       onRecommendationOpen={() => onRecommendationOpen(work)}
@@ -91,7 +91,7 @@ export const LibraryWorkCard = memo(function LibraryWorkCard({
       onTagOpen={onTagOpen}
       footer={
         <WorkCardFooter
-          className={mobileLayout === "row" ? "h-10 border-border/40" : undefined}
+          className={layout === "row" ? "h-10 border-border/40" : undefined}
           left={<WorkCardDLsiteAction href={work.dlsiteUrl} />}
           right={
             <>

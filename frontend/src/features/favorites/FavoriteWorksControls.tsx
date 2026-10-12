@@ -1,27 +1,14 @@
-import {
-  ArrowDownAZ,
-  ArrowDownZA,
-  ArrowUpDown,
-  Check,
-  Cloud,
-  LayoutGrid,
-  List as ListIcon,
-  ListChecks,
-  RefreshCw,
-  Search,
-  X,
-} from "lucide-react";
-import { useRef, useState, type ReactNode } from "react";
+import { ArrowDownAZ, ArrowDownZA, ArrowUpDown, Check, Cloud, ListChecks, RefreshCw, Search, X } from "lucide-react";
+import { useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { AnchoredPopover } from "@/components/ui/anchored-popover";
 import { Button } from "@/components/ui/button";
 import { IconButton } from "@/components/ui/icon-button";
-import type { FavoriteSort, LibrarySource, SortDirection } from "@/lib/api";
+import type { FavoriteSort, SortDirection } from "@/lib/api";
 import { dismissKeyboardOnEnter } from "@/lib/keyboard";
 import { cn } from "@/lib/tailwindClassNames";
 import type { FavoriteAvailability } from "./favoritesBrowseState";
-import type { FavoriteViewMode } from "./favoriteViewMode";
 
 export function FavoriteSearchInput({
   value,
@@ -66,37 +53,36 @@ export function FavoriteSearchInput({
   );
 }
 
-export type FavoriteResourceSelection = {
-  availability: FavoriteAvailability;
-  sourceIDs: number[];
-};
+const favoriteResourceOptions: FavoriteAvailability[] = ["all", "available", "local", "remote", "missing"];
 
-/** Availability and file source filter; compact draws only the icon. */
+/** Availability filter; compact draws only the icon. */
 export function FavoriteResourceFilter({
-  availability,
-  sources,
-  selectedSourceIDs,
-  loading,
+  value,
   compact = false,
   onChange,
 }: {
-  availability: FavoriteAvailability;
-  sources: LibrarySource[];
-  selectedSourceIDs: number[];
-  loading: boolean;
+  value: FavoriteAvailability;
   compact?: boolean;
-  onChange: (selection: FavoriteResourceSelection) => void;
+  onChange: (value: FavoriteAvailability) => void;
 }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const anchorRef = useRef<HTMLDivElement | null>(null);
-  const label = favoriteResourceLabel(sources, { availability, sourceIDs: selectedSourceIDs }, t);
-  const filtered = availability !== "all" || selectedSourceIDs.length > 0;
-  const select = (next: FavoriteResourceSelection) => {
-    onChange(next);
-    setOpen(false);
+  const resourceLabel = (option: FavoriteAvailability) => {
+    switch (option) {
+      case "available":
+        return t("content.available");
+      case "local":
+        return t("detailActions.local");
+      case "remote":
+        return t("detailActions.remote");
+      case "missing":
+        return t("favorites.missing");
+      default:
+        return t("favorites.allResources");
+    }
   };
-  const isOnly = (value: FavoriteAvailability) => availability === value && selectedSourceIDs.length === 0;
+  const label = resourceLabel(value);
 
   return (
     <div className="relative" ref={anchorRef}>
@@ -105,9 +91,8 @@ export function FavoriteResourceFilter({
         size={compact ? "icon-sm" : "sm"}
         className={cn(
           compact ? "" : "h-8 max-w-44",
-          filtered && "border-primary/30 bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary",
+          value !== "all" && "border-primary/30 bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary",
         )}
-        disabled={loading}
         aria-expanded={open}
         onClick={() => setOpen((current) => !current)}
         aria-label={`${t("favorites.resource")}: ${label}`}
@@ -117,107 +102,36 @@ export function FavoriteResourceFilter({
         {!compact && <span className="truncate">{label}</span>}
       </Button>
       <AnchoredPopover
-        open={open && !loading}
+        open={open}
         anchorRef={anchorRef}
         onOpenChange={setOpen}
         align="end"
-        className="w-[min(18rem,calc(100vw-1.5rem))] p-1 text-sm"
+        className="w-[min(10rem,calc(100vw-1.5rem))] p-1 text-sm"
       >
         <div role="menu" aria-label={t("favorites.resourceFilters")}>
-          <div className="px-3 py-2 text-xs font-semibold text-foreground">{t("favorites.resource")}</div>
-          <FavoriteResourceOption
-            label={t("favorites.anyAvailable")}
-            selected={isOnly("all")}
-            onClick={() => select({ availability: "all", sourceIDs: [] })}
-          />
-          <FavoriteResourceOption
-            label={t("detailActions.local")}
-            selected={isOnly("local")}
-            onClick={() => select({ availability: "local", sourceIDs: [] })}
-          />
-          <FavoriteResourceOption
-            label={t("favorites.cached")}
-            selected={isOnly("cache")}
-            onClick={() => select({ availability: "cache", sourceIDs: [] })}
-          />
-          <FavoriteResourceOption
-            label={t("favorites.anyRemote")}
-            selected={isOnly("remote")}
-            onClick={() => select({ availability: "remote", sourceIDs: [] })}
-          />
-          {sources.map((source) => (
-            <FavoriteResourceOption
-              key={source.id}
-              label={source.displayName || source.code}
-              selected={
-                availability === "remote" && selectedSourceIDs.length === 1 && selectedSourceIDs[0] === source.id
-              }
-              onClick={() => select({ availability: "remote", sourceIDs: [source.id] })}
-              icon={<Cloud className="h-3.5 w-3.5 shrink-0" />}
-              suffix={!source.enabled ? t("favorites.disabled") : undefined}
-            />
-          ))}
-          <FavoriteResourceOption
-            label={t("favorites.missing")}
-            selected={isOnly("missing")}
-            onClick={() => select({ availability: "missing", sourceIDs: [] })}
-          />
+          {favoriteResourceOptions.map((option) => {
+            const selected = option === value;
+            return (
+              <button
+                key={option}
+                type="button"
+                role="menuitemradio"
+                aria-checked={selected}
+                className={`flex min-h-9 w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left hover:bg-muted ${selected ? "bg-primary/10 font-medium text-primary" : "text-foreground"}`}
+                onClick={() => {
+                  onChange(option);
+                  setOpen(false);
+                }}
+              >
+                <span className="min-w-0 flex-1 truncate">{resourceLabel(option)}</span>
+                {selected && <Check className="h-4 w-4 shrink-0" aria-hidden="true" />}
+              </button>
+            );
+          })}
         </div>
       </AnchoredPopover>
     </div>
   );
-}
-
-function FavoriteResourceOption({
-  label,
-  selected,
-  onClick,
-  icon,
-  suffix,
-}: {
-  label: string;
-  selected: boolean;
-  onClick: () => void;
-  icon?: ReactNode;
-  suffix?: string;
-}) {
-  return (
-    <button
-      type="button"
-      role="menuitemradio"
-      aria-checked={selected}
-      className={`flex min-h-10 w-full items-center gap-2 rounded-md px-3 py-2 text-left hover:bg-muted ${selected ? "bg-primary/10 font-medium text-primary ring-1 ring-inset ring-primary/15" : "text-muted-foreground"}`}
-      onClick={onClick}
-    >
-      <Check className={`h-4 w-4 shrink-0 ${selected ? "opacity-100" : "opacity-0"}`} />
-      {icon}
-      <span className="min-w-0 flex-1 truncate text-foreground">{label}</span>
-      {suffix && <span className="text-2xs text-muted-foreground">{suffix}</span>}
-    </button>
-  );
-}
-
-function favoriteResourceLabel(
-  sources: LibrarySource[],
-  selection: FavoriteResourceSelection,
-  translate: (key: string) => string,
-) {
-  if (selection.sourceIDs.length === 1) {
-    const source = sources.find((candidate) => candidate.id === selection.sourceIDs[0]);
-    return source?.displayName || source?.code || translate("detailActions.source");
-  }
-  switch (selection.availability) {
-    case "local":
-      return translate("detailActions.local");
-    case "cache":
-      return translate("favorites.cached");
-    case "remote":
-      return translate("favorites.anyRemote");
-    case "missing":
-      return translate("favorites.missing");
-    default:
-      return translate("favorites.anyAvailable");
-  }
 }
 
 const favoriteSortOptions: FavoriteSort[] = [
@@ -325,50 +239,6 @@ export function FavoriteSortControls({
           ))}
         </div>
       </AnchoredPopover>
-    </div>
-  );
-}
-
-/** Grid or list; the two buttons form one segmented control. */
-export function FavoriteViewToggle({
-  value,
-  onChange,
-}: {
-  value: FavoriteViewMode;
-  onChange: (value: FavoriteViewMode) => void;
-}) {
-  const { t } = useTranslation();
-  const options = [
-    { value: "grid" as const, label: t("favorites.gridView"), icon: LayoutGrid },
-    { value: "list" as const, label: t("favorites.listView"), icon: ListIcon },
-  ];
-  return (
-    <div
-      className="inline-flex h-8 shrink-0 items-center gap-0.5 rounded-[var(--control-radius)] border bg-muted p-0.5"
-      role="group"
-      aria-label={t("favorites.viewMode")}
-    >
-      {options.map((option) => {
-        const active = option.value === value;
-        return (
-          <button
-            key={option.value}
-            type="button"
-            className={cn(
-              "touch-target relative grid h-full w-7 place-items-center rounded-[calc(var(--control-radius)-2px)] transition-[color,background-color,box-shadow] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-              active
-                ? "bg-card text-primary shadow-sm ring-1 ring-foreground/5"
-                : "text-muted-foreground hover:text-foreground",
-            )}
-            aria-pressed={active}
-            aria-label={option.label}
-            title={option.label}
-            onClick={() => onChange(option.value)}
-          >
-            <option.icon className="h-4 w-4" />
-          </button>
-        );
-      })}
     </div>
   );
 }

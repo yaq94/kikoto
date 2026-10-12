@@ -30,7 +30,7 @@ export function useFavoriteShelfCovers({
     if (!enabled || loadedKeyRef.current === key) return;
     const controller = new AbortController();
     api
-      .listFavoriteWorksPage(1, coverSampleSize, "", listID, "all", "all", [], "added", "desc", 1, controller.signal)
+      .listFavoriteWorksPage(1, coverSampleSize, "", listID, "all", "all", "added", "desc", 1, controller.signal)
       .then((result) => {
         if (controller.signal.aborted) return;
         loadedKeyRef.current = key;

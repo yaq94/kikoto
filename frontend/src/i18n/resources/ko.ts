@@ -171,9 +171,17 @@ const collectionKorean = {
   pageSize: "페이지당 항목 수: {{value}}",
   itemsPerPage: "페이지당 항목 수",
 
-  compactCards: "컴팩트 카드",
-
-  compactCardsHint: "휴대폰에서 작은 작품 카드 사용",
+  cardMode: "카드",
+  cardModes: {
+    full: "전체",
+    compact: "컴팩트",
+    mini: "미니",
+  },
+  cardModeOptions: {
+    full: "전체 카드: 모든 정보 표시",
+    compact: "컴팩트 카드: 간추린 정보 표시",
+    mini: "미니 카드: 커버와 제목만 표시",
+  },
   coverSources: "커버 소스 표시",
   coverSourceModes: {
     auto: "자동: 현재 소스와 다르거나 문제가 있는 표시만",
@@ -193,6 +201,13 @@ const collectionKorean = {
   columnsHeading: "열",
   displayOptions: "표시 옵션",
   displayOptionsValue: "표시 옵션 ({{value}})",
+  viewMode: "보기",
+  gridView: "그리드 보기",
+  listView: "목록 보기",
+  viewModes: {
+    grid: "그리드",
+    list: "목록",
+  },
   column_one: "{{count}}열",
   column_other: "{{count}}열",
   loadingWorks: "작품을 불러오는 중",

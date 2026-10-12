@@ -5,6 +5,7 @@ import {
   libraryBrowseSearch,
   libraryBrowseStateFromSearch,
   libraryBrowseStateFromValue,
+  localPageSize,
   normalizeLibraryBrowseLocation,
   withSharedLibraryQuery,
 } from "./libraryBrowseState";
@@ -15,6 +16,12 @@ describe("library browse state", () => {
     expect(defaultLibraryBrowseState.direction).toBe("desc");
     expect(defaultLibraryBrowseState.mobileColumns).toBe("auto");
     expect(defaultLibraryBrowseState.desktopColumns).toBe("auto");
+  });
+
+  it("keeps a local page size the picker offers and defaults any other", () => {
+    expect([24, 48, 96].map(localPageSize)).toEqual([24, 48, 96]);
+    expect(localPageSize(12)).toBe(24);
+    expect(localPageSize(100)).toBe(24);
   });
 
   it("keeps only semantic search fields in the canonical URL", () => {

@@ -165,9 +165,17 @@ export const collectionEnglish = {
   pageSize: "Items per page: {{value}}",
   itemsPerPage: "Items per page",
 
-  compactCards: "Compact cards",
-
-  compactCardsHint: "Smaller cards on phones",
+  cardMode: "Cards",
+  cardModes: {
+    full: "Full",
+    compact: "Compact",
+    mini: "Mini",
+  },
+  cardModeOptions: {
+    full: "Full cards with every detail",
+    compact: "Compact cards with fewer details",
+    mini: "Mini cards with the cover and title only",
+  },
   coverSources: "Cover source marks",
   coverSourceModes: {
     auto: "Auto: only marks that differ from the current source",
@@ -187,6 +195,13 @@ export const collectionEnglish = {
   columnsHeading: "Columns",
   displayOptions: "Display options",
   displayOptionsValue: "Display options ({{value}})",
+  viewMode: "View",
+  gridView: "Grid view",
+  listView: "List view",
+  viewModes: {
+    grid: "Grid",
+    list: "List",
+  },
   column_one: "{{count}} column",
   column_other: "{{count}} columns",
   loadingWorks: "Loading works",

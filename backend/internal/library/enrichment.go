@@ -76,16 +76,9 @@ type Progress struct {
 	Completed       bool
 }
 
-func (s *Store) LoadMediaSelections(ctx context.Context, workIDs []int64) (map[int64]MediaSelection, error) {
-	result := map[int64]MediaSelection{}
-	query, args := int64InQuery(`
-		SELECT current.work_id, edition.work_id, edition.primary_code, edition.translation_kind
-		FROM work_edition AS current
-		INNER JOIN work_edition AS edition ON edition.logical_work_id = current.logical_work_id
-		WHERE current.work_id IN (%s)
-			AND EXISTS (SELECT 1 FROM media_item WHERE media_item.work_id = edition.work_id)
-		ORDER BY current.work_id,
-			EXISTS (
+// mediaEditionOrderSQL ranks the editions of a family that have media: one
+// with available local files first, then the canonical edition, then by code.
+const mediaEditionOrderSQL = `EXISTS (
 				SELECT 1
 				FROM media_item AS local_item
 				INNER JOIN media_file_location AS local_location ON local_location.media_item_id = local_item.id
@@ -94,8 +87,65 @@ func (s *Store) LoadMediaSelections(ctx context.Context, workIDs []int64) (map[i
 					AND local_location.availability = 'available'
 			) DESC,
 			edition.is_canonical DESC,
-			edition.primary_code ASC
-	`, workIDs)
+			edition.primary_code ASC`
+
+// selectedMediaWorkSQL is the work whose media a card for work.id shows: the
+// first edition of its family by mediaEditionOrderSQL, or the work itself.
+const selectedMediaWorkSQL = `COALESCE((
+		SELECT edition.work_id
+		FROM work_edition AS current
+		INNER JOIN work_edition AS edition ON edition.logical_work_id = current.logical_work_id
+		WHERE current.work_id = work.id
+			AND EXISTS (SELECT 1 FROM media_item WHERE media_item.work_id = edition.work_id)
+		ORDER BY ` + mediaEditionOrderSQL + `
+		LIMIT 1
+	), work.id)`
+
+func selectedMediaLocationExists(locationTypes string) string {
+	return `EXISTS (
+		SELECT 1
+		FROM media_file_location AS badge_location
+		INNER JOIN media_item AS badge_item ON badge_item.id = badge_location.media_item_id
+		WHERE badge_item.work_id = ` + selectedMediaWorkSQL + `
+			AND badge_location.availability = 'available'
+			AND badge_location.location_type IN (` + locationTypes + `)
+	)`
+}
+
+// AvailabilityBadgeWhere filters works by the availability badge their card
+// shows, so a filter and the cards it returns agree. A card reads the
+// available locations of its selected media edition and adds Local when any
+// edition of the family has an available local presence; without either it is
+// Missing. It returns "" for an unknown badge. The media edition a card finds
+// only through provider language-edition codes, with no stored family, is not
+// followed here.
+func AvailabilityBadgeWhere(badge string) string {
+	const remoteTypes = "'remote_stream','remote_download'"
+	switch badge {
+	case "local":
+		return "(" + selectedMediaLocationExists("'local'") + " OR " + localPresenceWhereClause() + ")"
+	case "cache":
+		return selectedMediaLocationExists("'cache'")
+	case "remote":
+		return selectedMediaLocationExists(remoteTypes)
+	case "available":
+		return "(" + selectedMediaLocationExists("'local','cache',"+remoteTypes) + " OR " + localPresenceWhereClause() + ")"
+	case "missing":
+		return "NOT " + AvailabilityBadgeWhere("available")
+	default:
+		return ""
+	}
+}
+
+func (s *Store) LoadMediaSelections(ctx context.Context, workIDs []int64) (map[int64]MediaSelection, error) {
+	result := map[int64]MediaSelection{}
+	query, args := int64InQuery(`
+		SELECT current.work_id, edition.work_id, edition.primary_code, edition.translation_kind
+		FROM work_edition AS current
+		INNER JOIN work_edition AS edition ON edition.logical_work_id = current.logical_work_id
+		WHERE current.work_id IN (%s)
+			AND EXISTS (SELECT 1 FROM media_item WHERE media_item.work_id = edition.work_id)
+		ORDER BY current.work_id, `+mediaEditionOrderSQL, workIDs)
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err

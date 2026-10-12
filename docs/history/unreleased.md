@@ -8,6 +8,13 @@
   **Local**, **Remote**, and **Unavailable** counts filter the works when
   pressed, and a circle that was never pulled says that only works the library
   already knows are listed.
+- Library display options replace the phone-only **Compact cards** switch with
+  a **Cards** choice of **Full**, **Compact**, and **Mini**, available on
+  phones and wide screens and remembered separately for each. Compact on wide
+  screens uses short tiles, and Mini shows only the cover and title so a large
+  library can be scanned by its artwork. A device that had Compact cards on
+  keeps compact phone cards.
+- Local and Tracked can show 96 works per page.
 - **Insights** is a sidebar page for the account's own listening. It opens
   with a calendar of the past year, keeps the 30-day, 12-month, and all-time
   listening report, and ranks tags, voices, and circles by preference (share
@@ -39,3 +46,13 @@
   `language_editions` responses as well as arrays. Comma-separated language
   values are matched to their labeled edition so affected work families can
   synchronize normally.
+- On wide screens the Library sort control is one button that names the
+  current order and its direction. Its popover holds the orders and the
+  direction, and the Recommended and Random orders keep a refresh button
+  beside it.
+- The Favorites resource filter offers All, Available, Local, Remote, and
+  Missing in a narrower popover, in place of the cached and per-source
+  choices. It follows the availability each card shows, so a work whose files
+  belong to another language edition, or whose local folder has no indexed
+  tracks, is filtered as Local instead of Missing. The grid or list view moved
+  into display options.
