@@ -1,4 +1,4 @@
-import { type Dispatch, type RefObject, type SetStateAction, useEffect, useState } from "react";
+import { type Dispatch, type SetStateAction, useEffect, useState } from "react";
 
 import { workDetailCodeFromLocation } from "@/app/workDetailNavigation";
 import { loadWorkDetailStages } from "@/features/work-detail/loadWorkDetailStages";
@@ -8,7 +8,7 @@ import {
   setCachedWorkMedia,
 } from "@/features/work-detail/media/workMediaCache";
 import { directoryLoadErrorMessage, type WorkPreview } from "@/features/work-detail/workDetailShared";
-import { api, type Work, type WorkDetail } from "@/lib/api";
+import { api, type WorkDetail } from "@/lib/api";
 import type { ClientPrincipalID } from "@/lib/clientStorageScope";
 
 import { workLoadFailure, type WorkLoadFailure } from "./workLoadFailure";
@@ -64,26 +64,20 @@ async function resolveAndOpenWork(
 }
 
 /**
- * Loads the work selected by the Library route: its summary first, then its
- * media directory, so a directory failure keeps the rendered summary.
- * `listedWorksRef` supplies a known work id and preview for a code opened
- * from the list.
+ * Loads the work selected by the work detail route: its summary first, then
+ * its media directory, so a directory failure keeps the rendered summary. The
+ * history entry supplies a known work id and preview for a work opened from a
+ * list.
  */
 export function useLibraryWorkDetail({
-  active,
   principalID,
   selectedCode,
   onCodeResolved,
-  listedWorksRef,
-  listedWorkCount,
 }: {
-  active: boolean;
   principalID: ClientPrincipalID;
   selectedCode: string | null;
   /** The selected code names another edition of the work that was loaded. */
   onCodeResolved: (code: string | null) => void;
-  listedWorksRef: RefObject<Work[]>;
-  listedWorkCount: number;
 }) {
   const [work, setWork] = useState<WorkDetail | null>(null);
   const [loadFailure, setLoadFailure] = useState<WorkLoadFailure | null>(null);
@@ -95,7 +89,6 @@ export function useLibraryWorkDetail({
   const [mediaError, setMediaError] = useState("");
 
   useEffect(() => {
-    if (!active) return;
     if (selectedCode === null) {
       setWork(null);
       setLoadFailure(null);
@@ -106,12 +99,9 @@ export function useLibraryWorkDetail({
     setLoadFailure(null);
     setMediaError("");
     const controller = new AbortController();
-    const listedWork = listedWorksRef.current.find(
-      (item) => item.primaryCode.toUpperCase() === selectedCode.toUpperCase(),
-    );
     const historyPreview = workPreviewFromHistory(selectedCode);
-    const workID = listedWork?.id ?? historyPreview?.id ?? null;
-    setPreview(listedWork ?? historyPreview);
+    const workID = historyPreview?.id ?? null;
+    setPreview(historyPreview);
     if (workID !== null) {
       setMediaLoading(true);
       void loadWorkDetailStages(
@@ -157,7 +147,7 @@ export function useLibraryWorkDetail({
       controller.signal,
     );
     return () => controller.abort();
-  }, [active, principalID, selectedCode, loadAttempt, listedWorkCount, listedWorksRef, onCodeResolved]);
+  }, [principalID, selectedCode, loadAttempt, onCodeResolved]);
 
   const reload = async (workID: number, includeMedia = false) => {
     const detail = await api.getWorkSummary(workID);
@@ -178,9 +168,7 @@ export function useLibraryWorkDetail({
   return {
     work,
     preview,
-    setPreview,
     loadFailure,
-    clearLoadFailure: () => setLoadFailure(null),
     retry: () => setLoadAttempt((attempt) => attempt + 1),
     mediaLoading,
     mediaError,

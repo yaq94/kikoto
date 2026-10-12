@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { mobileTabSnapshotFromValue, readMobileTabSnapshot, writeMobileTabSnapshot } from "./mobileTabState";
-import { historyStateWithReturn } from "../lib/browserHistory";
+import { historyStateWithWorkDetailOwner } from "./workDetailNavigation";
 
 function memoryStorage(): Storage {
   const values = new Map<string, string>();
@@ -34,7 +34,10 @@ describe("mobile tab state", () => {
     ).toEqual({
       page: "library",
       location: "/RJ00000000?view=tracked",
-      state: { returnTo: "/?q=voice", workPreview: { primaryCode: "RJ00000000" } },
+      state: historyStateWithWorkDetailOwner(
+        { returnTo: "/?q=voice", workPreview: { primaryCode: "RJ00000000" } },
+        "library",
+      ),
       scrollY: 320,
     });
   });
@@ -68,17 +71,18 @@ describe("mobile tab state", () => {
     expect(readMobileTabSnapshot("example-server:user-1", "library")).toEqual({
       page: "library",
       location: "/RJ00000000?view=tracked#media",
-      state: { tab: "media" },
+      state: historyStateWithWorkDetailOwner({ tab: "media" }, "library"),
       scrollY: 240,
     });
     expect(readMobileTabSnapshot("example-server:user-1", "favorites")).toBeNull();
   });
 
-  it.each(["/circles/RG00000001", "/circles/RG00000001/series/example", "/voices/7", "/favorites"])(
-    "keeps the Library snapshot when a work is opened from %s and rejects an already saved foreign detail",
-    (returnTo) => {
+  it.each(["favorites", "circles", "voice-actors"] as const)(
+    "resumes a work opened from %s under that page and keeps the Library snapshot",
+    (owner) => {
       const sessionStorage = memoryStorage();
       vi.stubGlobal("window", { sessionStorage });
+      const detailState = historyStateWithWorkDetailOwner({ returnTo: "/RJ00000001" }, owner);
       writeMobileTabSnapshot(
         "example-server:user-1",
         "library",
@@ -86,38 +90,29 @@ describe("mobile tab state", () => {
         { libraryBrowseState: { page: 2 } },
         480,
       );
-      writeMobileTabSnapshot("example-server:user-1", "library", "/RJ00000000", { returnTo }, 0);
+      writeMobileTabSnapshot("example-server:user-1", "library", "/RJ00000000", detailState, 0);
+      writeMobileTabSnapshot("example-server:user-1", owner, "/RJ00000000", detailState, 0);
       expect(readMobileTabSnapshot("example-server:user-1", "library")).toEqual({
         page: "library",
         location: "/?q=Example",
         state: { libraryBrowseState: { page: 2 } },
         scrollY: 480,
       });
-      const key = sessionStorage.key(0)!;
-      sessionStorage.setItem(
-        key,
-        JSON.stringify({ page: "library", location: "/RJ00000000", state: { returnTo }, scrollY: 0 }),
-      );
-      expect(readMobileTabSnapshot("example-server:user-1", "library")).toBeNull();
+      expect(readMobileTabSnapshot("example-server:user-1", owner)).toEqual({
+        page: owner,
+        location: "/RJ00000000",
+        state: detailState,
+        scrollY: 0,
+      });
     },
   );
 
-  it("keeps the originating workspace through a nested work return entry", () => {
-    vi.stubGlobal("window", {
-      location: { pathname: "/RJ00000000", search: "", hash: "" },
-      history: { state: { returnTo: "/voices/7" } },
-      scrollY: 120,
-    });
+  it("rejects a snapshot whose location belongs to another page", () => {
     expect(
-      mobileTabSnapshotFromValue(
-        {
-          page: "library",
-          location: "/RJ00000001",
-          state: historyStateWithReturn("/RJ00000000", "Back to work"),
-          scrollY: 0,
-        },
-        "library",
-      ),
+      mobileTabSnapshotFromValue({ page: "favorites", location: "/voices/7", state: {}, scrollY: 0 }, "favorites"),
+    ).toBeNull();
+    expect(
+      mobileTabSnapshotFromValue({ page: "favorites", location: "/RJ00000000", state: {}, scrollY: 0 }, "favorites"),
     ).toBeNull();
   });
 

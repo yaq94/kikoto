@@ -111,6 +111,8 @@ export type PersistedPlayerTrack = {
     sourceName: string;
     availability: string;
   }[];
+  originPage?: string;
+  originWorkLocation?: string;
 };
 
 export const persistedTrack: PersistedPlayerTrack = {

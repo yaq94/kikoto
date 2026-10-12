@@ -370,7 +370,17 @@ test("mobile detail Back restores the favorites entry that opened it", async ({ 
   const initialRequests = requests["favorite-works"];
   await page.getByTestId("work-card").first().click();
   await expect(page.getByRole("heading", { name: "Example Work", exact: true })).toBeVisible();
+  // The work opens inside Favorites: its tab stays current while the detail is shown.
+  const favoritesTab = page.locator("footer").getByRole("button", { name: "Favorites", exact: true });
+  await expect(favoritesTab).toHaveAttribute("aria-current", "page");
   await page.getByRole("button", { name: "Back to favorites", exact: true }).click();
+  await expect(page).toHaveURL(/\/favorites\?q=Example$/);
+  await expect(page.getByTestId("work-card").first()).toBeVisible();
+  expect(requests["favorite-works"]).toBe(initialRequests);
+
+  await page.getByTestId("work-card").first().click();
+  await expect(page).toHaveURL(/\/RJ00000000$/);
+  await favoritesTab.click();
   await expect(page).toHaveURL(/\/favorites\?q=Example$/);
   await expect(page.getByTestId("work-card").first()).toBeVisible();
   expect(requests["favorite-works"]).toBe(initialRequests);
@@ -658,13 +668,15 @@ for (const creator of [
       await expect(page).toHaveURL((url) => url.pathname === creator.detail);
       await page.getByRole("heading", { name: "Example Work", exact: true }).click();
       await expect(page).toHaveURL((url) => url.pathname === "/RJ00000000" && !url.searchParams.has("q"));
+      // The work belongs to the page it was opened from, not to Library.
+      const creatorTab = navigation.getByRole("button", { name: creator.tab, exact: true });
+      await expect(creatorTab).toHaveAttribute("aria-current", "page");
       if (!desktop) {
         await navigation.getByRole("button", { name: "Library", exact: true }).click();
         await expect(page).toHaveURL((url) => url.pathname === "/" && url.searchParams.get("q") === "Example");
-        await navigation.getByRole("button", { name: creator.tab, exact: true }).click();
-        await expect(page).toHaveURL((url) => url.pathname === creator.detail);
-        await page.getByRole("heading", { name: "Example Work", exact: true }).click();
+        await creatorTab.click();
         await expect(page).toHaveURL((url) => url.pathname === "/RJ00000000" && !url.searchParams.has("q"));
+        await expect(creatorTab).toHaveAttribute("aria-current", "page");
       }
       await page.getByRole("main").getByRole("button", { name: creator.back, exact: true }).click();
       await expect(page).toHaveURL((url) => url.pathname === creator.detail);

@@ -107,12 +107,18 @@ move. A domain earns its own feature boundary after it owns a real page or flow
 and several mostly private components, models, or hooks. App composition or a
 small shared contract should resolve cross-domain needs.
 
-Library work detail lives in `features/work-detail` and loads as its own chunk
-through the feature's single lazy entry, `lazyWorkDetail`. The app shell
-recognizes a direct work link with `workDetailCodeFromLocation` from
-`app/workDetailNavigation` and starts the detail chunk beside the Library chunk
-instead of after it; an idle Library also preloads it, so opening a work
-normally renders without suspending. Library, circle, voice actor, and work
+Work detail lives in `features/work-detail` and loads as its own chunk
+through the feature's single lazy entry, `lazyWorkDetail`. It is a page of its
+own rather than a Library route: the shell mounts one `WorkDetailPage`, which
+loads the work the location names and renders it over the page the work was
+opened from. That page stays mounted and hidden, so only one detail loads,
+checks sources, or follows playback however many destinations have a work
+open. The browse lists learn what a detail changed from `app/workDetailEvents`
+(a changed listening status, a play, a changed set of works) instead of
+sharing state with it. The app shell recognizes a direct work link with
+`workDetailCodeFromLocation` from `app/workDetailNavigation` and starts the
+detail chunk with the session request; an idle Library also preloads it, so
+opening a work normally renders without suspending. Library, circle, voice actor, and work
 detail surfaces load the remote Fetch workspace dialog on demand through
 `LazyRemoteFetchWorkspaceDialog`, which mounts it only while a draft is open
 and closes the draft with a toast if its chunk fails to load. The production
@@ -161,16 +167,17 @@ and list management live in `features/favorites`. List icons come from a
 shared catalog in `components/favorite-list`, so the work card's list menu and
 Favorites draw the same icon for a stored key.
 
-The Library page is the route controller: it keeps the active source tab and
-scope, the browse controls with their history and storage restoration, and the
-work the route selects. The rest lives in `pages/library`. `libraryRoutes` and
+The Library page is the list's route controller: it keeps the active source
+tab and scope and the browse controls with their history and storage
+restoration. The rest lives in `pages/library`. `libraryRoutes` and
 `libraryBrowseModel` are the pure route and browse-state models.
 `useLocalLibraryWorks` and `useRemoteSourceWorks` load the local and remote
-result pages for the controls they are given, and `useLibraryWorkDetail` loads
-the selected work. `useLibraryRecommendations` owns the recommendation session,
-the score badge preference, list telemetry, and the explanation state. The
-toolbars, source tabs, search clause editor, local and remote result panels,
-work cards, and the detail surface are components there. The local and remote
+result pages for the controls they are given. `useLibraryRecommendations` owns
+the recommendation session, the score badge preference, list telemetry, and the
+explanation state. The toolbars, source tabs, search clause editor, local and
+remote result panels, and work cards are components there. `WorkDetailPage`
+uses the same folder's work-route helpers, and `useLibraryWorkDetail` loads
+the work its route selects. The local and remote
 loaders share one set of browse controls, so tab, search, sort, and page state
 stay with the page instead of being divided between them.
 
@@ -491,10 +498,25 @@ volatile queue with a diagnostic and a normal network loss window of up to
   suspending: React holds a shown Suspense fallback for at least 300ms, which
   would otherwise delay the page and the requests its effects start. An inactive
   workspace is hidden, cancels unfinished detail/list work, and pauses polling.
-- Retain a visited Library, Circle, or Voice actor list when opening its detail
-  route. Detail URLs do not reinitialize list controls or fetch a replacement
-  collection. Returning reveals the loaded cards and restores the originating
-  history entry's filters and page before list effects may write or fetch.
+- Retain a visited list when opening a detail route from it: a circle, a voice
+  actor, or a work opened from any page. Detail URLs do not reinitialize list
+  controls or fetch a replacement collection. Returning reveals the loaded
+  cards and restores the originating history entry's filters and page before
+  list effects may write or fetch.
+- A work detail entry belongs to the page it was opened from. The work URL
+  stays the canonical `/<primary_code>`; the history entry records its owner
+  when it is created (`historyStateForNavigation` in `app/appRoutes`), a work
+  opened from another work inherits that work's owner, and a direct link
+  belongs to Library. The owner decides which navigation item is current, which
+  list Back falls back to, and which destination resumes the entry.
+- A queued track records the page it was queued from and, when that was a work
+  detail, its location, because a track of another edition carries that
+  edition's code rather than the work the listener opened. On the
+  bottom-navigation layout the Full player's cover leads back there
+  (`app/playingWorkNavigation`): the origin destination resumes its own entry
+  when it still shows the work and otherwise opens the work as its own, with
+  Back returning to where the cover was tapped. On wide layouts, and for a
+  track with no recorded origin, the work opens in the current page.
 - Keep destination switches proportional to the workspaces that change. A
   workspace that stays hidden skips shell-driven renders, and browse list items
   are memoized with stable item handlers (`useStableCallback`) so a page render
@@ -502,12 +524,11 @@ volatile queue with a diagnostic and a normal network loss window of up to
 - Browse workspaces share the window scroll position. When a retained workspace
   becomes active, the shell applies that history entry's scroll offset before the
   first paint; a resumed workspace does not replay its own stored list offset.
-- Tapping the active Library, Circles, or Voice Actors destination from its
-  detail route returns to that workspace's last list state. Work detail routes
-  use the Library renderer, but a work opened from another workspace does not
-  replace Library's saved destination. Only Library-origin details and direct
-  work links are resumed by its tab; existing cross-workspace detail snapshots
-  are ignored so Library remains reachable after returning to a creator.
+- Tapping the active destination from a detail route, including a work opened
+  from it, returns to that workspace's last list state. Each destination
+  resumes only the entries it owns, so a work opened from Favorites, Circles,
+  or Voice Actors resumes under that destination and never replaces Library's
+  saved destination.
 - Distinguish native client-old, server-old, and network-disconnected states;
   version actions open signed GitHub Releases and never imply silent install.
   The client kind shown in the account panel, version messages, and copied

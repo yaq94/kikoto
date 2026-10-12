@@ -164,13 +164,18 @@ export function recentWorkSourceIntent(work: Work): DetailSourceIntent {
   return hasLocal || !hasTracked ? "local" : "tracked";
 }
 
+/** A work route that names a remote source without a persisted work's remote view. */
+export function isRemoteOnlyWorkLocation(search: string) {
+  const params = new URLSearchParams(search);
+  if (params.get("view") === "remote") return false;
+  const sourceID = Number(params.get("source"));
+  return Number.isFinite(sourceID) && sourceID > 0;
+}
+
 export function remoteTargetFromLocation(path: string, search: string, sources: LibrarySource[]) {
   const code = workDetailCodeFromLocation(path, search);
-  if (!code) return null;
-  const params = new URLSearchParams(search);
-  if (params.get("view") === "remote") return null;
-  const sourceID = Number(params.get("source"));
-  if (!Number.isFinite(sourceID) || sourceID <= 0) return null;
+  if (!code || !isRemoteOnlyWorkLocation(search)) return null;
+  const sourceID = Number(new URLSearchParams(search).get("source"));
   const source = sources.find((candidate) => candidate.id === sourceID);
   const preview = remoteWorkPreviewFromHistory(code);
   return source ? { source, code, ...(preview ? { preview } : {}) } : null;

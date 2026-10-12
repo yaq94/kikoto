@@ -1,5 +1,11 @@
 # Unreleased
 
+- A work opens inside the page it was opened from. Opening a work from
+  Favorites, Circles, or Voice Actors keeps that destination selected in the
+  navigation, Back returns to it, and on phones each bottom tab resumes its own
+  open work. Tapping the selected tab again returns to its list. A work address
+  opened directly belongs to Library. On phones, double-tapping the Full
+  player's cover returns to the tab the playback started from.
 - **Circles** and **Voice Actors** list each creator as a cover tile with an
   availability bar for local, remote-only, and missing works, and show the
   latest release date in place of the latest work code. Their views are

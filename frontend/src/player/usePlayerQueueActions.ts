@@ -1,5 +1,6 @@
 import { useCallback, useRef, useState, type Dispatch, type SetStateAction } from "react";
 
+import { currentPlaybackOrigin } from "@/app/playingWorkNavigation";
 import { useToast } from "@/components/ui/toast";
 import { useStableCallback } from "@/hooks/useStableCallback";
 import { api } from "@/lib/api";
@@ -54,7 +55,12 @@ export function usePlayerQueueActions({
   lyricsPreferenceOverridesRef.current = lyricsPreferenceOverrides;
 
   const prepareTrack = (track: PlayerTrack) =>
-    withQueueIdentity(applyLyricsPreferenceOverride(track, lyricsPreferenceOverridesRef.current));
+    withQueueIdentity(
+      applyLyricsPreferenceOverride(
+        track.originPage ? track : { ...track, ...currentPlaybackOrigin() },
+        lyricsPreferenceOverridesRef.current,
+      ),
+    );
 
   const playQueue = useStableCallback((tracks: PlayerTrack[], locationId: number, startPositionSeconds?: number) => {
     if (tracks.length === 0) return;
