@@ -60,7 +60,14 @@ func (s *Server) loadWorkMetadataTags(ctx context.Context, workID int64) (workMe
 		if result.Tags, err = metadatatags.Localize(ctx, s.db, result.Tags, tagLanguages); err != nil {
 			return result, err
 		}
-		result.InheritedTags, err = metadatatags.Localize(ctx, s.db, result.InheritedTags, tagLanguages)
+		if result.InheritedTags, err = metadatatags.Localize(ctx, s.db, result.InheritedTags, tagLanguages); err != nil {
+			return result, err
+		}
 	}
+	// The editor shows these tags in one language at a time.
+	if result.Tags, err = metadatatags.WithNames(ctx, s.db, result.Tags); err != nil {
+		return result, err
+	}
+	result.InheritedTags, err = metadatatags.WithNames(ctx, s.db, result.InheritedTags)
 	return result, err
 }

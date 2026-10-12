@@ -81,6 +81,61 @@ export function metadataTagLanguageName(
 }
 
 /**
+ * The name a tag shows in one language once a draft of its manual names is
+ * saved: a drafted name replaces that language's manual name and an empty
+ * draft removes it. `own` is false when the language has no name of its own
+ * and shows the all-language name or the display name.
+ */
+export function metadataTagNameIn(
+  tag: { names?: MetadataTagName[]; displayName: string },
+  language: string,
+  drafts: Record<string, string> = {},
+): { name: string; own: boolean } {
+  const names: MetadataTagName[] = [
+    ...Object.entries(drafts).map(([draftLanguage, name]) => ({ language: draftLanguage, name, source: "manual" })),
+    ...(tag.names ?? []).filter((name) => !(name.source === "manual" && name.language in drafts)),
+  ];
+  const shown = metadataTagLanguageName({ names }, language);
+  return shown ? { name: shown.name.trim(), own: shown.language === language } : { name: tag.displayName, own: false };
+}
+
+/**
+ * The tag's display name and its own names in the supported languages, apart
+ * from the one already shown, once each ignoring case. A list row offers them
+ * as the tag's other names.
+ */
+export function metadataTagAlternateNames(
+  tag: { names?: MetadataTagName[]; displayName: string },
+  shown: string,
+  drafts: Record<string, string> = {},
+): string[] {
+  const seen = new Set([sameNameKey(shown)]);
+  const candidates = [
+    tag.displayName,
+    ...metadataTagNameLanguages
+      .map(([language]) => metadataTagNameIn(tag, language, drafts))
+      .filter((name) => name.own)
+      .map((name) => name.name),
+  ];
+  return candidates
+    .map((name) => name.trim())
+    .filter((name) => {
+      const key = sameNameKey(name);
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+}
+
+/** Whether a name is the tag's display name or any of its names, ignoring case. */
+export function metadataTagHasName(tag: { names?: MetadataTagName[]; displayName: string }, name: string) {
+  return (
+    sameMetadataTagName(tag.displayName, name) ||
+    (tag.names ?? []).some((value) => sameMetadataTagName(value.name, name))
+  );
+}
+
+/**
  * Every known name no language column shows, once each ignoring case: names
  * a manual name replaced, names without a language, and a stored display
  * name that has no name record.

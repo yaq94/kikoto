@@ -14,7 +14,12 @@ import { MetadataEditorPurchaseBonusSection, type StagedPurchaseBonus } from "./
 import { WorkMetadataTagsSection } from "./WorkMetadataTagsSection";
 import { WorkTitleEditor } from "./WorkTitleEditor";
 import { MetadataLanguageScopeTabs } from "./MetadataLanguageScopeTabs";
-import { metadataLanguageScopes, type MetadataLanguageScope } from "./metadataLanguageScope";
+import {
+  allMetadataLanguagesScope,
+  findMetadataLanguageScope,
+  metadataLanguageScopeForVariant,
+  metadataLanguageScopes,
+} from "./metadataLanguageScope";
 import { MetadataPreviewDialog, type MetadataPreviewSelections } from "./MetadataPreviewDialog";
 import type { WorkMetadataPreview, WorkMetadataPreviewValues } from "@/lib/api";
 import {
@@ -77,13 +82,10 @@ export function WorkMetadataEditorModal({
     // maintenance editor should start with every language visible, even when
     // the work has a default provider variant.
     const preferredKey = selectedMetadataVariantKey?.trim();
-    const selected = preferredKey
-      ? scopes.find((scope) => scope.variant?.key === preferredKey)
-      : scopes.find((scope) => scope.key === "all");
-    return selected?.key ?? scopes[0]?.key ?? "all";
+    const selected = preferredKey ? metadataLanguageScopeForVariant(scopes, preferredKey) : undefined;
+    return (selected ?? allMetadataLanguagesScope).key;
   });
-  const languageScope: MetadataLanguageScope = scopes.find((scope) => scope.key === languageScopeKey) ??
-    scopes[0] ?? { key: "all", language: "", origin: false, label: "All", variant: null };
+  const languageScope = findMetadataLanguageScope(scopes, languageScopeKey) ?? allMetadataLanguagesScope;
   const [initialState] = useState(() => metadataEditorInitialState(work));
   const manual = initialState.manual;
   const [titleDrafts, setTitleDrafts] = useState<Record<string, string>>({});
@@ -231,184 +233,187 @@ export function WorkMetadataEditorModal({
   const sectionLabel = (id: MetadataEditorSection) => t(`metadataEditor.sections.${id}`);
 
   return (
-    <Dialog
-      onClose={requestClose}
-      size="2xl"
-      dismissible={false}
-      marker="work-metadata-editor"
-      className="h-[var(--dialog-max-height)] sm:h-[min(42rem,var(--dialog-max-height))]"
-    >
-      <DialogHeader
-        title={t("libraryDetail.editMetadata")}
-        description={
-          <span className="flex min-w-0 items-baseline gap-2">
-            <span className="shrink-0 font-mono text-xs">{work.primaryCode}</span>
-            <span className="truncate">{work.title}</span>
-          </span>
-        }
-        onClose={saving ? undefined : requestClose}
-        closeLabel={t("content.close")}
-      />
-      <div
-        className="flex min-h-0 flex-1 flex-col sm:flex-row"
-        onKeyDown={(event) => {
-          if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
-            event.preventDefault();
-            void save();
-          }
-        }}
+    <>
+      <Dialog
+        onClose={requestClose}
+        size="2xl"
+        dismissible={false}
+        marker="work-metadata-editor"
+        className="h-[var(--dialog-max-height)] sm:h-[min(42rem,var(--dialog-max-height))]"
       >
+        <DialogHeader
+          title={t("libraryDetail.editMetadata")}
+          description={
+            <span className="flex min-w-0 items-baseline gap-2">
+              <span className="shrink-0 font-mono text-xs">{work.primaryCode}</span>
+              <span className="truncate">{work.title}</span>
+            </span>
+          }
+          onClose={saving ? undefined : requestClose}
+          closeLabel={t("content.close")}
+        />
         <div
-          role="tablist"
-          aria-label={t("metadataEditor.sectionsLabel")}
-          className="app-scrollbar flex shrink-0 gap-1 overflow-x-auto overflow-y-hidden border-b px-3 py-2 sm:w-48 sm:flex-col sm:overflow-visible sm:border-b-0 sm:border-r sm:px-2 sm:py-3"
+          className="flex min-h-0 flex-1 flex-col sm:flex-row"
+          onKeyDown={(event) => {
+            if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+              event.preventDefault();
+              void save();
+            }
+          }}
         >
-          {sections.map(({ id, icon: Icon }) => {
-            const selected = section === id;
-            return (
-              <button
-                key={id}
-                ref={(element) => {
-                  tabRefs.current[id] = element;
-                }}
-                type="button"
-                role="tab"
-                id={`metadata-editor-tab-${id}`}
-                aria-selected={selected}
-                aria-controls="metadata-editor-panel"
-                tabIndex={selected ? 0 : -1}
-                className={cn(
-                  "relative flex h-9 shrink-0 items-center gap-2 rounded-md px-3 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                  selected
-                    ? "bg-secondary font-medium text-secondary-foreground"
-                    : "text-muted-foreground hover:bg-muted hover:text-foreground",
-                )}
-                onClick={() => setSection(id)}
-                onKeyDown={onTabKeyDown}
-              >
-                <Icon className="h-4 w-4 shrink-0" />
-                <span className="whitespace-nowrap sm:flex-1 sm:text-left">{sectionLabel(id)}</span>
-                {changed[id] && (
-                  <span className="h-2 w-2 shrink-0 rounded-full bg-primary">
-                    <span className="sr-only">{t("metadataEditor.unsavedMarker")}</span>
-                  </span>
-                )}
-              </button>
-            );
-          })}
+          <div
+            role="tablist"
+            aria-label={t("metadataEditor.sectionsLabel")}
+            className="app-scrollbar flex shrink-0 gap-1 overflow-x-auto overflow-y-hidden border-b px-3 py-2 sm:w-48 sm:flex-col sm:overflow-visible sm:border-b-0 sm:border-r sm:px-2 sm:py-3"
+          >
+            {sections.map(({ id, icon: Icon }) => {
+              const selected = section === id;
+              return (
+                <button
+                  key={id}
+                  ref={(element) => {
+                    tabRefs.current[id] = element;
+                  }}
+                  type="button"
+                  role="tab"
+                  id={`metadata-editor-tab-${id}`}
+                  aria-selected={selected}
+                  aria-controls="metadata-editor-panel"
+                  tabIndex={selected ? 0 : -1}
+                  className={cn(
+                    "relative flex h-9 shrink-0 items-center gap-2 rounded-md px-3 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                    selected
+                      ? "bg-secondary font-medium text-secondary-foreground"
+                      : "text-muted-foreground hover:bg-muted hover:text-foreground",
+                  )}
+                  onClick={() => setSection(id)}
+                  onKeyDown={onTabKeyDown}
+                >
+                  <Icon className="h-4 w-4 shrink-0" />
+                  <span className="whitespace-nowrap sm:flex-1 sm:text-left">{sectionLabel(id)}</span>
+                  {changed[id] && (
+                    <span className="h-2 w-2 shrink-0 rounded-full bg-primary">
+                      <span className="sr-only">{t("metadataEditor.unsavedMarker")}</span>
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+          <DialogBody
+            id="metadata-editor-panel"
+            role="tabpanel"
+            aria-labelledby={`metadata-editor-tab-${section}`}
+            className="sm:px-6 sm:py-5"
+          >
+            <MetadataLanguageScopeTabs scopes={scopes} selected={languageScope.key} onSelect={setLanguageScopeKey} />
+            {/* Demo opens the editor for inspection; every field stays visible but cannot be changed. */}
+            <fieldset disabled={readOnly || saving} className="m-0 min-w-0 space-y-5 border-0 p-0">
+              <p className="text-sm text-muted-foreground">{t(`metadataEditor.descriptions.${section}`)}</p>
+              {section === "title" && (
+                <WorkTitleEditor
+                  work={work}
+                  selectedMetadataVariantKey={selectedMetadataVariantKey}
+                  languageScope={languageScope}
+                  drafts={titleDrafts}
+                  onDraft={(language, title) => setTitleDrafts((current) => ({ ...current, [language]: title }))}
+                />
+              )}
+              {section === "cover" && (
+                <MetadataEditorCoverSection
+                  manualCover={manual.cover}
+                  providerCoverUrl={coverState.providerCoverUrl}
+                  providerSource={providerCoverSource(work.metadataSync)}
+                  candidates={coverState.coverCandidates}
+                  selected={coverChoice}
+                  status={coverFieldStatus({
+                    manualCover: manual.cover,
+                    selectedCoverId: coverState.selectedCoverId,
+                    initialCoverId: coverState.initialCoverId,
+                    reverted: coverReverted,
+                  })}
+                  loading={coverState.loadingCovers}
+                  onSelect={selectCover}
+                />
+              )}
+              {section === "tags" && <WorkMetadataTagsSection editor={tagEditor} languageScope={languageScope} />}
+              {section === "credits" && <MetadataEditorCreditsSection editor={credits} />}
+              {section === "source" && (
+                <div className="space-y-4">
+                  <MetadataEditorSourceSection
+                    link={work.metadataLink}
+                    primaryCode={work.primaryCode}
+                    staged={stagedLink}
+                    onStage={setStagedLink}
+                  />
+                  <MetadataEditorPurchaseBonusSection
+                    bonus={work.purchaseBonus}
+                    primaryCode={work.primaryCode}
+                    staged={stagedBonus}
+                    onStage={setStagedBonus}
+                  />
+                  <MetadataEditorFamilySection work={work} languageScope={languageScope} />
+                </div>
+              )}
+            </fieldset>
+          </DialogBody>
         </div>
-        <DialogBody
-          id="metadata-editor-panel"
-          role="tabpanel"
-          aria-labelledby={`metadata-editor-tab-${section}`}
-          className="sm:px-6 sm:py-5"
-        >
-          <MetadataLanguageScopeTabs scopes={scopes} selected={languageScope.key} onSelect={setLanguageScopeKey} />
-          {/* Demo opens the editor for inspection; every field stays visible but cannot be changed. */}
-          <fieldset disabled={readOnly || saving} className="m-0 min-w-0 space-y-5 border-0 p-0">
-            <p className="text-sm text-muted-foreground">{t(`metadataEditor.descriptions.${section}`)}</p>
-            {section === "title" && (
-              <WorkTitleEditor
-                work={work}
-                selectedMetadataVariantKey={selectedMetadataVariantKey}
-                languageScope={languageScope}
-                drafts={titleDrafts}
-                onDraft={(language, title) => setTitleDrafts((current) => ({ ...current, [language]: title }))}
-              />
-            )}
-            {section === "cover" && (
-              <MetadataEditorCoverSection
-                manualCover={manual.cover}
-                providerCoverUrl={coverState.providerCoverUrl}
-                providerSource={providerCoverSource(work.metadataSync)}
-                candidates={coverState.coverCandidates}
-                selected={coverChoice}
-                status={coverFieldStatus({
-                  manualCover: manual.cover,
-                  selectedCoverId: coverState.selectedCoverId,
-                  initialCoverId: coverState.initialCoverId,
-                  reverted: coverReverted,
-                })}
-                loading={coverState.loadingCovers}
-                onSelect={selectCover}
-              />
-            )}
-            {section === "tags" && <WorkMetadataTagsSection editor={tagEditor} />}
-            {section === "credits" && <MetadataEditorCreditsSection editor={credits} />}
-            {section === "source" && (
-              <div className="space-y-4">
-                <MetadataEditorSourceSection
-                  link={work.metadataLink}
-                  primaryCode={work.primaryCode}
-                  staged={stagedLink}
-                  onStage={setStagedLink}
-                />
-                <MetadataEditorPurchaseBonusSection
-                  bonus={work.purchaseBonus}
-                  primaryCode={work.primaryCode}
-                  staged={stagedBonus}
-                  onStage={setStagedBonus}
-                />
-                <MetadataEditorFamilySection work={work} languageScope={languageScope} />
-              </div>
-            )}
-          </fieldset>
-        </DialogBody>
-      </div>
-      <DialogFooter className="justify-between">
-        {confirmingDiscard ? (
-          <>
-            <span role="alert" className="min-w-0 text-sm font-medium">
-              {t("metadataEditor.discardPrompt")}
-            </span>
-            <div className="flex gap-2">
-              <Button variant="outline" size="sm" onClick={() => setConfirmingDiscard(false)}>
-                {t("metadataEditor.keepEditing")}
-              </Button>
-              <Button variant="destructive" size="sm" onClick={onClose}>
-                {t("metadataEditor.discard")}
-              </Button>
-            </div>
-          </>
-        ) : (
-          <>
-            <div className="flex min-w-0 flex-wrap items-center gap-2">
-              {canSyncMetadata && !readOnly && (
-                <Button variant="outline" size="sm" onClick={() => setPreviewOpen(true)}>
-                  {t("metadataEditor.fetchForEdit")}
+        <DialogFooter className="justify-between">
+          {confirmingDiscard ? (
+            <>
+              <span role="alert" className="min-w-0 text-sm font-medium">
+                {t("metadataEditor.discardPrompt")}
+              </span>
+              <div className="flex gap-2">
+                <Button variant="outline" size="sm" onClick={() => setConfirmingDiscard(false)}>
+                  {t("metadataEditor.keepEditing")}
                 </Button>
-              )}
-              {refreshActions}
-            </div>
-            <span
-              className={cn(
-                "min-w-0 truncate text-xs text-muted-foreground",
-                refreshActions && "order-last basis-full sm:order-none sm:basis-auto sm:flex-1",
-              )}
-              aria-live="polite"
-            >
-              {dirty
-                ? t("metadataEditor.unsavedSections", {
-                    sections: changedSections.map((item) => sectionLabel(item.id)).join(" · "),
-                  })
-                : t("metadataEditor.noChanges")}
-            </span>
-            <div className="ml-auto flex gap-2">
-              <Button variant="outline" size="sm" disabled={saving} onClick={requestClose}>
-                {t("content.cancel")}
-              </Button>
-              <Button
-                size="sm"
-                disabled={readOnly || saving || !dirty}
-                title={t("metadataEditor.saveShortcut")}
-                onClick={() => void save()}
+                <Button variant="destructive" size="sm" onClick={onClose}>
+                  {t("metadataEditor.discard")}
+                </Button>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="flex min-w-0 flex-wrap items-center gap-2">
+                {canSyncMetadata && !readOnly && (
+                  <Button variant="outline" size="sm" onClick={() => setPreviewOpen(true)}>
+                    {t("metadataEditor.fetchForEdit")}
+                  </Button>
+                )}
+                {refreshActions}
+              </div>
+              <span
+                className={cn(
+                  "min-w-0 truncate text-xs text-muted-foreground",
+                  refreshActions && "order-last basis-full sm:order-none sm:basis-auto sm:flex-1",
+                )}
+                aria-live="polite"
               >
-                {saving ? t("common.saving") : t("content.save")}
-              </Button>
-            </div>
-          </>
-        )}
-      </DialogFooter>
+                {dirty
+                  ? t("metadataEditor.unsavedSections", {
+                      sections: changedSections.map((item) => sectionLabel(item.id)).join(" · "),
+                    })
+                  : t("metadataEditor.noChanges")}
+              </span>
+              <div className="ml-auto flex gap-2">
+                <Button variant="outline" size="sm" disabled={saving} onClick={requestClose}>
+                  {t("content.cancel")}
+                </Button>
+                <Button
+                  size="sm"
+                  disabled={readOnly || saving || !dirty}
+                  title={t("metadataEditor.saveShortcut")}
+                  onClick={() => void save()}
+                >
+                  {saving ? t("common.saving") : t("content.save")}
+                </Button>
+              </div>
+            </>
+          )}
+        </DialogFooter>
+      </Dialog>
+      {/* A sibling, not a child: the editor panel clips and sizes anything rendered inside it. */}
       <MetadataPreviewDialog
         work={work}
         sources={sources}
@@ -417,6 +422,6 @@ export function WorkMetadataEditorModal({
         onClose={() => setPreviewOpen(false)}
         onApply={applyPreview}
       />
-    </Dialog>
+    </>
   );
 }

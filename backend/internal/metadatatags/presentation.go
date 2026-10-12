@@ -158,6 +158,25 @@ func Localize(ctx context.Context, q Querier, tags []EffectiveTag, priorities []
 	return result, nil
 }
 
+// WithNames attaches every known name of each tag, in the precedence order of
+// Load, so a caller can show the tags in any one language.
+func WithNames(ctx context.Context, q Querier, tags []EffectiveTag) ([]EffectiveTag, error) {
+	ids := make([]int64, 0, len(tags))
+	for _, tag := range tags {
+		ids = append(ids, tag.ID)
+	}
+	names, err := loadNamesBatch(ctx, q, ids)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]EffectiveTag, len(tags))
+	for index, tag := range tags {
+		tag.Names = names[tag.ID]
+		result[index] = tag
+	}
+	return result, nil
+}
+
 // loadNamesBatch reads the names of many concepts in the same precedence
 // order as loadNames.
 func loadNamesBatch(ctx context.Context, q Querier, ids []int64) (map[int64][]Name, error) {

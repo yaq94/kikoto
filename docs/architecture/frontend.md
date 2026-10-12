@@ -278,7 +278,9 @@ concepts, stages custom names and additions/removals, and can restore
 DLsite tags. Exact names in any known language reuse an existing concept after
 trimming and ignoring case. Custom names stay local until Save creates and
 attaches them in the same request; Cancel leaves no shared entry. Only a changed
-tag draft is saved. Each tag chip opens `MetadataTagNamesPanel`, which loads the
+tag draft is saved. The tags render as a list under the add field, one row per
+tag with its other names from `metadataTagAlternateNames`. A row's language
+button opens `MetadataTagNamesPanel` inside that row, which loads the
 shared tag once and edits its per-language manual names; Save patches renamed
 shared tags before the membership request, and new tags send their language
 names with it. A tag-section load failure
@@ -684,12 +686,23 @@ The metadata language label of an original edition whose language was never
 declared reads only Original; other editions keep their language or the
 unknown-language label.
 
-The metadata editor includes a language scope strip derived from the work's
-actual editions: All languages, the user's preferred available language, and
-the canonical edition marked as Original. The canonical label uses its
-declared language when one exists and never assumes Japanese. The family list
-follows the selected scope while shared credits and tag membership remain
-work-wide.
+`MetadataLanguageScopeTabs` is the metadata editor's language strip, drawn with
+the shared segmented control: All languages, a fixed tab for each language titles and tag names are saved in, and
+a More tab whose menu lists the work's editions in other languages, including
+an original edition with no declared language. Choosing one selects More and
+names that language on the tab; the menu says so when the work has no such
+edition. `metadataLanguageScope` builds the scopes and maps provider language
+spellings onto the supported tokens, so an edition's raw language and a
+metadata variant's language match the same scope. An original edition never
+implies a language.
+
+A supported scope shows its own title row, the family editions in that
+language, and each tag by its name in that language through
+`metadataTagNameIn`, with unsaved name drafts applied. A tag with no name in
+that language shows its fallback name muted, and `MetadataTagNamesPanel` lists
+only that language's name and the all-language name. The scope of another
+edition shows its provider title read-only and the tags' default names. Tag
+membership, cover, and credits remain work-wide.
 
 Effective titles and descriptions arrive together in metadata variants. Detail
 language selection updates both; descriptions render stored plain text verbatim

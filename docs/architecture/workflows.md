@@ -235,6 +235,8 @@ Tag APIs live under `/api/metadata/tags` (list/create, one tag with its
 names, rename/hide, merge, undo mapping); work additions/removals use `GET/PUT
 /api/works/{id}/metadata-tags`, whose `newTagNames` sets language names only
 for tags that save creates, never for an existing tag a draft name resolves to.
+Both return every known name of each tag, so the editor can show a work's tags
+in one language.
 Circle APIs under `/api/metadata/circles` list identities and manage manual
 names, aliases, merge reviews, and undo.
 These actions change known metadata only and never crawl or materialize a

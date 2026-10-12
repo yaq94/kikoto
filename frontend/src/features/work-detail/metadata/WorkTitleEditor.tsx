@@ -13,8 +13,8 @@ import {
   titleLanguageMarkers,
   titleSourceLabel,
 } from "./titleEditorModel";
-import type { MetadataLanguageScope } from "./metadataLanguageScope";
-import { scopeMatchesLanguage } from "./metadataLanguageScope";
+import { resolveMetadataVariant } from "../metadataPresentationModel";
+import { metadataLanguageScopeLabel, scopeMatchesLanguage, type MetadataLanguageScope } from "./metadataLanguageScope";
 
 /**
  * Shows per-language titles first, with the universal title in advanced options.
@@ -35,7 +35,10 @@ export function WorkTitleEditor({
   onDraft: (language: string, title: string) => void;
   languageScope?: MetadataLanguageScope;
 }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  // Titles are saved only in the supported languages; another edition shows its provider title.
+  const otherEdition = languageScope?.kind === "other" ? languageScope : null;
+  const currentVariantKey = resolveMetadataVariant(work.metadataPresentation, selectedMetadataVariantKey)?.key;
   const manual = manualTitles(work.manualOverrides ?? {});
   const current = currentTitles(work);
   const markers = titleLanguageMarkers(work, selectedMetadataVariantKey);
@@ -110,7 +113,24 @@ export function WorkTitleEditor({
           <h5 className="text-sm font-semibold">{t("metadataEditor.languageTitles")}</h5>
           <p className="text-xs text-muted-foreground">{t("metadataEditor.languageTitlesDescription")}</p>
         </div>
-        <div className="grid gap-3">{visibleLanguages.map((language) => row(language))}</div>
+        {otherEdition ? (
+          <div className="space-y-1.5">
+            <div className="flex min-h-7 flex-wrap items-center gap-2 text-sm font-medium">
+              {metadataLanguageScopeLabel(otherEdition, t, i18n.language)}
+              {otherEdition.variant?.key === currentVariantKey && (
+                <Badge variant="secondary" className="shrink-0 px-1.5 py-0 text-[11px] font-medium">
+                  {t("metadataEditor.currentLanguage")}
+                </Badge>
+              )}
+            </div>
+            <p className="rounded-md border border-dashed px-3 py-2 text-sm">
+              {otherEdition.variant?.title || t("metadataEditor.inheritedTitle")}
+            </p>
+            <p className="text-xs text-muted-foreground">{t("metadataEditor.otherLanguageTitle")}</p>
+          </div>
+        ) : (
+          <div className="grid gap-3">{visibleLanguages.map((language) => row(language))}</div>
+        )}
       </div>
       <details
         open={advancedOpen}

@@ -31,6 +31,17 @@ export const surfaceEnglish = {
     languageTitlesDescription: "Set a title for one display language only. Empty fields inherit.",
     languageScope: "Metadata language",
     allLanguages: "All languages",
+    moreLanguages: "More",
+    moreLanguageSelected: "More - {{language}}",
+    otherLanguages: "Other languages",
+    noOtherLanguages: "This work has no editions in other languages.",
+    otherLanguageTitle:
+      "Titles are saved in Japanese, Simplified Chinese, Traditional Chinese, English, and Korean. This edition shows its provider title.",
+    tagsInLanguage: "Showing {{language}} names. The tags on this work are the same in every language.",
+    tagsOtherLanguage:
+      "Tag names are saved in Japanese, Simplified Chinese, Traditional Chinese, English, and Korean. Here the tags show their default names.",
+    tagNameInherited: "No {{language}} name",
+    tagAddedBadge: "Added",
     fetchForEdit: "Fetch for edit",
     previewTitle: "Compare fetched metadata",
     previewDescription:

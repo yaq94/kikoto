@@ -122,6 +122,57 @@ test("remote metadata choices use declared capabilities and preserve drafts afte
   await expect(dialog.getByRole("button", { name: "Save", exact: true })).toBeEnabled();
 });
 
+const syntheticMetadataPreview = {
+  previewId: "synthetic-preview",
+  workId: 1,
+  primaryCode: "RJ00000000",
+  provider: "remote",
+  sourceCode: "example_remote_b",
+  sourceName: "Synthetic Remote B",
+  baseUpdatedAt: "2026-10-11T00:00:00Z",
+  current: {
+    title: "Current title",
+    titleLanguage: "ja-jp",
+    description: "Current description",
+    releaseDate: null,
+    ageRating: "general",
+    circle: "Current circle",
+    circleExternalId: "RG00000000",
+    tags: ["Current tag"],
+    voiceActors: [],
+    coverAvailable: false,
+    family: [],
+  },
+  fetched: {
+    title: "Fetched title",
+    titleLanguage: "ja-jp",
+    description: "Fetched description",
+    releaseDate: "2026-10-11",
+    ageRating: "general",
+    circle: "Fetched circle",
+    circleExternalId: "RG00000001",
+    tags: ["Fetched tag"],
+    voiceActors: [],
+    coverAvailable: false,
+    family: [],
+  },
+};
+
+test("@desktop Fetch for edit opens at its own size above the editor", async ({ page }) => {
+  await metadataActions(page, [librarySourceFixture()]);
+  await page.route(/\/api\/works\/1\/metadata-preview$/, (route) => route.fulfill({ json: syntheticMetadataPreview }));
+  await page.goto("/RJ00000000");
+  await page.getByRole("button", { name: "Edit metadata", exact: true }).click();
+  const editor = page.getByRole("dialog", { name: "Edit metadata", exact: true });
+  await editor.getByRole("button", { name: "Fetch for edit", exact: true }).click();
+  const preview = page.getByRole("dialog", { name: "Compare fetched metadata", exact: true });
+  await expect(preview.getByRole("button", { name: "Save selection", exact: true })).toBeVisible();
+  // The comparison is wider than the editor, so it cannot be laid out inside the editor's panel.
+  const [editorBox, previewBox] = [await editor.boundingBox(), await preview.boundingBox()];
+  expect(previewBox!.width).toBeGreaterThan(editorBox!.width);
+  await expect(preview.getByRole("button", { name: "Save selection", exact: true })).toBeInViewport({ ratio: 1 });
+});
+
 test("Fetch for edit compares a selected source and applies an authored value", async ({ page }) => {
   await metadataActions(page, [
     librarySourceFixture(),
@@ -131,43 +182,7 @@ test("Fetch for edit compares a selected source and applies an authored value", 
   let applied: unknown = null;
   await page.route(/\/api\/works\/1\/metadata-preview$/, async (route) => {
     previews.push(route.request().postDataJSON());
-    await route.fulfill({
-      json: {
-        previewId: "synthetic-preview",
-        workId: 1,
-        primaryCode: "RJ00000000",
-        provider: "remote",
-        sourceCode: "example_remote_b",
-        sourceName: "Synthetic Remote B",
-        baseUpdatedAt: "2026-10-11T00:00:00Z",
-        current: {
-          title: "Current title",
-          titleLanguage: "ja-jp",
-          description: "Current description",
-          releaseDate: null,
-          ageRating: "general",
-          circle: "Current circle",
-          circleExternalId: "RG00000000",
-          tags: ["Current tag"],
-          voiceActors: [],
-          coverAvailable: false,
-          family: [],
-        },
-        fetched: {
-          title: "Fetched title",
-          titleLanguage: "ja-jp",
-          description: "Fetched description",
-          releaseDate: "2026-10-11",
-          ageRating: "general",
-          circle: "Fetched circle",
-          circleExternalId: "RG00000001",
-          tags: ["Fetched tag"],
-          voiceActors: [],
-          coverAvailable: false,
-          family: [],
-        },
-      },
-    });
+    await route.fulfill({ json: syntheticMetadataPreview });
   });
   await page.route("**/api/works/1/metadata-preview/apply", async (route) => {
     applied = route.request().postDataJSON();

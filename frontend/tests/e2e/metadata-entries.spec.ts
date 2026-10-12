@@ -568,6 +568,80 @@ test("tag names are edited by language and saved with the work's tag draft", asy
   ]);
 });
 
+test("language tabs name the edition chosen under More and show tags in the selected language", async ({ page }) => {
+  await metadataWorkEditor(page);
+  await page.route("**/api/works/1?includeMedia=false", (route) =>
+    route.fulfill({
+      json: workDetailFixture(
+        { ...work, title: "Synthetic metadata work" },
+        {
+          manualOverrides: {},
+          metadataPresentation: {
+            defaultVariantKey: "original",
+            variants: [
+              { key: "original", language: "ja-jp", title: "Example original", tags: [], origin: true },
+              { key: "german", language: "ger", title: "Example German", tags: [], origin: false },
+            ],
+          },
+        },
+      ),
+    }),
+  );
+  const names = [
+    { language: "ja-jp", name: "Synthetic shared tag", source: "dlsite" },
+    { language: "zh-cn", name: "Synthetic Chinese tag", source: "dlsite" },
+  ];
+  const shared = metadataTagFixture({ id: 2, displayName: "Synthetic shared tag", workCount: 3, names });
+  const tag = { id: 2, displayName: "Synthetic shared tag", source: "dlsite", names };
+  await page.route("**/api/works/1/metadata-tags", (route) =>
+    route.fulfill({ json: { tags: [tag], inheritedTags: [tag], overrides: [] } satisfies WorkMetadataTags }),
+  );
+  await page.route("**/api/metadata/tags?*", (route) =>
+    route.fulfill({
+      json: { tags: [], total: 0, page: 1, pageSize: 20 } satisfies ApiResponse<"listMetadataTags">,
+    }),
+  );
+  await page.route("**/api/metadata/tags/2", (route) => route.fulfill({ json: shared }));
+  await page.goto("/metadata");
+  await page.getByRole("button", { name: `Edit metadata for ${work.primaryCode}` }).click();
+  const dialog = page.getByRole("dialog", { name: "Edit metadata", exact: true });
+  const languages = dialog.getByRole("tablist", { name: "Metadata language", exact: true });
+  await expect(languages.getByRole("tab")).toHaveText([
+    "All languages",
+    "Japanese",
+    "Simplified Chinese",
+    "Traditional Chinese",
+    "English",
+    "Korean",
+    "More",
+  ]);
+
+  await languages.getByRole("tab", { name: "More", exact: true }).click();
+  await page.getByRole("menu", { name: "Other languages", exact: true }).getByRole("menuitemradio").click();
+  const more = languages.getByRole("tab", { name: "More - German", exact: true });
+  await expect(more).toHaveAttribute("aria-selected", "true");
+  await expect(dialog.getByText("Example German", { exact: true })).toBeVisible();
+  await expect(dialog.getByRole("textbox", { name: "Japanese", exact: true })).toHaveCount(0);
+
+  await dialog.getByRole("tab", { name: /^Tags/ }).click();
+  const tags = dialog.getByRole("list", { name: "Tags", exact: true });
+  // Each row leads with the name in the selected language and lists the tag's other names.
+  await expect(tags.getByRole("listitem")).toHaveText([/^Synthetic shared tag\s*Synthetic Chinese tag$/]);
+  await languages.getByRole("tab", { name: "Simplified Chinese", exact: true }).click();
+  await expect(more).toHaveCount(0);
+  await expect(tags.getByRole("listitem")).toHaveText([/^Synthetic Chinese tag\s*Synthetic shared tag$/]);
+
+  await dialog.getByRole("button", { name: "Edit names of Synthetic Chinese tag by language" }).click();
+  const panel = dialog.getByRole("region", { name: "Names of Synthetic Chinese tag" });
+  await expect(panel.getByRole("textbox")).toHaveCount(2);
+  await panel.getByRole("textbox", { name: "Simplified Chinese", exact: true }).fill("Synthetic authored tag");
+  await expect(tags.getByRole("listitem")).toHaveText([/^Synthetic authored tag\s*Synthetic shared tag/]);
+  await languages.getByRole("tab", { name: "Korean", exact: true }).click();
+  await expect(tags.getByRole("listitem")).toHaveText([
+    /^Synthetic shared tag\s*No Korean name\s*Synthetic authored tag/,
+  ]);
+});
+
 test("canceling staged tags writes nothing and exact names reuse autocomplete entries", async ({ page }) => {
   await metadataWorkEditor(page);
   const existing = metadataTagFixture({
