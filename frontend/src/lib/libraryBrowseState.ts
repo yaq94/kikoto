@@ -5,7 +5,7 @@ import {
   type WorkCollectionColumnSetting,
 } from "../components/work-collection/workCollectionLayoutModel";
 
-export const localWorkPageSizeOptions = [24, 48] as const;
+export const localWorkPageSizeOptions = [24, 48, 96] as const;
 export type LocalWorkPageSize = (typeof localWorkPageSizeOptions)[number];
 export type LibraryColumnSetting = WorkCollectionColumnSetting;
 
@@ -192,7 +192,7 @@ export function withSharedLibraryQuery(state: LibraryBrowseState, query: string)
 }
 
 export function localPageSize(value: number): LocalWorkPageSize {
-  return value === 48 ? 48 : 24;
+  return localWorkPageSizeOptions.find((option) => option === value) ?? 24;
 }
 
 function parseColumnSearchValue(value: string | null) {

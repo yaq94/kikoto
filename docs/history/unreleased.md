@@ -1,5 +1,12 @@
 # Unreleased
 
+- Library display options replace the phone-only **Compact cards** switch with
+  a **Cards** choice of **Full**, **Compact**, and **Mini**, available on
+  phones and wide screens and remembered separately for each. Compact on wide
+  screens uses short tiles, and Mini shows only the cover and title so a large
+  library can be scanned by its artwork. A device that had Compact cards on
+  keeps compact phone cards.
+- Local and Tracked can show 96 works per page.
 - **Insights** is a sidebar page for the account's own listening. It opens
   with a calendar of the past year, keeps the 30-day, 12-month, and all-time
   listening report, and ranks tags, voices, and circles by preference (share
@@ -22,6 +29,11 @@
   Listening recorded before the upgrade, or before a time zone change,
   keeps the day it was counted on. Schema migration `067` adds the per-account
   setting.
+- With **Hide from screenshots and recordings** on, a screenshot taken in the
+  iOS app shows a blank page in place of Kikoto. The setting replaces **Hide
+  while the screen is recorded or mirrored** and keeps the stored choice.
+- The media controls choice under **Privacy on this device** is a segmented
+  control that shows its three options at once.
 - DLsite metadata synchronization accepts sparse numeric-keyed
   `language_editions` responses as well as arrays. Comma-separated language
   values are matched to their labeled edition so affected work families can

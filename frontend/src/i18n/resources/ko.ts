@@ -171,9 +171,17 @@ const collectionKorean = {
   pageSize: "페이지당 항목 수: {{value}}",
   itemsPerPage: "페이지당 항목 수",
 
-  compactCards: "컴팩트 카드",
-
-  compactCardsHint: "휴대폰에서 작은 작품 카드 사용",
+  cardMode: "카드",
+  cardModes: {
+    full: "전체",
+    compact: "컴팩트",
+    mini: "미니",
+  },
+  cardModeOptions: {
+    full: "전체 카드: 모든 정보 표시",
+    compact: "컴팩트 카드: 간추린 정보 표시",
+    mini: "미니 카드: 커버와 제목만 표시",
+  },
   coverSources: "커버 소스 표시",
   coverSourceModes: {
     auto: "자동: 현재 소스와 다르거나 문제가 있는 표시만",
@@ -900,6 +908,9 @@ export const koreanResource = {
         screenCaptureCover: "화면 녹화나 미러링 중 숨기기",
         screenCaptureCoverDescription:
           "화면 녹화, AirPlay 미러링 등 화면 캡처가 진행되는 동안 Kikoto를 가리고 화면 가사를 닫습니다. 스크린샷은 막지 않습니다.",
+        screenCaptureHide: "스크린샷과 화면 녹화에서 숨기기",
+        screenCaptureHideDescription:
+          "스크린샷에는 Kikoto 대신 빈 페이지가 찍힙니다. 화면 녹화, AirPlay 미러링 등 화면 캡처가 진행되는 동안 Kikoto를 가리고 화면 가사를 닫습니다.",
         nowPlayingContent: "재생 중 정보",
         nowPlayingContentDescription:
           "잠금 화면, 제어 센터, 연결된 Bluetooth 또는 차량 디스플레이에 표시할 현재 트랙의 내용입니다.",

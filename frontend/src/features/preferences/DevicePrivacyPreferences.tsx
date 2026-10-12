@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 
 import { SettingsRow, SettingsSection } from "@/components/settings/SettingsSection";
 import { FloatingSelect } from "@/components/ui/floating-select";
+import { segmentedItemClassName, segmentedListClassName } from "@/components/ui/segmented";
 import { Switch } from "@/components/ui/switch";
 import { toastFromError, useToast } from "@/components/ui/toast";
 import { useNativePrivacySettings } from "@/hooks/useNativePrivacySettings";
@@ -12,7 +13,6 @@ import {
   nativePrivacyStatus,
   updateNativePrivacySettings,
   type AppLockTimeoutSeconds,
-  type LockScreenMediaContent,
   type NativePrivacySettings,
 } from "@/lib/nativePrivacy";
 import { isAndroidApp, isIOSApp } from "@/lib/serverConfig";
@@ -26,6 +26,7 @@ function useNativePrivacyStatus() {
     supported: boolean;
     available: boolean;
     recentsShieldBlocksCapture: boolean;
+    screenshotsHidden: boolean;
   } | null>(null);
   useEffect(() => {
     let disposed = false;
@@ -50,7 +51,8 @@ function useNativePrivacyStatus() {
  * controls, speaker confirmation, screen capture protection, and, where the
  * shell offers it, the app lock. Changes apply immediately. iOS names the
  * choices after what it can do: its media controls cannot tell a locked
- * device, and it can cover a recording but not block a screenshot.
+ * device, and it blanks a screenshot and covers a recording rather than
+ * blocking either.
  */
 export function DevicePrivacyPreferences() {
   const { t } = useTranslation();
@@ -59,14 +61,18 @@ export function DevicePrivacyPreferences() {
   const privacyStatus = useNativePrivacyStatus();
   const appLockAvailable = privacyStatus?.available ?? null;
   const recentsShieldBlocksCapture = isAndroidApp() && privacyStatus?.recentsShieldBlocksCapture === true;
+  // Without a capture canvas, the iOS shell can cover a recording but not blank a screenshot.
+  const screenshotsHidden = privacyStatus?.screenshotsHidden !== false;
   const labels = isIOSApp()
     ? ({
         recentsShield: "settings.appSwitcherBlur",
         recentsShieldDescription: "settings.appSwitcherBlurDescription",
         lockScreenContent: "settings.nowPlayingContent",
         lockScreenContentDescription: "settings.nowPlayingContentDescription",
-        screenSecure: "settings.screenCaptureCover",
-        screenSecureDescription: "settings.screenCaptureCoverDescription",
+        screenSecure: screenshotsHidden ? "settings.screenCaptureHide" : "settings.screenCaptureCover",
+        screenSecureDescription: screenshotsHidden
+          ? "settings.screenCaptureHideDescription"
+          : "settings.screenCaptureCoverDescription",
       } as const)
     : ({
         recentsShield: "settings.recentsShield",
@@ -106,16 +112,28 @@ export function DevicePrivacyPreferences() {
         />
       </SettingsRow>
       <SettingsRow title={t(labels.lockScreenContent)} description={t(labels.lockScreenContentDescription)}>
-        <FloatingSelect
-          ariaLabel={t(labels.lockScreenContent)}
-          value={settings.lockScreenContent}
-          disabled={!loaded}
-          options={LOCK_SCREEN_MEDIA_CONTENTS.map((value) => ({
-            value,
-            label: t(`settings.lockScreenContentOptions.${value}`),
-          }))}
-          onValueChange={(value) => update({ lockScreenContent: value as LockScreenMediaContent })}
-        />
+        <div
+          role="radiogroup"
+          aria-label={t(labels.lockScreenContent)}
+          className={segmentedListClassName("w-full sm:w-fit")}
+        >
+          {LOCK_SCREEN_MEDIA_CONTENTS.map((value) => (
+            <button
+              key={value}
+              type="button"
+              role="radio"
+              aria-checked={settings.lockScreenContent === value}
+              disabled={!loaded}
+              className={segmentedItemClassName(
+                settings.lockScreenContent === value,
+                "min-w-0 flex-auto shrink justify-center px-2",
+              )}
+              onClick={() => update({ lockScreenContent: value })}
+            >
+              <span className="truncate">{t(`settings.lockScreenContentOptions.${value}`)}</span>
+            </button>
+          ))}
+        </div>
       </SettingsRow>
       <SettingsRow
         htmlFor={speakerId}

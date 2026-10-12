@@ -171,9 +171,17 @@ export const collectionHans = {
   pageSize: "每页数量：{{value}}",
   itemsPerPage: "每页数量",
 
-  compactCards: "紧凑卡片",
-
-  compactCardsHint: "手机上使用更小的作品卡片",
+  cardMode: "卡片",
+  cardModes: {
+    full: "完整",
+    compact: "紧凑",
+    mini: "极简",
+  },
+  cardModeOptions: {
+    full: "完整卡片，显示全部信息",
+    compact: "紧凑卡片，显示较少信息",
+    mini: "极简卡片，只显示封面和标题",
+  },
   coverSources: "封面来源标记",
   coverSourceModes: {
     auto: "自动：只显示与当前来源不同或异常的标记",
@@ -873,6 +881,9 @@ export const zhHansResource = {
         screenCaptureCover: "录屏或投屏时隐藏",
         screenCaptureCoverDescription:
           "屏幕录制、AirPlay 镜像或其他屏幕捕获进行时，遮挡 Kikoto 并关闭屏幕歌词。不会阻止截屏。",
+        screenCaptureHide: "截屏和录屏时隐藏",
+        screenCaptureHideDescription:
+          "截屏得到的是空白页面，而不是 Kikoto。屏幕录制、AirPlay 镜像或其他屏幕捕获进行时，遮挡 Kikoto 并关闭屏幕歌词。",
         nowPlayingContent: "正在播放信息",
         nowPlayingContentDescription: "锁屏、控制中心以及已连接的蓝牙或车载屏幕为当前曲目显示的内容。",
         recentsShield: "在最近任务中隐藏内容",

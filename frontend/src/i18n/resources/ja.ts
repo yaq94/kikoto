@@ -171,9 +171,17 @@ const collectionJapanese = {
   pageSize: "1ページあたりの項目数：{{value}}",
   itemsPerPage: "1ページあたりの項目数",
 
-  compactCards: "コンパクトカード",
-
-  compactCardsHint: "スマートフォンで小さめの作品カードを使う",
+  cardMode: "カード",
+  cardModes: {
+    full: "フル",
+    compact: "コンパクト",
+    mini: "ミニ",
+  },
+  cardModeOptions: {
+    full: "フルカード：すべての情報を表示",
+    compact: "コンパクトカード：情報を絞って表示",
+    mini: "ミニカード：カバーとタイトルのみ表示",
+  },
   coverSources: "カバーのソース表示",
   coverSourceModes: {
     auto: "自動：現在のソースと異なる、または問題のある表示のみ",
@@ -913,6 +921,9 @@ export const japaneseResource = {
         screenCaptureCover: "画面収録やミラーリング中は隠す",
         screenCaptureCoverDescription:
           "画面収録、AirPlay ミラーリングなどの画面キャプチャ中は Kikoto を覆い、画面歌詞を閉じます。スクリーンショットは防げません。",
+        screenCaptureHide: "スクリーンショットや画面収録で隠す",
+        screenCaptureHideDescription:
+          "スクリーンショットには Kikoto の代わりに空白のページが写ります。画面収録、AirPlay ミラーリングなどの画面キャプチャ中は Kikoto を覆い、画面歌詞を閉じます。",
         nowPlayingContent: "再生中の情報",
         nowPlayingContentDescription:
           "ロック画面、コントロールセンター、接続中の Bluetooth や車載ディスプレイに表示する、再生中のトラックの内容です。",

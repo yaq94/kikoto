@@ -17,7 +17,11 @@ export type NativePrivacySettings = {
   lockScreenContent: LockScreenMediaContent;
   /** Playback through the phone speaker waits for confirmation. */
   speakerConfirm: boolean;
-  /** Screenshots, screen recording, and casting show nothing of Kikoto or its floating lyrics. */
+  /**
+   * Screenshots, screen recording, and casting show nothing of Kikoto or its
+   * floating lyrics. iOS blanks the page in a screenshot and covers the app
+   * while the screen is captured.
+   */
   screenSecure: boolean;
   /** Returning to Kikoto needs a biometric or the device screen lock. */
   appLock: boolean;
@@ -43,6 +47,8 @@ type KikotoPrivacyPlugin = {
     appLockAvailable: boolean;
     /** Android 12 and earlier use FLAG_SECURE for the recent-apps choice. */
     recentsShieldBlocksCapture?: boolean;
+    /** The iOS screen capture choice also leaves the page out of screenshots. */
+    screenshotsHidden?: boolean;
   }>;
   setUnlockLabels(labels: { title: string; action: string }): Promise<void>;
   outputStatus(): Promise<{ phoneSpeaker: boolean }>;
@@ -90,13 +96,14 @@ export async function nativeAppLockStatus() {
 /** Native capabilities that affect the device privacy settings UI. */
 export async function nativePrivacyStatus() {
   if (!supportsNativePrivacy()) {
-    return { supported: false, available: false, recentsShieldBlocksCapture: false };
+    return { supported: false, available: false, recentsShieldBlocksCapture: false, screenshotsHidden: false };
   }
   const status = await KikotoPrivacy.status().catch(() => null);
   return {
     supported: status?.appLockSupported === true,
     available: status?.appLockAvailable === true,
     recentsShieldBlocksCapture: status?.recentsShieldBlocksCapture === true,
+    screenshotsHidden: status?.screenshotsHidden === true,
   };
 }
 

@@ -172,9 +172,17 @@ const collectionHant = {
   pageSize: "每頁數量：{{value}}",
   itemsPerPage: "每頁數量",
 
-  compactCards: "緊湊卡片",
-
-  compactCardsHint: "手機上使用更小的作品卡片",
+  cardMode: "卡片",
+  cardModes: {
+    full: "完整",
+    compact: "緊湊",
+    mini: "極簡",
+  },
+  cardModeOptions: {
+    full: "完整卡片，顯示全部資訊",
+    compact: "緊湊卡片，顯示較少資訊",
+    mini: "極簡卡片，只顯示封面和標題",
+  },
   coverSources: "封面來源標記",
   coverSourceModes: {
     auto: "自動：只顯示與目前來源不同或異常的標記",
@@ -878,6 +886,9 @@ export const zhHantResource = {
         screenCaptureCover: "錄影或投放畫面時隱藏",
         screenCaptureCoverDescription:
           "螢幕錄影、AirPlay 鏡像輸出或其他畫面擷取進行時，遮蓋 Kikoto 並關閉螢幕歌詞。不會阻止截圖。",
+        screenCaptureHide: "截圖和錄影時隱藏",
+        screenCaptureHideDescription:
+          "截圖得到的是空白頁面，而不是 Kikoto。螢幕錄影、AirPlay 鏡像輸出或其他畫面擷取進行時，遮蓋 Kikoto 並關閉螢幕歌詞。",
         nowPlayingContent: "正在播放資訊",
         nowPlayingContentDescription: "鎖定畫面、控制中心以及已連線的藍牙或車用螢幕為目前曲目顯示的內容。",
         recentsShield: "在最近使用的應用程式中隱藏內容",
