@@ -58,6 +58,10 @@ func TestTimeZoneFollowsAccountThenDeviceThenServer(t *testing.T) {
 		if err := json.Unmarshal(response.Body.Bytes(), &lookup); err != nil {
 			t.Fatalf("generation lookup = %s, %v", response.Body.String(), err)
 		}
+		// The same lookup tells a player that reports may split days by hour.
+		if lookup["hours"] != true {
+			t.Fatalf("generation lookup hours = %v", lookup["hours"])
+		}
 		zone, present := lookup["timeZone"]
 		if !present {
 			t.Fatalf("generation lookup has no timeZone: %s", response.Body.String())

@@ -1,15 +1,23 @@
-/** The calendar day an instant falls on in a time zone, and the instant that day ends. */
-export type ZonedDay = { day: string; end: number };
+/**
+ * The calendar day and hour of the day an instant falls on in a time zone,
+ * with the instants that day and that hour end.
+ */
+export type ZonedDay = { day: string; hour: number; end: number; hourEnd: number };
 
 function utcDay(time: number): ZonedDay {
   const day = new Date(time).toISOString().slice(0, 10);
-  return { day, end: Date.parse(`${day}T00:00:00Z`) + 86_400_000 };
+  return {
+    day,
+    hour: new Date(time).getUTCHours(),
+    end: Date.parse(`${day}T00:00:00Z`) + 86_400_000,
+    hourEnd: (Math.floor(time / 3_600_000) + 1) * 3_600_000,
+  };
 }
 
 /**
- * Returns a lookup from an instant to its calendar day (YYYY-MM-DD) in an
- * IANA time zone. Consecutive lookups inside one day reuse the last answer. A
- * zone this runtime does not know counts days in UTC.
+ * Returns a lookup from an instant to its calendar day (YYYY-MM-DD) and hour
+ * of the day in an IANA time zone. Consecutive lookups inside one hour reuse
+ * the last answer. A zone this runtime does not know counts days in UTC.
  */
 export function createZonedDays(timeZone: string) {
   let format: Intl.DateTimeFormat | null = null;
@@ -29,16 +37,19 @@ export function createZonedDays(timeZone: string) {
   }
   let cached: (ZonedDay & { start: number }) | null = null;
   return (time: number): ZonedDay => {
-    if (cached && time >= cached.start && time < cached.end) return cached;
+    if (cached && time >= cached.start && time < cached.hourEnd) return cached;
     if (!format) return utcDay(time);
     const parts: Partial<Record<Intl.DateTimeFormatPartTypes, string>> = {};
     for (const part of format.formatToParts(time)) parts[part.type] = part.value;
-    const seconds = (Number(parts.hour) % 24) * 3600 + Number(parts.minute) * 60 + Number(parts.second);
+    const hour = Number(parts.hour) % 24;
+    const secondsOfHour = Number(parts.minute) * 60 + Number(parts.second);
     const wholeSecond = time - (((time % 1000) + 1000) % 1000);
     cached = {
       day: `${parts.year}-${parts.month}-${parts.day}`,
+      hour,
       start: time,
-      end: wholeSecond + (86_400 - seconds) * 1000,
+      end: wholeSecond + (86_400 - hour * 3600 - secondsOfHour) * 1000,
+      hourEnd: wholeSecond + (3600 - secondsOfHour) * 1000,
     };
     return cached;
   };

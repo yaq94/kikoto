@@ -24,16 +24,19 @@ const labelledWeekdays = [0, 2, 4];
 const MONTH_LABEL_WEEKS = 3;
 
 /**
- * The past year of listening as a calendar: one cell per UTC day in week
- * columns, shaded by listening time, with a readout for the pointed day and
- * the year's active days and streaks. A narrow container scrolls the weeks
+ * A year of listening as a calendar, the past year or one calendar year: one
+ * cell per UTC day in week columns, shaded by listening time, with a readout
+ * for the pointed day and the year's active days and streaks. A narrow container scrolls the weeks
  * and opens on the latest one.
  */
 export function ListeningCalendar({
   calendar,
+  year,
   formatDuration,
 }: {
   calendar: ListeningCalendarData;
+  /** The calendar year shown; null for the weeks up to today. */
+  year?: string | null;
   formatDuration: (seconds: number) => string;
 }) {
   const { t } = useTranslation();
@@ -58,9 +61,10 @@ export function ListeningCalendar({
   const weekdayName = (weekday: number) =>
     dateTimeFormat(resolvedLocale, { weekday: "short", timeZone: "UTC" }).format(MONDAY_UTC + weekday * 86_400_000);
   // A week is labelled when its Monday opens a new month; the first and last weeks only when the label has room.
-  const monthStarts = weeks.map((week, index) => {
-    const month = week[0]?.period.slice(0, 7);
-    return index > 0 && month !== weeks[index - 1][0]?.period.slice(0, 7);
+  // A week belongs to the month of its first day in the calendar.
+  const weekHeads = weeks.map((week) => week.find((day) => day !== null) ?? null);
+  const monthStarts = weekHeads.map((head, index) => {
+    return index > 0 && head?.period.slice(0, 7) !== weekHeads[index - 1]?.period.slice(0, 7);
   });
   const firstMonthStart = monthStarts.indexOf(true);
   if (firstMonthStart < 0 || firstMonthStart >= MONTH_LABEL_WEEKS) monthStarts[0] = true;
@@ -79,7 +83,7 @@ export function ListeningCalendar({
       <figcaption className="flex min-h-5 flex-wrap items-baseline justify-between gap-x-3 gap-y-1 text-xs text-muted-foreground">
         <span className="flex items-baseline gap-2">
           <span className="text-sm font-semibold text-foreground">{t("personal.history.calendar.title")}</span>
-          <span>{t("personal.history.calendar.basis")}</span>
+          <span>{year ?? t("personal.history.calendar.basis")}</span>
         </span>
         <span aria-live="polite" className="tabular-nums">
           {readout}
@@ -94,17 +98,17 @@ export function ListeningCalendar({
           style={{ gridTemplateColumns: `auto repeat(${weeks.length}, minmax(0, 1fr))` }}
           onPointerLeave={() => setActive(null)}
         >
-          {weeks.map(
-            (week, index) =>
+          {weekHeads.map(
+            (head, index) =>
               monthStarts[index] &&
-              week[0] &&
+              head &&
               index + MONTH_LABEL_WEEKS <= weeks.length && (
                 <span
-                  key={week[0].period}
+                  key={head.period}
                   className="h-4 overflow-hidden whitespace-nowrap text-2xs leading-4 text-muted-foreground"
                   style={{ gridColumn: `${index + 2} / span ${MONTH_LABEL_WEEKS}`, gridRow: 1 }}
                 >
-                  {monthLabel(week[0].period)}
+                  {monthLabel(head.period)}
                 </span>
               ),
           )}
@@ -143,10 +147,12 @@ export function ListeningCalendar({
             value={t("personal.history.periodCount.day", { count: activeDays })}
           />
           <CalendarFigure label={t("personal.history.totalTime")} value={formatDuration(totalSeconds)} />
-          <CalendarFigure
-            label={t("personal.history.currentStreak")}
-            value={t("personal.history.periodCount.day", { count: streaks.current })}
-          />
+          {!year && (
+            <CalendarFigure
+              label={t("personal.history.currentStreak")}
+              value={t("personal.history.periodCount.day", { count: streaks.current })}
+            />
+          )}
           <CalendarFigure
             label={t("personal.history.longestStreak")}
             value={t("personal.history.periodCount.day", { count: streaks.longest })}

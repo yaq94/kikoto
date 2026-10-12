@@ -12,6 +12,11 @@ import {
   sharePercent,
   weekPartAverages,
   weekdayAverages,
+  hourRangeLabel,
+  listeningProfileStatements,
+  listeningRangeYear,
+  peakListeningHour,
+  radarPoints,
 } from "./listeningHistoryModel";
 
 const days = (seconds: number[], start = "2026-03-02") =>
@@ -169,5 +174,93 @@ describe("listening calendar", () => {
       days: [{ date: "2026-03-02", listenedSeconds: 30, listenCount: 1 }],
     });
     expect(single.days[0].level).toBe(4);
+  });
+});
+
+describe("calendar years and hours", () => {
+  it("tells a calendar year from a named range", () => {
+    expect(listeningRangeYear("2025")).toBe("2025");
+    expect(listeningRangeYear("30d")).toBeNull();
+    expect(listeningRangeYear("all")).toBeNull();
+  });
+
+  it("starts a year on the weekday of its first day", () => {
+    // 2025-01-01 is a Wednesday.
+    const { weeks, days } = listeningCalendarWeeks({
+      from: "2025-01-01",
+      to: "2025-01-07",
+      days: [{ date: "2025-01-06", listenedSeconds: 60, listenCount: 1 }],
+    });
+    expect(days).toHaveLength(7);
+    expect(weeks.map((week) => week.map((day) => day?.period.slice(8) ?? null))).toEqual([
+      [null, null, "01", "02", "03", "04", "05"],
+      ["06", "07", null, null, null, null, null],
+    ]);
+  });
+
+  it("names the busiest hour, the earliest on a tie", () => {
+    const hours = Array.from({ length: 24 }, () => 0);
+    expect(peakListeningHour(hours)).toBeNull();
+    expect(peakListeningHour(undefined)).toBeNull();
+    hours[22] = 600;
+    hours[7] = 600;
+    hours[23] = 30;
+    expect(peakListeningHour(hours)).toBe(7);
+    expect(hourRangeLabel(7)).toBe("07:00–08:00");
+    expect(hourRangeLabel(23)).toBe("23:00–00:00");
+  });
+});
+
+describe("taste profile", () => {
+  const entry = (id: number, name: string) => ({ id, name, listenedSeconds: 60, listenCount: 1, workCount: 1 });
+  const trait = (position: number) => ({ value: 1, libraryValue: 1, position, workCount: 3 });
+  const profile = {
+    range: "30d" as const,
+    listenedSeconds: 600,
+    workCount: 4,
+    libraryWorkCount: 10,
+    tags: [entry(1, "Example Tag A"), entry(2, "Example Tag B"), entry(3, "Example Tag C")],
+    marks: { works: 0, finished: 0, relisten: 0 },
+  };
+
+  it("says the leading tags, the strongest lean, the rating lean, and the marks", () => {
+    expect(
+      listeningProfileStatements({
+        ...profile,
+        duration: trait(0.72),
+        release: trait(0.2),
+        popularity: trait(0.55),
+        rating: trait(0.4),
+        marks: { works: 8, finished: 6, relisten: 1 },
+      }),
+    ).toEqual([
+      { kind: "tags", names: ["Example Tag A", "Example Tag B"] },
+      { kind: "lean", trait: "release", side: "low" },
+      { kind: "lean", trait: "rating", side: "low" },
+      { kind: "marks", works: 8, finishedPercent: 75, relistenPercent: 13 },
+    ]);
+  });
+
+  it("stays quiet about what sits near the library or rests on too few works", () => {
+    expect(
+      listeningProfileStatements({
+        ...profile,
+        tags: [],
+        duration: trait(0.55),
+        rating: trait(0.52),
+        marks: { works: 2, finished: 2, relisten: 0 },
+      }),
+    ).toEqual([]);
+  });
+
+  it("draws a radar from the top, clockwise, as shares of the rim", () => {
+    const points = radarPoints([1, 0.5, 0, 2], 2, 100);
+    expect(points.map((point) => [Math.round(point.x), Math.round(point.y)])).toEqual([
+      [0, -50],
+      [25, 0],
+      [0, 0],
+      [-100, 0],
+    ]);
+    expect(radarPoints([1], 0, 100)).toEqual([{ x: 0, y: -0 }]);
   });
 });

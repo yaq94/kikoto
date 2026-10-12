@@ -114,6 +114,83 @@ export const personalKorean = {
       timeZone: "하루는 {{zone}}의 자정에 시작합니다.",
       timeZoneAuto: "하루는 {{zone}}(이 기기의 시간대)의 자정에 시작합니다.",
       changeTimeZone: "시간대 변경",
+      yearLabel: "연도",
+      yearValue: "연도: {{year}}",
+      hours: {
+        title: "시간대별",
+        peak: "가장 많은 시간대 {{hours}}",
+        basis: "시간대가 기록된 청취만 집계합니다.",
+      },
+      profile: {
+        heading: "취향 프로필",
+        basis:
+          "듣는 내용을 라이브러리와 비교한 것입니다. 태그는 청취 시간에서 차지하는 비율이 라이브러리 작품에서 차지하는 비율보다 높은 것들입니다. 각 표식은 들은 작품이 라이브러리 안에서 어디에 있는지를 청취 시간으로 가중해 보여 줍니다.",
+        failed: "취향 프로필을 불러오지 못했습니다.",
+        tags: "선호 태그",
+        excess: "청취 시간 비율이 라이브러리 비율을 넘는 폭",
+        tagShares: "{{name}}: 청취 시간의 {{time}}%, 라이브러리의 {{library}}%",
+        fewWorks: "작품이 너무 적어 라이브러리와 비교할 수 없습니다.",
+        compare: "나 {{mine}} · 라이브러리 {{library}}",
+        compareRating: "나 {{mine}} · 대중 {{library}}",
+        traits: {
+          duration: {
+            label: "작품 길이",
+            low: "짧음",
+            high: "김",
+          },
+          release: {
+            label: "발매 연도",
+            low: "오래됨",
+            high: "최신",
+          },
+          popularity: {
+            label: "판매량",
+            low: "비주류",
+            high: "인기",
+          },
+          rating: {
+            label: "내 평점",
+            low: "엄격함",
+            high: "후함",
+          },
+        },
+        statements: {
+          tags: {
+            one: "가장 선호하는 태그는 '{{first}}'입니다.",
+            two: "가장 선호하는 태그는 '{{first}}', '{{second}}'입니다.",
+          },
+          duration: {
+            high: "긴 작품을 선호합니다.",
+            low: "짧은 작품을 선호합니다.",
+          },
+          release: {
+            high: "최신 작품을 선호합니다.",
+            low: "오래된 작품을 선호합니다.",
+          },
+          popularity: {
+            high: "인기 작품을 선호합니다.",
+            low: "비주류 작품을 선호합니다.",
+          },
+          rating: {
+            high: "대중 평점보다 후하게 평가합니다.",
+            low: "대중 평점보다 엄격하게 평가합니다.",
+          },
+          marks_one: "표시한 작품 {{count}}개 중 {{finished}}%를 다 들었고, {{relisten}}%를 다시 듣기로 표시했습니다.",
+          marks_other:
+            "표시한 작품 {{count}}개 중 {{finished}}%를 다 들었고, {{relisten}}%를 다시 듣기로 표시했습니다.",
+        },
+      },
+      highlights: {
+        title: "{{year}}년 하이라이트",
+        summary: "{{duration}} 청취, 작품 {{works}}개, 청취한 날 {{days}}일.",
+        work: "가장 많이 들은 작품",
+        voices: "가장 많이 들은 성우",
+        circles: "가장 많이 들은 서클",
+        busiestDay: "가장 많이 들은 날",
+        busiestDayDetail: "{{duration}} · {{title}}",
+        newWorks: "이 해에 처음 들은 작품",
+        peakHour: "가장 많이 듣는 시간대",
+      },
       weekdayAverage: "요일별 평균",
       rank: "{{rank}}위",
       search: "기록 검색",

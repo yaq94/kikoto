@@ -9,6 +9,7 @@ import { LISTENING_REPORT_TIMEOUT_MS } from "@/lib/listeningApi";
 import { sendPlaybackReport } from "@/lib/playbackReportApi";
 import { setListeningTimeZone } from "@/lib/timeZone";
 
+import { setReportsListeningHours } from "./listeningSession";
 import { createReportOutbox } from "./playbackReportOutbox";
 import { PlaybackReportScheduler } from "./playbackReportScheduler";
 import { createReportId } from "./reportId";
@@ -30,12 +31,13 @@ async function fetchGeneration(signal: AbortSignal) {
   const timer = setTimeout(() => controller.abort(), LISTENING_REPORT_TIMEOUT_MS);
   const cancellation = combineAbortSignals(signal, controller.signal);
   try {
-    const lookup = await apiTransport.getJSON<{ generation: number; timeZone?: string | null }>(
+    const lookup = await apiTransport.getJSON<{ generation: number; timeZone?: string | null; hours?: boolean }>(
       "/api/listening-sessions",
       cancellation.signal,
     );
     // The account's time zone travels with the generation new listening reports under; null follows this device.
     setListeningTimeZone(lookup.timeZone);
+    setReportsListeningHours(lookup.hours === true);
     return lookup.generation;
   } finally {
     clearTimeout(timer);

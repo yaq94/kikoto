@@ -21,24 +21,44 @@ should stop creating dated tags. Explicit date templates remain supported.
 
 ## Insights
 
-**Insights** opens with the **listening calendar**: the past year as one cell
-per day in week columns, shaded by listening time, with that year's listening
-days, listening time, and current and longest streaks. Point at or tap a day
-for its total.
+The switcher at the top of **Insights** chooses what the page covers: the last
+30 days, the last 12 months, all time, or one calendar year. **Year**, the last entry, opens the years with
+dated listening and names the chosen one.
 
-Below it, the listening report covers the last 30 days, the last 12 months, or
-all time. For the chosen range it shows:
+The **listening calendar** shows a year as one cell per day in week columns,
+shaded by listening time, with its listening days, listening time, and
+streaks: the chosen calendar year, or the past year for the other ranges.
+Point at or tap a day for its total.
+
+A calendar year opens with its **highlights**: the year's listening time,
+works, and listening days, the work, voice, and circle listened to most, the
+busiest day with its leading work, the longest run of listening days, the
+works first heard that year, and the busiest hour of the day.
+
+For the chosen range the listening report shows:
 
 - Listening time, plays, works, and active days, with the time per active day,
   the time per play, the top work's share of the time, and the share of days in
   the range with listening.
-- A chart by day, month, or year (all time switches to years after three
-  years) with the average and busiest period.
+- A chart by day, month, or year (a calendar year by month; all time switches
+  to years after three years) with the average and busiest period.
 - The five most listened works, expandable to ten, each with its time and its
   share of the range's listening.
 - Rhythm: the average listening per day from Monday to Friday and per weekend
   day, then the average per weekday. A 12-month or all-time report reads the
   calendar's days for this, so an all-time report describes the past year.
+  **By hour of day** adds the listening per hour, midnight first, with the
+  busiest hour. Hours are recorded as you listen, so listening from before
+  the server counted hours is not part of it.
+- **Taste profile**: what you listen to, compared with the Library. The radar
+  draws up to eight tags by how far each one's share of your listening time
+  exceeds its share of the Library's works. A marker places your works among
+  the Library's by release year, sales, and work length when enough of them
+  carry that figure: the middle of the track is the Library, and works you
+  listened to longer weigh more. **Your ratings** compares every rating you
+  gave with the public rating of the same works. A few sentences above the
+  markers say what stands out, with how many of the works you marked as
+  started are finished or marked to relisten.
 - **Tags, voices, and circles**: the leading five of each, expandable to ten,
   and each opens its Library search, voice page, or circle page. **Preference**
   ranks them by how far their share of your listening time exceeds their share

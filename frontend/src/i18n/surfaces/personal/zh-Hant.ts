@@ -112,6 +112,82 @@ export const personalHant = {
       timeZone: "一天從 {{zone}} 的午夜開始。",
       timeZoneAuto: "一天從 {{zone}}（此裝置的時區）的午夜開始。",
       changeTimeZone: "變更時區",
+      yearLabel: "年份",
+      yearValue: "年份：{{year}}",
+      hours: {
+        title: "時段分布",
+        peak: "最常在 {{hours}}",
+        basis: "只包含記錄了時段的收聽。",
+      },
+      profile: {
+        heading: "口味畫像",
+        basis:
+          "你聽的內容與資料庫的對比。標籤是收聽時間占比高於資料庫作品占比的那些；每個圓點表示你聽的作品在資料庫中所處的位置，依收聽時長加權。",
+        failed: "無法載入口味畫像。",
+        tags: "偏好標籤",
+        excess: "收聽時長占比高出資料庫占比的幅度",
+        tagShares: "{{name}}：占收聽時長 {{time}}%，占資料庫 {{library}}%",
+        fewWorks: "作品太少，暫時無法與資料庫比較。",
+        compare: "你 {{mine}} · 資料庫 {{library}}",
+        compareRating: "你 {{mine}} · 大眾 {{library}}",
+        traits: {
+          duration: {
+            label: "作品時長",
+            low: "較短",
+            high: "較長",
+          },
+          release: {
+            label: "發售年份",
+            low: "較早",
+            high: "較新",
+          },
+          popularity: {
+            label: "銷量",
+            low: "冷門",
+            high: "熱門",
+          },
+          rating: {
+            label: "你的評分",
+            low: "更嚴格",
+            high: "更寬鬆",
+          },
+        },
+        statements: {
+          tags: {
+            one: "你最偏好「{{first}}」。",
+            two: "你最偏好「{{first}}」和「{{second}}」。",
+          },
+          duration: {
+            high: "偏愛較長的作品。",
+            low: "偏愛較短的作品。",
+          },
+          release: {
+            high: "偏愛較新的作品。",
+            low: "偏愛較早的作品。",
+          },
+          popularity: {
+            high: "偏愛熱門作品。",
+            low: "偏愛冷門作品。",
+          },
+          rating: {
+            high: "評分比大眾評分寬鬆。",
+            low: "評分比大眾評分嚴格。",
+          },
+          marks_one: "你標記過的 {{count}} 部作品中，{{finished}}% 已聽完，{{relisten}}% 標記為重聽。",
+          marks_other: "你標記過的 {{count}} 部作品中，{{finished}}% 已聽完，{{relisten}}% 標記為重聽。",
+        },
+      },
+      highlights: {
+        title: "{{year}} 年度亮點",
+        summary: "共收聽 {{duration}}，{{works}} 部作品，{{days}} 天有收聽。",
+        work: "最常聽的作品",
+        voices: "最常聽的聲優",
+        circles: "最常聽的社團",
+        busiestDay: "收聽最多的一天",
+        busiestDayDetail: "{{duration}} · {{title}}",
+        newWorks: "這一年新聽",
+        peakHour: "最常收聽的時段",
+      },
       weekdayAverage: "依星期平均",
       rank: "第 {{rank}} 名",
       search: "搜尋歷史",

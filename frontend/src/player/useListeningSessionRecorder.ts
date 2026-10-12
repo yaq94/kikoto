@@ -2,7 +2,7 @@ import { useEffect, useRef, type RefObject } from "react";
 
 import { listeningTimeZone } from "@/lib/timeZone";
 
-import { isMediaAdvancing, ListeningClock, type ListeningTarget } from "./listeningSession";
+import { isMediaAdvancing, ListeningClock, reportsListeningHours, type ListeningTarget } from "./listeningSession";
 import type { PlaybackReportScheduler } from "./playbackReportScheduler";
 import type { PlayerTrack } from "./playerTypes";
 import { createReportId } from "./reportId";
@@ -26,7 +26,12 @@ export function useListeningSessionRecorder(
     const media = mediaRef.current;
     const scheduler = schedulerRef.current;
     if (!media || !scheduler) return;
-    const clock = new ListeningClock(createReportId, (report) => scheduler.stageHistory(report), listeningTimeZone);
+    const clock = new ListeningClock(
+      createReportId,
+      (report) => scheduler.stageHistory(report),
+      listeningTimeZone,
+      reportsListeningHours,
+    );
     const sync = () =>
       clock.update(targetRef.current, scheduler.generation, isMediaAdvancing(media), performance.now(), Date.now());
     const observe = () => {

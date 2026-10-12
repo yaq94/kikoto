@@ -28,6 +28,29 @@ type SessionInput struct {
 type SessionDay struct {
 	Day             string  `json:"day"`
 	ListenedSeconds float64 `json:"listenedSeconds"`
+	// Hours splits the day's listening by hour of the day, cumulative like the
+	// day itself. A client that does not count hours omits it.
+	Hours []SessionHour `json:"hours,omitempty"`
+}
+
+type SessionHour struct {
+	Hour            int     `json:"hour"`
+	ListenedSeconds float64 `json:"listenedSeconds"`
+}
+
+// validHours accepts ascending hours of the day that hold no more listening
+// than their day.
+func validHours(day SessionDay) bool {
+	previous := -1
+	total := 0.0
+	for _, hour := range day.Hours {
+		if hour.Hour <= previous || hour.Hour > 23 || !validNumber(hour.ListenedSeconds) || hour.ListenedSeconds <= 0 {
+			return false
+		}
+		previous = hour.Hour
+		total += hour.ListenedSeconds
+	}
+	return total <= day.ListenedSeconds+0.000001
 }
 
 func validNumber(n float64) bool { return !math.IsNaN(n) && !math.IsInf(n, 0) && n >= 0 }
@@ -75,7 +98,7 @@ func validSession(input SessionInput) bool {
 	total := 0.0
 	for _, day := range input.Days {
 		parsed, err := time.Parse("2006-01-02", day.Day)
-		if err != nil || parsed.Format("2006-01-02") != day.Day || day.Day <= previous || day.Day < first || day.Day > last || !validNumber(day.ListenedSeconds) || day.ListenedSeconds <= 0 {
+		if err != nil || parsed.Format("2006-01-02") != day.Day || day.Day <= previous || day.Day < first || day.Day > last || !validNumber(day.ListenedSeconds) || day.ListenedSeconds <= 0 || !validHours(day) {
 			return false
 		}
 		previous = day.Day
@@ -197,6 +220,24 @@ func recordDatedSession(ctx context.Context, tx *sql.Tx, user, work int64, input
 			return err
 		}
 	}
+	for _, day := range input.Days {
+		for _, hour := range day.Hours {
+			var before float64
+			if err = tx.QueryRowContext(ctx, `SELECT COALESCE((SELECT listened_seconds FROM user_listening_session_hour WHERE user_id=? AND session_id=? AND day=? AND hour=?),0)`, user, input.SessionID, day.Day, hour.Hour).Scan(&before); err != nil {
+				return err
+			}
+			// An hour a retry reports lower keeps what it already holds.
+			if hour.ListenedSeconds <= before {
+				continue
+			}
+			if _, err = tx.ExecContext(ctx, `INSERT INTO user_listening_session_hour (user_id,session_id,day,hour,listened_seconds) VALUES (?,?,?,?,?) ON CONFLICT(user_id,session_id,day,hour) DO UPDATE SET listened_seconds=excluded.listened_seconds`, user, input.SessionID, day.Day, hour.Hour, hour.ListenedSeconds); err != nil {
+				return err
+			}
+			if _, err = tx.ExecContext(ctx, `INSERT INTO user_listening_hour (user_id,day,hour,listened_seconds) VALUES (?,?,?,?) ON CONFLICT(user_id,day,hour) DO UPDATE SET listened_seconds=listened_seconds+excluded.listened_seconds`, user, day.Day, hour.Hour, hour.ListenedSeconds-before); err != nil {
+				return err
+			}
+		}
+	}
 	if newSession {
 		// The play counts on the day the client put the session's first listening.
 		_, err = tx.ExecContext(ctx, `INSERT INTO user_listening_day (user_id,work_id,day,listen_count) VALUES (?,?,?,1) ON CONFLICT(user_id,work_id,day) DO UPDATE SET listen_count=listen_count+1`, user, work, input.Days[0].Day)
@@ -290,7 +331,7 @@ func (s Store) ClearHistory(ctx context.Context, user int64) error {
 	if _, err = tx.ExecContext(ctx, `INSERT INTO user_listening_generation (user_id,generation) VALUES (?,1) ON CONFLICT(user_id) DO UPDATE SET generation=generation+1`, user); err != nil {
 		return err
 	}
-	for _, table := range []string{"user_listening_session", "user_listening_import", "user_listening_day"} {
+	for _, table := range []string{"user_listening_session", "user_listening_import", "user_listening_day", "user_listening_hour"} {
 		if _, err = tx.ExecContext(ctx, `DELETE FROM `+table+` WHERE user_id = ?`, user); err != nil {
 			return err
 		}

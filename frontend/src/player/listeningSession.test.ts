@@ -69,6 +69,27 @@ describe("listening measurement", () => {
     expect(last.days).toEqual([{ day: "2026-01-02", listenedSeconds: 10 }]);
   });
 
+  it("splits each day by hour of the day for a server that counts hours", () => {
+    const reports: DatedListeningReport[] = [];
+    let counts = false;
+    const clock = new ListeningClock(
+      () => "synthetic-session-hours",
+      (r) => reports.push(r),
+      () => "UTC",
+      () => counts,
+    );
+    // 23:59:50 UTC: ten seconds in the last hour of the day, twenty in the first of the next.
+    clock.update(target, 0, true, 0, wall);
+    clock.observe(5_000, wall + 5_000);
+    expect(reports[reports.length - 1].days).toEqual([{ day: "2026-01-01", listenedSeconds: 5 }]);
+    counts = true;
+    clock.observe(30_000, wall + 30_000);
+    expect(reports[reports.length - 1].days).toEqual([
+      { day: "2026-01-01", listenedSeconds: 10, hours: [{ hour: 23, listenedSeconds: 10 }] },
+      { day: "2026-01-02", listenedSeconds: 20, hours: [{ hour: 0, listenedSeconds: 20 }] },
+    ]);
+  });
+
   it("drops suspended and changed-clock gaps and resumes from the next observation", () => {
     const h = harness();
     h.update(0, true);

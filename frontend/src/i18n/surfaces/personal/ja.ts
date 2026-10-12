@@ -114,6 +114,82 @@ export const personalJapanese = {
       timeZone: "1 日は {{zone}} の午前 0 時に始まります。",
       timeZoneAuto: "1 日は {{zone}}（この端末のタイムゾーン）の午前 0 時に始まります。",
       changeTimeZone: "タイムゾーンを変更",
+      yearLabel: "年",
+      yearValue: "年：{{year}}",
+      hours: {
+        title: "時間帯別",
+        peak: "最も多い時間帯 {{hours}}",
+        basis: "時間帯が記録された聴取だけを集計します。",
+      },
+      profile: {
+        heading: "好みのプロフィール",
+        basis:
+          "聴いている内容をライブラリと比べたものです。タグは、聴取時間に占める割合がライブラリの作品に占める割合を上回るものです。各マーカーは、聴いた作品がライブラリの中でどの位置にあるかを、聴取時間で重み付けして示します。",
+        failed: "好みのプロフィールを読み込めませんでした。",
+        tags: "好みのタグ",
+        excess: "聴取時間の割合がライブラリの割合を上回る幅",
+        tagShares: "{{name}}：聴取時間の {{time}}%、ライブラリの {{library}}%",
+        fewWorks: "作品が少ないため、ライブラリと比較できません。",
+        compare: "あなた {{mine}} · ライブラリ {{library}}",
+        compareRating: "あなた {{mine}} · 一般 {{library}}",
+        traits: {
+          duration: {
+            label: "作品の長さ",
+            low: "短い",
+            high: "長い",
+          },
+          release: {
+            label: "発売年",
+            low: "古い",
+            high: "新しい",
+          },
+          popularity: {
+            label: "販売数",
+            low: "ニッチ",
+            high: "人気",
+          },
+          rating: {
+            label: "あなたの評価",
+            low: "厳しめ",
+            high: "甘め",
+          },
+        },
+        statements: {
+          tags: {
+            one: "最も好むのは「{{first}}」です。",
+            two: "最も好むのは「{{first}}」と「{{second}}」です。",
+          },
+          duration: {
+            high: "長めの作品を好みます。",
+            low: "短めの作品を好みます。",
+          },
+          release: {
+            high: "新しめの作品を好みます。",
+            low: "古めの作品を好みます。",
+          },
+          popularity: {
+            high: "人気作を好みます。",
+            low: "ニッチな作品を好みます。",
+          },
+          rating: {
+            high: "評価は一般より甘めです。",
+            low: "評価は一般より厳しめです。",
+          },
+          marks_one: "マークした {{count}} 作品のうち、{{finished}}% が聴取済み、{{relisten}}% が再聴です。",
+          marks_other: "マークした {{count}} 作品のうち、{{finished}}% が聴取済み、{{relisten}}% が再聴です。",
+        },
+      },
+      highlights: {
+        title: "{{year}} 年のハイライト",
+        summary: "{{duration}} 聴取、{{works}} 作品、聴取した日は {{days}} 日。",
+        work: "最も聴いた作品",
+        voices: "最も聴いた声優",
+        circles: "最も聴いたサークル",
+        busiestDay: "最も聴いた日",
+        busiestDayDetail: "{{duration}} · {{title}}",
+        newWorks: "この年に初めて聴いた作品",
+        peakHour: "最も聴く時間帯",
+      },
       weekdayAverage: "曜日別の平均",
       rank: "{{rank}} 位",
       search: "履歴を検索",

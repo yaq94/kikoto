@@ -110,6 +110,19 @@ async function mockPersonalData(
       await route.fulfill({ json: { from: "2025-12-29", to: "2026-01-02", days: [] } });
       return;
     }
+    if (url.pathname === "/api/listening-profile") {
+      await route.fulfill({
+        json: {
+          range: url.searchParams.get("range") ?? "all",
+          listenedSeconds: 0,
+          workCount: 0,
+          libraryWorkCount: 0,
+          tags: [],
+          marks: { works: 0, finished: 0, relisten: 0 },
+        },
+      });
+      return;
+    }
     if (url.pathname === "/api/listening-breakdown") {
       await route.fulfill({
         json: {

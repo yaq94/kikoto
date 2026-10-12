@@ -679,7 +679,11 @@ Undated reports credit only newly reported seconds to the account's current day 
 `user_listening_session_day`, with a cascading session foreign key; they credit
 only each bucket's increase to `user_listening_day`, count a session once on
 its first reported date, and keep occurrence time in the session's history
-timestamps.
+timestamps. A dated report may also split a date by hour of the day:
+`user_listening_session_hour` keeps the session's cumulative hour buckets and
+`user_listening_hour` the account's listening per date and hour, credited by
+each bucket's increase. Hours describe only the listening reported with them,
+and clearing history removes them.
 
 Listening reports read these rows per canonical work: a row stored against an
 edition is reported as its family's canonical work, the one the Library lists.
@@ -688,6 +692,18 @@ The tag, voice, and circle rankings join the canonical work's shared tags,
 voice credits, and primary circle; their preference order compares an entry's
 share of the range's listening time with its share of the Library's canonical
 works.
+
+The taste profile reads the same range. Its tags are the leading entries of
+the tag preference order. A work attribute (`duration_seconds`,
+`release_date`, `sales_count`) places the listening among the Library's
+canonical works: each listened work takes its percentile among the Library's
+works that carry the attribute, and the profile reports their mean weighted by
+listening time, so 0.5 is a Library-typical account. An attribute with fewer
+than three works on either side is omitted. The rating comparison spans every
+rated work whatever the range: the mean `user_work_state.rating` against the
+mean `rating_average` of the same works. Marks count the listened works whose
+`listening_status` is listening, paused, finished, or relisten. Ratings and
+marks on an edition count for its canonical work.
 
 `favorite_list` distinguishes a system `marked` list from ordinary user lists.
 The system list has no stored items: it derives membership from a non-`none`

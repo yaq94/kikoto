@@ -1,14 +1,22 @@
 import type {
   ListeningCalendar,
   ListeningGranularity,
+  ListeningNamedRange,
   ListeningPeriodStatistic,
+  ListeningProfile,
+  ListeningProfileTrait,
   ListeningStatisticsRange,
 } from "@/lib/listeningApi";
 
 export const LISTENING_HISTORY_PAGE_SIZE = 30;
 
-/** Report ranges in switcher order; the first is the default. */
-export const LISTENING_REPORT_RANGES: readonly ListeningStatisticsRange[] = ["30d", "12m", "all"];
+/** Named report ranges in switcher order; the first is the default. */
+export const LISTENING_REPORT_RANGES: readonly ListeningNamedRange[] = ["30d", "12m", "all"];
+
+/** The calendar year a range names, or null for a named range. */
+export function listeningRangeYear(range: ListeningStatisticsRange) {
+  return /^[0-9]{4}$/.test(range) ? range : null;
+}
 
 export type ListeningDurationParts =
   | { key: "hoursMinutes"; values: { hours: number; minutes: number } }
@@ -159,8 +167,8 @@ export type ListeningCalendarCell = ListeningPeriodStatistic & {
 
 /**
  * A listening calendar as whole weeks, Monday first, oldest week first. Every
- * UTC day from the calendar's first Monday through its last day is a cell;
- * the days of the last week that have not happened yet are null.
+ * UTC day from the calendar's first day through its last is a cell; the days
+ * of the first week before it and of the last week after it are null.
  */
 export function listeningCalendarWeeks(calendar: ListeningCalendar) {
   const listened = new Map(calendar.days.map((day) => [day.date, day]));
@@ -173,7 +181,10 @@ export function listeningCalendarWeeks(calendar: ListeningCalendar) {
   const last = periodStart(calendar.to).getTime();
   const days: ListeningCalendarCell[] = [];
   const weeks: (ListeningCalendarCell | null)[][] = [];
-  for (let time = periodStart(calendar.from).getTime(), index = 0; time <= last; time += 86_400_000, index += 1) {
+  const first = periodStart(calendar.from);
+  // The first day sits on its own weekday row, so a year that opens midweek starts partway down its first week.
+  const offset = (first.getUTCDay() + 6) % 7;
+  for (let time = first.getTime(), index = offset; time <= last; time += 86_400_000, index += 1) {
     const period = new Date(time).toISOString().slice(0, 10);
     const seconds = listened.get(period)?.listenedSeconds ?? 0;
     const cell: ListeningCalendarCell = {
@@ -183,8 +194,83 @@ export function listeningCalendarWeeks(calendar: ListeningCalendar) {
       level: seconds > 0 ? ((1 + thresholds.filter((threshold) => seconds >= threshold).length) as 1 | 2 | 3 | 4) : 0,
     };
     days.push(cell);
-    if (index % 7 === 0) weeks.push(Array.from({ length: 7 }, () => null));
+    if (index % 7 === 0 || weeks.length === 0) weeks.push(Array.from({ length: 7 }, () => null));
     weeks[weeks.length - 1][index % 7] = cell;
   }
   return { weeks, days };
+}
+
+/** The hour of the day with the most listening (the earliest on a tie), or null without any. */
+export function peakListeningHour(hours: readonly number[] | undefined) {
+  const values = hours ?? [];
+  let peak: number | null = null;
+  for (let hour = 0; hour < values.length; hour += 1)
+    if (values[hour] > 0 && (peak === null || values[hour] > values[peak])) peak = hour;
+  return peak;
+}
+
+/** An hour of the day as a clock range, such as 22:00–23:00. */
+export function hourRangeLabel(hour: number) {
+  const clock = (value: number) => `${String(value % 24).padStart(2, "0")}:00`;
+  return `${clock(hour)}–${clock(hour + 1)}`;
+}
+
+export type ListeningProfileTraitKind = "duration" | "release" | "popularity" | "rating";
+
+// A trait further than this from the comparison's middle is worth a sentence.
+const PROFILE_LEAN: Record<ListeningProfileTraitKind, number> = {
+  duration: 0.1,
+  release: 0.1,
+  popularity: 0.1,
+  rating: 0.05,
+};
+
+/** The fewest marked works a profile reads completion from. */
+export const PROFILE_MARKS_MINIMUM = 3;
+
+export type ListeningProfileStatement =
+  | { kind: "tags"; names: string[] }
+  | { kind: "lean"; trait: ListeningProfileTraitKind; side: "high" | "low" }
+  | { kind: "marks"; works: number; finishedPercent: number; relistenPercent: number };
+
+/**
+ * What a profile says in words, in reading order: the two most preferred
+ * tags, the work attribute the listening leans on most, how the account's
+ * ratings compare, and how many of the marked works are finished.
+ */
+export function listeningProfileStatements(profile: ListeningProfile): ListeningProfileStatement[] {
+  const statements: ListeningProfileStatement[] = [];
+  const names = profile.tags.slice(0, 2).map((tag) => tag.name);
+  if (names.length > 0) statements.push({ kind: "tags", names });
+  const lean = (trait: ListeningProfileTrait | undefined) => (trait ? Math.abs(trait.position - 0.5) : 0);
+  const side = (trait: ListeningProfileTrait) => (trait.position > 0.5 ? "high" : "low");
+  const strongest = (["duration", "release", "popularity"] as const)
+    .filter((kind) => lean(profile[kind]) >= PROFILE_LEAN[kind])
+    .sort((left, right) => lean(profile[right]) - lean(profile[left]))[0];
+  const strongestTrait = strongest && profile[strongest];
+  if (strongest && strongestTrait) statements.push({ kind: "lean", trait: strongest, side: side(strongestTrait) });
+  if (profile.rating && lean(profile.rating) >= PROFILE_LEAN.rating)
+    statements.push({ kind: "lean", trait: "rating", side: side(profile.rating) });
+  if (profile.marks.works >= PROFILE_MARKS_MINIMUM)
+    statements.push({
+      kind: "marks",
+      works: profile.marks.works,
+      finishedPercent: Math.round((profile.marks.finished / profile.marks.works) * 100),
+      relistenPercent: Math.round((profile.marks.relisten / profile.marks.works) * 100),
+    });
+  return statements;
+}
+
+export type RadarPoint = { x: number; y: number };
+
+/**
+ * Points of a radar chart with one axis per value, the first pointing up and
+ * the rest clockwise. A value is a share of `scale`, the chart's rim.
+ */
+export function radarPoints(values: readonly number[], scale: number, radius: number): RadarPoint[] {
+  return values.map((value, index) => {
+    const angle = -Math.PI / 2 + (index * 2 * Math.PI) / values.length;
+    const length = scale > 0 ? (Math.max(0, value) / scale) * radius : 0;
+    return { x: Math.cos(angle) * length, y: Math.sin(angle) * length };
+  });
 }

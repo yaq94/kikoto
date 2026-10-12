@@ -114,6 +114,84 @@ export const personalEnglish = {
       timeZone: "Days start at midnight in {{zone}}.",
       timeZoneAuto: "Days start at midnight in {{zone}}, this device's time zone.",
       changeTimeZone: "Change time zone",
+      yearLabel: "Year",
+      yearValue: "Year: {{year}}",
+      hours: {
+        title: "By hour of day",
+        peak: "Most at {{hours}}",
+        basis: "Counts the listening recorded with its hour.",
+      },
+      profile: {
+        heading: "Taste profile",
+        basis:
+          "What you listen to, compared with your Library. Tags are the ones that take a larger share of your listening time than of the Library's works; each marker shows where your works sit among the Library's, weighted by listening time.",
+        failed: "The taste profile could not be loaded.",
+        tags: "Preferred tags",
+        excess: "Share of listening time above share of the Library",
+        tagShares: "{{name}}: {{time}}% of listening time, {{library}}% of the Library",
+        fewWorks: "Too few works to compare with the Library.",
+        compare: "You {{mine}} · Library {{library}}",
+        compareRating: "You {{mine}} · Public {{library}}",
+        traits: {
+          duration: {
+            label: "Work length",
+            low: "Shorter",
+            high: "Longer",
+          },
+          release: {
+            label: "Release year",
+            low: "Older",
+            high: "Newer",
+          },
+          popularity: {
+            label: "Sales",
+            low: "Niche",
+            high: "Popular",
+          },
+          rating: {
+            label: "Your ratings",
+            low: "Stricter",
+            high: "More generous",
+          },
+        },
+        statements: {
+          tags: {
+            one: "You lean most toward {{first}}.",
+            two: "You lean most toward {{first}} and {{second}}.",
+          },
+          duration: {
+            high: "You favor longer works.",
+            low: "You favor shorter works.",
+          },
+          release: {
+            high: "You favor newer releases.",
+            low: "You favor older releases.",
+          },
+          popularity: {
+            high: "You favor popular works.",
+            low: "You favor niche works.",
+          },
+          rating: {
+            high: "You rate more generously than the public.",
+            low: "You rate more strictly than the public.",
+          },
+          marks_one:
+            "Of the {{count}} work you marked, {{finished}}% is finished and {{relisten}}% is marked to relisten.",
+          marks_other:
+            "Of the {{count}} works you marked, {{finished}}% are finished and {{relisten}}% are marked to relisten.",
+        },
+      },
+      highlights: {
+        title: "{{year}} highlights",
+        summary: "{{duration}} of listening across {{works}} works on {{days}} days.",
+        work: "Most listened work",
+        voices: "Most listened voice",
+        circles: "Most listened circle",
+        busiestDay: "Busiest day",
+        busiestDayDetail: "{{duration}} · {{title}}",
+        newWorks: "First heard this year",
+        peakHour: "Busiest hour",
+      },
       weekdayAverage: "Average per weekday",
       rank: "Rank {{rank}}",
       search: "Search history",

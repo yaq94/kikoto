@@ -17,7 +17,7 @@ func TestListeningCalendarCoversWholeWeeksOfDatedListening(t *testing.T) {
 	 (1,1,'2026-03-04',600,2),(1,2,'2026-03-04',300,1),(1,1,'2025-03-03',3600,3),(1,3,'2025-03-02',7200,1),(2,1,'2025-12-20',60,1)`)
 	execFixture(t, s.DB, `INSERT INTO user_listening_import (user_id,work_id,listened_seconds,listen_count) VALUES (1,3,100,1)`)
 
-	calendar, err := s.CalendarFor(ctx, 1, now)
+	calendar, err := s.CalendarFor(ctx, 1, RangeAll, now)
 	if err != nil || calendar.From != "2025-03-03" || calendar.To != "2026-03-04" {
 		t.Fatalf("calendar span = %+v, %v", calendar, err)
 	}
@@ -25,7 +25,7 @@ func TestListeningCalendarCoversWholeWeeksOfDatedListening(t *testing.T) {
 	if len(calendar.Days) != 2 || calendar.Days[0] != (ListeningDay{Date: "2025-03-03", ListenedSeconds: 3600, ListenCount: 3}) || calendar.Days[1] != (ListeningDay{Date: "2026-03-04", ListenedSeconds: 900, ListenCount: 3}) {
 		t.Fatalf("calendar days = %+v", calendar.Days)
 	}
-	calendar, err = s.CalendarFor(ctx, 2, now)
+	calendar, err = s.CalendarFor(ctx, 2, RangeAll, now)
 	if err != nil || len(calendar.Days) != 1 || calendar.Days[0].Date != "2025-12-20" {
 		t.Fatalf("other account = %+v, %v", calendar, err)
 	}

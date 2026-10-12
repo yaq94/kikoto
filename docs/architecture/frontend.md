@@ -226,13 +226,17 @@ viewer read LRC, WebVTT, and SRT files the same way.
   holds the account's time zone: automatic, which follows the device, or one
   of the IANA zones the browser knows plus the zone in use.
 - Insights (`/insights`): the listening dashboard, composed by
-  `pages/InsightsPage` from `features/listening-history`. It shows the past
-  year as a calendar, then a 30-day, 12-month, or all-time report of totals,
-  activity, ranked most listened works, weekly rhythm, and tags, voices, and
-  circles ranked by preference or listening time, with the full per-work
-  history collapsed until opened beside the clear action and the link to Your
-  data. Report requests name the device's time zone, and the foot of the page
-  names the zone its days follow with a link to the Account setting. The calendar, the report, and the rankings load independently, so one
+  `pages/InsightsPage` from `features/listening-history`. One range
+  switcher at the top drives the page: 30 days, 12 months, all time, or a
+  calendar year the report lists. It shows a year as a calendar (the chosen
+  year, else the past one), then the report of totals, activity, ranked most
+  listened works, weekly rhythm with listening by hour of day, a taste
+  profile, and tags, voices, and circles ranked by preference or listening
+  time, with the full per-work history collapsed until opened beside the clear
+  action and the link to Your data. A calendar year opens with its highlights.
+  The taste profile draws its preferred tags as an SVG radar with an
+  equivalent list for assistive technology. Report requests name the device's time zone, and the foot of the page
+  names the zone its days follow with a link to the Account setting. The calendar, the report, the profile, and the rankings load independently, so one
   failed request leaves the others on screen. The app shell composes each
   work, tag, voice, and circle link.
 - Metadata: a Works group for saved metadata and attention categories, and an
@@ -335,8 +339,10 @@ by the calendar date of the account's time zone, under one stable session id.
 The zone arrives with the history generation from `GET /api/listening-sessions`:
 a name is the zone the account fixed, `null` is the device's own zone, and a
 response that names nothing counts UTC dates. A saved Account time zone
-replaces it at once; a zone the runtime does not know counts UTC dates. A session rolls over after 86,400 measured seconds, 32
-distinct dates, or a changed zone. Midnight alone does not add a listen count;
+replaces it at once; a zone the runtime does not know counts UTC dates. For a server whose generation lookup
+says it counts hours, each date also carries its listening per hour of the day.
+A session rolls over after 86,400 measured seconds, 32
+distinct dates, 48 distinct hours, or a changed zone. Midnight alone does not add a listen count;
 the count belongs to the activation's first listening date.
 
 `usePlaybackProgress` retains the applied-start and listener-intent guards for

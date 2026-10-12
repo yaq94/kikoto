@@ -31,7 +31,11 @@ export type ListeningHistoryPage = {
   pageSize: number;
 };
 
-export type ListeningStatisticsRange = "30d" | "12m" | "all";
+/** A report range that ends today. */
+export type ListeningNamedRange = "30d" | "12m" | "all";
+
+/** A named range, or a calendar year such as "2026". */
+export type ListeningStatisticsRange = ListeningNamedRange | `${number}`;
 
 export type ListeningGranularity = "day" | "month" | "year";
 
@@ -58,6 +62,21 @@ export type ListeningStatistics = {
   /** Every period of the range, oldest first; periods without listening are zero. */
   series: ListeningPeriodStatistic[];
   topWorks: ListeningHistoryItem[];
+  /** The calendar years with dated listening, latest first. */
+  years?: string[];
+  /** Listening per hour of the day, midnight first, for the listening whose hours were recorded. */
+  hours?: number[];
+  /** The standout figures of a calendar year; other ranges have none. */
+  highlights?: ListeningHighlights;
+};
+
+export type ListeningHighlights = {
+  /** The day with the most listening and the work listened to most on it. */
+  busiestDay?: { date: string; listenedSeconds: number; topWork?: ListeningHistoryItem };
+  /** Works whose first dated listening falls in the year. */
+  newWorkCount: number;
+  topVoice?: ListeningBreakdownEntry;
+  topCircle?: ListeningBreakdownEntry;
 };
 
 export type ListeningCalendarDay = {
@@ -67,9 +86,9 @@ export type ListeningCalendarDay = {
   listenCount: number;
 };
 
-/** Dated listening for the 52 weeks before the current week through today. */
+/** Dated listening for the 52 weeks before the current week through today, or for one calendar year. */
 export type ListeningCalendar = {
-  /** The Monday the calendar starts on. */
+  /** The Monday the calendar starts on, or the first day of its year. */
   from: string;
   to: string;
   /** The IANA zone whose calendar the days follow. */
@@ -112,6 +131,37 @@ export type ListeningBreakdown = Record<ListeningBreakdownKind, ListeningBreakdo
   listenedSeconds: number;
   /** The number of works the library lists; present in a preference ranking. */
   libraryWorkCount?: number;
+};
+
+/** Where an account's listening sits on one work attribute, against the library. */
+export type ListeningProfileTrait = {
+  /** The attribute's listening-time-weighted mean over the listened works. */
+  value: number;
+  /** The attribute's mean over the works it is compared with. */
+  libraryValue: number;
+  /** From 0 to 1; 0.5 is where the comparison sits. */
+  position: number;
+  workCount: number;
+};
+
+/**
+ * What an account listens to in one range, against the library: its most
+ * preferred tags, and where its works sit by duration (seconds), release
+ * (calendar years), and popularity (sales). `rating` compares the account's
+ * ratings with the public ones.
+ */
+export type ListeningProfile = {
+  range: ListeningStatisticsRange;
+  listenedSeconds: number;
+  workCount: number;
+  libraryWorkCount: number;
+  tags: ListeningBreakdownEntry[];
+  duration?: ListeningProfileTrait;
+  release?: ListeningProfileTrait;
+  popularity?: ListeningProfileTrait;
+  rating?: ListeningProfileTrait;
+  /** The listened works the account marked as started. */
+  marks: { works: number; finished: number; relisten: number };
 };
 
 /** The server's error code for a report whose generation predates a history clear. */
@@ -157,8 +207,14 @@ export const listeningApi = {
   },
   statistics: (range: ListeningStatisticsRange, signal?: AbortSignal) =>
     apiTransport.getJSON<ListeningStatistics>(`/api/listening-statistics${reportQuery({ range })}`, signal),
-  calendar: (signal?: AbortSignal) =>
-    apiTransport.getJSON<ListeningCalendar>(`/api/listening-calendar${reportQuery()}`, signal),
+  /** The calendar of a year, or of the weeks up to today for a range that names none. */
+  calendar: (year: string | null, signal?: AbortSignal) =>
+    apiTransport.getJSON<ListeningCalendar>(
+      `/api/listening-calendar${reportQuery(year ? { range: year } : {})}`,
+      signal,
+    ),
+  profile: (range: ListeningStatisticsRange, signal?: AbortSignal) =>
+    apiTransport.getJSON<ListeningProfile>(`/api/listening-profile${reportQuery({ range })}`, signal),
   breakdown: (range: ListeningStatisticsRange, rank: ListeningBreakdownRank, signal?: AbortSignal) =>
     apiTransport.getJSON<ListeningBreakdown>(`/api/listening-breakdown${reportQuery({ range, rank })}`, signal),
   clearHistory: () => apiTransport.deleteJSON<unknown>("/api/listening-history"),

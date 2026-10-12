@@ -255,6 +255,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/listening-statistics", s.getListeningStatistics)
 	mux.HandleFunc("GET /api/listening-calendar", s.getListeningCalendar)
 	mux.HandleFunc("GET /api/listening-breakdown", s.getListeningBreakdown)
+	mux.HandleFunc("GET /api/listening-profile", s.getListeningProfile)
 	mux.HandleFunc("GET /api/user-data/export", s.exportPersonalData)
 	mux.HandleFunc("POST /api/user-data/import/preview", s.importPersonalData)
 	mux.HandleFunc("POST /api/user-data/import", s.importPersonalData)

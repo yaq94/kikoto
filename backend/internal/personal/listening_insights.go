@@ -12,9 +12,11 @@ const calendarWeeks = 52
 
 const breakdownLimit = 10
 
-// Calendar is the dated listening of the weeks ending with the current one.
+// Calendar is the dated listening of the weeks ending with the current one,
+// or of one calendar year.
 type Calendar struct {
-	// From is the Monday the calendar starts on and To is today.
+	// From is the Monday the calendar starts on and To is today; a year's
+	// calendar runs from its first day through its last, or through today.
 	From string `json:"from"`
 	To   string `json:"to"`
 	// TimeZone names the zone whose calendar the days follow.
@@ -23,16 +25,24 @@ type Calendar struct {
 	Days []ListeningDay `json:"days"`
 }
 
-// CalendarFor reports dated listening per day from the Monday 52 weeks before
-// the current week through now's calendar day, read in now's own time zone.
-// Imported totals have no dates and never appear.
-func (s Store) CalendarFor(ctx context.Context, user int64, now time.Time) (Calendar, error) {
+// CalendarFor reports dated listening per day, read in now's own time zone:
+// the days of the year a range names, or else from the Monday 52 weeks before
+// the current week through now's calendar day. Imported totals have no dates
+// and never appear.
+func (s Store) CalendarFor(ctx context.Context, user int64, period StatisticsRange, now time.Time) (Calendar, error) {
 	today := calendarDay(now)
 	monday := today.AddDate(0, 0, -((int(today.Weekday()) + 6) % 7))
-	from := monday.AddDate(0, 0, -7*calendarWeeks)
-	result := Calendar{From: from.Format(time.DateOnly), To: today.Format(time.DateOnly), TimeZone: now.Location().String()}
+	from, to := monday.AddDate(0, 0, -7*calendarWeeks), today
+	if _, ok := period.Year(); ok {
+		window, err := rangeWindow(period, today)
+		if err != nil {
+			return Calendar{}, err
+		}
+		from, to = window.from, window.to
+	}
+	result := Calendar{From: from.Format(time.DateOnly), To: to.Format(time.DateOnly), TimeZone: now.Location().String()}
 	var err error
-	result.Days, err = s.recentListeningDays(ctx, user, from)
+	result.Days, err = s.listeningDays(ctx, user, from, to)
 	return result, err
 }
 
@@ -130,18 +140,11 @@ func (s Store) BreakdownFor(ctx context.Context, user int64, period StatisticsRa
 	if rank != RankTime && rank != RankPreference {
 		return result, ErrInvalid
 	}
-	var listened string
-	var args []any
-	switch period {
-	case RangeAll:
-		listened = reportHistoryCTE + `, listened AS (SELECT work_id,listened_seconds,listen_count FROM history) `
-		args = []any{user, user}
-	case RangeLast30Days, RangeLast12Months:
-		listened = `WITH listened AS (SELECT work_id,SUM(listened_seconds) listened_seconds,SUM(listen_count) listen_count FROM ` + reportDays + ` WHERE day >= ? GROUP BY work_id) `
-		args = []any{user, boundedRangeStart(period, today).Format(time.DateOnly)}
-	default:
-		return result, ErrInvalid
+	window, err := rangeWindow(period, today)
+	if err != nil {
+		return result, err
 	}
+	listened, args := listenedWorks(user, window)
 	if err := s.DB.QueryRowContext(ctx, listened+`SELECT COALESCE(SUM(listened_seconds),0) FROM listened`, args...).Scan(&result.ListenedSeconds); err != nil {
 		return result, err
 	}
@@ -167,6 +170,15 @@ func (s Store) BreakdownFor(ctx context.Context, user int64, period StatisticsRa
 		*target = entries[:min(len(entries), breakdownLimit)]
 	}
 	return result, nil
+}
+
+// listenedWorks is a CTE named listened that holds a window's listening per
+// canonical work, with the scope of StatisticsFor, and the arguments it binds.
+func listenedWorks(user int64, window reportWindow) (string, []any) {
+	if !window.bounded {
+		return reportHistoryCTE + `, listened AS (SELECT work_id,listened_seconds,listen_count FROM history) `, []any{user, user}
+	}
+	return `WITH listened AS (SELECT work_id,SUM(listened_seconds) listened_seconds,SUM(listen_count) listen_count FROM ` + reportDays + ` WHERE day >= ? AND day <= ? GROUP BY work_id) `, []any{user, window.from.Format(time.DateOnly), window.to.Format(time.DateOnly)}
 }
 
 func listenedMore(left, right BreakdownEntry) bool {

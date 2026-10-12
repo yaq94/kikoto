@@ -4,17 +4,33 @@ import { createZonedDays } from "@/lib/timeZone";
 export const MAX_LISTENING_SESSION_SECONDS = 86_400;
 export const LISTENING_MAX_OBSERVATION_GAP_MS = 60_000;
 const MAX_SESSION_DAYS = 32;
+// A report rolls over before its hour buckets outgrow one request.
+const MAX_SESSION_HOURS = 48;
+
+let hourReports = false;
+
+/** Whether the server takes each day's listening split by hour of the day. */
+export function reportsListeningHours() {
+  return hourReports;
+}
+
+export function setReportsListeningHours(enabled: boolean) {
+  hourReports = enabled;
+}
 export type ListeningTarget = { activationKey: string; workId: number };
 
 /**
- * Measures actual advancing wall time and credits it to calendar days of the
- * account's time zone. It owns neither storage nor networking.
+ * Measures actual advancing wall time and credits it to calendar days, and
+ * their hours, of the account's time zone. It owns neither storage nor
+ * networking.
  */
 export class ListeningClock {
   private target: ListeningTarget | null = null;
   private generation: number | null = null;
   private report: DatedListeningReport | null = null;
   private days = new Map<string, number>();
+  // Milliseconds per `day hour`; reported only to a server that counts hours.
+  private hours = new Map<string, number>();
   private runningSince: number | null = null;
   private wallSince = 0;
   private publishedSeconds = 0;
@@ -26,12 +42,15 @@ export class ListeningClock {
     private readonly checkpoint: (report: DatedListeningReport) => void,
     /** The time zone whose calendar days listening is credited to. */
     private readonly timeZone: () => string = () => "UTC",
+    /** Whether reports split each day by hour. */
+    private readonly countsHours: () => boolean = () => false,
   ) {}
 
   update(target: ListeningTarget | null, generation: number | null, advancing: boolean, now: number, wall: number) {
     if (generation !== this.generation) {
       this.report = null;
       this.days.clear();
+      this.hours.clear();
       this.publishedSeconds = 0;
       this.runningSince = null;
       this.generation = generation;
@@ -67,8 +86,13 @@ export class ListeningClock {
     }
     let cursor = wall - elapsed;
     while (cursor < wall) {
-      const { day, end: dayEnd } = this.dayAt(cursor);
-      if (this.days.size >= MAX_SESSION_DAYS && !this.days.has(day)) this.closeReport();
+      const { day, hour, hourEnd } = this.dayAt(cursor);
+      const hourKey = `${day} ${hour}`;
+      if (
+        (this.days.size >= MAX_SESSION_DAYS && !this.days.has(day)) ||
+        (this.hours.size >= MAX_SESSION_HOURS && !this.hours.has(hourKey))
+      )
+        this.closeReport();
       if (!this.report)
         this.report = {
           generation: this.generation,
@@ -80,14 +104,21 @@ export class ListeningClock {
           days: [],
         };
       const remaining = MAX_LISTENING_SESSION_SECONDS * 1000 - this.report.listenedSeconds * 1000;
-      const amount = Math.min(wall - cursor, Math.max(1, dayEnd - cursor), remaining);
+      // An hour never outlasts its day, so a step also stops at midnight.
+      const amount = Math.min(wall - cursor, Math.max(1, hourEnd - cursor), remaining);
       this.days.set(day, (this.days.get(day) ?? 0) + amount);
+      this.hours.set(hourKey, (this.hours.get(hourKey) ?? 0) + amount);
       cursor += amount;
       this.report.listenedSeconds = [...this.days.values()].reduce((sum, value) => sum + value, 0) / 1000;
       this.report.lastListenedAt = new Date(cursor).toISOString();
+      const countHours = this.countsHours();
       this.report.days = [...this.days]
         .sort(([a], [b]) => a.localeCompare(b))
-        .map(([day, ms]) => ({ day, listenedSeconds: ms / 1000 }));
+        .map(([day, ms]) => ({
+          day,
+          listenedSeconds: ms / 1000,
+          ...(countHours ? { hours: this.hoursOf(day) } : {}),
+        }));
       this.publish();
       if (this.report.listenedSeconds >= MAX_LISTENING_SESSION_SECONDS) this.closeReport();
     }
@@ -96,6 +127,12 @@ export class ListeningClock {
   end() {
     this.closeReport();
     this.runningSince = null;
+  }
+  private hoursOf(day: string) {
+    return [...this.hours]
+      .filter(([key]) => key.startsWith(`${day} `))
+      .map(([key, ms]) => ({ hour: Number(key.slice(day.length + 1)), listenedSeconds: ms / 1000 }))
+      .sort((left, right) => left.hour - right.hour);
   }
   private publish(force = false) {
     if (
@@ -111,6 +148,7 @@ export class ListeningClock {
     this.publish(true);
     this.report = null;
     this.days.clear();
+    this.hours.clear();
     this.publishedSeconds = 0;
   }
 }

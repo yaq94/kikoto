@@ -34,9 +34,29 @@ describe("time zone calendar days", () => {
 
   it("counts days in UTC for a zone the runtime does not know", () => {
     const unknown = createZonedDays("Mars/Olympus");
-    expect(unknown(Date.parse("2026-03-02T23:30:00Z"))).toEqual({
+    expect(unknown(Date.parse("2026-03-02T23:30:00Z"))).toMatchObject({
       day: "2026-03-02",
       end: Date.parse("2026-03-03T00:00:00Z"),
+    });
+  });
+
+  it("names the hour of the day and when it ends, in whole and fractional offsets", () => {
+    const tokyo = createZonedDays("Asia/Tokyo");
+    // 14:59:30 UTC is 23:59:30 in Tokyo; the hour and the day end together.
+    expect(tokyo(Date.parse("2026-03-02T14:59:30.250Z"))).toMatchObject({
+      hour: 23,
+      hourEnd: Date.parse("2026-03-02T15:00:00Z"),
+    });
+    // Kolkata is five and a half hours ahead, so its hours turn on the UTC half hour.
+    const kolkata = createZonedDays("Asia/Kolkata");
+    expect(kolkata(Date.parse("2026-03-02T06:40:00Z"))).toMatchObject({
+      day: "2026-03-02",
+      hour: 12,
+      hourEnd: Date.parse("2026-03-02T07:30:00Z"),
+    });
+    expect(createZonedDays("Mars/Olympus")(Date.parse("2026-03-02T06:40:00Z"))).toMatchObject({
+      hour: 6,
+      hourEnd: Date.parse("2026-03-02T07:00:00Z"),
     });
   });
 

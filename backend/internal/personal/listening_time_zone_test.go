@@ -29,7 +29,7 @@ func TestListeningDaysFollowTheAccountCalendar(t *testing.T) {
 	if stats.Series[28] != (ListeningPeriod{Period: "2026-03-02", ListenedSeconds: 60, ListenCount: 1}) || stats.Series[29] != (ListeningPeriod{Period: "2026-03-03", ListenedSeconds: 60}) {
 		t.Fatalf("series = %+v", stats.Series[28:])
 	}
-	calendar, err := s.CalendarFor(ctx, 1, now)
+	calendar, err := s.CalendarFor(ctx, 1, RangeAll, now)
 	if err != nil || calendar.To != "2026-03-03" || calendar.From != "2025-03-03" || calendar.TimeZone != "synthetic/zone" {
 		t.Fatalf("calendar = %+v, %v", calendar, err)
 	}

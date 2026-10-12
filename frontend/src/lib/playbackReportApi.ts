@@ -6,7 +6,8 @@ import type { MediaProgressUpdate } from "./mediaApi";
 export type DatedListeningReport = ListeningSessionReport & {
   startedAt: string;
   lastListenedAt: string;
-  days: { day: string; listenedSeconds: number }[];
+  /** Each day's listening, split by hour of the day for a server that counts hours. */
+  days: { day: string; listenedSeconds: number; hours?: { hour: number; listenedSeconds: number }[] }[];
 };
 
 export type ProgressReport = {

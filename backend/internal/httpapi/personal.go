@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"errors"
 	"io"
 	"net/http"
@@ -112,7 +113,8 @@ func (s *Server) getListeningGeneration(w http.ResponseWriter, r *http.Request) 
 	if name, ok := s.ownTimeZone(r.Context(), user.ID); ok {
 		timeZone = name
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"generation": generation, "timeZone": timeZone})
+	// hours tells it that dated reports may split each day by hour.
+	writeJSON(w, http.StatusOK, map[string]any{"generation": generation, "timeZone": timeZone, "hours": true})
 }
 
 func (s *Server) recordListeningSession(w http.ResponseWriter, r *http.Request) {
@@ -164,6 +166,10 @@ func (s *Server) getListeningStatistics(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	s.attachListeningCovers(result.TopWorks)
+	if result.Highlights != nil && result.Highlights.BusiestDay != nil && result.Highlights.BusiestDay.TopWork != nil {
+		work := result.Highlights.BusiestDay.TopWork
+		work.CoverURL = s.coverURL(work.PrimaryCode)
+	}
 	writeJSON(w, http.StatusOK, result)
 }
 
@@ -173,7 +179,13 @@ func (s *Server) getListeningCalendar(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
-	result, err := (personal.Store{DB: s.db}).CalendarFor(r.Context(), user.ID, s.accountNow(r, user.ID))
+	// A year shows that year; every other range shows the weeks up to today.
+	period, err := personal.ParseStatisticsRange(r.URL.Query().Get("range"))
+	if err != nil {
+		writePersonalError(w, err)
+		return
+	}
+	result, err := (personal.Store{DB: s.db}).CalendarFor(r.Context(), user.ID, period, s.accountNow(r, user.ID))
 	if err != nil {
 		writePersonalError(w, err)
 		return
@@ -207,24 +219,57 @@ func (s *Server) getListeningBreakdown(w http.ResponseWriter, r *http.Request) {
 		writePersonalError(w, err)
 		return
 	}
-	// Shared tags are named in the viewer's metadata language, like a work's own tags.
-	if languages := s.viewerTagLanguages(r.Context()); languages != nil && len(result.Tags) > 0 {
-		ids := make([]int64, len(result.Tags))
-		for index, tag := range result.Tags {
-			ids[index] = tag.ID
-		}
-		names, err := metadatatags.LocalizedNames(r.Context(), s.db, ids, languages)
-		if err != nil {
-			writePersonalError(w, err)
-			return
-		}
-		for index, tag := range result.Tags {
-			if name, ok := names[tag.ID]; ok {
-				result.Tags[index].Name = name
-			}
-		}
+	if err = s.localizeListeningTags(r.Context(), result.Tags); err != nil {
+		writePersonalError(w, err)
+		return
 	}
 	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) getListeningProfile(w http.ResponseWriter, r *http.Request) {
+	user, ok := s.requirePermission(w, r, "library:read")
+	if !ok {
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	period, err := personal.ParseStatisticsRange(r.URL.Query().Get("range"))
+	if err != nil {
+		writePersonalError(w, err)
+		return
+	}
+	result, err := (personal.Store{DB: s.db}).ProfileFor(r.Context(), user.ID, period, s.accountNow(r, user.ID))
+	if err != nil {
+		writePersonalError(w, err)
+		return
+	}
+	if err = s.localizeListeningTags(r.Context(), result.Tags); err != nil {
+		writePersonalError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+// localizeListeningTags names shared tags in the viewer's metadata language,
+// like a work's own tags.
+func (s *Server) localizeListeningTags(ctx context.Context, tags []personal.BreakdownEntry) error {
+	languages := s.viewerTagLanguages(ctx)
+	if languages == nil || len(tags) == 0 {
+		return nil
+	}
+	ids := make([]int64, len(tags))
+	for index, tag := range tags {
+		ids[index] = tag.ID
+	}
+	names, err := metadatatags.LocalizedNames(ctx, s.db, ids, languages)
+	if err != nil {
+		return err
+	}
+	for index, tag := range tags {
+		if name, ok := names[tag.ID]; ok {
+			tags[index].Name = name
+		}
+	}
+	return nil
 }
 
 // History records store the canonical work, so its own cached cover applies.
