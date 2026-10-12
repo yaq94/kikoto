@@ -15,6 +15,7 @@ export function FloatingSelect({
   options,
   onValueChange,
   ariaLabel,
+  triggerLabel,
   disabled = false,
   ariaBusy = false,
   ariaInvalid = false,
@@ -26,6 +27,8 @@ export function FloatingSelect({
   options: readonly FloatingSelectOption[];
   onValueChange: (value: string) => void;
   ariaLabel: string;
+  /** What the trigger shows in place of the selected option's label, as when no option is selected. */
+  triggerLabel?: ReactNode;
   disabled?: boolean;
   ariaBusy?: boolean;
   ariaInvalid?: boolean;
@@ -122,7 +125,7 @@ export function FloatingSelect({
         onClick={() => setOpen((current) => !current)}
         onKeyDown={handleTriggerKeyDown}
       >
-        <span className="min-w-0 flex-1 truncate text-left">{selectedOption?.label}</span>
+        <span className="min-w-0 flex-1 truncate text-left">{triggerLabel ?? selectedOption?.label}</span>
         <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
       </button>
       <AnchoredPopover

@@ -1,7 +1,13 @@
 import type { ReactNode } from "react";
 
 import type { ReforkTarget, RemoteSourceAvailability } from "@/features/work-detail/source/sourceContextModel";
-import { api, type SourcePresenceItem, type WorkDetail, type WorkMetadataSyncRunResult } from "@/lib/api";
+import {
+  api,
+  type LibrarySource,
+  type SourcePresenceItem,
+  type WorkDetail,
+  type WorkMetadataSyncRunResult,
+} from "@/lib/api";
 import type { TreeNode } from "@/features/work-detail/media/mediaTreeModel";
 import i18n from "@/i18n";
 import { FilePreviewDialog, type FilePreviewRequest } from "@/features/work-detail/dialogs/FilePreviewDialog";
@@ -128,7 +134,9 @@ export function PersistedLyricsManagerOverlay({
 export function PersistedMetadataEditorOverlay({
   section,
   work,
+  sources = [],
   selectedMetadataVariantKey,
+  canSyncMetadata = false,
   refreshActions,
   onClose,
   onSaved,
@@ -136,7 +144,9 @@ export function PersistedMetadataEditorOverlay({
 }: {
   section: MetadataEditorSection | null;
   work: WorkDetail | null;
+  sources?: LibrarySource[];
   selectedMetadataVariantKey: string;
+  canSyncMetadata?: boolean;
   refreshActions?: ReactNode;
   onClose: () => void;
   onSaved: () => void;
@@ -147,7 +157,9 @@ export function PersistedMetadataEditorOverlay({
   return (
     <WorkMetadataEditorModal
       work={work}
+      sources={sources}
       selectedMetadataVariantKey={selectedMetadataVariantKey}
+      canSyncMetadata={canSyncMetadata}
       readOnly={demoMode || !hasPermission("library:write")}
       initialSection={section}
       refreshActions={refreshActions}

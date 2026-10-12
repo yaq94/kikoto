@@ -48,8 +48,8 @@ describe("commandActions", () => {
       onOpenPath,
     });
 
-    expect(actions.map((action) => action.label)).toEqual(["Settings", "History", "Tags", "Your data"]);
-    actions[2].run();
+    expect(actions.map((action) => action.label)).toEqual(["Settings", "Tags", "Your data"]);
+    actions[1].run();
     expect(onOpenPath).toHaveBeenCalledWith("/settings?tab=tags");
     expect(
       commandActions({ hasPermission: () => false, visibleNavItems: settings, onOpenPage: vi.fn(), onOpenPath }),

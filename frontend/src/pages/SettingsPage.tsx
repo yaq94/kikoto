@@ -13,7 +13,6 @@ import {
   Eraser,
   FastForward,
   Folder,
-  History,
   KeyRound,
   LoaderCircle,
   Network,
@@ -37,6 +36,7 @@ import { api, type CurrentUser } from "@/lib/api";
 import { validatePasswordChange, type PasswordChangeDraft } from "@/pages/accountSettings";
 import { CleanupPage } from "@/pages/CleanupPage";
 import { MaintenancePage } from "@/pages/MaintenancePage";
+import { AccountTimeZoneSection } from "@/features/time-zone/AccountTimeZoneSection";
 import { PersonalTabPanel, type PersonalTabProps } from "@/pages/PersonalTabPanel";
 import {
   getStoredPlaybackSeekPreferences,
@@ -56,24 +56,18 @@ const emptyPasswordDraft: PasswordChangeDraft = {
 };
 
 type SettingsTab =
-  "account" | "playback" | "history" | "recommendation" | "tags" | "library" | "cache" | "proxy" | "cleanup" | "users";
-type SettingsSectionTarget = "data";
+  "account" | "playback" | "recommendation" | "tags" | "library" | "cache" | "proxy" | "cleanup" | "users";
+type SettingsSectionTarget = "data" | "time-zone";
 type SettingsLocation = { tab: SettingsTab; section?: SettingsSectionTarget };
 
 const adminSettingsTabs: SettingsTab[] = ["library", "cache", "proxy", "cleanup", "users"];
-// Listening history and personal tags need library access; the other personal tabs do not.
-const libraryReaderTabs: SettingsTab[] = ["history", "tags"];
-const allSettingsTabs: SettingsTab[] = [
-  "account",
-  "playback",
-  "history",
-  "recommendation",
-  "tags",
-  ...adminSettingsTabs,
-];
+// Personal tags need library access; the other personal tabs do not.
+const libraryReaderTabs: SettingsTab[] = ["tags"];
+const allSettingsTabs: SettingsTab[] = ["account", "playback", "recommendation", "tags", ...adminSettingsTabs];
 // Alias tab ids keep existing links valid; each opens the tab that holds its content.
 const settingsTabAliases: Record<string, SettingsLocation> = {
   data: { tab: "account", section: "data" },
+  "time-zone": { tab: "account", section: "time-zone" },
   // The metadata tab id opens Library, which holds catalog freshness.
   metadata: { tab: "library" },
 };
@@ -84,7 +78,6 @@ const settingsPanelClassName = "w-full max-w-4xl space-y-8";
 const settingsTabs: Array<{ id: SettingsTab; labelKey: string; icon: LucideIcon }> = [
   { id: "account", labelKey: "settings.account", icon: UserRound },
   { id: "playback", labelKey: "settings.playback", icon: FastForward },
-  { id: "history", labelKey: "nav.history", icon: History },
   { id: "recommendation", labelKey: "settings.recommendations", icon: Sparkles },
   { id: "tags", labelKey: "nav.tags", icon: Tags },
   { id: "library", labelKey: "maintenance.tabs.library", icon: Folder },
@@ -471,6 +464,7 @@ export function SettingsPage({
                   </SettingsSection>
                 </form>
               )}
+              <AccountTimeZoneSection readOnly={readOnly} />
               {personal && (
                 <section
                   id="settings-section-data"
@@ -544,16 +538,6 @@ export function SettingsPage({
               <PlaybackSourcePreferences userId={user.id} />
               {supportsNativePrivacy() && <DevicePrivacyPreferences />}
               <UserPreferencePanels userId={user.id} section="playback" readOnly={readOnly} />
-            </div>
-          )}
-          {personal && activeTab === "history" && (
-            <div
-              className={settingsPanelClassName}
-              role="tabpanel"
-              id="settings-panel-history"
-              aria-labelledby="settings-tab-history"
-            >
-              <PersonalTabPanel tab="history" {...personal} />
             </div>
           )}
           {activeTab === "recommendation" && (

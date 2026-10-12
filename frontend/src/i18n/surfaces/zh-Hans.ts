@@ -11,6 +11,7 @@ export const surfaceHans = {
     description: "作品简介",
   },
   metadataEditor: {
+    ...surfaceEnglish.metadataEditor,
     originLanguage: "origin",
     currentLanguage: "current",
     status: {
@@ -80,6 +81,7 @@ export const surfaceHans = {
       current: "当前",
       local: "在库中",
       metadataOnly: "仅元数据",
+      noMatchingLanguage: "此作品族没有所选语言的版本。",
       bonus: "购买特典",
     },
     searchTags: "搜索标签或输入新标签",

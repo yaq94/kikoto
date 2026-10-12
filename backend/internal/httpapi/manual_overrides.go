@@ -22,6 +22,9 @@ import (
 type workManualOverrides struct {
 	Title       *string                `json:"title,omitempty"`
 	Titles      map[string]string      `json:"titles,omitempty"`
+	Description *string                `json:"description,omitempty"`
+	ReleaseDate *string                `json:"releaseDate,omitempty"`
+	AgeRating   *string                `json:"ageRating,omitempty"`
 	Circle      *manualOverrideEntity  `json:"circle,omitempty"`
 	Series      *manualOverrideSeries  `json:"series,omitempty"`
 	VoiceActors []manualOverridePerson `json:"voiceActors,omitempty"`
@@ -69,6 +72,9 @@ type workCoverCandidate struct {
 type workManualOverridePayload struct {
 	Titles      map[string]*string     `json:"titles"`
 	Title       *string                `json:"title"`
+	Description *string                `json:"description"`
+	ReleaseDate *string                `json:"releaseDate"`
+	AgeRating   *string                `json:"ageRating"`
 	Circle      *manualOverrideEntity  `json:"circle"`
 	Series      *manualOverrideSeries  `json:"series"`
 	VoiceActors []manualOverridePerson `json:"voiceActors"`
@@ -173,6 +179,12 @@ func patchManualOverride(ctx context.Context, tx *sql.Tx, workID int64, field st
 		return nil
 	case "title":
 		return upsertManualTextOverride(ctx, tx, workID, field, payload.Title, userID)
+	case "description":
+		return upsertManualTextOverride(ctx, tx, workID, field, payload.Description, userID)
+	case "releaseDate":
+		return upsertManualTextOverride(ctx, tx, workID, "release_date", payload.ReleaseDate, userID)
+	case "ageRating":
+		return upsertManualTextOverride(ctx, tx, workID, "age_rating", payload.AgeRating, userID)
 	case "circle":
 		value := normalizeManualEntity(payload.Circle)
 		var encoded any
@@ -427,6 +439,21 @@ func (s *Server) applyManualOverrideRow(overrides *workManualOverrides, row manu
 				overrides.Title = &value
 			}
 		}
+	case "description":
+		var value string
+		if err := json.Unmarshal([]byte(row.ValueJSON), &value); err == nil {
+			overrides.Description = stringPointer(strings.TrimSpace(value))
+		}
+	case "release_date":
+		var value string
+		if err := json.Unmarshal([]byte(row.ValueJSON), &value); err == nil {
+			overrides.ReleaseDate = stringPointer(strings.TrimSpace(value))
+		}
+	case "age_rating":
+		var value string
+		if err := json.Unmarshal([]byte(row.ValueJSON), &value); err == nil {
+			overrides.AgeRating = stringPointer(strings.TrimSpace(value))
+		}
 	case "circle":
 		var value manualOverrideEntity
 		if err := json.Unmarshal([]byte(row.ValueJSON), &value); err == nil {
@@ -456,6 +483,12 @@ func (s *Server) applyManualOverrideRow(overrides *workManualOverrides, row manu
 func applyManualOverridesToLibrarySummary(work *libraryWorkSummary, overrides workManualOverrides) {
 	if overrides.Title != nil {
 		work.Title = *overrides.Title
+	}
+	if overrides.ReleaseDate != nil {
+		work.ReleaseDate = overrides.ReleaseDate
+	}
+	if overrides.AgeRating != nil {
+		work.AgeRating = *overrides.AgeRating
 	}
 	if overrides.Circle != nil {
 		work.Circle = overrides.Circle.Name
@@ -505,6 +538,15 @@ func (s *Server) applyManualOverridesToDetail(ctx context.Context, work *workDet
 			}
 			break
 		}
+	}
+	if overrides.Description != nil {
+		work.Description = *overrides.Description
+	}
+	if overrides.ReleaseDate != nil {
+		work.ReleaseDate = overrides.ReleaseDate
+	}
+	if overrides.AgeRating != nil {
+		work.AgeRating = *overrides.AgeRating
 	}
 	if overrides.Circle != nil {
 		work.Circle = overrides.Circle.Name
@@ -674,6 +716,12 @@ func normalizeManualOverrideField(field string) string {
 	switch strings.ToLower(strings.TrimSpace(field)) {
 	case "title":
 		return "title"
+	case "description":
+		return "description"
+	case "releasedate", "release_date":
+		return "release_date"
+	case "agerating", "age_rating":
+		return "age_rating"
 	case "circle":
 		return "circle"
 	case "series":

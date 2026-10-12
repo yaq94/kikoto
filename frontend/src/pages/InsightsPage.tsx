@@ -1,0 +1,41 @@
+import { ArchiveRestore } from "lucide-react";
+import type { ComponentProps } from "react";
+import { useTranslation } from "react-i18next";
+
+import { Button } from "@/components/ui/button";
+import { ListeningHistoryPage, openLinkInPlace } from "@/features/listening-history/ListeningHistoryPage";
+import { personalTabPath, TIME_ZONE_SETTINGS_PATH } from "@/pages/personalTabs";
+
+/**
+ * The account's own listening as one page: the listening dashboard, with the
+ * way to Your data, where the same account exports and imports it, beside the
+ * dashboard's other data actions, and the way to the account's time zone.
+ */
+export function InsightsPage({
+  listening,
+  onOpenPath,
+}: {
+  listening: Omit<ComponentProps<typeof ListeningHistoryPage>, "actions" | "timeZoneLink">;
+  onOpenPath: (path: string) => void;
+}) {
+  const { t } = useTranslation();
+  const dataPath = personalTabPath("data");
+  return (
+    <ListeningHistoryPage
+      {...listening}
+      timeZoneLink={{ href: TIME_ZONE_SETTINGS_PATH, open: () => onOpenPath(TIME_ZONE_SETTINGS_PATH) }}
+      actions={
+        <Button asChild variant="ghost" size="sm" className="shrink-0">
+          <a
+            href={dataPath}
+            title={t("personal.insights.dataHint")}
+            onClick={(event) => openLinkInPlace(event, { href: dataPath, open: () => onOpenPath(dataPath) })}
+          >
+            <ArchiveRestore className="h-4 w-4" aria-hidden="true" />
+            {t("nav.userData")}
+          </a>
+        </Button>
+      }
+    />
+  );
+}

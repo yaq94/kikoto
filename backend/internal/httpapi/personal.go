@@ -1,11 +1,13 @@
 package httpapi
 
 import (
+	"context"
 	"errors"
 	"io"
 	"net/http"
 	"time"
 
+	"github.com/yexca/kikoto/backend/internal/metadatatags"
 	"github.com/yexca/kikoto/backend/internal/personal"
 )
 
@@ -105,7 +107,14 @@ func (s *Server) getListeningGeneration(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, http.StatusOK, map[string]int64{"generation": generation})
+	// A client buckets listening by the calendar day of the account's time
+	// zone; null tells it to follow its own device.
+	var timeZone any
+	if name, ok := s.ownTimeZone(r.Context(), user.ID); ok {
+		timeZone = name
+	}
+	// hours tells it that dated reports may split each day by hour.
+	writeJSON(w, http.StatusOK, map[string]any{"generation": generation, "timeZone": timeZone, "hours": true})
 }
 
 func (s *Server) recordListeningSession(w http.ResponseWriter, r *http.Request) {
@@ -117,6 +126,7 @@ func (s *Server) recordListeningSession(w http.ResponseWriter, r *http.Request) 
 	if !decodePersonalBody(w, r, &payload, 2048) {
 		return
 	}
+	payload.Day = s.accountNow(r, user.ID).Format(time.DateOnly)
 	if err := (personal.Store{DB: s.db}).RecordSession(r.Context(), user.ID, payload); err != nil {
 		writePersonalError(w, err)
 		return
@@ -150,13 +160,116 @@ func (s *Server) getListeningStatistics(w http.ResponseWriter, r *http.Request) 
 		writePersonalError(w, err)
 		return
 	}
-	result, err := (personal.Store{DB: s.db}).StatisticsFor(r.Context(), user.ID, period, time.Now())
+	result, err := (personal.Store{DB: s.db}).StatisticsFor(r.Context(), user.ID, period, s.accountNow(r, user.ID))
 	if err != nil {
 		writePersonalError(w, err)
 		return
 	}
 	s.attachListeningCovers(result.TopWorks)
+	if result.Highlights != nil && result.Highlights.BusiestDay != nil && result.Highlights.BusiestDay.TopWork != nil {
+		work := result.Highlights.BusiestDay.TopWork
+		work.CoverURL = s.coverURL(work.PrimaryCode)
+	}
 	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) getListeningCalendar(w http.ResponseWriter, r *http.Request) {
+	user, ok := s.requirePermission(w, r, "library:read")
+	if !ok {
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	// A year shows that year; every other range shows the weeks up to today.
+	period, err := personal.ParseStatisticsRange(r.URL.Query().Get("range"))
+	if err != nil {
+		writePersonalError(w, err)
+		return
+	}
+	result, err := (personal.Store{DB: s.db}).CalendarFor(r.Context(), user.ID, period, s.accountNow(r, user.ID))
+	if err != nil {
+		writePersonalError(w, err)
+		return
+	}
+	_, followsDevice := s.accountTimeZone(r, user.ID)
+	writeJSON(w, http.StatusOK, struct {
+		personal.Calendar
+		// FollowsDevice reports that the account fixed no zone of its own.
+		FollowsDevice bool `json:"followsDevice"`
+	}{result, followsDevice})
+}
+
+func (s *Server) getListeningBreakdown(w http.ResponseWriter, r *http.Request) {
+	user, ok := s.requirePermission(w, r, "library:read")
+	if !ok {
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	period, err := personal.ParseStatisticsRange(r.URL.Query().Get("range"))
+	if err != nil {
+		writePersonalError(w, err)
+		return
+	}
+	rank, err := personal.ParseBreakdownRank(r.URL.Query().Get("rank"))
+	if err != nil {
+		writePersonalError(w, err)
+		return
+	}
+	result, err := (personal.Store{DB: s.db}).BreakdownFor(r.Context(), user.ID, period, rank, s.accountNow(r, user.ID))
+	if err != nil {
+		writePersonalError(w, err)
+		return
+	}
+	if err = s.localizeListeningTags(r.Context(), result.Tags); err != nil {
+		writePersonalError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) getListeningProfile(w http.ResponseWriter, r *http.Request) {
+	user, ok := s.requirePermission(w, r, "library:read")
+	if !ok {
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	period, err := personal.ParseStatisticsRange(r.URL.Query().Get("range"))
+	if err != nil {
+		writePersonalError(w, err)
+		return
+	}
+	result, err := (personal.Store{DB: s.db}).ProfileFor(r.Context(), user.ID, period, s.accountNow(r, user.ID))
+	if err != nil {
+		writePersonalError(w, err)
+		return
+	}
+	if err = s.localizeListeningTags(r.Context(), result.Tags); err != nil {
+		writePersonalError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+// localizeListeningTags names shared tags in the viewer's metadata language,
+// like a work's own tags.
+func (s *Server) localizeListeningTags(ctx context.Context, tags []personal.BreakdownEntry) error {
+	languages := s.viewerTagLanguages(ctx)
+	if languages == nil || len(tags) == 0 {
+		return nil
+	}
+	ids := make([]int64, len(tags))
+	for index, tag := range tags {
+		ids[index] = tag.ID
+	}
+	names, err := metadatatags.LocalizedNames(ctx, s.db, ids, languages)
+	if err != nil {
+		return err
+	}
+	for index, tag := range tags {
+		if name, ok := names[tag.ID]; ok {
+			tags[index].Name = name
+		}
+	}
+	return nil
 }
 
 // History records store the canonical work, so its own cached cover applies.

@@ -220,12 +220,25 @@ viewer read LRC, WebVTT, and SRT files the same way.
   only the selected tab) and wraps instead of scrolling; the
   orientation is stored locally as well. Section headings are plain text,
   and a switch or number field stays beside its label even on a phone.
-  Listening history shows a 30-day, 12-month, or all-time dashboard of totals,
-  activity, ranked most listened works, and listening rhythm derived from the
-  report's period series, with the full per-work history collapsed until opened;
-  personal tags manage account-owned work, circle, and voice tags; data
+  Personal tags manage account-owned work, circle, and voice tags; data
   transfer offers personal JSON export and previewed import from a Kikoto or
-  Kikoeru file, a Kikoeru account, or an open-source Kikoeru database.
+  Kikoeru file, a Kikoeru account, or an open-source Kikoeru database. Account
+  holds the account's time zone: automatic, which follows the device, or one
+  of the IANA zones the browser knows plus the zone in use.
+- Insights (`/insights`): the listening dashboard, composed by
+  `pages/InsightsPage` from `features/listening-history`. One range
+  switcher at the top drives the page: 30 days, 12 months, all time, or a
+  calendar year the report lists. It shows a year as a calendar (the chosen
+  year, else the past one), then the report of totals, activity, ranked most
+  listened works, weekly rhythm with listening by hour of day, a taste
+  profile, and tags, voices, and circles ranked by preference or listening
+  time, with the full per-work history collapsed until opened beside the clear
+  action and the link to Your data. A calendar year opens with its highlights.
+  The taste profile draws its preferred tags as an SVG radar with an
+  equivalent list for assistive technology. Report requests name the device's time zone, and the foot of the page
+  names the zone its days follow with a link to the Account setting. The calendar, the report, the profile, and the rankings load independently, so one
+  failed request leaves the others on screen. The app shell composes each
+  work, tag, voice, and circle link.
 - Metadata: a Works group for saved metadata and attention categories, and an
   Entries group for Tags, Circles, and Voice actors. Each entry view owns a
   searchable table and management dialog. Tag and circle edits require
@@ -281,12 +294,14 @@ suggestion hook owns cancellation and debounce. The maintenance tag and circle
 dialogs keep transport separate from the work editor and preserve their loaded
 state and drafts on request failure.
 
-The personal destinations open at `/settings?tab=history`, `?tab=tags`, and
-`?tab=data`; `data` is an alias that opens the Account data section, and
-`?tab=recommendation` opens Recommendations. The former `/history`,
-`/tags`, and `/user-data` links redirect there. They require `library:read`, are reachable from mobile account actions
-and Quick actions, and load their own chunks independently of the global
-player. The administration tabs appear only for administrators and Demo,
+The personal Settings destinations open at `/settings?tab=tags` and
+`?tab=data`; `data` is an alias that opens the Account data section,
+`?tab=time-zone` opens the Account time zone section, and
+`?tab=recommendation` opens Recommendations. The former `/tags` and
+`/user-data` links redirect there, and `/history` and `/settings?tab=history`
+redirect to `/insights`. Insights and the personal destinations require
+`library:read`, are reachable from mobile account actions and Quick actions,
+and load their own chunks independently of the global player. The administration tabs appear only for administrators and Demo,
 which sees every tab read-only.
 The player records cumulative listening time under an account/server scope;
 history clearing invalidates older reports using a server generation. Sleep
@@ -320,9 +335,15 @@ floating lyrics window follows `screenSecure` independently.
 and playback rate. Pause, waiting, seeking and ended stop its clock. A gap over
 60 seconds, or a wall-clock discontinuity inconsistent with the monotonic clock,
 is excluded rather than credited as device sleep. It partitions measured time
-by the actual UTC date, under one stable session id. A session rolls over after
-86,400 measured seconds or 32 distinct UTC dates. Midnight alone does not add a
-listen count; the count belongs to the activation's first listening date.
+by the calendar date of the account's time zone, under one stable session id.
+The zone arrives with the history generation from `GET /api/listening-sessions`:
+a name is the zone the account fixed, `null` is the device's own zone, and a
+response that names nothing counts UTC dates. A saved Account time zone
+replaces it at once; a zone the runtime does not know counts UTC dates. For a server whose generation lookup
+says it counts hours, each date also carries its listening per hour of the day.
+A session rolls over after 86,400 measured seconds, 32
+distinct dates, 48 distinct hours, or a changed zone. Midnight alone does not add a listen count;
+the count belongs to the activation's first listening date.
 
 `usePlaybackProgress` retains the applied-start and listener-intent guards for
 the canonical work cursor. Events update local checkpoints; `timeupdate` never
@@ -636,6 +657,13 @@ The metadata language label of an original edition whose language was never
 declared reads only Original; other editions keep their language or the
 unknown-language label.
 
+The metadata editor includes a language scope strip derived from the work's
+actual editions: All languages, the user's preferred available language, and
+the canonical edition marked as Original. The canonical label uses its
+declared language when one exists and never assumes Japanese. The family list
+follows the selected scope while shared credits and tag membership remain
+work-wide.
+
 Effective titles and descriptions arrive together in metadata variants. Detail
 language selection updates both; descriptions render stored plain text verbatim
 through React escaping, preserving brackets, ampersands and line breaks. Local,
@@ -662,6 +690,16 @@ names the filling source and, per source, which values it filled; a not-synced
 work with remote values shows the same per-source lines. The title editor names
 a remote title's source. Metadata issue rows say a DLsite-unavailable work was
 filled by a named remote source instead of showing a bare unavailable status.
+
+The metadata editor's **Fetch for edit** action opens a three-column comparison
+of current, fetched, and expected values. Choosing a fetched value keeps it as
+provider metadata; changing the expected value records a manual override. The
+preview is private, expires, and is rejected when the work changed while it
+was open.
+
+Tags offer an explicit merge action that preserves current concepts as manual
+additions to the fetched provider set. A DLsite family has its own accept
+action; the normal field save does not materialize sibling editions.
 
 Workflows lists Learn tag names (`metadata_genre_names`) in the Basic group
 after metadata sync. It is a read-only system workflow: its runs, progress and

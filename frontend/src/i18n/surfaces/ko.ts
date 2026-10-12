@@ -11,6 +11,7 @@ export const surfaceKorean = {
     description: "작품 소개",
   },
   metadataEditor: {
+    ...surfaceEnglish.metadataEditor,
     originLanguage: "origin",
     currentLanguage: "current",
     status: {
@@ -81,6 +82,7 @@ export const surfaceKorean = {
       current: "현재",
       local: "라이브러리에 있음",
       metadataOnly: "메타데이터만",
+      noMatchingLanguage: "이 패밀리에는 선택한 언어의 에디션이 없습니다.",
       bonus: "구매 특전",
     },
     searchTags: "태그를 검색하거나 새 태그를 입력하세요",

@@ -20,11 +20,37 @@ type SessionInput struct {
 	StartedAt       string       `json:"startedAt,omitempty"`
 	LastListenedAt  string       `json:"lastListenedAt,omitempty"`
 	Days            []SessionDay `json:"days,omitempty"`
+	// Day is the account's current calendar day, which a report without Days
+	// is credited to; the server sets it, and empty means the UTC day.
+	Day string `json:"-"`
 }
 
 type SessionDay struct {
 	Day             string  `json:"day"`
 	ListenedSeconds float64 `json:"listenedSeconds"`
+	// Hours splits the day's listening by hour of the day, cumulative like the
+	// day itself. A client that does not count hours omits it.
+	Hours []SessionHour `json:"hours,omitempty"`
+}
+
+type SessionHour struct {
+	Hour            int     `json:"hour"`
+	ListenedSeconds float64 `json:"listenedSeconds"`
+}
+
+// validHours accepts ascending hours of the day that hold no more listening
+// than their day.
+func validHours(day SessionDay) bool {
+	previous := -1
+	total := 0.0
+	for _, hour := range day.Hours {
+		if hour.Hour <= previous || hour.Hour > 23 || !validNumber(hour.ListenedSeconds) || hour.ListenedSeconds <= 0 {
+			return false
+		}
+		previous = hour.Hour
+		total += hour.ListenedSeconds
+	}
+	return total <= day.ListenedSeconds+0.000001
 }
 
 func validNumber(n float64) bool { return !math.IsNaN(n) && !math.IsInf(n, 0) && n >= 0 }
@@ -65,12 +91,14 @@ func validSession(input SessionInput) bool {
 	if e1 != nil || e2 != nil || end.Before(start) || end.After(time.Now().Add(5*time.Minute)) {
 		return false
 	}
-	first, last := start.UTC().Format("2006-01-02"), end.UTC().Format("2006-01-02")
+	// A client buckets by the account's time zone, whose calendar day is at
+	// most one day from the UTC day of the same instant.
+	first, last := start.UTC().AddDate(0, 0, -1).Format("2006-01-02"), end.UTC().AddDate(0, 0, 1).Format("2006-01-02")
 	previous := ""
 	total := 0.0
 	for _, day := range input.Days {
 		parsed, err := time.Parse("2006-01-02", day.Day)
-		if err != nil || parsed.Format("2006-01-02") != day.Day || day.Day <= previous || day.Day < first || day.Day > last || !validNumber(day.ListenedSeconds) || day.ListenedSeconds <= 0 {
+		if err != nil || parsed.Format("2006-01-02") != day.Day || day.Day <= previous || day.Day < first || day.Day > last || !validNumber(day.ListenedSeconds) || day.ListenedSeconds <= 0 || !validHours(day) {
 			return false
 		}
 		previous = day.Day
@@ -130,7 +158,11 @@ func recordSessionTx(ctx context.Context, tx *sql.Tx, user int64, input SessionI
 	if newSession {
 		count = 1
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO user_listening_day (user_id,work_id,day,listened_seconds,listen_count) VALUES (?,?,date('now'),?,?) ON CONFLICT(user_id,work_id,day) DO UPDATE SET listened_seconds = listened_seconds + excluded.listened_seconds, listen_count = listen_count + excluded.listen_count`, user, work, input.ListenedSeconds-previous, count)
+	day := input.Day
+	if day == "" {
+		day = time.Now().UTC().Format(time.DateOnly)
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO user_listening_day (user_id,work_id,day,listened_seconds,listen_count) VALUES (?,?,?,?,?) ON CONFLICT(user_id,work_id,day) DO UPDATE SET listened_seconds = listened_seconds + excluded.listened_seconds, listen_count = listen_count + excluded.listen_count`, user, work, day, input.ListenedSeconds-previous, count)
 	if err != nil {
 		return err
 	}
@@ -188,8 +220,27 @@ func recordDatedSession(ctx context.Context, tx *sql.Tx, user, work int64, input
 			return err
 		}
 	}
+	for _, day := range input.Days {
+		for _, hour := range day.Hours {
+			var before float64
+			if err = tx.QueryRowContext(ctx, `SELECT COALESCE((SELECT listened_seconds FROM user_listening_session_hour WHERE user_id=? AND session_id=? AND day=? AND hour=?),0)`, user, input.SessionID, day.Day, hour.Hour).Scan(&before); err != nil {
+				return err
+			}
+			// An hour a retry reports lower keeps what it already holds.
+			if hour.ListenedSeconds <= before {
+				continue
+			}
+			if _, err = tx.ExecContext(ctx, `INSERT INTO user_listening_session_hour (user_id,session_id,day,hour,listened_seconds) VALUES (?,?,?,?,?) ON CONFLICT(user_id,session_id,day,hour) DO UPDATE SET listened_seconds=excluded.listened_seconds`, user, input.SessionID, day.Day, hour.Hour, hour.ListenedSeconds); err != nil {
+				return err
+			}
+			if _, err = tx.ExecContext(ctx, `INSERT INTO user_listening_hour (user_id,day,hour,listened_seconds) VALUES (?,?,?,?) ON CONFLICT(user_id,day,hour) DO UPDATE SET listened_seconds=listened_seconds+excluded.listened_seconds`, user, day.Day, hour.Hour, hour.ListenedSeconds-before); err != nil {
+				return err
+			}
+		}
+	}
 	if newSession {
-		_, err = tx.ExecContext(ctx, `INSERT INTO user_listening_day (user_id,work_id,day,listen_count) VALUES (?,?,?,1) ON CONFLICT(user_id,work_id,day) DO UPDATE SET listen_count=listen_count+1`, user, work, start.UTC().Format("2006-01-02"))
+		// The play counts on the day the client put the session's first listening.
+		_, err = tx.ExecContext(ctx, `INSERT INTO user_listening_day (user_id,work_id,day,listen_count) VALUES (?,?,?,1) ON CONFLICT(user_id,work_id,day) DO UPDATE SET listen_count=listen_count+1`, user, work, input.Days[0].Day)
 	}
 	return err
 }
@@ -201,6 +252,23 @@ const historyCTE = `WITH history AS (
   UNION ALL SELECT work_id, listened_seconds, listen_count, last_played_at FROM user_listening_import WHERE user_id = ?
  ) GROUP BY work_id
 ) `
+
+// A stored work is reported as its family's canonical work, the one the
+// library lists, even when it was recorded before the family was linked.
+const canonicalWorkJoin = ` LEFT JOIN work_edition family_edition ON family_edition.work_id = stored.work_id LEFT JOIN logical_work family ON family.id = family_edition.logical_work_id `
+
+const canonicalWorkID = `COALESCE(family.canonical_work_id,stored.work_id)`
+
+// reportHistoryCTE is historyCTE per canonical work, for listening reports.
+const reportHistoryCTE = `WITH history AS (
+ SELECT ` + canonicalWorkID + ` work_id, SUM(stored.listened_seconds) listened_seconds, SUM(stored.listen_count) listen_count, MAX(stored.last_played_at) last_played_at FROM (
+  SELECT work_id, listened_seconds, 1 listen_count, updated_at last_played_at FROM user_listening_session WHERE user_id = ?
+  UNION ALL SELECT work_id, listened_seconds, listen_count, last_played_at FROM user_listening_import WHERE user_id = ?
+ ) stored` + canonicalWorkJoin + `GROUP BY 1
+) `
+
+// reportDays is one account's dated listening per canonical work; it binds the user id.
+const reportDays = `(SELECT ` + canonicalWorkID + ` work_id,stored.day,stored.listened_seconds,stored.listen_count FROM user_listening_day stored` + canonicalWorkJoin + `WHERE stored.user_id = ?)`
 
 type HistoryItem struct {
 	WorkID          int64   `json:"workId"`
@@ -241,10 +309,10 @@ func (s Store) History(ctx context.Context, user int64, query string, page, size
 	}
 	query = strings.TrimSpace(query)
 	where := ` FROM history h JOIN work w ON w.id = h.work_id WHERE instr(LOWER(w.primary_code || ' ' || w.title),LOWER(?)) > 0`
-	if err := s.DB.QueryRowContext(ctx, historyCTE+`SELECT COUNT(*)`+where, user, user, query).Scan(&result.Total); err != nil {
+	if err := s.DB.QueryRowContext(ctx, reportHistoryCTE+`SELECT COUNT(*)`+where, user, user, query).Scan(&result.Total); err != nil {
 		return result, err
 	}
-	rows, err := s.DB.QueryContext(ctx, historyCTE+`SELECT w.id,w.primary_code,w.title,h.listened_seconds,h.listen_count,h.last_played_at`+where+` ORDER BY h.last_played_at DESC,w.id DESC LIMIT ? OFFSET ?`, user, user, query, size, (page-1)*size)
+	rows, err := s.DB.QueryContext(ctx, reportHistoryCTE+`SELECT w.id,w.primary_code,w.title,h.listened_seconds,h.listen_count,h.last_played_at`+where+` ORDER BY h.last_played_at DESC,w.id DESC LIMIT ? OFFSET ?`, user, user, query, size, (page-1)*size)
 	if err != nil {
 		return result, err
 	}
@@ -263,7 +331,7 @@ func (s Store) ClearHistory(ctx context.Context, user int64) error {
 	if _, err = tx.ExecContext(ctx, `INSERT INTO user_listening_generation (user_id,generation) VALUES (?,1) ON CONFLICT(user_id) DO UPDATE SET generation=generation+1`, user); err != nil {
 		return err
 	}
-	for _, table := range []string{"user_listening_session", "user_listening_import", "user_listening_day"} {
+	for _, table := range []string{"user_listening_session", "user_listening_import", "user_listening_day", "user_listening_hour"} {
 		if _, err = tx.ExecContext(ctx, `DELETE FROM `+table+` WHERE user_id = ?`, user); err != nil {
 			return err
 		}

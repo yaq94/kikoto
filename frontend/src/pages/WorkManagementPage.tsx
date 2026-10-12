@@ -323,6 +323,7 @@ export function WorkManagementPage({
         <WorkMetadataEditorModal
           work={editor.work}
           readOnly={readOnly}
+          canSyncMetadata={canSyncMetadata}
           onClose={() => setEditor(null)}
           onSaved={editor.onSaved}
           onLinkChanged={editor.onSaved}

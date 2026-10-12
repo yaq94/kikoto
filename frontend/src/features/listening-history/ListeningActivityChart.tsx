@@ -52,7 +52,7 @@ export function ListeningActivityChart({
                 duration: formatDuration(active.listenedSeconds),
                 count: active.listenCount,
               })
-            : t("personal.history.periodHint")}
+            : null}
         </span>
       </figcaption>
       <div className="space-y-1 pt-4">

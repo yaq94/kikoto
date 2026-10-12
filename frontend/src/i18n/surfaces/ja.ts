@@ -11,6 +11,7 @@ export const surfaceJapanese = {
     description: "作品紹介",
   },
   metadataEditor: {
+    ...surfaceEnglish.metadataEditor,
     originLanguage: "origin",
     currentLanguage: "current",
     status: {
@@ -82,6 +83,7 @@ export const surfaceJapanese = {
       current: "表示中",
       local: "ライブラリにあり",
       metadataOnly: "メタデータのみ",
+      noMatchingLanguage: "選択した言語の版はこのファミリーにありません。",
       bonus: "購入特典",
     },
     searchTags: "タグを検索、または新しいタグを入力",

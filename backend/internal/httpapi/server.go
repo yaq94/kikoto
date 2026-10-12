@@ -60,6 +60,8 @@ type Server struct {
 	cachePathLocks                 cachePathLocker
 	audioTranscodeLocks            cachePathLocker
 	metadataSyncMu                 sync.Mutex
+	metadataPreviewMu              sync.Mutex
+	metadataPreviews               map[string]metadataPreviewRecord
 	metadataOnboardingMu           sync.Mutex
 	metadataCoordinator            *metasync.Coordinator
 	jobRunnerMu                    sync.Mutex
@@ -110,6 +112,7 @@ func NewServer(db *sql.DB, cfg config.Config) *Server {
 		loginThrottle:                  auththrottle.New(),
 		dlsiteEndpoints:                dlsiteEndpoints,
 		metadataCoordinator:            metasync.NewCoordinator(),
+		metadataPreviews:               map[string]metadataPreviewRecord{},
 		remoteWorkCache:                map[string]remoteWorkSnapshot{},
 		remoteWorkCacheGenerations:     map[int64]uint64{},
 		remoteWorkCacheCalls:           map[string]*remoteWorkCall{},
@@ -197,6 +200,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/works/{id}/media", s.getWorkMedia)
 	handleSlowFirstResponse("POST /api/works/{id}/local-files/refresh", s.refreshWorkLocalFiles)
 	mux.HandleFunc("POST /api/works/{id}/metadata-sync", s.createWorkMetadataSyncRun)
+	handleSlowFirstResponse("POST /api/works/{id}/metadata-preview", s.createWorkMetadataPreview)
+	handleSlowFirstResponse("POST /api/works/{id}/metadata-preview/apply", s.applyWorkMetadataPreview)
 	mux.HandleFunc("PUT /api/media/{id}/lyrics-preference", s.setMediaLyricsPreference)
 	mux.HandleFunc("DELETE /api/media/{id}/lyrics-preference", s.clearMediaLyricsPreference)
 	mux.HandleFunc("PUT /api/works/{id}/lyrics-assignments", s.setWorkLyricsAssignments)
@@ -248,6 +253,9 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/listening-history", s.getListeningHistory)
 	mux.HandleFunc("DELETE /api/listening-history", s.clearListeningHistory)
 	mux.HandleFunc("GET /api/listening-statistics", s.getListeningStatistics)
+	mux.HandleFunc("GET /api/listening-calendar", s.getListeningCalendar)
+	mux.HandleFunc("GET /api/listening-breakdown", s.getListeningBreakdown)
+	mux.HandleFunc("GET /api/listening-profile", s.getListeningProfile)
 	mux.HandleFunc("GET /api/user-data/export", s.exportPersonalData)
 	mux.HandleFunc("POST /api/user-data/import/preview", s.importPersonalData)
 	mux.HandleFunc("POST /api/user-data/import", s.importPersonalData)
