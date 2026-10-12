@@ -41,6 +41,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/toast";
 import { LoginPage } from "@/pages/LoginPage";
+import { WorkDetailPage } from "@/pages/WorkDetailPage";
 import { SetupPage } from "@/pages/SetupPage";
 import { cx } from "@/lib/classNames";
 import { PlayerDock } from "@/player/dock/PlayerDock";
@@ -57,8 +58,8 @@ import { useNativeUnlockLabels } from "@/hooks/useNativePrivacySettings";
 import { addNativeEdgeBackListener } from "@/lib/nativeEdgeBack";
 import { isNativeApp } from "@/lib/serverConfig";
 import { currentClientStorageScope } from "@/lib/clientStorageScope";
-import { isWorkCodePath } from "@/lib/workCode";
-import { openWorkDetail, workDetailCodeFromLocation, workDetailRoute } from "@/app/workDetailNavigation";
+import { currentAppPage, isWorkDetailLocationOpen, pageFromPath, type AppPage } from "@/app/appRoutes";
+import { openWorkDetail, workDetailRoute } from "@/app/workDetailNavigation";
 import type {
   ListeningEntityLinkFactory,
   ListeningHistoryWorkLinkFactory,
@@ -143,7 +144,6 @@ const CommandPalette = commandPalette.Component;
 
 const preferredMobileTabs: PageID[] = ["library", "favorites", "circles", "voice-actors"];
 const SIDEBAR_COLLAPSED_KEY = "kikoto:sidebar-collapsed";
-type AppPage = PageID | "not-found";
 
 export function App() {
   return (
@@ -165,7 +165,8 @@ function AuthenticatedApp() {
   const auth = useAuth();
   const { t } = useTranslation();
   const locale = useLocale();
-  const [page, setPage] = useState<AppPage>(resolveAppPageFromLocation);
+  const [routePage, setRoutePage] = useState<AppPage>(resolveAppPageFromLocation);
+  const [workDetailOpen, setWorkDetailOpen] = useState(isWorkDetailLocationOpen);
   const [routeRenderKey, setRouteRenderKey] = useState(resolveRouteRenderKey);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(
     () => localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "true",
@@ -281,6 +282,12 @@ function AuthenticatedApp() {
     },
     [t],
   );
+  // Work detail belongs to the page it was opened from. A detail whose owner
+  // the viewer cannot open stays readable under Library.
+  const page: AppPage =
+    workDetailOpen && routePage !== "not-found" && !canAccessPage(routePage, authState, navigationHasPermission)
+      ? "library"
+      : routePage;
   const visibleNavItems = useMemo(
     () => visibleNavigationItems({ state: authState, hasPermission: navigationHasPermission }),
     [authState, navigationHasPermission],
@@ -296,10 +303,12 @@ function AuthenticatedApp() {
   const showMobilePageTitle = !["library", "favorites", "circles", "voice-actors"].includes(page);
   const activeItem = useMemo(() => visibleNavItems.find((item) => item.id === page), [page, visibleNavItems]);
   const canAccessCurrentPage = page !== "not-found" && canAccessPage(page, authState, navigationHasPermission);
+  const showRoutePage = canAccessCurrentPage && !workDetailOpen;
 
   useEffect(() => {
     const syncLocation = () => {
-      setPage(resolveAppPageFromLocation());
+      setRoutePage(resolveAppPageFromLocation());
+      setWorkDetailOpen(isWorkDetailLocationOpen());
       setRouteRenderKey(resolveRouteRenderKey());
     };
     window.addEventListener("popstate", syncLocation);
@@ -311,7 +320,7 @@ function AuthenticatedApp() {
   }, []);
 
   const rememberCurrentMobileTab = useCallback(() => {
-    const currentPage = pageFromPath(window.location.pathname);
+    const currentPage = currentAppPage();
     if (currentPage === "not-found") return;
     writeMobileTabSnapshot(
       clientStorageScope,
@@ -348,20 +357,21 @@ function AuthenticatedApp() {
       restoredScrollY === undefined ? (state ?? {}) : requestHistoryScrollRestoration(state, restoredScrollY);
     window.history.pushState(nextState, "", path);
     window.dispatchEvent(new Event(NAVIGATION_EVENT));
-    setPage(resolveAppPageFromLocation());
+    setRoutePage(resolveAppPageFromLocation());
+    setWorkDetailOpen(isWorkDetailLocationOpen());
     setRouteRenderKey(resolveRouteRenderKey());
   };
 
   const openMobilePage = (id: PageID) => {
     const item = navItems.find((navItem) => navItem.id === id);
     if (!item) return;
-    if (page === id && isMobileTabDetailLocation(id, currentInternalLocation())) {
+    if (page === id && (workDetailOpen || isMobileTabDetailLocation(id, currentInternalLocation()))) {
       navigateToMobileTabHome(id, clientStorageScope);
       return;
     }
     rememberCurrentMobileTab();
     const snapshot = readMobileTabSnapshot(clientStorageScope, id);
-    if (snapshot && pageFromSnapshotLocation(snapshot.location) === id) {
+    if (snapshot) {
       if (page === id && currentInternalLocation() === snapshot.location) return;
       openPath(snapshot.location, mobileTabResumeHistoryState(snapshot.state), snapshot.scrollY);
       return;
@@ -617,8 +627,10 @@ function AuthenticatedApp() {
                 <CachedBrowsePages
                   key={`${clientStorageScope}:${preferenceRevision}`}
                   activePage={canAccessCurrentPage ? page : null}
+                  workDetailOpen={workDetailOpen}
+                  storageScope={clientStorageScope}
                 />
-                {canAccessCurrentPage && page === "settings" && auth.user && (
+                {showRoutePage && page === "settings" && auth.user && (
                   <SettingsPage
                     user={auth.user}
                     readOnly={auth.demoMode}
@@ -640,7 +652,7 @@ function AuthenticatedApp() {
                     onAccessPolicyUpdated={auth.refreshRuntime}
                   />
                 )}
-                {canAccessCurrentPage && page === "metadata" && auth.user && (
+                {showRoutePage && page === "metadata" && auth.user && (
                   <WorkManagementPage
                     preferenceRevision={preferenceRevision}
                     canSyncMetadata={auth.demoMode || auth.hasPermission("metadata:sync")}
@@ -649,7 +661,7 @@ function AuthenticatedApp() {
                     readOnly={auth.demoMode}
                   />
                 )}
-                {canAccessCurrentPage && page === "workflows" && (
+                {showRoutePage && page === "workflows" && (
                   <WorkflowsPage
                     canRun={auth.demoMode || auth.hasPermission("workflows:run")}
                     canSyncMetadata={auth.demoMode || auth.hasPermission("metadata:sync")}
@@ -662,7 +674,7 @@ function AuthenticatedApp() {
                     readOnly={auth.demoMode}
                   />
                 )}
-                {canAccessCurrentPage && page === "insights" && auth.user && (
+                {showRoutePage && page === "insights" && auth.user && (
                   <InsightsPage
                     listening={{
                       canClear: effectiveHasPermission("playback:use"),
@@ -673,7 +685,7 @@ function AuthenticatedApp() {
                     onOpenPath={openPath}
                   />
                 )}
-                {canAccessCurrentPage && page === "about" && <AboutPage />}
+                {showRoutePage && page === "about" && <AboutPage />}
                 {![
                   "library",
                   "favorites",
@@ -807,25 +819,36 @@ const browsePages: Record<CachedBrowsePage, { preload: () => Promise<unknown> }>
   circles: circlesPage,
   "voice-actors": creatorWorksPage,
 };
-// Fetch the current location's workspace chunk alongside the session request
-// rather than after the shell mounts. A direct work link also starts the work
-// detail chunk immediately instead of waiting for the Library chunk to evaluate.
+// Fetch the current location's page chunk alongside the session request rather
+// than after the shell mounts: work detail for a direct work link, otherwise
+// the browse workspace the location shows.
 const initialPage = pageFromPath(window.location.pathname);
-if (isCachedBrowsePage(initialPage)) void browsePages[initialPage].preload().catch(() => {});
-if (
-  initialPage === "library" &&
-  workDetailCodeFromLocation(window.location.pathname, window.location.search) !== null
-) {
+if (isWorkDetailLocationOpen()) {
   preloadWorkDetail();
+} else if (isCachedBrowsePage(initialPage)) {
+  void browsePages[initialPage].preload().catch(() => {});
 }
 
-function CachedBrowsePages({ activePage }: { activePage: AppPage | null }) {
+function CachedBrowsePages({
+  activePage,
+  workDetailOpen,
+  storageScope,
+}: {
+  activePage: AppPage | null;
+  workDetailOpen: boolean;
+  storageScope: string;
+}) {
+  // Work detail hides the page it was opened from and leaves it mounted. A page
+  // first reached through a detail mounts once its own location is shown.
+  const shownPage = workDetailOpen ? null : activePage;
   const [visitedPages, setVisitedPages] = useState<readonly CachedBrowsePage[]>(() =>
-    activePage && isCachedBrowsePage(activePage) ? [activePage] : [],
+    shownPage && isCachedBrowsePage(shownPage) ? [shownPage] : [],
   );
-  const pageToMount = activePage && isCachedBrowsePage(activePage) ? activePage : null;
+  const pageToMount = shownPage && isCachedBrowsePage(shownPage) ? shownPage : null;
   const mountedPages = new Set(pageToMount ? [...visitedPages, pageToMount] : visitedPages);
-  const previousActivePage = useRef(activePage);
+  const detailActive = workDetailOpen && activePage !== null && activePage !== "not-found";
+  const shownSurface = detailActive ? "work-detail" : shownPage;
+  const previousSurface = useRef(shownSurface);
 
   useEffect(() => {
     if (!pageToMount) return;
@@ -836,11 +859,11 @@ function CachedBrowsePages({ activePage }: { activePage: AppPage | null }) {
   // has its content, so place the entry's scroll position before the first paint
   // instead of showing the previous page's offset and correcting it later.
   useLayoutEffect(() => {
-    const previous = previousActivePage.current;
-    previousActivePage.current = activePage;
-    if (!pageToMount || previous === activePage || !visitedPages.includes(pageToMount)) return;
+    const previous = previousSurface.current;
+    previousSurface.current = shownSurface;
+    if (!pageToMount || previous === shownSurface || !visitedPages.includes(pageToMount)) return;
     restoreCurrentHistoryScroll(historyScrollY(window.history.state));
-  }, [activePage, pageToMount, visitedPages]);
+  }, [shownSurface, pageToMount, visitedPages]);
 
   useEffect(() => {
     const preload = () => {
@@ -856,38 +879,46 @@ function CachedBrowsePages({ activePage }: { activePage: AppPage | null }) {
 
   return (
     <>
+      {/* One work detail serves every page; it stays mounted so opening a work is a route change, not a mount. */}
+      <PageActiveProvider value={detailActive}>
+        <WorkDetailPage
+          active={detailActive}
+          ownerPage={detailActive ? activePage : "library"}
+          fallbackLocation={pageHomeLocation(detailActive ? activePage : "library", storageScope)}
+        />
+      </PageActiveProvider>
       {mountedPages.has("library") && (
-        <div data-browse-page="library" hidden={activePage !== "library"}>
-          <PageActiveProvider value={activePage === "library"}>
+        <div data-browse-page="library" hidden={shownPage !== "library"}>
+          <PageActiveProvider value={shownPage === "library"}>
             <Suspense fallback={<PageLoading />}>
-              <LibraryPage active={activePage === "library"} />
+              <LibraryPage active={shownPage === "library"} />
             </Suspense>
           </PageActiveProvider>
         </div>
       )}
       {mountedPages.has("favorites") && (
-        <div data-browse-page="favorites" hidden={activePage !== "favorites"}>
-          <PageActiveProvider value={activePage === "favorites"}>
+        <div data-browse-page="favorites" hidden={shownPage !== "favorites"}>
+          <PageActiveProvider value={shownPage === "favorites"}>
             <Suspense fallback={<PageLoading />}>
-              <FavoritesPage active={activePage === "favorites"} />
+              <FavoritesPage active={shownPage === "favorites"} />
             </Suspense>
           </PageActiveProvider>
         </div>
       )}
       {mountedPages.has("circles") && (
-        <div data-browse-page="circles" hidden={activePage !== "circles"}>
-          <PageActiveProvider value={activePage === "circles"}>
+        <div data-browse-page="circles" hidden={shownPage !== "circles"}>
+          <PageActiveProvider value={shownPage === "circles"}>
             <Suspense fallback={<PageLoading />}>
-              <CirclesPage active={activePage === "circles"} />
+              <CirclesPage active={shownPage === "circles"} />
             </Suspense>
           </PageActiveProvider>
         </div>
       )}
       {mountedPages.has("voice-actors") && (
-        <div data-browse-page="voice-actors" hidden={activePage !== "voice-actors"}>
-          <PageActiveProvider value={activePage === "voice-actors"}>
+        <div data-browse-page="voice-actors" hidden={shownPage !== "voice-actors"}>
+          <PageActiveProvider value={shownPage === "voice-actors"}>
             <Suspense fallback={<PageLoading />}>
-              <CreatorWorksPage kind="voice" active={activePage === "voice-actors"} />
+              <CreatorWorksPage kind="voice" active={shownPage === "voice-actors"} />
             </Suspense>
           </PageActiveProvider>
         </div>
@@ -1124,35 +1155,6 @@ function PageLoading() {
   );
 }
 
-function pageFromPath(rawPath: string): AppPage {
-  const path = rawPath.length > 1 ? rawPath.replace(/\/+$/, "") : rawPath;
-  if (path === "/" || isWorkCodePath(path)) {
-    return "library";
-  }
-  const item = navItems.find((navItem) => navItem.path === path);
-  if (item) {
-    return item.id;
-  }
-  if (/^\/[^/]+$/.test(path)) {
-    return "library";
-  }
-  if (/^\/circles\/[^/]+(?:\/series(?:\/[^/]+)?)?$/.test(path)) {
-    return "circles";
-  }
-  if (path === "/voices" || /^\/voices\/\d+$/.test(path)) {
-    return "voice-actors";
-  }
-  if (
-    path === "/tracked" ||
-    path === "/no-source" ||
-    ["/library", "/library/tracked", "/library/no-source", "/library/all", "/library/remote"].includes(path) ||
-    /^\/library\/source\/[^/]+$/.test(path)
-  ) {
-    return "library";
-  }
-  return "not-found";
-}
-
 function isMobileTabDetailLocation(id: PageID, location: string) {
   try {
     const parsed = new URL(location, "https://kikoto.invalid");
@@ -1170,37 +1172,27 @@ function isMobileTabDetailLocation(id: PageID, location: string) {
 }
 
 function navigateToMobileTabHome(id: PageID, storageScope: string) {
-  if (id === "library") {
-    navigateToWorkspaceUp({
-      mobile: true,
-      fallbackLocation: readLastLibraryLocation(storageScope) ?? "/",
-      isWorkspaceListLocation: (location) => normalizeLibraryBrowseLocation(location) !== null,
-    });
-    return;
-  }
-  if (id === "circles") {
-    navigateToWorkspaceUp({
-      mobile: true,
-      fallbackLocation: readLastCircleListLocation(storageScope) ?? "/circles",
-      isWorkspaceListLocation: isCircleListLocation,
-    });
-    return;
-  }
-  if (id === "voice-actors") {
-    navigateToWorkspaceUp({
-      mobile: true,
-      fallbackLocation: readLastVoiceListLocation(storageScope) ?? "/voices",
-      isWorkspaceListLocation: isVoiceListLocation,
-    });
-  }
+  const fallbackLocation = pageHomeLocation(id, storageScope);
+  navigateToWorkspaceUp({
+    mobile: true,
+    fallbackLocation,
+    isWorkspaceListLocation:
+      id === "library"
+        ? (location) => normalizeLibraryBrowseLocation(location) !== null
+        : id === "circles"
+          ? isCircleListLocation
+          : id === "voice-actors"
+            ? isVoiceListLocation
+            : (location) => pageFromPath(new URL(location, "https://kikoto.invalid").pathname) === id,
+  });
 }
 
-function pageFromSnapshotLocation(location: string): AppPage {
-  try {
-    return pageFromPath(new URL(location, window.location.origin).pathname);
-  } catch {
-    return "not-found";
-  }
+/** Where a page's own list or landing view is: the last list state it recorded, or its root. */
+function pageHomeLocation(id: PageID, storageScope: string) {
+  if (id === "library") return readLastLibraryLocation(storageScope) ?? "/";
+  if (id === "circles") return readLastCircleListLocation(storageScope) ?? "/circles";
+  if (id === "voice-actors") return readLastVoiceListLocation(storageScope) ?? "/voices";
+  return navItems.find((item) => item.id === id)?.path ?? "/";
 }
 
 function resolveAppPageFromLocation() {
@@ -1208,7 +1200,7 @@ function resolveAppPageFromLocation() {
   if (redirect) {
     window.history.replaceState(window.history.state ?? {}, "", redirect + window.location.hash);
   }
-  return pageFromPath(window.location.pathname);
+  return currentAppPage();
 }
 
 function resolveRouteRenderKey() {

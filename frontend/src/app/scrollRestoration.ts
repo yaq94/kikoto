@@ -1,5 +1,6 @@
 import { useLayoutEffect } from "react";
 
+import { historyStateForNavigation } from "@/app/appRoutes";
 import {
   HISTORY_ENTRY_UPDATED_EVENT,
   NAVIGATION_EVENT,
@@ -88,11 +89,12 @@ export function useScrollRestoration() {
       cancelWrite();
       rememberCurrentEntry();
       cancelRestore();
-      originalPushState(historyStateWithEntryKey(historyPushStateWithScroll(state), newEntryKey()), unused, url);
+      const entryState = historyStateForNavigation(historyPushStateWithScroll(state), url);
+      originalPushState(historyStateWithEntryKey(entryState, newEntryKey()), unused, url);
     }) as History["pushState"];
     history.replaceState = ((state: unknown, unused: string, url?: string | URL | null) => {
       const key = ensureEntryKey();
-      originalReplaceState(historyStateWithEntryKey(state, key), unused, url);
+      originalReplaceState(historyStateWithEntryKey(historyStateForNavigation(state, url), key), unused, url);
       announceEntryUpdate();
     }) as History["replaceState"];
 

@@ -1,5 +1,11 @@
 # Unreleased
 
+- A work opens inside the page it was opened from. Opening a work from
+  Favorites, Circles, or Voice Actors keeps that destination selected in the
+  navigation, Back returns to it, and on phones each bottom tab resumes its own
+  open work. Tapping the selected tab again returns to its list. A work address
+  opened directly belongs to Library. On phones, double-tapping the Full
+  player's cover returns to the tab the playback started from.
 - Library display options replace the phone-only **Compact cards** switch with
   a **Cards** choice of **Full**, **Compact**, and **Mini**, available on
   phones and wide screens and remembered separately for each. Compact on wide

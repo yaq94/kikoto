@@ -21,10 +21,12 @@ import {
 } from "react";
 import { useTranslation } from "react-i18next";
 
+import { openPlayingWorkDetail } from "@/app/playingWorkNavigation";
+import { useAuth } from "@/auth/AuthProvider";
 import { NATIVE_BACK_EVENT } from "@/lib/appEvents";
 import { useToast } from "@/components/ui/toast";
 import { assetURL } from "@/lib/api";
-import { historyStateWithReturn, NAVIGATION_EVENT } from "@/lib/browserHistory";
+import { currentClientStorageScope } from "@/lib/clientStorageScope";
 import { cn } from "@/lib/tailwindClassNames";
 import type { TimedLyricLine } from "@/lib/timedLyrics";
 import { usePlayerTime, type usePlayer } from "@/player/PlayerProvider";
@@ -62,6 +64,7 @@ export function FullPlayer({
 }) {
   const { t } = useTranslation();
   const toast = useToast();
+  const auth = useAuth();
   const [sidePanel, setSidePanel] = useState<PlayerSidePanel | null>(null);
   const [isSleepOpen, setIsSleepOpen] = useState(false);
   const [isCustomSleepOpen, setIsCustomSleepOpen] = useState(false);
@@ -140,9 +143,13 @@ export function FullPlayer({
   const openWorkDetail = () => {
     if (!track.workCode) return;
     if (isMobile) onDockModeChange("compact", { persist: false });
-    const returnTo = window.location.pathname + window.location.search;
-    window.history.pushState(historyStateWithReturn(returnTo, "Back"), "", `/${encodeURIComponent(track.workCode)}`);
-    window.dispatchEvent(new Event(NAVIGATION_EVENT));
+    openPlayingWorkDetail({
+      workCode: track.workCode,
+      origin: track,
+      returnToOrigin: isMobile,
+      storageScope: currentClientStorageScope(auth.user?.id ?? null),
+      returnLabel: t("common.back"),
+    });
   };
 
   const handleCoverClick = (event: ReactMouseEvent<HTMLButtonElement>) => {

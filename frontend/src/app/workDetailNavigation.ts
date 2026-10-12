@@ -1,5 +1,8 @@
+import { navItems, type PageID } from "./navigation";
 import { NAVIGATION_EVENT, historyStateWithReturn } from "../lib/browserHistory";
 import { WORK_CODE_PATH_PATTERN } from "../lib/workCode";
+
+const ownerPageStateKey = "__kikotoWorkDetailOwner";
 
 // A remote-only work route is one path segment qualified by a `source` query.
 export const REMOTE_SOURCE_WORK_PATTERN = /^\/([^/?#]+)\/?$/;
@@ -81,8 +84,28 @@ export function workDetailCodeFromLocation(path: string, search: string) {
   if (standardMatch) return standardMatch[1].toUpperCase();
   const sourceID = Number(new URLSearchParams(search).get("source"));
   if (!Number.isFinite(sourceID) || sourceID <= 0) return null;
+  // Another page may carry its own `source` query, such as a Settings deep link.
+  const pagePath = path.length > 1 ? path.replace(/\/+$/, "") : path;
+  if (navItems.some((item) => item.path === pagePath)) return null;
   const match = path.match(REMOTE_SOURCE_WORK_PATTERN);
   return match ? safeDecodePathSegment(match[1]) : null;
+}
+
+/**
+ * The page a work detail entry belongs to: the page it was opened from, so the
+ * navigation keeps showing that page and Back returns to it. A direct link has
+ * no recorded owner and belongs to Library.
+ */
+export function workDetailOwnerPage(state: unknown): PageID {
+  const owner = state && typeof state === "object" ? (state as Record<string, unknown>)[ownerPageStateKey] : undefined;
+  return navItems.find((item) => item.id === owner)?.id ?? "library";
+}
+
+/** Keeps an owner the entry already names; `replace` assigns the given one regardless. */
+export function historyStateWithWorkDetailOwner(state: unknown, owner: PageID, replace = false) {
+  const record = state && typeof state === "object" && !Array.isArray(state) ? (state as Record<string, unknown>) : {};
+  if (!replace && navItems.some((item) => item.id === record[ownerPageStateKey])) return record;
+  return { ...record, [ownerPageStateKey]: owner };
 }
 
 function safeDecodePathSegment(value: string) {

@@ -5,6 +5,13 @@ import { useTranslation } from "react-i18next";
 import { NotFoundPage } from "@/app/NotFoundPage";
 import { PageActiveProvider } from "@/app/pageHeader";
 import { REMOTE_TRACK_TERMINAL_EVENT, type RemoteTrackTerminalDetail } from "@/app/remoteTrackWorkflows";
+import {
+  WORK_DETAIL_PLAY_EVENT,
+  WORK_DETAIL_USER_STATE_EVENT,
+  WORK_DETAIL_WORKS_CHANGED_EVENT,
+  type WorkDetailPlayDetail,
+  type WorkDetailUserStateDetail,
+} from "@/app/workDetailEvents";
 import { openWorkDetail, workDetailCodeFromLocation } from "@/app/workDetailNavigation";
 import { useAuth } from "@/auth/AuthProvider";
 import { REMOTE_TRACK_PERMISSIONS, usePermissionGate } from "@/auth/usePermissionGate";
@@ -46,7 +53,6 @@ import {
   historyEntryKey,
   historyScrollY,
   isMobileTabResumeHistoryState,
-  navigateToHistoryReturn,
   requestHistoryScrollRestoration,
 } from "@/lib/browserHistory";
 import { currentClientStorageScope } from "@/lib/clientStorageScope";
@@ -58,7 +64,6 @@ import {
   libraryLocation,
   localPageSize,
   type LocalWorkPageSize,
-  readLastLibraryLocation,
   readLibraryBrowseState,
   readLibrarySortPreference,
   withSharedLibraryQuery,
@@ -105,10 +110,8 @@ import {
   pathForLibraryTab,
   pathForLocalScope,
   recentWorkSourceIntent,
-  remoteTargetFromLocation,
   tabFromPath,
 } from "@/pages/library/libraryRoutes";
-import { type LibraryRemoteTarget, LibraryWorkDetail } from "@/pages/library/LibraryWorkDetail";
 import { LocalLibraryPanel } from "@/pages/library/LocalLibraryPanel";
 import { MobileLibraryToolbar } from "@/pages/library/MobileLibraryToolbar";
 import { RecommendationExplanationDialog } from "@/pages/library/RecommendationExplanationDialog";
@@ -123,10 +126,9 @@ import { useLibraryCoverSourceMode } from "@/pages/library/useLibraryCoverSource
 import { useLibraryRecommendations } from "@/pages/library/useLibraryRecommendations";
 import { useLibraryResultsScroll } from "@/pages/library/useLibraryResultsScroll";
 import { useLibrarySourceVisibility } from "@/pages/library/useLibrarySourceVisibility";
-import { useLibraryWorkDetail } from "@/pages/library/useLibraryWorkDetail";
 import { useLocalLibraryWorks } from "@/pages/library/useLocalLibraryWorks";
 import { useRemoteSourceWorks } from "@/pages/library/useRemoteSourceWorks";
-import { remoteOnlyWorkPreview, remoteWorkPreview, workPreviewFromHistory } from "@/pages/library/workPreviewHistory";
+import { remoteOnlyWorkPreview, remoteWorkPreview } from "@/pages/library/workPreviewHistory";
 
 // The app shell starts the detail chunk for a direct work link; this covers a
 // detail location reached before the Library chunk finished loading. Both share
@@ -175,10 +177,6 @@ export function LibraryPage({ active = true }: { active?: boolean }) {
   const [localScope, setLocalScope] = useState<LocalLibraryScope>(initialBrowse.scope);
   const [remoteSourceStates, setRemoteSourceStates] = useState<Record<number, RemoteSourceViewState>>({});
   const [remoteSelectionMode, setRemoteSelectionMode] = useState(false);
-  const [selectedCode, setSelectedCode] = useState<string | null>(() =>
-    workDetailCodeFromLocation(window.location.pathname, window.location.search),
-  );
-  const [selectedRemoteTarget, setSelectedRemoteTarget] = useState<LibraryRemoteTarget | null>(null);
   const [statusFilter, setStatusFilter] = useState<ListeningStatus | "all">(initialBrowseState.status);
   const [searchQuery, setSearchQuery] = useState(initialBrowseState.query);
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState(initialBrowseState.query);
@@ -210,12 +208,9 @@ export function LibraryPage({ active = true }: { active?: boolean }) {
   const requireUntrack = usePermissionGate(REMOTE_TRACK_PERMISSIONS, { deferDemo: true });
   const wasActive = useRef(active);
   const browseSurfaceActive = useRef(true);
-  // Activation renders once before the route synchronization updates selection.
-  // The current URL must already prevent list effects from writing into a detail.
-  const showBrowse =
-    selectedCode === null &&
-    selectedRemoteTarget === null &&
-    workDetailCodeFromLocation(window.location.pathname, window.location.search) === null;
+  // Work detail is another page that hides this one. The current URL must
+  // already prevent list effects from writing into a detail entry.
+  const showBrowse = workDetailCodeFromLocation(window.location.pathname, window.location.search) === null;
   browseSurfaceActive.current = showBrowse;
   const [listVisited, setListVisited] = useState(showBrowse);
   useEffect(() => {
@@ -377,10 +372,8 @@ export function LibraryPage({ active = true }: { active?: boolean }) {
         const scope = localScopeFromPath(window.location.pathname);
         const stored = readLibraryBrowseState(libraryBrowseKey(resolved, scope, browseStorageScope));
         const sortPreference = readLibrarySortPreference(libraryBrowseKey(resolved, scope, browseStorageScope));
-        const routeRemoteTarget = remoteTargetFromLocation(window.location.pathname, window.location.search, items);
         if (
           workDetailCodeFromLocation(window.location.pathname, window.location.search) === null &&
-          routeRemoteTarget === null &&
           !localBrowseRoute(window.location.pathname)
         ) {
           const state = libraryBrowseStateFromSearch(
@@ -391,7 +384,6 @@ export function LibraryPage({ active = true }: { active?: boolean }) {
           applyBrowseState(state, resolved, false);
           setActiveTab(resolved);
         }
-        if (routeRemoteTarget) setSelectedRemoteTarget(routeRemoteTarget);
       })
       .catch(() => {
         if (cancelled) return;
@@ -435,46 +427,30 @@ export function LibraryPage({ active = true }: { active?: boolean }) {
     setRemoteSelectionMode(false);
   }, [activeTab.kind, activeRemoteSourceId]);
 
-  const workDetail = useLibraryWorkDetail({
-    active,
-    principalID,
-    selectedCode,
-    onCodeResolved: setSelectedCode,
-    listedWorksRef: localWorks.worksRef,
-    listedWorkCount: localWorks.works.length,
-  });
-  const setWorkPreview = workDetail.setPreview;
-
   useLayoutEffect(() => {
     if (!active) {
       wasActive.current = false;
       return;
     }
     const syncFromPath = (restoreListScroll = true) => {
+      if (workDetailCodeFromLocation(window.location.pathname, window.location.search) !== null) return;
       if (!knownLibraryRoute(window.location.pathname, window.location.search, sources)) return;
       const nextTab = tabFromPath(window.location.pathname, sources, activeTab);
       const nextScope = localScopeFromPath(window.location.pathname);
       const stored = readLibraryBrowseState(libraryBrowseKey(nextTab, nextScope, browseStorageScope));
       const sortPreference = readLibrarySortPreference(libraryBrowseKey(nextTab, nextScope, browseStorageScope));
-      const nextCode = workDetailCodeFromLocation(window.location.pathname, window.location.search);
-      const remoteTarget = remoteTargetFromLocation(window.location.pathname, window.location.search, sources);
-      if (nextCode === null && remoteTarget === null) {
-        const state = libraryBrowseStateFromSearch(
-          window.location.search,
-          readLibraryHistoryBrowseState(browseStorageScope) ??
-            stored ?? { ...sessionDefaultBrowseState, ...sortPreference },
-        );
-        applyBrowseState(
-          { ...state, scrollY: historyScrollY(window.history.state, state.scrollY) },
-          nextTab,
-          restoreListScroll,
-        );
-        setActiveTab(nextTab);
-        setLocalScope(nextScope);
-      }
-      setSelectedCode(nextCode);
-      setWorkPreview(workPreviewFromHistory(nextCode));
-      setSelectedRemoteTarget(remoteTarget);
+      const state = libraryBrowseStateFromSearch(
+        window.location.search,
+        readLibraryHistoryBrowseState(browseStorageScope) ??
+          stored ?? { ...sessionDefaultBrowseState, ...sortPreference },
+      );
+      applyBrowseState(
+        { ...state, scrollY: historyScrollY(window.history.state, state.scrollY) },
+        nextTab,
+        restoreListScroll,
+      );
+      setActiveTab(nextTab);
+      setLocalScope(nextScope);
     };
     const becameActive = !wasActive.current;
     wasActive.current = true;
@@ -489,7 +465,7 @@ export function LibraryPage({ active = true }: { active?: boolean }) {
       window.removeEventListener("popstate", handlePopState);
       window.removeEventListener("kikoto:navigation", handleAppNavigation);
     };
-  }, [active, applyBrowseState, sources, activeTab, browseStorageScope, sessionDefaultBrowseState, setWorkPreview]);
+  }, [active, applyBrowseState, sources, activeTab, browseStorageScope, sessionDefaultBrowseState]);
 
   useEffect(() => {
     if (
@@ -610,7 +586,6 @@ export function LibraryPage({ active = true }: { active?: boolean }) {
     const browseState = { ...activeBrowseState, scrollY: window.scrollY };
     writeLibraryBrowseState(libraryBrowseKey(activeTab, localScope, browseStorageScope), browseState);
     writeLibraryHistoryBrowseState(browseStorageScope, browseState);
-    setSelectedRemoteTarget(null);
     openWorkDetail(
       {
         kind: "known",
@@ -623,8 +598,6 @@ export function LibraryPage({ active = true }: { active?: boolean }) {
         workPreview: work,
       },
     );
-    setWorkPreview(work);
-    setSelectedCode(work.primaryCode);
   };
 
   const openRemotePreview = (source: LibrarySource, work: RemoteWork) => {
@@ -634,40 +607,23 @@ export function LibraryPage({ active = true }: { active?: boolean }) {
     writeLibraryBrowseState(libraryBrowseKey(activeTab, localScope, browseStorageScope), browseState);
     writeLibraryHistoryBrowseState(browseStorageScope, browseState);
     if (work.workId !== null && work.primaryCode) {
-      const preview = remoteWorkPreview(work);
-      setSelectedRemoteTarget(null);
       openPersistedRemoteSourceWorkRoute(
         source.id,
         work.primaryCode,
         code,
         libraryLocation(pathForActiveLibrary(activeTab, localScope), activeBrowseState),
         t("nav.library"),
-        preview,
+        remoteWorkPreview(work),
       );
-      setWorkPreview(preview);
-      setSelectedCode(work.primaryCode);
       return;
     }
-    const preview = remoteOnlyWorkPreview(work);
-    setSelectedRemoteTarget({ source, code, preview });
     openRemoteSourceWorkRoute(
       source.id,
       code,
       libraryLocation(pathForActiveLibrary(activeTab, localScope), activeBrowseState),
       t("nav.library"),
-      preview,
+      remoteOnlyWorkPreview(work),
     );
-    setSelectedCode(workDetailCodeFromLocation(window.location.pathname, window.location.search));
-  };
-
-  const backToLibrary = () => {
-    const fallbackLocation =
-      readLastLibraryLocation(browseStorageScope) ??
-      libraryLocation(pathForActiveLibrary(activeTab, localScope), activeBrowseState);
-    navigateToHistoryReturn({
-      fallbackLocation,
-      fallbackState: { libraryBrowseScope: browseStorageScope, libraryBrowseState: activeBrowseState },
-    });
   };
 
   const changeTab = (tab: LibraryTab) => {
@@ -683,7 +639,6 @@ export function LibraryPage({ active = true }: { active?: boolean }) {
     setActiveTab(tab);
     if (tab.kind === "all") setLocalScope(nextScope);
     applyBrowseState(nextState, tab);
-    setSelectedRemoteTarget(null);
     const path = libraryLocation(pathForLibraryTab(tab), nextState);
     if (`${window.location.pathname}${window.location.search}` !== path) {
       window.history.pushState(
@@ -711,7 +666,6 @@ export function LibraryPage({ active = true }: { active?: boolean }) {
     setActiveTab({ kind: "all" });
     setLocalScope(scope);
     applyBrowseState(nextState, nextTab);
-    setSelectedRemoteTarget(null);
     const basePath = pathForLocalScope(scope);
     const path = basePath ? libraryLocation(basePath, nextState) : null;
     if (path && `${window.location.pathname}${window.location.search}` !== path) {
@@ -736,7 +690,6 @@ export function LibraryPage({ active = true }: { active?: boolean }) {
       const result = await api.updateWorkUserState(workID, { listeningStatus: status });
       const patch = { listeningStatus: result.listeningStatus, favorite: result.favorite };
       localWorks.patchWork(workID, patch);
-      workDetail.patchWork(workID, patch);
       const work = localWorks.worksRef.current.find((item) => item.id === workID);
       if (work && ["relisten", "paused"].includes(status)) {
         recordWorkRecommendationEvent(work, status === "paused" ? "paused_mark" : "positive_mark");
@@ -799,6 +752,34 @@ export function LibraryPage({ active = true }: { active?: boolean }) {
     return () => window.removeEventListener(REMOTE_TRACK_TERMINAL_EVENT, refreshAfterTrack);
   }, [active, refreshAfterTrack]);
 
+  // Work detail is another page; a retained list follows what happened there.
+  const followDetailUserState = useStableCallback((event: Event) => {
+    const { ownerPage, workID, listeningStatus, favorite } = (event as CustomEvent<WorkDetailUserStateDetail>).detail;
+    localWorks.patchWork(workID, { listeningStatus, favorite });
+    const work = localWorks.worksRef.current.find((item) => item.id === workID);
+    if (ownerPage === "library" && work && ["relisten", "paused"].includes(listeningStatus)) {
+      recordWorkRecommendationEvent(work, listeningStatus === "paused" ? "paused_mark" : "positive_mark");
+    }
+  });
+  const followDetailPlay = useStableCallback((event: Event) => {
+    const { ownerPage, workID } = (event as CustomEvent<WorkDetailPlayDetail>).detail;
+    const work = localWorks.worksRef.current.find((item) => item.id === workID);
+    if (ownerPage === "library" && work) recordWorkRecommendationEvent(work, "play");
+  });
+  const followDetailWorksChanged = useStableCallback(() => {
+    void refreshCurrentWorksPage().catch(() => {});
+  });
+  useEffect(() => {
+    window.addEventListener(WORK_DETAIL_USER_STATE_EVENT, followDetailUserState);
+    window.addEventListener(WORK_DETAIL_PLAY_EVENT, followDetailPlay);
+    window.addEventListener(WORK_DETAIL_WORKS_CHANGED_EVENT, followDetailWorksChanged);
+    return () => {
+      window.removeEventListener(WORK_DETAIL_USER_STATE_EVENT, followDetailUserState);
+      window.removeEventListener(WORK_DETAIL_PLAY_EVENT, followDetailPlay);
+      window.removeEventListener(WORK_DETAIL_WORKS_CHANGED_EVENT, followDetailWorksChanged);
+    };
+  }, [followDetailPlay, followDetailUserState, followDetailWorksChanged]);
+
   const trackedFetchWorkspace = useRemoteFetchWorkspace({ onWorksChanged: refreshCurrentWorksPage });
   const openTrackedFetchSelection = (work: Work, presence: SourcePresenceItem) => {
     if (!presence.fileSourceId) return;
@@ -815,9 +796,6 @@ export function LibraryPage({ active = true }: { active?: boolean }) {
   const openLibraryHome = () => {
     window.history.pushState({}, "", "/");
     window.dispatchEvent(new Event("kikoto:navigation"));
-    setSelectedCode(null);
-    setSelectedRemoteTarget(null);
-    workDetail.clearLoadFailure();
   };
 
   const updateSearchClauses = (clauses: SearchClause[]) => {
@@ -898,7 +876,6 @@ export function LibraryPage({ active = true }: { active?: boolean }) {
   const changeCardStatus = useStableCallback(updateWorkStatus);
   const saveCardFavorite = useStableCallback((work: Work, favorite: boolean) => {
     localWorks.patchWork(work.id, { favorite });
-    workDetail.patchWork(work.id, { favorite });
     if (favorite) recordWorkRecommendationEvent(work, "positive_mark");
   });
   const openCardTag = useStableCallback(addTagSearchClause);
@@ -1226,25 +1203,6 @@ export function LibraryPage({ active = true }: { active?: boolean }) {
     </div>
   );
   return (
-    <>
-      <LibraryWorkDetail
-        remoteTarget={selectedRemoteTarget}
-        code={selectedCode}
-        detail={workDetail}
-        sources={sources}
-        principalID={principalID}
-        onBack={backToLibrary}
-        onOpenLibrary={openLibraryHome}
-        onStatusChange={updateWorkStatus}
-        onPlay={() => {
-          const sourceWork = localWorks.worksRef.current.find((candidate) => candidate.id === workDetail.work?.id);
-          if (sourceWork) recordWorkRecommendationEvent(sourceWork, "play");
-        }}
-        onWorksChanged={refreshCurrentWorksPage}
-      />
-      {(listVisited || showBrowse) && (
-        <PageActiveProvider value={active && showBrowse}>{browseContent}</PageActiveProvider>
-      )}
-    </>
+    (listVisited || showBrowse) && <PageActiveProvider value={active && showBrowse}>{browseContent}</PageActiveProvider>
   );
 }

@@ -107,6 +107,25 @@ test("full player collapses from the upper content area and double-tapping its c
   await expect(fullPlayer).toBeHidden();
 });
 
+test("double-tapping the cover opens the work in the destination its playback started from", async ({ page }) => {
+  await mockApplication(page);
+  await seedPlayer(page, { ...persistedTrack, originPage: "circles" });
+  await page.goto("/");
+
+  await page.getByText("Test track", { exact: true }).click();
+  const fullPlayer = page.locator("section.fixed.inset-0");
+  const cover = fullPlayer.getByRole("button", { name: "Open work detail" });
+  await cover.tap();
+  await page.waitForTimeout(100);
+  await cover.tap();
+
+  await expect(page).toHaveURL(/\/RJ00000000$/);
+  await expect(page.getByTestId("directory-file-row").first()).toBeVisible();
+  const tabs = page.locator("footer");
+  await expect(tabs.getByRole("button", { name: "Circles", exact: true })).toHaveAttribute("aria-current", "page");
+  await expect(tabs.getByRole("button", { name: "Library", exact: true })).not.toHaveAttribute("aria-current", "page");
+});
+
 test("entering a playing work opens the current track folder", async ({ page }) => {
   const playingTrack = {
     ...persistedTrack,
