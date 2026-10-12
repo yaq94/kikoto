@@ -25,13 +25,15 @@ import {
 } from "./WorkCardShell";
 
 /**
- * Phone layouts for a work card. `row` puts a small cover beside the facts so a
- * single column scans like a track list; `tile` is the two-column grid, which
- * keeps the cover dominant and drops tags and credits to stay short.
+ * Reduced layouts for a work card. `row` puts a small cover beside the facts so
+ * a single phone column scans like a track list; `tile` keeps the cover
+ * dominant and drops tags and credits to stay short; `cover` is the cover and
+ * the title alone, without the action row, for scanning a collection by its
+ * artwork.
  */
-export type MobileWorkCardLayout = "row" | "tile";
+export type CompactWorkCardLayout = "row" | "tile" | "cover";
 
-export function MobileWorkCardShell({
+export function CompactWorkCardShell({
   layout,
   work,
   selection,
@@ -43,17 +45,17 @@ export function MobileWorkCardShell({
   onSeriesOpen,
   onTagOpen,
   onRecommendationOpen,
-}: WorkCardShellProps & { layout: MobileWorkCardLayout }) {
+}: WorkCardShellProps & { layout: CompactWorkCardLayout }) {
   const { t } = useTranslation();
   const { circleOpen, voiceOpen } = useWorkCardEntityActions(work, { onCircleOpen, onVoiceOpen, onSeriesOpen });
   const interactive = Boolean(onOpen) && canOpen;
   const hasTags = work.dlsiteTags.length > 0 || (work.userTags?.length ?? 0) > 0;
   const cover = (
-    <MobileCover work={work} layout={layout} selection={selection} onRecommendationOpen={onRecommendationOpen} />
+    <CompactCover work={work} layout={layout} selection={selection} onRecommendationOpen={onRecommendationOpen} />
   );
   return (
     <Card
-      className="group h-full overflow-hidden transition-[border-color,transform] duration-150 focus-within:border-primary/40 active:scale-[var(--press-scale)] motion-reduce:transition-none motion-reduce:active:scale-100"
+      className="group h-full overflow-hidden transition-[border-color,transform] duration-150 hover:border-primary/40 focus-within:border-primary/40 active:scale-[var(--press-scale)] motion-reduce:transition-none motion-reduce:active:scale-100"
       data-testid="work-card"
       data-card-layout={layout}
     >
@@ -104,7 +106,7 @@ export function MobileWorkCardShell({
               )}
               <ProgressLine work={work} />
             </>
-          ) : (
+          ) : layout === "tile" ? (
             <>
               <div className="p-1.5 pb-0">{cover}</div>
               <div className="flex flex-1 flex-col gap-1 px-2.5 pb-2.5 pt-2">
@@ -116,17 +118,39 @@ export function MobileWorkCardShell({
                 <MetricLine work={work} hidePrice className="mt-auto pt-0.5" />
               </div>
             </>
+          ) : (
+            <>
+              <div className="p-1.5 pb-0">{cover}</div>
+              <div className="px-2 pb-2 pt-1.5">
+                <h3 className="line-clamp-2 min-h-9 text-[0.8125rem] font-medium leading-[1.125rem]" title={work.title}>
+                  {work.title}
+                </h3>
+              </div>
+            </>
           )}
         </div>
-        {footer}
+        {layout !== "cover" && footer}
       </CardContent>
     </Card>
   );
 }
 
 /** Loading placeholder with the same footprint as the matching card layout. */
-export function MobileWorkCardSkeleton({ layout }: { layout: MobileWorkCardLayout }) {
+export function CompactWorkCardSkeleton({ layout }: { layout: CompactWorkCardLayout }) {
   const bar = "animate-pulse rounded bg-muted";
+  if (layout === "cover") {
+    return (
+      <div className="flex h-full flex-col overflow-hidden rounded-lg border bg-card" aria-hidden="true">
+        <div className="p-1.5 pb-0">
+          <div className="aspect-[4/3] animate-pulse rounded-[calc(var(--radius)-4px)] bg-muted" />
+        </div>
+        <div className="flex h-[3.125rem] flex-col justify-center gap-1.5 px-2">
+          <div className={cn(bar, "h-3 w-full")} />
+          <div className={cn(bar, "h-3 w-2/3")} />
+        </div>
+      </div>
+    );
+  }
   return (
     <div className="flex h-full flex-col overflow-hidden rounded-lg border bg-card" aria-hidden="true">
       {layout === "row" ? (
@@ -165,21 +189,24 @@ export function MobileWorkCardSkeleton({ layout }: { layout: MobileWorkCardLayou
   );
 }
 
-function MobileCover({
+function CompactCover({
   work,
   layout,
   selection,
   onRecommendationOpen,
 }: {
   work: WorkCardViewModel;
-  layout: MobileWorkCardLayout;
+  layout: CompactWorkCardLayout;
   selection?: ReactNode;
   onRecommendationOpen?: () => void;
 }) {
   const { t } = useTranslation();
   const { resolvedLocale } = useLocale();
+  // A cover card keeps the artwork clear of facts: only source marks and the
+  // selection control ride on it.
+  const coverOnly = layout === "cover";
   const price = work.price ?? null;
-  const progress = work.progress ?? null;
+  const progress = coverOnly ? null : (work.progress ?? null);
   const highlighted = work.recommendationHighlighted ?? true;
   const recommendationClassName = cn(
     coverChipClassName,
@@ -214,6 +241,7 @@ function MobileCover({
         </div>
       )}
       {work.recommended &&
+        !coverOnly &&
         (onRecommendationOpen ? (
           <button
             type="button"

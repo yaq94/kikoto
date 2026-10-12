@@ -171,9 +171,17 @@ const collectionJapanese = {
   pageSize: "1ページあたりの項目数：{{value}}",
   itemsPerPage: "1ページあたりの項目数",
 
-  compactCards: "コンパクトカード",
-
-  compactCardsHint: "スマートフォンで小さめの作品カードを使う",
+  cardMode: "カード",
+  cardModes: {
+    full: "フル",
+    compact: "コンパクト",
+    mini: "ミニ",
+  },
+  cardModeOptions: {
+    full: "フルカード：すべての情報を表示",
+    compact: "コンパクトカード：情報を絞って表示",
+    mini: "ミニカード：カバーとタイトルのみ表示",
+  },
   coverSources: "カバーのソース表示",
   coverSourceModes: {
     auto: "自動：現在のソースと異なる、または問題のある表示のみ",
