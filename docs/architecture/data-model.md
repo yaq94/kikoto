@@ -133,6 +133,29 @@ work is queued. Triggers on editions, variants, title overrides and work titles
 queue whole families in `work_title_language_dirty`; the search index worker
 rebuilds them in bounded batches.
 
+### LLM translation
+
+Administrator-managed LLM endpoints are stored in the `app_setting` key
+`llm_providers`. Each endpoint declares its wire protocol (`openai`,
+`anthropic`, or `ollama`), an origin, a private or external data boundary, and
+its discovered models. API keys stay server-side and are never returned by the
+settings API. The local Ollama option derives its endpoint from the server host
+gateway; an Ollama endpoint on another machine stores an administrator-entered
+origin.
+
+The `llm_content_policy` setting stores sensitive metadata tag IDs and bounded
+literal keyword rules. A translation request selects its fields, evaluates the
+selected origin text and metadata before contacting an endpoint, and fails
+closed for unknown or blocked content. Sensitive content is accepted only by a
+private endpoint. The same evaluation runs when a preview is applied, so a
+changed work or policy cannot reuse an old preview.
+
+Accepted title and description translations live in `work_llm_translation`,
+keyed by work, target language, and field. Each row retains the source hash,
+provider, model, author, and status. Provider metadata and origin descriptions
+remain intact; the translated value participates in language presentation only
+when that target language is selected.
+
 ### DLsite Genres
 
 DLsite genre ids are stable across request locales. `work_dlsite_genre`

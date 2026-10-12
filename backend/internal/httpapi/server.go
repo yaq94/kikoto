@@ -20,6 +20,7 @@ import (
 	"github.com/yexca/kikoto/backend/internal/config"
 	"github.com/yexca/kikoto/backend/internal/dlsite"
 	"github.com/yexca/kikoto/backend/internal/library"
+	"github.com/yexca/kikoto/backend/internal/llm"
 	"github.com/yexca/kikoto/backend/internal/metasync"
 	"github.com/yexca/kikoto/backend/internal/proxyconfig"
 	"github.com/yexca/kikoto/backend/internal/storage"
@@ -32,6 +33,10 @@ type updateCheckCache struct {
 }
 
 type Server struct {
+	llmStore                       *llm.Store
+	llmRequestSlots                chan struct{}
+	llmPreviewMu                   sync.Mutex
+	llmPreviews                    map[string]llmPreview
 	db                             *sql.DB
 	statistics                     *storage.StatisticsMaintainer
 	accountStore                   *account.Store
@@ -107,8 +112,11 @@ type localMediaIndexCall struct {
 func NewServer(db *sql.DB, cfg config.Config) *Server {
 	dlsiteEndpoints := dlsite.DefaultEndpoints()
 	server := &Server{
-		statistics: storage.NewStatisticsMaintainer(db),
-		db:         db, accountStore: account.NewStore(db), accessPolicy: accesspolicy.NewStore(db), libraryStore: library.NewStore(db), workflowStore: workflow.NewStore(db), cfg: cfg,
+		llmStore:        llm.NewStore(db),
+		llmRequestSlots: make(chan struct{}, 2),
+		llmPreviews:     map[string]llmPreview{},
+		statistics:      storage.NewStatisticsMaintainer(db),
+		db:              db, accountStore: account.NewStore(db), accessPolicy: accesspolicy.NewStore(db), libraryStore: library.NewStore(db), workflowStore: workflow.NewStore(db), cfg: cfg,
 		loginThrottle:                  auththrottle.New(),
 		dlsiteEndpoints:                dlsiteEndpoints,
 		metadataCoordinator:            metasync.NewCoordinator(),
@@ -224,6 +232,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("PUT /api/works/{id}/metadata-tags", s.setWorkMetadataTags)
 	mux.HandleFunc("GET /api/works/{id}/manual-overrides", s.getWorkManualOverrides)
 	mux.HandleFunc("PATCH /api/works/{id}/manual-overrides", s.updateWorkManualOverrides)
+	handleSlowFirstResponse("POST /api/works/{id}/llm-translate", s.translateWorkWithLLM)
+	mux.HandleFunc("PUT /api/works/{id}/llm-translation", s.applyLLMTranslation)
 	mux.HandleFunc("DELETE /api/works/{id}/manual-overrides/{field}", s.deleteWorkManualOverride)
 	mux.HandleFunc("GET /api/works/{id}/cover-candidates", s.listWorkCoverCandidates)
 	mux.HandleFunc("POST /api/works/{id}/cover-override", s.setWorkCoverOverride)
@@ -333,6 +343,14 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/settings", s.getSettings)
 	mux.HandleFunc("GET /api/runtime-settings", s.getRuntimeSettings)
 	handleSlowFirstResponse("PATCH /api/settings", s.updateSettings)
+	mux.HandleFunc("GET /api/llm/providers", s.listLLMProviders)
+	mux.HandleFunc("GET /api/llm/translation-models", s.listLLMTranslationModels)
+	mux.HandleFunc("GET /api/llm/policy", s.getLLMPolicy)
+	mux.HandleFunc("PUT /api/llm/policy", s.updateLLMPolicy)
+	mux.HandleFunc("POST /api/llm/providers", s.saveLLMProvider)
+	mux.HandleFunc("PUT /api/llm/providers/{id}", s.saveLLMProvider)
+	mux.HandleFunc("DELETE /api/llm/providers/{id}", s.deleteLLMProvider)
+	handleSlowFirstResponse("POST /api/llm/providers/{id}/fetch-models", s.fetchLLMModels)
 	mux.HandleFunc("GET /api/library-sources", s.listLibrarySources)
 	mux.HandleFunc("GET /api/file-sources", s.listFileSources)
 	mux.HandleFunc("POST /api/file-sources", s.createFileSource)

@@ -62,6 +62,7 @@ export type WorkDetail = {
   metadataSync: WorkMetadataSyncStatus;
   translations: WorkTranslation[];
   manualOverrides: WorkManualOverrides;
+  llmDescriptions?: Record<string, string>;
   metadataLink?: WorkMetadataLink | null;
   /** Set when this work is a purchase bonus with a link decision. */
   purchaseBonus?: WorkPurchaseBonus | null;

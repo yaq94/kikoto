@@ -18,6 +18,7 @@ type Variant struct {
 	// Remote titles use only provider-declared edition languages. A title
 	// without such a declaration remains the languageless fallback.
 	RemoteSource string
+	LLM          bool
 }
 
 type Selection struct {
@@ -96,6 +97,9 @@ func ForLanguage(variants []Variant, manual map[string]string, language string, 
 		result.Source, result.SourceName = "remote", selected.RemoteSource
 	} else if found {
 		result.Source = "dlsite"
+		if selected.LLM {
+			result.Source = "llm"
+		}
 	}
 	if title := strings.TrimSpace(manual[""]); title != "" {
 		result.Title, result.Source, result.SourceName = title, "manual", ""

@@ -147,6 +147,39 @@ func LoadInputs(ctx context.Context, db Querier, ids []int64, descriptions bool)
 			return nil, err
 		}
 		_ = rows.Close()
+		if !descriptions {
+			continue
+		}
+		rows, err = db.QueryContext(ctx, `SELECT work_id,language,
+ COALESCE(MAX(CASE WHEN field_name='title' THEN value_text END),''),
+ COALESCE(MAX(CASE WHEN field_name='description' THEN value_text END),'')
+ FROM work_llm_translation WHERE status='accepted' AND work_id IN (`+placeholders+`)
+ GROUP BY work_id,language ORDER BY work_id,language`, args...)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var id int64
+			var language, title, description string
+			if err := rows.Scan(&id, &language, &title, &description); err != nil {
+				_ = rows.Close()
+				return nil, err
+			}
+			input, exists := result[id]
+			if !exists {
+				continue
+			}
+			if title == "" {
+				title = Original(input.Variants, input.Fallback).Title
+			}
+			input.Variants = append(input.Variants, Variant{Code: input.Fallback.Code, Language: language, Title: title, Description: description, LLM: true})
+			result[id] = input
+		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		_ = rows.Close()
 	}
 	return result, nil
 }
