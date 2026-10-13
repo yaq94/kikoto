@@ -365,6 +365,7 @@ export const surfaceHant = {
     demoRemoteSourceNotice:
       "示範模式：{{source}} 是模擬的遠端來源，並非真實伺服器。其中的作品是從本示範的本機作品中隨機選取的。",
     demoWorksNotice: "示範模式：作品僅用於示範，版權歸原作者所有。",
+    demoListeningNotice: "示範模式：這裡的收聽紀錄是模擬產生的，並非真實收聽；示範中的播放也不會被記錄。",
     permissionDenied: "您的帳戶沒有使用此功能的權限。",
   },
   workflow: {

@@ -374,6 +374,8 @@ export const surfaceJapanese = {
     demoRemoteSourceNotice:
       "デモモード：{{source}} はシミュレートされたリモートソースで、実際のサーバーではありません。作品はこのデモのローカル作品からランダムに選ばれています。",
     demoWorksNotice: "デモモード：作品はデモ用途でのみ表示しており、著作権は原作者に帰属します。",
+    demoListeningNotice:
+      "デモモード：この聴取履歴はシミュレーションで、実際の聴取ではありません。このデモでの再生も記録されません。",
     permissionDenied: "この機能を使用する権限がありません。",
   },
   workflow: {

@@ -705,6 +705,14 @@ mean `rating_average` of the same works. Marks count the listened works whose
 `listening_status` is listening, paused, finished, or relisten. Ratings and
 marks on an edition count for its canonical work.
 
+Demo stores a simulated listening history for its shared account in the same
+tables, so its reports run the ordinary queries. `demo-listening-v1` derives
+each calendar day's sessions from the date alone and each work's share from
+its unified `primary_code`, over at most 24 admitted local works and the last
+400 days through the current hour. Startup and an hourly rebuild replace the
+account's sessions, days, hours, and imported totals, and rate the works the
+history plays most.
+
 `favorite_list` distinguishes a system `marked` list from ordinary user lists.
 The system list has no stored items: it derives membership from a non-`none`
 Quick mark. `favorite_list_item` records only explicit user-list membership.

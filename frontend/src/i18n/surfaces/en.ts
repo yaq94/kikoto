@@ -407,6 +407,8 @@ export const surfaceEnglish = {
       "Demo mode: {{source}} is a simulated remote source, not a real server. Its works are randomly selected from this demo's local works.",
     demoWorksNotice:
       "Demo mode: these works are shown for demonstration only, and their copyrights belong to their original creators.",
+    demoListeningNotice:
+      "Demo mode: this listening history is simulated. Nobody listened to it, and listening in this demo is not recorded.",
     permissionDenied: "Your account does not have permission to use this feature.",
   },
   workflow: {

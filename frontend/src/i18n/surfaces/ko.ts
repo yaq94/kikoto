@@ -373,6 +373,8 @@ export const surfaceKorean = {
     demoRemoteSourceNotice:
       "데모 모드: {{source}}는 시뮬레이션된 원격 소스이며 실제 서버가 아닙니다. 작품은 이 데모의 로컬 작품 중에서 무작위로 선택됩니다.",
     demoWorksNotice: "데모 모드: 작품은 데모 용도로만 표시되며, 저작권은 원저작자에게 있습니다.",
+    demoListeningNotice:
+      "데모 모드: 이 청취 기록은 시뮬레이션이며 실제 청취가 아닙니다. 이 데모에서의 재생도 기록되지 않습니다.",
     permissionDenied: "이 기능을 사용할 권한이 없습니다.",
   },
   workflow: {
