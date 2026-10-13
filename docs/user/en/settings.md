@@ -5,7 +5,7 @@ Settings holds account controls, personal playback, recommendation, and tag pref
 
 ## Tabs
 
-Settings uses Account, Playback, Recommendations, and Tags tabs, shown as icons: hover or focus an icon for its name, and phones also name the active tab. Administrators, and Demo, also see the administration tabs (Library, Cache & Fetch, Proxy, Cleanup, and Users) after a divider, so the elevated scope stays separate. Wide screens show the tabs in a column beside the settings, with every tab named; phones show them as one row that scrolls sideways. Below the column, **Hide tab names** collapses it to icons and **Show tab names** expands it again. **Show tabs above** moves the tabs into one row above the settings. The row names every tab when there is room; otherwise it names the group holding the open tab (the personal or the administration tabs) and shows the other group as icons, and on the narrowest wide screens it names only the open tab. If even that does not fit, the row wraps onto a second line. The icon at the end of that row, **Show tabs beside**, returns them to the column. Settings remembers both choices on that device.
+Settings uses Account, Playback, Recommendations, and Tags tabs, shown as icons: hover or focus an icon for its name, and phones also name the active tab. Administrators, and Demo, also see the administration tabs (Library, Cache & Fetch, Proxy, LLM, Cleanup, and Users) after a divider, so the elevated scope stays separate. Wide screens show the tabs in a column beside the settings, with every tab named; phones show them as one row that scrolls sideways. Below the column, **Hide tab names** collapses it to icons and **Show tab names** expands it again. **Show tabs above** moves the tabs into one row above the settings. The row names every tab when there is room; otherwise it names the group holding the open tab (the personal or the administration tabs) and shows the other group as icons, and on the narrowest wide screens it names only the open tab. If even that does not fit, the row wraps onto a second line. The icon at the end of that row, **Show tabs beside**, returns them to the column. Settings remembers both choices on that device.
 
 `/maintenance`, `/users`, `/cleanup`, `/tags`, and `/user-data` links open the matching Settings tab. `/history` and `/settings?tab=history` open [Insights](personal-data.md#insights).
 
@@ -181,6 +181,13 @@ after a change. Cache contents are managed in the Cleanup tab.
 - **Direct connection fallback** is off by default. When off, a request whose
   proxies all fail to connect fails rather than connecting directly. When on,
   that request is retried once without a proxy, after every proxy was tried.
+
+### LLM
+
+Configure the protocol, service origin, default model and server-side API key. Kikoto adds protocol paths automatically and supports native Anthropic. Same-machine Ollama uses a server-derived address; another-machine Ollama accepts an origin. Changing the origin, preset or Ollama location clears the old key and model list. **Clear stored API key** deletes a credential explicitly. Enter a model ID manually when discovery is empty or fails. **Fetch models** saves the current connection draft before discovery.
+
+Select the declared data boundary and explicitly allow sensitive content for a private endpoint. Unknown and blocked content are refused. Sensitive tags use the shared tag selector and stable IDs; keywords use field checkboxes and sensitive or blocked actions. Blocking rules apply to every rating; the all-ages option controls additional sensitive keyword checks. Invalid or excessive rules reject the whole save. This policy does not guarantee provider compliance or account safety. Remote lyrics translation is off by default. LLM is unavailable in Demo. See [translation, review and background workflows](work-detail.md#llm-translation).
+
 
 ### Cleanup
 

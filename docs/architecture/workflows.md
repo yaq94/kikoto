@@ -32,6 +32,12 @@ Library and metadata:
   family, queued by work detail, Metadata recovery, and link changes.
 - `metadata_genre_names`: learn genre names in preferred metadata languages
   (see [Genre Name Learning](#genre-name-learning)).
+- `llm_translation`: translate one explicitly selected existing work for review.
+  A batch names at most 100 existing works and creates one task per work;
+  lyrics selects one work and one file. Progress and cancellation use the
+  shared executor. [Translation task persistence](data-model.md#llm-translation)
+  defines source/configuration invalidation, restart recovery and explicit
+  resubmission of uncertain requests.
 - `demo_library_scan`: the Demo library scan, which indexes only works
   eligible for public browsing.
 

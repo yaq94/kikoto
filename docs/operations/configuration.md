@@ -65,6 +65,8 @@ Administrators manage the instance from the administration tabs in Settings:
   origins are entered without protocol paths. The same-machine Ollama option
   uses the server's host gateway and keeps its address read-only; a remote
   Ollama instance accepts an administrator-entered origin.
+  [Settings → LLM](../user/en/settings.md#llm) defines credential clearing,
+  model discovery, declared content boundaries and structured safety rules.
 - **Cleanup**: cache cleanup and database backups.
 - **Users**: accounts and production instance access.
 

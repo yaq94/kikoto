@@ -35,6 +35,9 @@ The backend is a Go HTTP API with SQLite persistence.
   bounded snapshot decoding, and reconciliation for the opt-in fallback.
 - `backend/internal/metadatatags`: shared metadata tag concepts, projection,
   and selection, independent of provider snapshots and personal tags.
+- `backend/internal/llm`: bounded translation protocols, deterministic content
+  assessments, endpoint configuration and lyrics templates. HTTP composition
+  binds these to work identity, review persistence, file scope and workflow jobs.
 - `backend/internal/metadatatitles`: display-title selection from edition,
   declared remote, and manual titles without changing provider data.
 - `backend/internal/outbound`: the shared outbound transport policy, forward
