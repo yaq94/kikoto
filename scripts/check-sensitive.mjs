@@ -397,6 +397,47 @@ function isLiteralSensitiveValue(value) {
   return /^[A-Za-z0-9+/_=-]{8,}$/u.test(normalized);
 }
 
+// Bare JavaScript identifiers pass a value from state; they are not string
+// literals. Environment and YAML files still treat unquoted values as data.
+function isCodeValueReference(entry, value) {
+  return (
+    /\.(?:[cm]?js|tsx?)$/iu.test(entry.file) &&
+    /^[A-Za-z_$][A-Za-z0-9_$]*$/u.test(value)
+  );
+}
+
+// These exact public UI strings name a control, not a credential. Keep the
+// owner scope narrow; token, URL and path checks still inspect every line.
+const credentialControlCopy = new Set([
+  "API key",
+  "API 密钥",
+  "API 金鑰",
+  "API キー",
+  "API 키",
+  "Keys are stored by the server and are never returned to the browser.",
+  "密钥由服务器保存，不会返回到浏览器。",
+  "金鑰由伺服器保存，不會回傳到瀏覽器。",
+  "キーはサーバーに保存され、ブラウザーには返されません。",
+  "키는 서버에 저장되며 브라우저로 반환되지 않습니다.",
+]);
+function isCredentialControlCopy(entry) {
+  if (
+    !/^frontend\/src\/i18n\/surfaces\/(?:en|ja|ko|zh-Hans|zh-Hant)\.ts$/u.test(
+      entry.file,
+    )
+  )
+    return false;
+  const match = entry.text.match(
+    /^\s*apiKey(?:Description)?:\s*("(?:\\.|[^"\\])*")\s*,?\s*$/u,
+  );
+  if (!match) return false;
+  try {
+    return credentialControlCopy.has(JSON.parse(match[1]));
+  } catch {
+    return false;
+  }
+}
+
 function isAllowedHost(host) {
   const normalized = host.toLowerCase().replace(/^\[|\]$/gu, "");
   return (
@@ -498,7 +539,12 @@ export function scanLine(entry, findings, approvedEndpoints) {
   }
 
   const assignment = entry.text.match(sensitiveAssignmentPattern);
-  if (assignment?.groups && isLiteralSensitiveValue(assignment.groups.value)) {
+  if (
+    assignment?.groups &&
+    isLiteralSensitiveValue(assignment.groups.value) &&
+    !isCodeValueReference(entry, assignment.groups.value) &&
+    !isCredentialControlCopy(entry)
+  ) {
     findings.push({
       ...entry,
       kind: "literal value assigned to a sensitive key",
