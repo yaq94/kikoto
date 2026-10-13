@@ -762,6 +762,8 @@ export const zhHansResource = {
         overviewOne: "Kikoto 将本地文件夹、DLsite 元数据和 Kikoeru 兼容远程来源统一到一个作品模型中。",
         overviewTwo: "它包含媒体库浏览、收藏、社团、声优、工作流可见性、远程获取流程和基于浏览器的音频播放器。",
         referenceProjects: "参考项目",
+        showReferenceDetails: "显示详情",
+        hideReferenceDetails: "隐藏详情",
         referenceAreas: {
           recommendation: "推荐设计",
           remoteSources: "远程来源",
