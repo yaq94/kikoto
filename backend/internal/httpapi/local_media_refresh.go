@@ -62,6 +62,10 @@ func (s *Server) refreshWorkLocalFiles(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
+	if err := s.indexAdditionalLocalFolders(r.Context(), targetWorkID, true); err != nil {
+		writeError(w, err)
+		return
+	}
 	var indexedFiles int
 	if err := s.db.QueryRowContext(r.Context(), `
 		SELECT COUNT(*)

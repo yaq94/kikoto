@@ -216,7 +216,7 @@ func (s *Server) persistLocalScanResults(ctx context.Context, job workflowJobRec
 	if err != nil {
 		return localScanResult{}, nil, err
 	}
-	state := localScanPersistState{scope: scope, duplicateCodes: localScanDuplicateCodes(scanSummary.DuplicateGroups), seenWorkIDs: map[int64]bool{}, reconciledWorkIDs: map[int64]bool{}}
+	state := localScanPersistState{scope: scope, duplicateRoots: localScanDuplicateRoots(scanSummary.DuplicateGroups), seenWorkIDs: map[int64]bool{}, reconciledWorkIDs: map[int64]bool{}}
 	seenRoots := map[string]bool{}
 	for start := 0; start < len(workFolders); start += localScanFolderCommitBatch {
 		batch := workFolders[start:min(start+localScanFolderCommitBatch, len(workFolders))]
@@ -264,9 +264,6 @@ func (s *Server) persistLocalScanResults(ctx context.Context, job workflowJobRec
 		runSummary["offline_pools"] = scope.offlinePoolSummaries()
 	}
 	if err := completeLocalScanNodes(ctx, tx, nodeIDs, fileSourceID, scanSummary, state); err != nil {
-		return localScanResult{}, nil, err
-	}
-	if err := insertLocalDuplicateCandidates(ctx, tx, job.RunID, scanSummary.DuplicateGroups); err != nil {
 		return localScanResult{}, nil, err
 	}
 	if _, err := tx.ExecContext(ctx, "UPDATE workflow_run SET summary_json = ? WHERE id = ?", mustJSON(runSummary), job.RunID); err != nil {
@@ -318,13 +315,19 @@ type localScanPersistState struct {
 	updatedLocations, skippedLocations, missingLocations int
 	newWorkCodes                                         []string
 	seenWorkIDs, reconciledWorkIDs                       map[int64]bool
-	duplicateCodes                                       map[string]bool
+	// duplicateRoots holds, per work code found in several folders, the
+	// normalized roots of those folders.
+	duplicateRoots map[string]map[string]bool
 }
 
-func localScanDuplicateCodes(groups []localfs.DuplicateGroup) map[string]bool {
-	result := map[string]bool{}
+func localScanDuplicateRoots(groups []localfs.DuplicateGroup) map[string]map[string]bool {
+	result := map[string]map[string]bool{}
 	for _, group := range groups {
-		result[strings.ToUpper(strings.TrimSpace(group.Code))] = true
+		roots := map[string]bool{}
+		for _, folder := range group.Folders {
+			roots[normalizeFolderRootPath(folder.RelPath)] = true
+		}
+		result[strings.ToUpper(strings.TrimSpace(group.Code))] = roots
 	}
 	return result
 }
@@ -355,10 +358,18 @@ func (s *Server) persistLocalScanFolder(ctx context.Context, tx *sql.Tx, fileSou
 		return 0, err
 	}
 	code := strings.ToUpper(strings.TrimSpace(folder.Code))
+	currentRoot := filepath.ToSlash(folder.RelPath)
+	duplicateRoots := state.duplicateRoots[code]
+	// A work found in several folders keeps all of them. Its presence stays
+	// on the folder it already names, so repeated scans do not move the work
+	// between folders; the other folders are recorded beside it.
+	if duplicateRoots[normalizeFolderRootPath(previousRoot)] && !sameLocalRelativePath(previousRoot, currentRoot) {
+		return workID, upsertWorkFolderLocation(ctx, tx, workID, fileSourceID, folder.RelPath, "external", "active", false)
+	}
 	missingLocations := 0
-	// A duplicate stays reviewable. Invalidating either folder here would
-	// choose a winner before the user has reviewed the candidate.
-	if !state.duplicateCodes[code] && !state.reconciledWorkIDs[workID] {
+	// Every folder of the work was found, so none of their locations is
+	// invalidated in favour of another.
+	if len(duplicateRoots) == 0 && !state.reconciledWorkIDs[workID] {
 		missingLocations, err = markLocalLocationsMissingForChangedFolder(ctx, tx, workID, fileSourceID, folder.RelPath, state.scope)
 		if err != nil {
 			return 0, err
@@ -366,12 +377,10 @@ func (s *Server) persistLocalScanFolder(ctx context.Context, tx *sql.Tx, fileSou
 		state.missingLocations += missingLocations
 		state.reconciledWorkIDs[workID] = true
 	}
-	currentRoot := filepath.ToSlash(folder.RelPath)
 	preserveCompletedIndex := previousScanned != 0 &&
 		previousAvailability == "available" &&
 		strings.EqualFold(normalizeFolderRootPath(previousRoot), normalizeFolderRootPath(currentRoot)) &&
-		missingLocations == 0 &&
-		!state.duplicateCodes[code]
+		missingLocations == 0
 	rawPresence := map[string]any{
 		"code": folder.Code, "title": folder.Title, "rel_path": currentRoot,
 		"files": len(folder.Files), "file_tree_scanned": preserveCompletedIndex,

@@ -63,7 +63,8 @@ started, and can follow their status, events, and file progress.
 - For one unambiguous local work, a scan marks old local file locations missing
   when the folder disappears or its stored paths no longer belong to the
   detected folder. It does not delete files or change Fetch ownership. A moved
-  folder is indexed lazily when opened; duplicate-code folders remain in Needs attention.
+  folder is indexed lazily when opened. A work whose code is found in several
+  folders keeps all of them, and its detail page offers to tidy them up.
 - Node runs expose step-level progress.
 - Candidates expose reviewable outcomes.
 - Needs attention contains terminal runs with unresolved candidates that need a user

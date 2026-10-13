@@ -42,6 +42,7 @@ import i18n from "@/i18n";
 import { assetURL, mediaDownloadURL } from "@/lib/api";
 import { cn } from "@/lib/tailwindClassNames";
 import { type LyricsChoice, lyricsChoiceDisplayLabel } from "@/player/lyricsMatching";
+import { lyricsLanguageLabelKey } from "@/lib/lyricsLanguage";
 import { preferredLyricsMediaItemID, useLibraryPlayer } from "@/player/PlayerProvider";
 
 export type DirectoryPlayFolder = (tracks: TreeTrack[], locationId: number) => void;
@@ -494,7 +495,7 @@ function LyricsActions({
                 <span className="block truncate text-xs text-muted-foreground">
                   {selectedLyricsChoice
                     ? i18n.t("libraryDetail.matchesLyrics", {
-                        label: lyricsChoiceDisplayLabel(selectedLyricsChoice, choices),
+                        label: lyricsChoiceDisplayLabel(selectedLyricsChoice, choices, lyricsLanguageName),
                       })
                     : i18n.t("libraryDetail.noAvailableMatch")}
                 </span>
@@ -513,7 +514,7 @@ function LyricsActions({
                 >
                   <span className="min-w-0 flex-1">
                     <span className="block truncate font-medium" title={choice.displayPath || choice.title}>
-                      {lyricsChoiceDisplayLabel(choice, choices)}
+                      {lyricsChoiceDisplayLabel(choice, choices, lyricsLanguageName)}
                     </span>
                     <span className="block text-xs text-muted-foreground">{lyricsMatchReasonLabel(choice.reason)}</span>
                   </span>
@@ -660,6 +661,11 @@ function MoreActions({
       </AnchoredPopover>
     </div>
   );
+}
+
+function lyricsLanguageName(language: string) {
+  const key = lyricsLanguageLabelKey(language);
+  return key ? i18n.t(key) : language;
 }
 
 function lyricsMatchReasonLabel(reason: LyricsChoice["reason"]) {

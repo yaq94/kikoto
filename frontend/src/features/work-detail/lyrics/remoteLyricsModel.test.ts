@@ -2,9 +2,11 @@ import { describe, expect, it } from "vitest";
 
 import type { MediaItem, RemoteTrack, WorkFolderLocation, WorkTranslation } from "@/lib/api";
 
-import { lyricsManagerEntries, rebaseLyricsAssignmentDraft } from "./lyricsManagerModel";
+import { lyricsManagerEntries, rebaseLyricsAssignmentDrafts } from "./lyricsManagerModel";
 import {
   defaultLyricsEditionCode,
+  localLyricsEditions,
+  localLyricsFiles,
   lyricsTargetFolders,
   remoteLyricsFiles,
   remoteLyricsRequest,
@@ -188,10 +190,51 @@ describe("rebaseLyricsAssignmentDraft", () => {
   it("keeps unsaved edits and takes newly stored assignments elsewhere", () => {
     const before = lyricsManagerEntries([audioItem(1, "w/01.mp3", 10), audioItem(2, "w/02.mp3")]).audio;
     const after = lyricsManagerEntries([audioItem(1, "w/01.mp3", 10), audioItem(2, "w/02.mp3", 21)]).audio;
-    const draft = new Map<number, number | null>([
-      [1, null],
-      [2, null],
+    const drafts = new Map([
+      [
+        "",
+        new Map<number, number | null>([
+          [1, null],
+          [2, null],
+        ]),
+      ],
     ]);
-    expect(Object.fromEntries(rebaseLyricsAssignmentDraft(before, after, draft))).toEqual({ 1: null, 2: 21 });
+    const rebased = rebaseLyricsAssignmentDrafts(before, after, drafts);
+    expect(Object.fromEntries(rebased.get("") ?? [])).toEqual({ 1: null, 2: 21 });
+    // A language without a draft takes the stored assignments.
+    expect(Object.fromEntries(rebased.get("zh-cn") ?? [])).toEqual({ 1: null, 2: null });
+  });
+});
+
+describe("library lyrics sources", () => {
+  it("lists a library folder's lyrics with paths relative to that folder", () => {
+    const text = (id: number, path: string): MediaItem => ({ ...audioItem(id, path), kind: "text" });
+    const files = localLyricsFiles(
+      [
+        audioItem(1, "library/RJ00000002/Translated/Track1.mp3"),
+        text(2, "library/RJ00000002/Translated/Track1.mp3.vtt"),
+        text(3, "library/RJ00000002/readme.md"),
+        text(4, "library/RJ00000020/other.vtt"),
+      ],
+      "library/RJ00000002",
+    );
+    expect(files).toEqual([
+      {
+        path: "Translated/Track1.mp3.vtt",
+        title: "Track1.mp3.vtt",
+        folder: "Translated",
+        sizeBytes: null,
+        locationId: 102,
+      },
+    ]);
+  });
+
+  it("offers only other editions that have local files", () => {
+    const current = { ...edition("RJ00000001", true), workId: 1 };
+    const translated = { ...edition("RJ00000002", false), workId: 2, localAvailable: true };
+    const metadataOnly = { ...edition("RJ00000003", false), workId: 3 };
+    expect(localLyricsEditions([current, translated, metadataOnly], 1).map((item) => item.primaryCode)).toEqual([
+      "RJ00000002",
+    ]);
   });
 });

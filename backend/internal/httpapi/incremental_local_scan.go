@@ -208,8 +208,8 @@ func newIncrementalLocalScanPersistence(
 		server: server, ctx: ctx, tx: tx, dataRoot: payload.Root,
 		changedPaths: payload.ChangedPaths, fileSourceID: fileSourceID, knownRoots: knownRoots,
 		state: localScanPersistState{
-			scope:          scope,
-			duplicateCodes: map[string]bool{}, seenWorkIDs: map[int64]bool{}, reconciledWorkIDs: map[int64]bool{},
+			scope:       scope,
+			seenWorkIDs: map[int64]bool{}, reconciledWorkIDs: map[int64]bool{},
 		},
 		affectedWorkIDs: map[int64]bool{}, seenRoots: map[string]bool{},
 	}

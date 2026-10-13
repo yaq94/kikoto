@@ -14,9 +14,11 @@ import (
 const maxLyricsAssignmentChanges = 2000
 
 // lyricsAssignmentChange sets or clears the library-level lyrics file of one
-// audio media item. A null lyrics id clears the assignment.
+// audio media item in one language. A null lyrics id clears the assignment,
+// and an empty language is the assignment for every language.
 type lyricsAssignmentChange struct {
 	AudioMediaItemID  int64  `json:"audioMediaItemId"`
+	Language          string `json:"language"`
 	LyricsMediaItemID *int64 `json:"lyricsMediaItemId"`
 }
 
@@ -46,7 +48,8 @@ func (s *Server) setWorkLyricsAssignments(w http.ResponseWriter, r *http.Request
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
 		return
 	}
-	if err := validateLyricsAssignmentChanges(payload.Assignments); err != nil {
+	changes, err := normalizeLyricsAssignmentChanges(payload.Assignments)
+	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
@@ -59,7 +62,7 @@ func (s *Server) setWorkLyricsAssignments(w http.ResponseWriter, r *http.Request
 		writeError(w, err)
 		return
 	}
-	if err := s.applyLyricsAssignmentChanges(r.Context(), user.ID, familyWorkIDs, payload.Assignments); err != nil {
+	if err := s.applyLyricsAssignmentChanges(r.Context(), user.ID, familyWorkIDs, changes); err != nil {
 		var requestErr lyricsAssignmentRequestError
 		if errors.As(err, &requestErr) {
 			writeJSON(w, requestErr.status, map[string]string{"error": requestErr.message})
@@ -68,27 +71,41 @@ func (s *Server) setWorkLyricsAssignments(w http.ResponseWriter, r *http.Request
 		writeError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"workId": workID, "assignments": payload.Assignments})
+	writeJSON(w, http.StatusOK, map[string]any{"workId": workID, "assignments": changes})
 }
 
-func validateLyricsAssignmentChanges(changes []lyricsAssignmentChange) error {
+// normalizeLyricsAssignmentChanges validates a save and returns its changes
+// with every language as its stored token.
+func normalizeLyricsAssignmentChanges(changes []lyricsAssignmentChange) ([]lyricsAssignmentChange, error) {
 	if len(changes) == 0 {
-		return errors.New("assignments are required")
+		return nil, errors.New("assignments are required")
 	}
 	if len(changes) > maxLyricsAssignmentChanges {
-		return fmt.Errorf("at most %d assignments can be saved at once", maxLyricsAssignmentChanges)
+		return nil, fmt.Errorf("at most %d assignments can be saved at once", maxLyricsAssignmentChanges)
 	}
-	seen := make(map[int64]bool, len(changes))
+	type target struct {
+		audioID  int64
+		language string
+	}
+	seen := make(map[target]bool, len(changes))
+	normalized := make([]lyricsAssignmentChange, 0, len(changes))
 	for _, change := range changes {
 		if change.AudioMediaItemID <= 0 || (change.LyricsMediaItemID != nil && *change.LyricsMediaItemID <= 0) {
-			return errors.New("assignment media item ids must be positive")
+			return nil, errors.New("assignment media item ids must be positive")
 		}
-		if seen[change.AudioMediaItemID] {
-			return errors.New("each audio media item can be assigned only once")
+		language, ok := normalizeLyricsLanguage(change.Language)
+		if !ok {
+			return nil, errors.New("unsupported lyrics language")
 		}
-		seen[change.AudioMediaItemID] = true
+		change.Language = language
+		key := target{audioID: change.AudioMediaItemID, language: language}
+		if seen[key] {
+			return nil, errors.New("each audio media item can be assigned only once per language")
+		}
+		seen[key] = true
+		normalized = append(normalized, change)
 	}
-	return nil
+	return normalized, nil
 }
 
 // lyricsAssignmentFamily returns the works whose media the requested work's
@@ -136,7 +153,7 @@ func applyLyricsAssignmentChange(ctx context.Context, tx *sql.Tx, userID int64, 
 		return lyricsAssignmentRequestError{status: http.StatusBadRequest, message: "lyrics assignments must target audio media of this work"}
 	}
 	if change.LyricsMediaItemID == nil {
-		_, err := tx.ExecContext(ctx, "DELETE FROM media_lyrics_assignment WHERE audio_media_item_id = ?", change.AudioMediaItemID)
+		_, err := tx.ExecContext(ctx, "DELETE FROM media_lyrics_assignment WHERE audio_media_item_id = ? AND language = ?", change.AudioMediaItemID, change.Language)
 		return err
 	}
 	lyricsID := *change.LyricsMediaItemID
@@ -161,14 +178,20 @@ func applyLyricsAssignmentChange(ctx context.Context, tx *sql.Tx, userID int64, 
 	if lyricsID == change.AudioMediaItemID || !isLyricsMediaKind(lyricsKind, lyricsPath) || lyricsWorkID != audioWorkID {
 		return lyricsAssignmentRequestError{status: http.StatusBadRequest, message: "lyrics assignments must link audio and text media from the same work"}
 	}
+	return upsertLyricsAssignment(ctx, tx, change.AudioMediaItemID, change.Language, lyricsID, "manual", userID)
+}
+
+// upsertLyricsAssignment stores the library lyrics file of an audio item in
+// one language, replacing the file that language had.
+func upsertLyricsAssignment(ctx context.Context, tx *sql.Tx, audioID int64, language string, lyricsID int64, origin string, userID int64) error {
 	_, err := tx.ExecContext(ctx, `
-		INSERT INTO media_lyrics_assignment (audio_media_item_id, lyrics_media_item_id, origin, assigned_by_user_id)
-		VALUES (?, ?, 'manual', ?)
-		ON CONFLICT(audio_media_item_id) DO UPDATE SET
+		INSERT INTO media_lyrics_assignment (audio_media_item_id, language, lyrics_media_item_id, origin, assigned_by_user_id)
+		VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT(audio_media_item_id, language) DO UPDATE SET
 			lyrics_media_item_id = excluded.lyrics_media_item_id,
 			origin = excluded.origin,
 			assigned_by_user_id = excluded.assigned_by_user_id,
 			updated_at = CURRENT_TIMESTAMP
-	`, change.AudioMediaItemID, lyricsID, nullableUserID(userID))
+	`, audioID, language, lyricsID, origin, nullableUserID(userID))
 	return err
 }

@@ -89,12 +89,7 @@ func (s *Server) loadMediaItemRows(ctx context.Context, userID int64, mediaWorkI
 				FROM user_media_lyrics_preference AS preference
 				WHERE preference.user_id = ?
 					AND preference.audio_media_item_id = media_item.id
-			) AS preferred_lyrics_media_item_id,
-			(
-				SELECT assignment.lyrics_media_item_id
-				FROM media_lyrics_assignment AS assignment
-				WHERE assignment.audio_media_item_id = media_item.id
-			) AS assigned_lyrics_media_item_id
+			) AS preferred_lyrics_media_item_id
 		FROM media_item
 		LEFT JOIN user_work_playback_cursor AS playback_cursor ON playback_cursor.media_item_id = media_item.id
 			AND playback_cursor.user_id = ?
@@ -124,7 +119,6 @@ func (s *Server) loadMediaItemRows(ctx context.Context, userID int64, mediaWorkI
 		var progressCompleted sql.NullBool
 		var progressLastPlayedAt sql.NullString
 		var preferredLyricsMediaItemID sql.NullInt64
-		var assignedLyricsMediaItemID sql.NullInt64
 		if err := rows.Scan(
 			&item.ID,
 			&parentID,
@@ -141,7 +135,6 @@ func (s *Server) loadMediaItemRows(ctx context.Context, userID int64, mediaWorkI
 			&progressCompleted,
 			&progressLastPlayedAt,
 			&preferredLyricsMediaItemID,
-			&assignedLyricsMediaItemID,
 		); err != nil {
 			_ = rows.Close()
 			return nil, nil, err
@@ -154,7 +147,6 @@ func (s *Server) loadMediaItemRows(ctx context.Context, userID int64, mediaWorkI
 		item.SizeBytes = sqlutil.Int64(sizeBytes)
 		item.Progress = nullableMediaProgress(progressPositionSeconds, progressDurationSeconds, progressCompleted, progressLastPlayedAt)
 		item.PreferredLyricsMediaItemID = sqlutil.Int64(preferredLyricsMediaItemID)
-		item.AssignedLyricsMediaItemID = sqlutil.Int64(assignedLyricsMediaItemID)
 		item.Locations = []fileLocationDetail{}
 		itemIndexes[item.ID] = len(mediaItems)
 		mediaItems = append(mediaItems, item)
@@ -164,6 +156,9 @@ func (s *Server) loadMediaItemRows(ctx context.Context, userID int64, mediaWorkI
 		return nil, nil, err
 	}
 	if err := rows.Close(); err != nil {
+		return nil, nil, err
+	}
+	if err := s.attachLyricsAssignments(ctx, mediaWorkID, mediaItems, itemIndexes); err != nil {
 		return nil, nil, err
 	}
 	return mediaItems, itemIndexes, nil

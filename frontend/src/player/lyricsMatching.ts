@@ -1,4 +1,4 @@
-import type { MediaItem } from "@/lib/api";
+import type { MediaItem, MediaLyricsAssignment } from "@/lib/api";
 
 // The server reports a work's lyrics status with a copy of this name matching in
 // backend/internal/httpapi/lyrics_match.go. Both must accept the same track and
@@ -14,6 +14,8 @@ export type LyricsMatch = {
   path: string;
   displayPath?: string;
   reason: "assigned" | "exact_sidecar" | "same_stem" | "normalized_name" | "shared_folder";
+  /** The language an assigned file declares; empty or absent when it declares none. */
+  language?: string;
 };
 
 export type LyricsChoice = LyricsMatch & { url?: string };
@@ -72,23 +74,32 @@ export function findLyricsMatches(audioPath: string, items: MediaItem[]): Lyrics
 }
 
 /**
- * Lists the lyrics choices of a local audio file. A library-level assignment
- * leads the list even when its name does not match, so it becomes the
- * automatic choice; name matches follow in their usual order.
+ * Lists the lyrics choices of a local audio file. Library-level assignments
+ * lead the list in the given order, which is the order the viewer's languages
+ * rank them, even when their names do not match; the first becomes the
+ * automatic choice. Name matches follow in their usual order.
  */
 export function findLocalLyricsChoices(
   audioPath: string,
   items: MediaItem[],
-  assignedLyricsMediaItemId?: number | null,
+  assignments: readonly MediaLyricsAssignment[] = [],
 ): LyricsMatch[] {
+  const assigned: LyricsMatch[] = [];
+  for (const assignment of assignments) {
+    if (assigned.some((choice) => choice.mediaItemId === assignment.lyricsMediaItemId)) continue;
+    const choice = assignedLyricsChoice(items, assignment);
+    if (choice) assigned.push(choice);
+  }
   const matches = findLyricsMatches(audioPath, items);
-  const assigned = assignedLyricsMediaItemId ? assignedLyricsChoice(items, assignedLyricsMediaItemId) : null;
-  if (!assigned) return matches;
-  return [assigned, ...matches.filter((match) => match.mediaItemId !== assigned.mediaItemId)];
+  if (assigned.length === 0) return matches;
+  return [
+    ...assigned,
+    ...matches.filter((match) => !assigned.some((choice) => choice.mediaItemId === match.mediaItemId)),
+  ];
 }
 
-function assignedLyricsChoice(items: MediaItem[], mediaItemId: number): LyricsMatch | null {
-  const item = items.find((candidate) => candidate.id === mediaItemId);
+function assignedLyricsChoice(items: MediaItem[], assignment: MediaLyricsAssignment): LyricsMatch | null {
+  const item = items.find((candidate) => candidate.id === assignment.lyricsMediaItemId);
   const location = item?.locations.find(
     (candidate) => candidate.locationType === "local" && candidate.availability === "available",
   );
@@ -99,6 +110,7 @@ function assignedLyricsChoice(items: MediaItem[], mediaItemId: number): LyricsMa
     title: fileName(location.path),
     path: location.path,
     reason: "assigned",
+    language: assignment.language,
   };
 }
 
@@ -141,15 +153,25 @@ export function isLyricsPath(path: string) {
   return lyricExtensions.some((extension) => lower.endsWith(extension));
 }
 
-export function lyricsChoiceDisplayLabel(choice: LyricsChoice, choices: LyricsChoice[]) {
+/**
+ * The label of a lyrics choice. `languageName` names a declared language, which
+ * then leads the label so choices in different languages are told apart.
+ */
+export function lyricsChoiceDisplayLabel(
+  choice: LyricsChoice,
+  choices: LyricsChoice[],
+  languageName?: (language: string) => string,
+) {
   const duplicateTitle = choices.some(
     (candidate) =>
       candidate.locationId !== choice.locationId &&
       candidate.title.localeCompare(choice.title, undefined, { sensitivity: "base" }) === 0,
   );
-  if (!duplicateTitle) return choice.title;
-  const displayPath = choice.displayPath?.trim() || compactLyricsPath(choice.path);
-  return displayPath || choice.title;
+  const name = duplicateTitle
+    ? choice.displayPath?.trim() || compactLyricsPath(choice.path) || choice.title
+    : choice.title;
+  const language = choice.language ? languageName?.(choice.language) : "";
+  return language ? `${language} · ${name}` : name;
 }
 
 function scoreCandidate(

@@ -26,33 +26,58 @@ export type MediaItem = {
   fingerprint: string;
   progress: MediaProgress | null;
   preferredLyricsMediaItemId?: number | null;
-  /** The library-level lyrics file shared by every user unless they choose another. */
+  /** The first of `lyricsAssignments`: the library lyrics this viewer's playback uses. */
   assignedLyricsMediaItemId?: number | null;
+  /**
+   * The library-level lyrics files shared by every user unless they choose
+   * another, one per language, in the order this viewer's playback tries them.
+   */
+  lyricsAssignments?: MediaLyricsAssignment[];
   locations: MediaFileLocation[];
+};
+
+/** A track's library lyrics file in one language; the empty language applies to every language. */
+export type MediaLyricsAssignment = {
+  language: string;
+  lyricsMediaItemId: number;
 };
 
 export type LyricsAssignmentChange = {
   audioMediaItemId: number;
-  /** Null restores automatic name matching. */
+  /** The language the lyrics are in; empty applies to every language. */
+  language: string;
+  /** Null removes this language's lyrics, so playback falls back to another language or name matching. */
   lyricsMediaItemId: number | null;
 };
 
-/** Downloads lyrics of a family edition from a remote source into a new folder of a local work folder. */
+/**
+ * Adds lyrics of a family edition to the language's lyrics folder of a local
+ * work folder, from a remote source or from another local folder of the family.
+ */
 export type LyricsFetchRequest = {
+  /** The remote source and edition to download from; zero and empty for a local source. */
   sourceId: number;
   remoteCode: string;
+  /** Another local folder of the family to copy from, instead of a remote edition. */
+  sourceFolderId?: number;
   folderId: number;
-  /** Remote tree paths of the lyrics files to download. */
+  /** The language the lyrics are in; empty applies to every language. */
+  language: string;
+  /** Paths of the lyrics files in the source: remote tree paths, or paths below the source folder. */
   files: string[];
-  /** Downloaded files to assign as the library lyrics of local tracks. */
+  /** Added files to assign as the library lyrics of local tracks. */
   assignments: { audioMediaItemId: number; path: string }[];
 };
 
 export type LyricsFetchResult = {
   workId: number;
-  /** The new folder, relative to the library. */
+  /** The language's lyrics folder, relative to the library. */
   folder: string;
+  language: string;
+  /** Files this request added. */
   downloaded: number;
+  /** Files the folder already held with the same content. */
+  skipped: number;
   assigned: number;
 };
 
@@ -159,6 +184,30 @@ export type MediaCleanupTarget = {
   expectedPath?: string;
 };
 
+/** A local file that holds the same bytes as the other files of its group. */
+export type DuplicateFile = {
+  locationId: number;
+  mediaItemId: number;
+  workId: number;
+  workCode: string;
+  /** The file's path relative to the library. */
+  path: string;
+};
+
+export type DuplicateFileGroup = {
+  sizeBytes: number;
+  files: DuplicateFile[];
+};
+
+export type DuplicateFilesResult = {
+  /** False while files that could be identical are still unchecked; repeat the request to continue. */
+  complete: boolean;
+  checkedFiles: number;
+  pendingFiles: number;
+  pendingBytes: number;
+  groups: DuplicateFileGroup[];
+};
+
 export type MediaCleanupMode = "files_only" | "files_and_forget_work";
 
 export type MediaCleanupResult = {
@@ -174,6 +223,9 @@ export function mediaDownloadURL(locationId: number) {
 
 export const mediaApi = {
   getMediaText: (locationId: number) => getJSON<MediaTextPreview>(`/api/media/${locationId}/text`),
+  /** Compares the local files of a work's family by content; one request does a bounded share of the work. */
+  findWorkDuplicateFiles: (workId: number) =>
+    postJSON<DuplicateFilesResult>(`/api/works/${workId}/local-files/duplicates`),
   getVideoPlaybackInfo: (locationId: number, capabilities: string[], forceTranscode = false, signal?: AbortSignal) => {
     const query = new URLSearchParams();
     if (capabilities.length > 0) query.set("capabilities", capabilities.join(","));

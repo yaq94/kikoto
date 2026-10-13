@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -17,6 +18,103 @@ func (s *Server) ensureLocalMediaIndexed(ctx context.Context, workID int64) erro
 	if s.cfg.IsDemo() {
 		return nil
 	}
+	if err := s.ensurePresenceFolderIndexed(ctx, workID); err != nil {
+		return err
+	}
+	return s.indexAdditionalLocalFolders(ctx, workID, false)
+}
+
+// localWorkFolder is one active local folder of a work.
+type localWorkFolder struct {
+	fileSourceID int64
+	root         string
+}
+
+// additionalLocalFolders lists the active local folders of a work other than
+// the one its presence names. A work has them when a scan found its code in
+// several folders.
+func (s *Server) additionalLocalFolders(ctx context.Context, workID int64) ([]localWorkFolder, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT folder.file_source_id, folder.root_path
+		FROM work_folder_location AS folder
+		INNER JOIN file_source AS source ON source.id = folder.file_source_id
+		WHERE folder.work_id = ?
+			AND folder.state = 'active'
+			AND source.source_type = 'local_folder'
+			AND NOT EXISTS (
+				SELECT 1
+				FROM work_source_presence AS presence
+				WHERE presence.work_id = folder.work_id
+					AND presence.file_source_id = folder.file_source_id
+					AND presence.presence_type = 'local'
+					AND presence.source_url = folder.root_path
+			)
+		ORDER BY folder.root_path
+	`, workID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	folders := []localWorkFolder{}
+	for rows.Next() {
+		var folder localWorkFolder
+		if err := rows.Scan(&folder.fileSourceID, &folder.root); err != nil {
+			return nil, err
+		}
+		if folder.root = normalizeFolderRootPath(folder.root); folder.root != "" {
+			folders = append(folders, folder)
+		}
+	}
+	return folders, rows.Err()
+}
+
+// indexAdditionalLocalFolders indexes the work's other local folders. Unless
+// refresh is set, a folder that already has indexed files is left alone. A
+// folder that cannot be read, such as one in an offline pool, is skipped: its
+// stored files keep their state.
+func (s *Server) indexAdditionalLocalFolders(ctx context.Context, workID int64, refresh bool) error {
+	folders, err := s.additionalLocalFolders(ctx, workID)
+	if err != nil || len(folders) == 0 {
+		return err
+	}
+	for _, folder := range folders {
+		if !refresh {
+			var indexed bool
+			if err := s.db.QueryRowContext(ctx, `
+				SELECT EXISTS (
+					SELECT 1
+					FROM media_file_location AS location
+					INNER JOIN media_item AS item ON item.id = location.media_item_id
+					WHERE item.work_id = ?
+						AND location.file_source_id = ?
+						AND location.location_type = 'local'
+						AND location.availability = 'available'
+						AND substr(location.path, 1, length(?) + 1) = ? || '/'
+				)
+			`, workID, folder.fileSourceID, folder.root, folder.root).Scan(&indexed); err != nil {
+				return err
+			}
+			if indexed {
+				continue
+			}
+		}
+		absolute, err := safeDataPath(s.cfg.DataRoot, folder.root)
+		if err != nil {
+			continue
+		}
+		if info, err := os.Stat(absolute); err != nil || !info.IsDir() {
+			continue
+		}
+		if err := s.indexLocalMediaForWork(ctx, workID, folder.fileSourceID, folder.root); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ensurePresenceFolderIndexed indexes the folder the work's local presence
+// names when its files have not been indexed yet.
+func (s *Server) ensurePresenceFolderIndexed(ctx context.Context, workID int64) error {
 	var existing int
 	if err := s.db.QueryRowContext(ctx, `
 		SELECT COUNT(*)
@@ -249,6 +347,29 @@ func (s *Server) persistIndexedLocalWork(ctx context.Context, workID, fileSource
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
+	// One of several folders of a work only contributes its files: the scan
+	// records the folder, and the presence describes the folder it names.
+	var presenceRoot string
+	if err := tx.QueryRowContext(ctx, `
+		SELECT source_url FROM work_source_presence
+		WHERE work_id = ? AND file_source_id = ? AND presence_type = 'local'
+	`, workID, fileSourceID).Scan(&presenceRoot); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	if normalizeFolderRootPath(presenceRoot) != "" && !sameLocalRelativePath(presenceRoot, relPath) {
+		seenPaths, err := persistIndexedLocalFiles(ctx, tx, workID, fileSourceID, folder)
+		if err != nil {
+			return err
+		}
+		if _, err := markMissingLocalLocationsForWork(ctx, tx, workID, fileSourceID, seenPaths, relPath); err != nil {
+			return err
+		}
+		if err := tx.Commit(); err != nil {
+			return err
+		}
+		s.refreshQueryPlannerStatistics(ctx)
+		return nil
+	}
 	var managedFetchRootExists bool
 	if err := tx.QueryRowContext(ctx, `
 		SELECT EXISTS (
