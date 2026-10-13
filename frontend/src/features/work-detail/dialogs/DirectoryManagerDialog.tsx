@@ -1,11 +1,14 @@
-import { useMemo, useState, type ReactNode } from "react";
-import { ChevronDown, ChevronRight, Folder, FolderCog, ShieldAlert, Trash2 } from "lucide-react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { ChevronDown, ChevronRight, CopyCheck, Folder, FolderCog, Search, ShieldAlert, Trash2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogHeader } from "@/components/ui/dialog";
+import { FloatingSelect } from "@/components/ui/floating-select";
 import { ConfirmMediaBatchDeleteDialog } from "@/features/work-detail/dialogs/ConfirmMediaBatchDeleteDialog";
 import {
+  compactLibraryPath,
+  directoryManagerDuplicates,
   directoryManagerFormatGroups,
   directoryManagerLocationGroups,
   directoryManagerSelectionState,
@@ -13,6 +16,7 @@ import {
   withTargetKeys,
   type DirectoryManagerOptions,
   type DirectoryManagerSelectionGroup,
+  type DuplicateFileMark,
 } from "@/features/work-detail/dialogs/directoryManagerModel";
 import {
   directoryManageTargets,
@@ -38,6 +42,53 @@ import {
 } from "@/features/work-detail/media/mediaTreeModel";
 import type { MediaCleanupMode, MediaDeleteTarget } from "@/features/work-detail/workflows/useMediaCleanupWorkflow";
 import i18n from "@/i18n";
+import { api, type DuplicateFileGroup } from "@/lib/api";
+
+/** Marks of the listed local files that have an identical file, by location id. */
+const DuplicateMarksContext = createContext<ReadonlyMap<number, DuplicateFileMark>>(new Map());
+
+type DuplicateFileCheck =
+  | { status: "idle" | "error" }
+  | { status: "running"; checkedFiles: number; pendingFiles: number }
+  | { status: "done"; groups: DuplicateFileGroup[] };
+
+/**
+ * Runs the identical-file check of a work's family on demand. The server does
+ * a bounded share per request, so the check repeats until it is complete and
+ * stops when the dialog closes or the check is cancelled.
+ */
+function useDuplicateFileCheck(workId: number) {
+  const [check, setCheck] = useState<DuplicateFileCheck>({ status: "idle" });
+  const run = useRef(0);
+  useEffect(
+    () => () => {
+      run.current += 1;
+    },
+    [],
+  );
+  const start = async () => {
+    const current = ++run.current;
+    setCheck({ status: "running", checkedFiles: 0, pendingFiles: 0 });
+    try {
+      for (;;) {
+        const result = await api.findWorkDuplicateFiles(workId);
+        if (current !== run.current) return;
+        if (result.complete) {
+          setCheck({ status: "done", groups: result.groups });
+          return;
+        }
+        setCheck({ status: "running", checkedFiles: result.checkedFiles, pendingFiles: result.pendingFiles });
+      }
+    } catch {
+      if (current === run.current) setCheck({ status: "error" });
+    }
+  };
+  const reset = () => {
+    run.current += 1;
+    setCheck({ status: "idle" });
+  };
+  return { check, start, reset };
+}
 
 function directoryManagerRootTarget({
   fileTargets,
@@ -101,9 +152,12 @@ export function DirectoryManagerDialog({
   allowCacheDelete,
   allowLocalDelete,
   localRoot = null,
+  localFolders = [],
+  onSelectLocalFolder,
   showCachedFilter = false,
   workId = 0,
   canForgetWork = false,
+  duplicateWorkId = 0,
 }: {
   root: TreeNode;
   title?: string;
@@ -115,11 +169,17 @@ export function DirectoryManagerDialog({
   allowCacheDelete?: boolean;
   allowLocalDelete?: boolean;
   localRoot?: { folderId: number; path: string } | null;
+  /** The work's local folders when it has several; the dialog lists the one named by localRoot. */
+  localFolders?: { id: number; rootPath: string }[];
+  onSelectLocalFolder?: (folderId: number) => void;
   showCachedFilter?: boolean;
   workId?: number;
   canForgetWork?: boolean;
+  /** The work whose family is checked for identical local files; zero hides the check. */
+  duplicateWorkId?: number;
 }) {
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
+  const duplicateCheck = useDuplicateFileCheck(duplicateWorkId);
   const [confirmation, setConfirmation] = useState<{
     mode: MediaCleanupMode;
     step: 1 | 2;
@@ -145,6 +205,12 @@ export function DirectoryManagerDialog({
     () => targets.filter((target) => selectedKeys.has(mediaDeleteTargetKey(target))),
     [targets, selectedKeys],
   );
+  const duplicateGroups = duplicateCheck.check.status === "done" ? duplicateCheck.check.groups : null;
+  const duplicates = useMemo(
+    () => (duplicateGroups ? directoryManagerDuplicates(duplicateGroups, fileTargets) : null),
+    [duplicateGroups, fileTargets],
+  );
+  const canCheckDuplicates = duplicateWorkId > 0 && Boolean(allowLocalDelete) && fileTargets.length > 0;
   const forgetAvailable = Boolean(canForgetWork && rootTarget && onDeleteTargets);
   // Forgetting a work removes its complete folder, so it unlocks only once everything is selected.
   const canReviewForget = canForgetSelection({ selectedTargets, fileTargets, selectedKeys, canForgetWork });
@@ -159,8 +225,12 @@ export function DirectoryManagerDialog({
     onDeleteTargets?.(confirmation.targets, confirmation.mode);
     setConfirmation(null);
     setSelectedKeys(new Set());
+    // The marks describe the files as they were; a deletion makes them stale.
+    duplicateCheck.reset();
   };
-  const hasShortcuts = locationGroups.length > 1 || formatGroups.length > 1 || showCachedFilter;
+  const canSwitchFolder = localFolders.length > 1 && Boolean(onSelectLocalFolder);
+  const hasShortcuts =
+    canSwitchFolder || locationGroups.length > 1 || formatGroups.length > 1 || showCachedFilter || canCheckDuplicates;
 
   return (
     <>
@@ -175,6 +245,22 @@ export function DirectoryManagerDialog({
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-card">
           {hasShortcuts && (
             <div className="shrink-0 space-y-2 border-b px-4 py-3">
+              {canSwitchFolder && (
+                <ShortcutRow label={i18n.t("libraryDetail.manageFolder")}>
+                  <FloatingSelect
+                    value={String(localRoot?.folderId ?? "")}
+                    options={localFolders.map((folder) => ({ value: String(folder.id), label: folder.rootPath }))}
+                    onValueChange={(value) => {
+                      // A selection belongs to the folder it was made in.
+                      setSelectedKeys(new Set());
+                      onSelectLocalFolder?.(Number(value));
+                    }}
+                    ariaLabel={i18n.t("libraryDetail.manageFolder")}
+                    disabled={deleting}
+                    className="h-8 min-w-0 flex-1 text-xs"
+                  />
+                </ShortcutRow>
+              )}
               {locationGroups.length > 1 && (
                 <ShortcutRow label={i18n.t("libraryDetail.selectByLocation")}>
                   {locationGroups.map((group) => (
@@ -215,20 +301,35 @@ export function DirectoryManagerDialog({
                   )}
                 </ShortcutRow>
               )}
+              {canCheckDuplicates && (
+                <ShortcutRow label={i18n.t("libraryDetail.identicalFiles")}>
+                  <DuplicateFileControls
+                    check={duplicateCheck.check}
+                    duplicates={duplicates}
+                    selectedKeys={selectedKeys}
+                    disabled={deleting}
+                    onStart={() => void duplicateCheck.start()}
+                    onStop={duplicateCheck.reset}
+                    onToggle={toggleKeys}
+                  />
+                </ShortcutRow>
+              )}
             </div>
           )}
           <div className="app-scroll min-h-0 flex-1 overflow-auto p-2">
-            <DirectoryManagerTree
-              root={root}
-              emptyLabel={emptyLabel}
-              selectedKeys={selectedKeys}
-              options={options}
-              showOnlyDeletable={showOnlyDeletable}
-              rootTarget={rootTarget}
-              allKeys={allKeys}
-              disabled={deleting}
-              onToggle={toggleKeys}
-            />
+            <DuplicateMarksContext.Provider value={duplicates?.marks ?? noDuplicateMarks}>
+              <DirectoryManagerTree
+                root={root}
+                emptyLabel={emptyLabel}
+                selectedKeys={selectedKeys}
+                options={options}
+                showOnlyDeletable={showOnlyDeletable}
+                rootTarget={rootTarget}
+                allKeys={allKeys}
+                disabled={deleting}
+                onToggle={toggleKeys}
+              />
+            </DuplicateMarksContext.Provider>
           </div>
         </div>
         <DirectoryManagerFooter
@@ -252,6 +353,80 @@ export function DirectoryManagerDialog({
           onCancel={() => setConfirmation(null)}
           onContinue={() => setConfirmation({ ...confirmation, step: 2 })}
           onConfirm={confirmDelete}
+        />
+      )}
+    </>
+  );
+}
+
+const noDuplicateMarks: ReadonlyMap<number, DuplicateFileMark> = new Map();
+
+/** The identical-file check: its start button, its progress, and the selections it offers. */
+function DuplicateFileControls({
+  check,
+  duplicates,
+  selectedKeys,
+  disabled,
+  onStart,
+  onStop,
+  onToggle,
+}: {
+  check: DuplicateFileCheck;
+  duplicates: ReturnType<typeof directoryManagerDuplicates> | null;
+  selectedKeys: Set<string>;
+  disabled: boolean;
+  onStart: () => void;
+  onStop: () => void;
+  onToggle: (keys: string[], included: boolean) => void;
+}) {
+  if (check.status === "running") {
+    return (
+      <>
+        <span className="text-xs tabular-nums text-muted-foreground" role="status">
+          {i18n.t("libraryDetail.identicalChecking", { checked: check.checkedFiles, pending: check.pendingFiles })}
+        </span>
+        <Button variant="ghost" size="sm" className="h-8" onClick={onStop}>
+          {i18n.t("libraryDetail.identicalStop")}
+        </Button>
+      </>
+    );
+  }
+  const found = duplicates ? duplicates.elsewhere.files + duplicates.repeated.files : 0;
+  return (
+    <>
+      <Button variant="outline" size="sm" className="h-8 shrink-0" disabled={disabled} onClick={onStart}>
+        <Search className="h-4 w-4" />
+        {check.status === "done" ? i18n.t("libraryDetail.identicalCheckAgain") : i18n.t("libraryDetail.identicalFind")}
+      </Button>
+      {check.status === "idle" && (
+        <span className="text-xs text-muted-foreground">{i18n.t("libraryDetail.identicalHint")}</span>
+      )}
+      {check.status === "error" && (
+        <span className="text-xs text-muted-foreground" role="status">
+          {i18n.t("libraryDetail.identicalFailed")}
+        </span>
+      )}
+      {duplicates && found === 0 && (
+        <span className="text-xs text-muted-foreground" role="status">
+          {i18n.t("libraryDetail.identicalNone")}
+        </span>
+      )}
+      {duplicates && duplicates.elsewhere.files > 0 && (
+        <SelectionChip
+          group={duplicates.elsewhere}
+          label={i18n.t("libraryDetail.identicalElsewhere")}
+          selectedKeys={selectedKeys}
+          disabled={disabled}
+          onToggle={onToggle}
+        />
+      )}
+      {duplicates && duplicates.repeated.files > 0 && (
+        <SelectionChip
+          group={duplicates.repeated}
+          label={i18n.t("libraryDetail.identicalRepeated")}
+          selectedKeys={selectedKeys}
+          disabled={disabled}
+          onToggle={onToggle}
         />
       )}
     </>
@@ -537,6 +712,8 @@ function ManagedFileRow({
   );
   const keys = targets.map(mediaDeleteTargetKey);
   const state = directoryManagerSelectionState(keys, selectedKeys);
+  const duplicateMarks = useContext(DuplicateMarksContext);
+  const duplicate = file.localLocationId !== null ? duplicateMarks.get(file.localLocationId) : undefined;
   const fileMeta = [
     file.kind === "audio" || file.kind === "video" ? formatDuration(file.durationSeconds) : "",
     formatBytes(file.sizeBytes),
@@ -560,6 +737,20 @@ function ManagedFileRow({
       <div className="min-w-0 flex-1">
         <div className={`truncate ${targets.length === 0 ? "text-muted-foreground" : ""}`}>{file.title}</div>
         {fileMeta && <div className="truncate text-2xs tabular-nums text-muted-foreground">{fileMeta}</div>}
+        {duplicate && (
+          <div
+            className="mt-0.5 flex items-center gap-1 truncate text-2xs text-warning-foreground"
+            title={`${duplicate.counterpart.workCode} · ${duplicate.counterpart.path}`}
+          >
+            <CopyCheck className="h-3 w-3 shrink-0" aria-hidden="true" />
+            <span className="truncate">
+              {i18n.t(duplicate.elsewhere ? "libraryDetail.identicalToElsewhere" : "libraryDetail.identicalTo", {
+                code: duplicate.counterpart.workCode,
+                path: compactLibraryPath(duplicate.counterpart.path),
+              })}
+            </span>
+          </div>
+        )}
       </div>
       <div className="flex shrink-0 items-center gap-1">
         {targets.map((target) => {

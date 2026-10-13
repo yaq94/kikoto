@@ -818,4 +818,26 @@ describe("mediaTreeModel", () => {
     expect(file.assetUrl).toBe(`/api/media/105/asset?v=${encodeURIComponent("fixture-5:1024")}`);
     expect(file.textPreviewUrl).toBe("");
   });
+
+  it("shows one folder per copy when a work's local files lie in several folders", () => {
+    const single = buildTree([localMediaItem(1, "audio", "library/RJ00000000/mp3/01.mp3")], null, "RJ00000000");
+    // A work in one folder shows that folder's contents, without naming the folder.
+    expect(flattenTreeFiles(single).map((file) => file.sourcePath)).toEqual(["mp3/01.mp3"]);
+
+    const tree = buildTree(
+      [
+        localMediaItem(1, "audio", "library/RJ00000000/mp3/01.mp3"),
+        localMediaItem(2, "audio", "library/RJ00000000 mp3 only/01.mp3"),
+        localMediaItem(3, "audio", "archive/RJ00000000/mp3/01.mp3"),
+      ],
+      null,
+      "RJ00000000",
+    );
+    // Folders that share a name are told apart by their parent folder.
+    expect(
+      flattenTreeFiles(tree)
+        .map((file) => file.sourcePath)
+        .sort(),
+    ).toEqual(["RJ00000000 mp3 only/01.mp3", "archive / RJ00000000/mp3/01.mp3", "library / RJ00000000/mp3/01.mp3"]);
+  });
 });

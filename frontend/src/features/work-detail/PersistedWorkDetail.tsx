@@ -66,7 +66,9 @@ import { Card, CardContent } from "@/components/ui/card";
 import { LazyRemoteFetchWorkspaceDialog } from "@/features/work-detail/workflows/LazyRemoteFetchWorkspaceDialog";
 import { defaultDirectoryRoutingRules } from "@/features/work-detail/directory/directoryModel";
 import {
+  activeLocalFolders,
   hasResumablePlaybackCursor,
+  mediaItemsInLocalFolder,
   persistedActiveSourceLabel,
   persistedDetailActionMode,
   persistedDirectoryDescription,
@@ -200,6 +202,7 @@ export function PersistedWorkDetailController({
     refreshAvailability,
   } = sourceContext;
   const [isManageOpen, setIsManageOpen] = useState(false);
+  const [manageFolderID, setManageFolderID] = useState(0);
   const [isLyricsManagerOpen, setIsLyricsManagerOpen] = useState(false);
   const [metadataEditorSection, setMetadataEditorSection] = useState<MetadataEditorSection | null>(null);
   const [preview, setPreview] = useState<FilePreviewRequest | null>(null);
@@ -250,19 +253,21 @@ export function PersistedWorkDetailController({
   const activeMetadataVariant = resolveMetadataVariant(work?.metadataPresentation, selectedMetadataVariantKey);
   const playbackDisplayTitle = activeMetadataVariant?.title ?? work?.title;
   const playbackCoverUrl = work?.coverUrl || workPreview?.coverUrl || "";
-  const localRoot = useMemo(() => {
-    const sourceID = selectedSource?.fileSourceId;
-    if (!localDirectoryWork || !sourceID) return null;
-    const folders = (localDirectoryWork.localFolders ?? []).filter(
-      (folder) =>
-        folder.workId === localDirectoryWork.id &&
-        folder.fileSourceId === sourceID &&
-        folder.state === "active" &&
-        folder.rootPath.trim() !== "",
-    );
-    if (folders.length !== 1) return null;
-    return { folderId: folders[0].id, path: folders[0].rootPath };
-  }, [localDirectoryWork, selectedSource?.fileSourceId]);
+  // A work a scan found in several folders has several active local folders.
+  const localFolders = useMemo(
+    () => activeLocalFolders(localDirectoryWork, selectedSource?.fileSourceId),
+    [localDirectoryWork, selectedSource?.fileSourceId],
+  );
+  // File management works on one folder at a time, starting with the work's main one.
+  const manageFolder =
+    localFolders.find((folder) => folder.id === manageFolderID) ??
+    localFolders.find((folder) => folder.primary) ??
+    localFolders[0] ??
+    null;
+  const localRoot = useMemo(
+    () => (manageFolder ? { folderId: manageFolder.id, path: manageFolder.rootPath } : null),
+    [manageFolder],
+  );
   const { tree, isDirectoryLoading } = useMediaTree(
     persistedMediaTreeInput({
       mediaLoading: mediaLoading || editionLoadingCode !== "",
@@ -309,15 +314,34 @@ export function PersistedWorkDetailController({
       ),
     [localDirectoryWork?.mediaItems, selectedTrackedSourceID],
   );
-  const managementTree = useMemo(
-    () =>
-      !isManageOpen
-        ? emptyTree()
-        : selectedTrackedPresence && localDirectoryWork && selectedTrackedSourceID
-          ? buildTree(localDirectoryWork.mediaItems, selectedTrackedSourceID, localDirectoryWork.primaryCode)
-          : tree,
-    [isManageOpen, localDirectoryWork, selectedTrackedPresence, selectedTrackedSourceID, tree],
-  );
+  const managementTree = useMemo(() => {
+    if (!isManageOpen) return emptyTree();
+    if (selectedTrackedPresence && localDirectoryWork && selectedTrackedSourceID) {
+      return buildTree(localDirectoryWork.mediaItems, selectedTrackedSourceID, localDirectoryWork.primaryCode);
+    }
+    if (localDirectoryWork && manageFolder && localFolders.length > 1 && selectedSource?.kind === "local") {
+      return buildTree(
+        mediaItemsInLocalFolder(localDirectoryWork.mediaItems, manageFolder.rootPath),
+        manageFolder.fileSourceId,
+        localDirectoryWork.primaryCode,
+      );
+    }
+    return tree;
+  }, [
+    isManageOpen,
+    localDirectoryWork,
+    localFolders.length,
+    manageFolder,
+    selectedSource?.kind,
+    selectedTrackedPresence,
+    selectedTrackedSourceID,
+    tree,
+  ]);
+  const otherLocalEditionCount = (localDirectoryWork?.translations ?? []).filter(
+    (edition) => edition.workId && edition.workId !== localDirectoryWork?.id && edition.localAvailable,
+  ).length;
+  const canManageLocalCopies =
+    !auth.demoMode && auth.hasPermission("downloads:manage") && selectedSource?.kind === "local";
   const fetchWorkspace = useRemoteFetchWorkspace({ onWorksChanged });
   const openFetchWorkspace = () => {
     if (!fetchRemote) return;
@@ -716,6 +740,16 @@ export function PersistedWorkDetailController({
       directoryMediaError={directoryMediaError}
       cleanupRunId={mediaCleanup.activeRunId}
       cleanupRunStatus={mediaCleanup.runStatus}
+      localCopies={
+        canManageLocalCopies && (localFolders.length > 1 || otherLocalEditionCount > 0)
+          ? {
+              folderCount: localFolders.length,
+              editionCount: otherLocalEditionCount,
+              onManageFiles: () => setIsManageOpen(true),
+              onManageLyrics: detailActionProps.onManageLyrics,
+            }
+          : null
+      }
       selectedRemoteDetail={selectedRemoteDetail}
       selectionModal={fetchSelectionModal}
       onActiveKeyChange={changeSourceKey}
@@ -779,8 +813,11 @@ export function PersistedWorkDetailController({
         deleting={mediaCleanup.isSubmitting}
         onDeleteTargets={mediaCleanup.submit}
         workID={localDirectoryWork?.id ?? work?.id ?? 0}
-        canForgetWork={canForgetWork}
+        // Forgetting a work removes it entirely, which one of several folders must not do.
+        canForgetWork={canForgetWork && localFolders.length <= 1}
         localRoot={localRoot}
+        localFolders={localFolders.length > 1 ? localFolders : []}
+        onSelectLocalFolder={setManageFolderID}
         onClose={() => setIsManageOpen(false)}
       />
       <PersistedLyricsManagerOverlay

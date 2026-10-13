@@ -249,6 +249,8 @@ export const workCardEnglish = {
   favoriteLists: "Favorite lists",
   addToList: "Add to list",
   lists: "Lists",
+  inLists: "Lists: {{names}}",
+  moreLists: "+{{others}}",
   addList: "Add list",
   loadingLists: "Loading lists...",
   noLists: "No lists yet.",
@@ -454,6 +456,8 @@ export const englishResource = {
         overviewTwo:
           "It includes library browsing, favorites, circles, voice actors, workflow visibility, remote fetch flows, and a browser-based audio player.",
         referenceProjects: "Reference projects",
+        showReferenceDetails: "Show details",
+        hideReferenceDetails: "Hide details",
         referenceAreas: {
           recommendation: "Recommendation design",
           remoteSources: "Remote sources",

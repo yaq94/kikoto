@@ -7,11 +7,13 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { FloatingSelect, type FloatingSelectOption } from "@/components/ui/floating-select";
 import { toastFromError, useToast } from "@/components/ui/toast";
 import type { LyricsManagerAudio } from "@/features/work-detail/lyrics/lyricsManagerModel";
-import { LyricsPreview, loadRemoteLyricsText } from "@/features/work-detail/lyrics/LyricsPreview";
+import { LyricsPreview, loadLocalLyricsText, loadRemoteLyricsText } from "@/features/work-detail/lyrics/LyricsPreview";
 import {
   defaultLyricsEditionCode,
   editionLanguageKey,
   folderDisplayName,
+  localLyricsEditions,
+  localLyricsFiles,
   lyricsTargetFolders,
   remoteLyricsFiles,
   remoteLyricsRequest,
@@ -20,16 +22,25 @@ import {
 } from "@/features/work-detail/lyrics/remoteLyricsModel";
 import { formatTrackDuration } from "@/features/work-detail/media/mediaTreeModel";
 import { api, ApiError, type LibrarySource, type WorkDetail, type WorkTranslation } from "@/lib/api";
+import { editionLyricsLanguage, lyricsLanguageFolderName, lyricsLanguages } from "@/lib/lyricsLanguage";
 
 const unassignedValue = "none";
+/** The source that copies lyrics from another local edition of the family. */
+const librarySourceValue = "library";
+
+/** Where the listed files come from: a remote edition, or a library folder of another edition. */
+type LyricsOrigin = { kind: "remote"; sourceId: number; code: string } | { kind: "library"; folderId: number };
 
 type RemoteListing =
   | { status: "idle" | "loading" | "not_found" | "error" }
-  | { status: "ready"; sourceId: number; code: string; files: RemoteLyricsFile[] };
+  | { status: "ready"; origin: LyricsOrigin; files: RemoteLyricsFile[] };
 
 export type RemoteLyricsFetchState = ReturnType<typeof useRemoteLyricsFetch>;
 
-/** State of the "From remote" tab: which edition to read, what to download, and where each file goes. */
+/**
+ * State of the "Add lyrics" tab: which source and edition to read, what
+ * language the lyrics are in, what to add, and which track each file goes to.
+ */
 export function useRemoteLyricsFetch({
   work,
   audio,
@@ -46,14 +57,16 @@ export function useRemoteLyricsFetch({
   const { t } = useTranslation();
   const toast = useToast();
   const editions = useMemo(() => familyEditions(work), [work]);
+  const libraryEditions = useMemo(() => localLyricsEditions(editions, work.id), [editions, work.id]);
   const targetFolders = useMemo(
     () => lyricsTargetFolders(work.localFolders ?? [], work.mediaItems),
     [work.localFolders, work.mediaItems],
   );
-  const [sourceId, setSourceId] = useState(() => sources[0]?.id ?? 0);
-  const [editionCode, setEditionCode] = useState(() =>
-    defaultLyricsEditionCode(work.translations ?? [], work.primaryCode),
-  );
+  const [sourceValue, setSourceValue] = useState(() => (sources[0] ? String(sources[0].id) : librarySourceValue));
+  const fromLibrary = sourceValue === librarySourceValue;
+  const sourceEditions = fromLibrary ? libraryEditions : editions;
+  const [editionCode, setEditionCode] = useState(() => defaultLyricsEditionCode(sourceEditions, work.primaryCode));
+  const [language, setLanguage] = useState(() => editionLanguage(sourceEditions, editionCode));
   const [folderId, setFolderId] = useState(() => targetFolders[0]?.id ?? 0);
   const [listing, setListing] = useState<RemoteListing>({ status: "idle" });
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -64,15 +77,36 @@ export function useRemoteLyricsFetch({
 
   const resetListing = () => setListing({ status: "idle" });
 
+  /** Selects an edition and takes its declared language as the lyrics' language. */
+  const selectEdition = (nextEditions: WorkTranslation[], code: string) => {
+    setEditionCode(code);
+    setLanguage(editionLanguage(nextEditions, code));
+    resetListing();
+  };
+
+  const showFiles = (origin: LyricsOrigin, found: RemoteLyricsFile[]) => {
+    setListing({ status: "ready", origin, files: found });
+    setSelected(new Set(found.map((file) => file.path)));
+    setMapping(suggestRemoteLyricsMapping(audio, found));
+  };
+
   const list = async () => {
-    if (!sourceId || !editionCode) return;
+    if (!editionCode) return;
     setListing({ status: "loading" });
     try {
+      if (fromLibrary) {
+        const edition = libraryEditions.find((candidate) => candidate.primaryCode === editionCode);
+        if (!edition?.workId) return setListing({ status: "not_found" });
+        const detail = await api.getWork(edition.workId);
+        const folder = (detail.localFolders ?? []).find((candidate) => candidate.state === "active");
+        if (!folder) return setListing({ status: "not_found" });
+        showFiles({ kind: "library", folderId: folder.id }, localLyricsFiles(detail.mediaItems, folder.rootPath));
+        return;
+      }
+      const sourceId = Number(sourceValue);
+      if (!sourceId) return setListing({ status: "idle" });
       const response = await api.getRemoteSourceWorkTracks(sourceId, editionCode);
-      const found = remoteLyricsFiles(response.tracks);
-      setListing({ status: "ready", sourceId, code: editionCode, files: found });
-      setSelected(new Set(found.map((file) => file.path)));
-      setMapping(suggestRemoteLyricsMapping(audio, found));
+      showFiles({ kind: "remote", sourceId, code: editionCode }, remoteLyricsFiles(response.tracks));
     } catch (error) {
       setListing({ status: error instanceof ApiError && error.status === 404 ? "not_found" : "error" });
     }
@@ -82,14 +116,19 @@ export function useRemoteLyricsFetch({
     if (listing.status !== "ready" || request.files.length === 0 || !folderId) return;
     setFetching(true);
     try {
+      const origin = listing.origin;
       const result = await api.fetchWorkLyrics(work.id, {
-        sourceId: listing.sourceId,
-        remoteCode: listing.code,
+        sourceId: origin.kind === "remote" ? origin.sourceId : 0,
+        remoteCode: origin.kind === "remote" ? origin.code : "",
+        sourceFolderId: origin.kind === "library" ? origin.folderId : undefined,
         folderId,
+        language,
         ...request,
       });
       toast.success(
-        t("lyricsManager.downloaded", { count: result.downloaded, folder: folderDisplayName(result.folder) }),
+        result.downloaded > 0
+          ? t("lyricsManager.downloaded", { count: result.downloaded, folder: folderDisplayName(result.folder) })
+          : t("lyricsManager.alreadyPresent", { folder: folderDisplayName(result.folder) }),
       );
       resetListing();
       await onFetched();
@@ -101,11 +140,14 @@ export function useRemoteLyricsFetch({
   };
 
   return {
-    editions,
+    editions: sourceEditions,
     sources,
+    libraryAvailable: libraryEditions.length > 0,
     targetFolders,
-    sourceId,
+    sourceValue,
+    fromLibrary,
     editionCode,
+    language,
     folderId,
     listing,
     files,
@@ -114,15 +156,14 @@ export function useRemoteLyricsFetch({
     fetching,
     request,
     canAssign,
-    available: sources.length > 0 && targetFolders.length > 0,
-    setSourceId: (value: number) => {
-      setSourceId(value);
-      resetListing();
+    available: (sources.length > 0 || libraryEditions.length > 0) && targetFolders.length > 0,
+    setSourceValue: (value: string) => {
+      const nextEditions = value === librarySourceValue ? libraryEditions : editions;
+      setSourceValue(value);
+      selectEdition(nextEditions, defaultLyricsEditionCode(nextEditions, work.primaryCode));
     },
-    setEditionCode: (value: string) => {
-      setEditionCode(value);
-      resetListing();
-    },
+    setEditionCode: (value: string) => selectEdition(sourceEditions, value),
+    setLanguage,
     setFolderId,
     toggleFile: (path: string, checked: boolean) =>
       setSelected((current) => {
@@ -141,16 +182,20 @@ export function useRemoteLyricsFetch({
 export function RemoteLyricsPanel({ state, audio }: { state: RemoteLyricsFetchState; audio: LyricsManagerAudio[] }) {
   const { t } = useTranslation();
   const [previewAudioID, setPreviewAudioID] = useState<number | null>(null);
-  const sourceOptions: FloatingSelectOption[] = state.sources.map((source) => ({
-    value: String(source.id),
-    label: source.displayName,
-  }));
+  const sourceOptions: FloatingSelectOption[] = [
+    ...state.sources.map((source) => ({ value: String(source.id), label: source.displayName })),
+    ...(state.libraryAvailable ? [{ value: librarySourceValue, label: t("lyricsManager.librarySource") }] : []),
+  ];
   const editionOptions: FloatingSelectOption[] = state.editions.map((edition) => {
     const key = editionLanguageKey(edition.metadataLanguage);
     const language = key ? t(key) : edition.editionLabel || edition.metadataLanguage;
     const origin = edition.origin ? ` · ${t("lyricsManager.originEdition")}` : "";
     return { value: edition.primaryCode, label: `${edition.primaryCode} · ${language || "—"}${origin}` };
   });
+  const languageOptions: FloatingSelectOption[] = lyricsLanguages.map(([language, labelKey]) => ({
+    value: language || allLanguagesValue,
+    label: t(labelKey),
+  }));
   const folderOptions: FloatingSelectOption[] = state.targetFolders.map((folder) => ({
     value: String(folder.id),
     label: folder.rootPath,
@@ -166,13 +211,13 @@ export function RemoteLyricsPanel({ state, audio }: { state: RemoteLyricsFetchSt
       <div className="flex flex-wrap items-end gap-2">
         <label className="min-w-0 flex-1 basis-48">
           <span className="mb-1 block text-xs font-medium text-muted-foreground">
-            {t("lyricsManager.remoteSource")}
+            {t("lyricsManager.lyricsSource")}
           </span>
           <FloatingSelect
-            value={String(state.sourceId)}
+            value={state.sourceValue}
             options={sourceOptions}
-            onValueChange={(value) => state.setSourceId(Number(value))}
-            ariaLabel={t("lyricsManager.remoteSource")}
+            onValueChange={state.setSourceValue}
+            ariaLabel={t("lyricsManager.lyricsSource")}
             disabled={busy}
           />
         </label>
@@ -186,12 +231,14 @@ export function RemoteLyricsPanel({ state, audio }: { state: RemoteLyricsFetchSt
             disabled={busy}
           />
         </label>
-        <Button variant="outline" onClick={() => void state.list()} disabled={busy || !state.sourceId}>
+        <Button variant="outline" onClick={() => void state.list()} disabled={busy || !state.editionCode}>
           <Search className="h-4 w-4" />
           {listing.status === "loading" ? t("lyricsManager.listing") : t("lyricsManager.listLyrics")}
         </Button>
       </div>
-      <p className="text-xs text-muted-foreground">{t("lyricsManager.remoteHint")}</p>
+      <p className="text-xs text-muted-foreground">
+        {state.fromLibrary ? t("lyricsManager.libraryHint") : t("lyricsManager.remoteHint")}
+      </p>
 
       {listing.status === "not_found" && (
         <p role="status" className="text-sm text-muted-foreground">
@@ -245,6 +292,18 @@ export function RemoteLyricsPanel({ state, audio }: { state: RemoteLyricsFetchSt
             </ul>
           </section>
 
+          <section aria-label={t("lyricsManager.lyricsLanguage")} className="space-y-1">
+            <h4 className="text-xs font-medium text-muted-foreground">{t("lyricsManager.lyricsLanguage")}</h4>
+            <FloatingSelect
+              value={state.language || allLanguagesValue}
+              options={languageOptions}
+              onValueChange={(value) => state.setLanguage(value === allLanguagesValue ? "" : value)}
+              ariaLabel={t("lyricsManager.lyricsLanguage")}
+              disabled={busy}
+            />
+            <p className="text-xs text-muted-foreground">{t("lyricsManager.lyricsLanguageHint")}</p>
+          </section>
+
           <section aria-label={t("lyricsManager.mapTracks")}>
             <h4 className="mb-1 text-xs font-medium text-muted-foreground">{t("lyricsManager.mapTracks")}</h4>
             <p className="mb-2 text-xs text-muted-foreground">
@@ -259,8 +318,7 @@ export function RemoteLyricsPanel({ state, audio }: { state: RemoteLyricsFetchSt
                   files={selectedFiles}
                   disabled={busy || !state.canAssign}
                   previewOpen={previewAudioID === entry.mediaItemId}
-                  sourceId={listing.sourceId}
-                  workCode={listing.code}
+                  origin={listing.origin}
                   onAssign={(path) => state.assign(entry.mediaItemId, path)}
                   onTogglePreview={() =>
                     setPreviewAudioID((current) => (current === entry.mediaItemId ? null : entry.mediaItemId))
@@ -285,7 +343,9 @@ export function RemoteLyricsPanel({ state, audio }: { state: RemoteLyricsFetchSt
                 {state.targetFolders[0]?.rootPath}
               </p>
             )}
-            <p className="text-xs text-muted-foreground">{t("lyricsManager.targetHint", { code: listing.code })}</p>
+            <p className="text-xs text-muted-foreground">
+              {t("lyricsManager.targetHint", { folder: lyricsLanguageFolderName(state.language) })}
+            </p>
           </section>
         </>
       )}
@@ -293,14 +353,16 @@ export function RemoteLyricsPanel({ state, audio }: { state: RemoteLyricsFetchSt
   );
 }
 
+/** A select value cannot be empty, so every language has its own. */
+const allLanguagesValue = "all";
+
 function RemoteMappingRow({
   entry,
   value,
   files,
   disabled,
   previewOpen,
-  sourceId,
-  workCode,
+  origin,
   onAssign,
   onTogglePreview,
 }: {
@@ -309,13 +371,12 @@ function RemoteMappingRow({
   files: RemoteLyricsFile[];
   disabled: boolean;
   previewOpen: boolean;
-  sourceId: number;
-  workCode: string;
+  origin: LyricsOrigin;
   onAssign: (path: string | null) => void;
   onTogglePreview: () => void;
 }) {
   const { t } = useTranslation();
-  const selectedValue = value && files.some((file) => file.path === value) ? value : null;
+  const selectedFile = value ? (files.find((file) => file.path === value) ?? null) : null;
   const options: FloatingSelectOption[] = [
     { value: unassignedValue, label: t("lyricsManager.noAssignment") },
     ...files.map((file) => ({
@@ -339,7 +400,7 @@ function RemoteMappingRow({
           {duration && <div className="mt-0.5 text-xs tabular-nums text-muted-foreground">{duration}</div>}
         </div>
         <FloatingSelect
-          value={selectedValue ?? unassignedValue}
+          value={selectedFile?.path ?? unassignedValue}
           options={options}
           onValueChange={(next) => onAssign(next === unassignedValue ? null : next)}
           ariaLabel={t("lyricsManager.lyricsFor", { title: entry.title })}
@@ -352,23 +413,36 @@ function RemoteMappingRow({
           className="justify-self-start sm:justify-self-auto"
           aria-expanded={previewOpen}
           aria-label={t("lyricsManager.previewOf", { title: entry.title })}
-          disabled={!selectedValue}
+          disabled={!selectedFile}
           onClick={onTogglePreview}
         >
           <FileText className="h-4 w-4" />
           {t("lyricsManager.preview")}
         </Button>
       </div>
-      {previewOpen && selectedValue && (
+      {previewOpen && selectedFile && (
         <LyricsPreview
-          label={selectedValue}
-          loadKey={`${sourceId}:${workCode}:${selectedValue}`}
-          load={() => loadRemoteLyricsText(sourceId, workCode, selectedValue)}
+          label={selectedFile.path}
+          loadKey={lyricsPreviewKey(origin, selectedFile)}
+          load={() => loadLyricsPreview(origin, selectedFile)}
           durationSeconds={entry.durationSeconds}
         />
       )}
     </li>
   );
+}
+
+function lyricsPreviewKey(origin: LyricsOrigin, file: RemoteLyricsFile) {
+  return origin.kind === "remote"
+    ? `${origin.sourceId}:${origin.code}:${file.path}`
+    : `library:${origin.folderId}:${file.path}`;
+}
+
+function loadLyricsPreview(origin: LyricsOrigin, file: RemoteLyricsFile) {
+  if (origin.kind === "remote") return loadRemoteLyricsText(origin.sourceId, origin.code, file.path);
+  return file.locationId
+    ? loadLocalLyricsText(file.locationId)
+    : Promise.reject(new Error("The library lyrics file has no local location."));
 }
 
 export function RemoteLyricsDownloadButton({ state }: { state: RemoteLyricsFetchState }) {
@@ -382,6 +456,12 @@ export function RemoteLyricsDownloadButton({ state }: { state: RemoteLyricsFetch
         : t("lyricsManager.download", { count: state.request.files.length })}
     </Button>
   );
+}
+
+/** The lyrics language an edition of the list declares. */
+function editionLanguage(editions: WorkTranslation[], code: string) {
+  const edition = editions.find((candidate) => candidate.primaryCode === code);
+  return editionLyricsLanguage(edition?.metadataLanguage ?? "");
 }
 
 function familyEditions(work: WorkDetail): WorkTranslation[] {

@@ -176,17 +176,46 @@ A purchase bonus, such as an early purchase bonus (`【早期購入特典】`), 
   previews the first lines and warns when the last timed line starts after the
   track ends. Assignments are shared by every listener and become the Auto
   choice; a listener's own choice still takes priority.
-- When a compatible remote source is configured, **Manage lyrics** also has a
-  **From remote** tab for users who can download files. Pick a source and an
+- A track keeps one assigned lyrics file per language. The **Lyrics language**
+  strip switches between **All languages** and Japanese, Simplified Chinese,
+  Traditional Chinese, English, and Korean, and shows how many tracks have
+  lyrics in each. Lyrics under **All languages** are used for every language,
+  and only there does a track without an assignment fall back to a file-name
+  match. Playback uses the first of a listener's metadata languages that has
+  lyrics, then the all-language lyrics, then any other language. You declare a
+  file's language yourself; Kikoto does not guess it from the file.
+- **Manage lyrics** has an **Add lyrics** tab for users who can download
+  files. Its source is a configured compatible remote source or **Library
+  (another local edition)**, which copies from another edition of the work
+  that is in the library and leaves that edition's folder unchanged. Pick an
   edition of the work's family (a translated edition is chosen first, since
   DLsite usually ships lyrics with translations), list its lyrics files, choose
-  which to download and which track each one belongs to, and preview them with
-  the same timing check. The files are saved to a new folder named after the
-  edition's language, its code, and the download time, for example
-  `Lyrics - CHI_HANS - RJ00000001 - 20261008-153012`, inside the work folder.
-  Kikoto never replaces an existing file or folder, then rescans the work and
-  stores the chosen assignments. The edition you read from is not added to the
-  library.
+  which to add and which track each one belongs to, and preview them with the
+  same timing check. **Language of these lyrics** starts as the edition's
+  language. The files are saved inside the work folder to a folder named after
+  that language: `lyrics_ja`, `lyrics_en`, `lyrics_zh_hans`, `lyrics_zh_hant`,
+  `lyrics_ko`, or `lyrics` for all languages. Kikoto never replaces a file: one
+  that is already there with the same content is left alone, and one that
+  differs stops the request before anything is added. It then rescans the work
+  and stores the chosen assignments in that language. A remote edition you
+  read from is not added to the library.
+- **Manage files** on a local work has **Find identical files**. It compares
+  the local files of every edition and folder of the work by content, so a
+  translated edition's renamed audio is recognized as the original's. A file
+  with an identical copy is marked with the copy's location, and two
+  selections appear: **Also in another folder** selects the listed files that
+  exist elsewhere with the same content, and **Repeated in this folder**
+  selects every copy except the first inside the listed folder. Files that
+  only resemble each other, such as the same track encoded again, are not
+  identical and are not marked. Nothing is deleted until you review the
+  deletion.
+- A work whose code a scan finds in several local folders keeps all of them.
+  The directory then shows one folder per copy, **Manage files** lists one
+  folder at a time with a **Folder** choice, and the work can be forgotten
+  only once a single folder is left. A library manager sees a notice above the
+  directory when the work is in several folders or another edition of it is in
+  the library, with **Manage lyrics** and **Manage files** to bring the lyrics
+  into one folder and remove what is identical.
 - Lists naturally sorted folders before naturally sorted files. Folder playback
   follows that same visible order.
 - Keeps available non-playable files such as images and text in Directory while
@@ -214,8 +243,11 @@ A purchase bonus, such as an early purchase bonus (`【早期購入特典】`), 
 - Show one fixed Resume action. It is disabled without a positive unfinished
   work cursor; direct file activation starts from the beginning.
 - Update quick listening status.
-- Manage favorite-list membership. **Add list** creates a list inside the List
-  menu and selects it; **Save** applies membership alongside existing choices.
+- Manage favorite-list membership. The List button names the list that holds
+  the work; when several do, it names the first in list order and counts the
+  rest, and its tooltip names them all. **Add list** creates a list inside the
+  List menu and selects it; **Save** applies membership alongside existing
+  choices.
 - Edit personal work tags separately from provider metadata tags.
 - Sync metadata.
 - Sync/cache/fetch from compatible remote sources.

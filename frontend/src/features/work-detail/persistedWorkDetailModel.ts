@@ -9,6 +9,7 @@ import {
   type SourceTabInfo,
 } from "@/features/work-detail/source/sourceContextModel";
 import type {
+  MediaItem,
   RemoteWorkDetail,
   SourcePresenceItem,
   VoiceCredit,
@@ -44,6 +45,29 @@ export function persistedFetchTarget(
 
 export function hasResumablePlaybackCursor(cursor: WorkProgressSummary | null) {
   return Boolean(cursor && !cursor.completed && Number.isFinite(cursor.positionSeconds) && cursor.positionSeconds > 0);
+}
+
+/** The active folders of the shown edition on one local source. */
+export function activeLocalFolders(work: WorkDetail | null, fileSourceId: number | null | undefined) {
+  if (!work || !fileSourceId) return [];
+  return (work.localFolders ?? []).filter(
+    (folder) =>
+      folder.workId === work.id &&
+      folder.fileSourceId === fileSourceId &&
+      folder.state === "active" &&
+      folder.rootPath.trim() !== "",
+  );
+}
+
+/** The media items that have a local file inside one work folder. */
+export function mediaItemsInLocalFolder(items: MediaItem[], rootPath: string) {
+  const root = rootPath.replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
+  if (!root) return items;
+  return items.filter((item) =>
+    item.locations.some(
+      (location) => location.locationType === "local" && location.path.replace(/^\/+/, "").startsWith(`${root}/`),
+    ),
+  );
 }
 
 export function persistedMediaTreeInput({

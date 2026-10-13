@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { FloatingSelect } from "@/components/ui/floating-select";
+import { lyricsLanguageLabelKey } from "@/lib/lyricsLanguage";
 import { cn } from "@/lib/tailwindClassNames";
 import type { ParsedLyrics } from "@/lib/timedLyrics";
 import { lyricsChoiceDisplayLabel, type LyricsChoice } from "@/player/lyricsMatching";
@@ -161,6 +162,10 @@ function LyricsSourceSelector({
   onChoiceChange: (locationId: number | null) => void;
 }) {
   const { t } = useTranslation();
+  const languageName = (language: string) => {
+    const key = lyricsLanguageLabelKey(language);
+    return key ? t(key) : language;
+  };
   if (choices.length <= 1 && automatic)
     return <div className="truncate text-xs font-medium text-muted-foreground">{title}</div>;
   return (
@@ -176,7 +181,7 @@ function LyricsSourceSelector({
           { value: "auto", label: t("common.auto") },
           ...choices.map((choice) => ({
             value: String(choice.locationId),
-            label: lyricsChoiceDisplayLabel(choice, choices),
+            label: lyricsChoiceDisplayLabel(choice, choices, languageName),
           })),
         ]}
       />

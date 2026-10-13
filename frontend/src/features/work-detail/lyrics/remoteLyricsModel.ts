@@ -11,12 +11,17 @@ import {
 /** Text formats the server accepts as downloadable lyrics. */
 const remoteLyricsExtensions = [".lrc", ".vtt", ".srt", ".ass", ".txt"];
 
-/** A lyrics file in a remote edition's tree, addressed by its tree path. */
+/**
+ * A lyrics file of the source being added from, addressed by its path in that
+ * source: a remote edition's tree path, or a path below a library folder.
+ */
 export type RemoteLyricsFile = {
   path: string;
   title: string;
   folder: string;
   sizeBytes: number | null;
+  /** The file's local location when the source is a library folder. */
+  locationId?: number;
 };
 
 /** Remote file path chosen for each local audio media item; null leaves it unassigned. */
@@ -40,6 +45,39 @@ export function remoteLyricsFiles(tracks: RemoteTrack[]): RemoteLyricsFile[] {
   };
   walk(tracks, "");
   return files;
+}
+
+/** The lyrics files of a library folder, with paths relative to that folder. */
+export function localLyricsFiles(items: MediaItem[], rootPath: string): RemoteLyricsFile[] {
+  const root = normalizePath(rootPath);
+  const files: RemoteLyricsFile[] = [];
+  for (const item of items) {
+    if (item.kind === "audio" || item.kind === "video") continue;
+    for (const location of item.locations) {
+      if (location.locationType !== "local" || location.availability !== "available") continue;
+      const absolute = normalizePath(location.path);
+      if (!root || !absolute.startsWith(`${root}/`)) continue;
+      const path = absolute.slice(root.length + 1);
+      const lower = path.toLowerCase();
+      if (!remoteLyricsExtensions.some((extension) => lower.endsWith(extension))) continue;
+      const slash = path.lastIndexOf("/");
+      files.push({
+        path,
+        title: slash >= 0 ? path.slice(slash + 1) : path,
+        folder: slash >= 0 ? path.slice(0, slash) : "",
+        sizeBytes: location.sizeBytes ?? item.sizeBytes,
+        locationId: location.id,
+      });
+    }
+  }
+  return files.sort((left, right) =>
+    left.path.localeCompare(right.path, undefined, { numeric: true, sensitivity: "base" }),
+  );
+}
+
+/** The family's other editions that have local files, whose lyrics can be copied into this one. */
+export function localLyricsEditions(editions: WorkTranslation[], currentWorkId: number) {
+  return editions.filter((edition) => edition.workId && edition.workId !== currentWorkId && edition.localAvailable);
 }
 
 /**

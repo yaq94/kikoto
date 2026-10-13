@@ -151,8 +151,11 @@ type mediaItemDetail struct {
 	Fingerprint                string               `json:"fingerprint"`
 	Progress                   *mediaProgressDetail `json:"progress"`
 	PreferredLyricsMediaItemID *int64               `json:"preferredLyricsMediaItemId"`
-	AssignedLyricsMediaItemID  *int64               `json:"assignedLyricsMediaItemId"`
-	Locations                  []fileLocationDetail `json:"locations"`
+	// AssignedLyricsMediaItemID is the first of LyricsAssignments, which lists
+	// the item's library lyrics in the order this viewer's playback tries them.
+	AssignedLyricsMediaItemID *int64                        `json:"assignedLyricsMediaItemId"`
+	LyricsAssignments         []mediaLyricsAssignmentDetail `json:"lyricsAssignments,omitempty"`
+	Locations                 []fileLocationDetail          `json:"locations"`
 }
 
 type fileLocationDetail struct {

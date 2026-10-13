@@ -138,9 +138,10 @@ queue or an unpublished initial catalog returns a retryable 503
 Demo bypasses catalog preparation and uses the simulated scores described there.
 
 `PUT /api/works/{id}/lyrics-assignments` requires `library:write` and sets or
-clears, in one transaction, the shared lyrics file of up to 2,000 audio items
-in the work's edition family; each lyrics file must be a text item of the same
-work as its audio. `PUT` and `DELETE /api/media/{id}/lyrics-preference` require
+clears, in one transaction, up to 2,000 shared lyrics files of audio items in
+the work's edition family. Each change names an audio item, a language (empty
+for every language), and a lyrics file, which must be a text item of the same
+work as its audio; a null lyrics file removes that language's assignment. `PUT` and `DELETE /api/media/{id}/lyrics-preference` require
 `playback:use` and set or clear the signed-in user's own lyrics choice for one
 audio item under the same same-work rule. How clients rank preferences,
 assignments, and name matching is in [Data model](data-model.md).
@@ -335,11 +336,23 @@ lanes. The first three serialize response bodies; playback permits four active
 streams. Each lane admits at most 32 waiting requests, and queued cancellation
 does not wait for the active response to finish.
 
-`POST /api/works/{id}/lyrics-fetch` downloads lyrics files from a configured
-source through that source's download lane and stages them on the target
-work's storage pool before publication. Its permissions, destination checks,
-and file, byte, and time limits are in
+`POST /api/works/{id}/lyrics-fetch` adds lyrics files of a family edition to
+the language's lyrics folder of a local work folder. The files come from a
+configured source through that source's download lane, or from another local
+folder of the family, and are staged on the target work's storage pool before
+publication. Its permissions, destination checks, and file, byte, and time
+limits are in
 [Remote lyrics download](../development/security.md#remote-lyrics-download).
+
+`POST /api/works/{id}/local-files/duplicates` requires `downloads:manage` and
+reports the local files of the work's family that hold the same bytes, in any
+of its editions and folders. It first indexes family folders that have no
+indexed files, then hashes only files that share a size and caches each hash
+per file version. One request hashes for at most 20 seconds and always
+completes at least one file; a response with `complete: false` reports how
+much is pending, and repeating the request continues from the stored hashes. A
+link, an unreadable file, and a file that changes while it is read are left
+out. The request never changes a library file.
 
 Remote queries requiring local filtering retain only upstream pages for up to
 30 seconds, with at most 32 pages and 16 MiB of serialized data per server.

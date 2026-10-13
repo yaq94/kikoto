@@ -20,6 +20,7 @@ import type { FilePreviewRequest } from "@/features/work-detail/dialogs/FilePrev
 import {
   DirectoryLoadErrorPanel,
   DirectoryOperationBanner,
+  LocalCopiesBanner,
   LocalSourceStatePanel,
   NoSourceDirectoryPanel,
   RemoteSourceStatePanel,
@@ -53,6 +54,13 @@ export type PersistedDirectoryPanelProps = {
   directoryMediaError: string;
   cleanupRunId: number | null;
   cleanupRunStatus: string;
+  /** Set when the work's files lie in several local folders or editions the viewer can tidy up. */
+  localCopies?: {
+    folderCount: number;
+    editionCount: number;
+    onManageFiles: () => void;
+    onManageLyrics?: () => void;
+  } | null;
   selectedRemoteDetail: RemoteWorkDetail | null;
   selectionModal: ReactNode;
   onActiveKeyChange: (key: string) => void;
@@ -83,6 +91,7 @@ function persistedDirectoryToolbar(props: PersistedDirectoryPanelProps) {
       />
     );
   }
+  if (props.localCopies) return <LocalCopiesBanner {...props.localCopies} />;
   return null;
 }
 

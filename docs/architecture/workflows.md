@@ -579,7 +579,7 @@ and job input. Incremental execution resolves those paths to affected known or
 new work roots, walks each affected work's complete media tree, and reconciles
 its locations. It does not walk unaffected media trees. A watcher error, path
 batch overflow, invalid or unavailable path batch, watch-root invalidation, or
-duplicate work root switches that run to full mode. An invalidated root keeps
+a work whose code lies in several folders switches that run to full mode. An invalidated root keeps
 the recovery request across watcher restarts and dispatches it only after the
 replacement watcher has settled.
 
@@ -604,15 +604,17 @@ history remain. Application-owned deletion updates its known location state
 immediately and may also produce a native event; the later incremental run is an
 idempotent reconciliation. A full scan records presence for every discovered
 folder and keeps a work's completed media index only when the folder stayed
-available at the same root without newly missing locations or a duplicate code;
-otherwise the work is indexed again lazily. A full scan commits discovered
+available at the same root without newly missing locations; otherwise the work
+is indexed again lazily. A full scan commits discovered
 folders in batches of 250, so progress saves and other writers are not locked
 out for the whole library, and marks unseen works missing only in its final
 transaction. An interrupted scan therefore records what it found and marks
 nothing missing, and its retry repeats the idempotent folder writes. A folder
 whose work, presence, and folder location already match is not rewritten, so
-its timestamps record its last change. Duplicate-code groups skip automatic
-invalidation, fall back to full discovery, and remain review candidates.
+its timestamps record its last change. A work whose code is found in several
+folders keeps every one of them as an active folder (see
+[File Availability](data-model.md#file-availability)): none of their locations
+is invalidated in favour of another, and the scan raises nothing for review.
 Neither mode rewrites `managed_fetch` ownership records.
 
 Local scan and metadata sync have separate definitions, jobs, resource labels,
@@ -628,7 +630,9 @@ provider work.
 
 `local_media_index` indexes the media tree of local work folders that a local
 scan has already discovered, the same per-work indexing that otherwise runs
-lazily the first time a work's media is requested. It never discovers new work
+lazily the first time a work's media is requested. A lazy request indexes every
+active folder of the work that has no indexed files yet, and skips a folder
+that cannot be read, such as one in an offline pool. It never discovers new work
 roots; that is the local scan's job, and the Workflows page lists it second,
 after the scan.
 
@@ -958,9 +962,8 @@ is listed, planned, cached, and stored under: path separators and `.` or `..`
 components are dropped, and a title with nothing left is named after its
 position in its folder.
 
-Workflow candidates capture user-reviewable outcomes such as duplicate local
-folders, unavailable DLsite products, and old local locations left after remote
-fetches. A Fetch from a source with restricted outbound hosts also creates a
+Workflow candidates capture user-reviewable outcomes such as unavailable
+DLsite products and old local locations left after remote fetches. A Fetch from a source with restricted outbound hosts also creates a
 `remote_origin_blocked` candidate when a media origin is outside that source's
 boundary. The run and active node become partial, the recoverable job is not
 automatically retried, and Activity records only the normalized origin rather

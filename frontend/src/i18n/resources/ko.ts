@@ -257,6 +257,8 @@ const workCardKorean = {
   favoriteLists: "즐겨찾기 목록",
   addToList: "목록에 추가",
   lists: "목록",
+  inLists: "목록: {{names}}",
+  moreLists: "+{{others}}",
   addList: "목록 추가",
   loadingLists: "목록 로드 중...",
   noLists: "목록이 없습니다.",
@@ -783,6 +785,8 @@ export const koreanResource = {
         overviewTwo:
           "라이브러리 탐색, 즐겨찾기, 서클, 성우, 워크플로 가시성, 원격 가져오기와 브라우저 오디오 플레이어를 제공합니다.",
         referenceProjects: "참조 프로젝트",
+        showReferenceDetails: "세부 정보 표시",
+        hideReferenceDetails: "세부 정보 숨기기",
         referenceAreas: {
           recommendation: "추천 설계",
           remoteSources: "원격 소스",

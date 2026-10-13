@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -620,7 +621,36 @@ func TestLocalLibraryScanInvalidatesLocationsWhenFolderDisappears(t *testing.T) 
 	}
 }
 
-func TestLocalLibraryScanKeepsLocationsForDuplicateFolderReview(t *testing.T) {
+// localWorkFolders lists a work's folder locations as "root state primary".
+func localWorkFolders(t *testing.T, db *sql.DB, code string) []string {
+	t.Helper()
+	rows, err := db.Query(`
+		SELECT folder.root_path, folder.state, folder.is_primary
+		FROM work_folder_location AS folder
+		INNER JOIN work ON work.id = folder.work_id
+		WHERE work.primary_code = ?
+		ORDER BY folder.root_path
+	`, code)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = rows.Close() }()
+	folders := []string{}
+	for rows.Next() {
+		var root, state string
+		var primary int
+		if err := rows.Scan(&root, &state, &primary); err != nil {
+			t.Fatal(err)
+		}
+		folders = append(folders, fmt.Sprintf("%s %s %d", root, state, primary))
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	return folders
+}
+
+func TestLocalLibraryScanKeepsEveryFolderOfAWork(t *testing.T) {
 	dataRoot := t.TempDir()
 	code := "RJ00000015"
 	firstRoot := "A " + code
@@ -635,23 +665,72 @@ func TestLocalLibraryScanKeepsLocationsForDuplicateFolderReview(t *testing.T) {
 	}
 	db := openMigratedTestDB(t)
 	server := NewServer(db, config.Config{DataRoot: dataRoot, LocalScanDepth: 4})
-	seeded := seedIndexedLocalScanWork(t, db, server, code, firstRoot, firstRoot+"/track.mp3")
+	// The work is already known in its second folder, which the scan reaches last.
+	seeded := seedIndexedLocalScanWork(t, db, server, code, secondRoot, secondRoot+"/track.mp3")
 	runID := executeLocalScanForTest(t, server)
+	executeLocalScanForTest(t, server)
 
-	var availability string
+	var availability, presenceRoot string
 	if err := db.QueryRow("SELECT availability FROM media_file_location WHERE id = ?", seeded.locationID).Scan(&availability); err != nil {
 		t.Fatal(err)
 	}
-	var candidates int
 	if err := db.QueryRow(`
-		SELECT COUNT(*)
-		FROM workflow_candidate
-		WHERE workflow_run_id = ? AND candidate_type = 'local_duplicate_work_folder' AND external_key = ? AND status = 'pending'
-	`, runID, code).Scan(&candidates); err != nil {
+		SELECT source_url FROM work_source_presence WHERE work_id = ? AND presence_type = 'local' AND availability = 'available'
+	`, seeded.workID).Scan(&presenceRoot); err != nil {
 		t.Fatal(err)
 	}
-	if availability != "available" || candidates != 1 || localScanMissingLocationCount(t, db, runID) != 0 {
-		t.Fatalf("duplicate review = availability %q, candidates %d", availability, candidates)
+	// Two folders with one code are both folders of the work. The presence
+	// stays on the folder it named, and nothing is raised for review.
+	if availability != "available" || presenceRoot != secondRoot || localScanMissingLocationCount(t, db, runID) != 0 {
+		t.Fatalf("availability %q, presence root %q", availability, presenceRoot)
+	}
+	want := []string{firstRoot + " active 0", secondRoot + " active 1"}
+	if folders := localWorkFolders(t, db, code); strings.Join(folders, "|") != strings.Join(want, "|") {
+		t.Fatalf("folders = %v, want %v", folders, want)
+	}
+	var candidates int
+	if err := db.QueryRow("SELECT COUNT(*) FROM workflow_candidate WHERE candidate_type = 'local_duplicate_work_folder'").Scan(&candidates); err != nil {
+		t.Fatal(err)
+	}
+	if candidates != 0 {
+		t.Fatalf("a work in two folders raised %d review candidates", candidates)
+	}
+
+	// Opening the work indexes the other folder too, so both can be compared.
+	if err := server.ensureLocalMediaIndexed(context.Background(), seeded.workID); err != nil {
+		t.Fatal(err)
+	}
+	var indexed int
+	if err := db.QueryRow(`
+		SELECT COUNT(*)
+		FROM media_file_location AS location
+		INNER JOIN media_item AS item ON item.id = location.media_item_id
+		WHERE item.work_id = ? AND location.location_type = 'local' AND location.availability = 'available'
+	`, seeded.workID).Scan(&indexed); err != nil {
+		t.Fatal(err)
+	}
+	if indexed != 2 {
+		t.Fatalf("indexed %d local files, want one from each folder", indexed)
+	}
+	if err := db.QueryRow(`
+		SELECT source_url FROM work_source_presence WHERE work_id = ? AND presence_type = 'local'
+	`, seeded.workID).Scan(&presenceRoot); err != nil || presenceRoot != secondRoot {
+		t.Fatalf("indexing the other folder moved the presence to %q, %v", presenceRoot, err)
+	}
+
+	// Removing the folder the presence named leaves the work in the other one.
+	if err := os.RemoveAll(filepath.Join(dataRoot, secondRoot)); err != nil {
+		t.Fatal(err)
+	}
+	executeLocalScanForTest(t, server)
+	if err := db.QueryRow(`
+		SELECT source_url FROM work_source_presence WHERE work_id = ? AND presence_type = 'local' AND availability = 'available'
+	`, seeded.workID).Scan(&presenceRoot); err != nil || presenceRoot != firstRoot {
+		t.Fatalf("presence after removing a folder = %q, %v", presenceRoot, err)
+	}
+	want = []string{firstRoot + " active 1", secondRoot + " missing 0"}
+	if folders := localWorkFolders(t, db, code); strings.Join(folders, "|") != strings.Join(want, "|") {
+		t.Fatalf("folders after removing one = %v, want %v", folders, want)
 	}
 }
 
@@ -878,12 +957,12 @@ func TestIncrementalLocalScanFallsBackToFullForDuplicateWorkRoots(t *testing.T) 
 	if err := json.Unmarshal([]byte(summaryJSON), &summary); err != nil {
 		t.Fatal(err)
 	}
-	var candidates int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM workflow_candidate WHERE workflow_run_id = ? AND candidate_type = 'local_duplicate_work_folder'`, runID).Scan(&candidates); err != nil {
-		t.Fatal(err)
+	if summary.ScanMode != localScanModeFull || summary.FullFallbackReason != "duplicate_work_roots" {
+		t.Fatalf("duplicate fallback = %+v, summary %s", summary, summaryJSON)
 	}
-	if summary.ScanMode != localScanModeFull || summary.FullFallbackReason != "duplicate_work_roots" || candidates != 1 {
-		t.Fatalf("duplicate fallback = %+v, candidates %d, summary %s", summary, candidates, summaryJSON)
+	want := []string{firstRoot + " active 1", secondRoot + " active 0"}
+	if folders := localWorkFolders(t, db, "RJ00000030"); strings.Join(folders, "|") != strings.Join(want, "|") {
+		t.Fatalf("folders = %v, want %v", folders, want)
 	}
 }
 

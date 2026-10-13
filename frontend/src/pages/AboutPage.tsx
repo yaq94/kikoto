@@ -2,6 +2,7 @@ import { ArrowUpRight, CodeXml, RefreshCw, Scale, ScrollText, type LucideIcon } 
 import { useEffect, useState, type ReactNode } from "react";
 import { Trans, useTranslation } from "react-i18next";
 
+import { Button } from "@/components/ui/button";
 import { APP_CLIENT_VERSION, githubReleaseURL } from "@/lib/appInfo";
 import { api, type AppUpdate } from "@/lib/api";
 import { KIKOTO_GITHUB_ENDPOINTS } from "@/lib/official-links";
@@ -131,9 +132,7 @@ export function AboutPage() {
             <Track number={3} title={t("about.technologies")}>
               <TechnologyCredits />
             </Track>
-            <Track number={4} title={t("about.referenceProjects")}>
-              <ReferenceCredits />
-            </Track>
+            <ReferenceTrack number={4} />
           </div>
           <FinePrint />
         </div>
@@ -262,15 +261,28 @@ function SleeveLink({
 }
 
 /** A liner-notes section, numbered like a track on the record. */
-function Track({ number, title, children }: { number: number; title: string; children: ReactNode }) {
+function Track({
+  number,
+  title,
+  action,
+  children,
+}: {
+  number: number;
+  title: string;
+  action?: ReactNode;
+  children: ReactNode;
+}) {
   return (
     <section aria-label={title}>
-      <h3 className="flex items-baseline gap-3 border-b pb-2.5">
-        <span aria-hidden="true" className="w-6 shrink-0 text-xs font-medium tabular-nums text-muted-foreground">
-          {String(number).padStart(2, "0")}
-        </span>
-        <span className="text-base font-semibold [font-family:var(--font-heading)]">{title}</span>
-      </h3>
+      <div className="flex items-center gap-3 border-b pb-2.5">
+        <h3 className="flex min-w-0 flex-1 items-baseline gap-3">
+          <span aria-hidden="true" className="w-6 shrink-0 text-xs font-medium tabular-nums text-muted-foreground">
+            {String(number).padStart(2, "0")}
+          </span>
+          <span className="text-base font-semibold [font-family:var(--font-heading)]">{title}</span>
+        </h3>
+        {action}
+      </div>
       <div className="pt-4 sm:pl-9">{children}</div>
     </section>
   );
@@ -322,9 +334,76 @@ function ModelTimeline() {
   );
 }
 
-/** Reference projects as album credits: the area they informed on the left, the projects on the right. */
-function ReferenceCredits() {
+/** The reference projects track, with a switch between the compact credits and the per-project notes. */
+function ReferenceTrack({ number }: { number: number }) {
   const { t } = useTranslation();
+  const [detailed, setDetailed] = useState(false);
+  return (
+    <Track
+      number={number}
+      title={t("about.referenceProjects")}
+      action={
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="-my-2 -mr-2 shrink-0 text-muted-foreground"
+          onClick={() => setDetailed((value) => !value)}
+        >
+          {detailed ? t("about.hideReferenceDetails") : t("about.showReferenceDetails")}
+        </Button>
+      }
+    >
+      <ReferenceCredits detailed={detailed} />
+    </Track>
+  );
+}
+
+const creditList =
+  "flex flex-wrap gap-x-1.5 text-sm leading-6 text-foreground [&>li:not(:last-child)]:after:ml-1.5 [&>li:not(:last-child)]:after:text-muted-foreground [&>li:not(:last-child)]:after:content-['·']";
+
+/**
+ * Reference projects as album credits: the area they informed on the left, the projects on the right.
+ * The compact form lists project names only; the detailed form adds what each one informed.
+ */
+function ReferenceCredits({ detailed }: { detailed: boolean }) {
+  const { t } = useTranslation();
+  if (!detailed) {
+    return (
+      <dl className="grid gap-y-4 sm:grid-cols-[minmax(0,11rem)_minmax(0,1fr)] sm:gap-x-4 sm:gap-y-3">
+        {referenceGroups.map((group) => (
+          <div key={group.area} className="min-w-0 sm:contents">
+            <dt className="text-xs font-medium uppercase leading-6 tracking-[0.08em] text-muted-foreground">
+              {t(`about.referenceAreas.${group.area}`)}
+            </dt>
+            <dd className="min-w-0">
+              <ul className={creditList}>
+                {group.projects.map((project) => {
+                  const [owner, repository] = project.name.split("/");
+                  return (
+                    <li key={project.name} className="min-w-0">
+                      <a
+                        href={project.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className={cn(
+                          "rounded-sm font-medium text-foreground underline-offset-4 hover:underline",
+                          focusRing,
+                        )}
+                      >
+                        <span className="font-normal text-muted-foreground">{owner}/</span>
+                        {repository}
+                      </a>
+                    </li>
+                  );
+                })}
+              </ul>
+            </dd>
+          </div>
+        ))}
+      </dl>
+    );
+  }
   return (
     <dl className="grid gap-y-5 sm:grid-cols-[minmax(0,11rem)_minmax(0,1fr)] sm:gap-x-4">
       {referenceGroups.map((group) => (
@@ -379,7 +458,7 @@ function TechnologyCredits() {
             {t(`about.groups.${group.title}`)}
           </dt>
           <dd>
-            <ul className="flex flex-wrap gap-x-1.5 text-sm leading-6 text-foreground [&>li:not(:last-child)]:after:ml-1.5 [&>li:not(:last-child)]:after:text-muted-foreground [&>li:not(:last-child)]:after:content-['·']">
+            <ul className={creditList}>
               {group.items.map((item) => (
                 <li key={item}>{item}</li>
               ))}
