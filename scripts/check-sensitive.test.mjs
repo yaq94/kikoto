@@ -270,6 +270,70 @@ test("treats tokenizer options as configuration, not credentials", () => {
   assert.deepEqual(findings, []);
 });
 
+test("distinguishes state references from literals without relaxing configuration files", () => {
+  const findings = [];
+  scanLine(
+    { file: "frontend/src/example.tsx", line: 1, text: "apiKey: newAPIKey," },
+    findings,
+    approvedAllowlist(),
+  );
+  assert.deepEqual(findings, []);
+  scanLine(
+    { file: "config.yaml", line: 1, text: "apiKey: newAPIKey" },
+    findings,
+    approvedAllowlist(),
+  );
+  assert.equal(findings.length, 1);
+  scanLine(
+    {
+      file: "frontend/src/example.tsx",
+      line: 2,
+      text: 'apiKey: "ordinaryvalue123",',
+    },
+    findings,
+    approvedAllowlist(),
+  );
+  assert.equal(findings.length, 2);
+});
+
+test("permits only exact credential control copy in its localization owners", () => {
+  const findings = [];
+  scanLine(
+    {
+      file: "frontend/src/i18n/surfaces/en.ts",
+      line: 1,
+      text: 'apiKey: "API key",',
+    },
+    findings,
+    approvedAllowlist(),
+  );
+  scanLine(
+    {
+      file: "frontend/src/i18n/surfaces/en.ts",
+      line: 2,
+      text: 'apiKeyDescription: "Keys are stored by the server and are never returned to the browser.",',
+    },
+    findings,
+    approvedAllowlist(),
+  );
+  assert.deepEqual(findings, []);
+  scanLine(
+    { file: "config.ts", line: 1, text: 'apiKey: "API key",' },
+    findings,
+    approvedAllowlist(),
+  );
+  scanLine(
+    {
+      file: "frontend/src/i18n/surfaces/en.ts",
+      line: 3,
+      text: 'apiKey: "ordinaryvalue123",',
+    },
+    findings,
+    approvedAllowlist(),
+  );
+  assert.equal(findings.length, 2);
+});
+
 test("still flags a credential key that follows a tokenizer prefix", () => {
   const sensitiveKey = ["tokenizer", "Token"].join("");
   const findings = [];

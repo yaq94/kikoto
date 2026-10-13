@@ -90,3 +90,33 @@ func TestLanguageTitlesMatchSelectForEveryPriority(t *testing.T) {
 		}
 	}
 }
+
+func TestMachineFieldsFillIndependentGapsBelowOfficialAndManual(t *testing.T) {
+	origin := Variant{Code: testfixture.WorkCode(testfixture.PrefixRJ, 0), Language: "ja-jp", Title: "Original title", Description: "Original description", Origin: true}
+	machine := Variant{Code: origin.Code, Language: "en-us", Title: "Machine title", Description: "Machine description", LLM: true}
+	official := Variant{Code: testfixture.WorkCode(testfixture.PrefixRJ, 1), Language: "en-us", Title: "Official title", Description: "Official description"}
+	for _, tc := range []struct {
+		name                       string
+		variants                   []Variant
+		manual                     map[string]string
+		title, description, source string
+	}{
+		{"machine", []Variant{machine, origin}, nil, "Machine title", "Machine description", "llm"},
+		{"official wins regardless of order", []Variant{machine, official, origin}, nil, "Official title", "Official description", "dlsite"},
+		{"scoped manual wins", []Variant{machine, origin}, map[string]string{"en-us": "Manual title"}, "Manual title", "Machine description", "manual"},
+		{"universal manual wins", []Variant{machine, origin}, map[string]string{"": "Universal title"}, "Universal title", "Machine description", "manual"},
+		{"title only retains original description", []Variant{{Code: origin.Code, Language: "en-us", Title: "Machine title", LLM: true}, origin}, nil, "Machine title", "Original description", "llm"},
+		{"description only retains original title", []Variant{{Code: origin.Code, Language: "en-us", Description: "Machine description", LLM: true}, origin}, nil, "Original title", "Machine description", "original"},
+		{"official description gap", []Variant{machine, {Code: official.Code, Language: "en-us", Title: "Official title"}, origin}, nil, "Official title", "Machine description", "dlsite"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := Select(tc.variants, tc.manual, []string{"en-us"}, origin)
+			if got.Title != tc.title || got.Description != tc.description || got.Source != tc.source {
+				t.Fatalf("selection=%+v", got)
+			}
+		})
+	}
+	if got := Select([]Variant{machine, origin}, nil, []string{"origin"}, origin); got.Title != origin.Title || got.Description != origin.Description {
+		t.Fatal("machine translation replaced origin")
+	}
+}

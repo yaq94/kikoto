@@ -125,13 +125,35 @@ first sets `metadata_projection_pending`, so the backfill projects stored
 titles and tag names again in the original language.
 
 `work_title_language` holds each work's title for every language that title
-selection can stop at: each supported language with its own edition or
-language-specific manual title, and always `origin`. Selection over a priority
+selection can stop at: each supported language with its own edition, language-specific manual title or
+accepted translation field, and always `origin`. Selection over a priority
 therefore equals the first present row in that priority, so a title sort reads
 `COALESCE` over the viewer's languages and falls back to `work.title` while a
 work is queued. Triggers on editions, variants, title overrides and work titles
 queue whole families in `work_title_language_dirty`; the search index worker
 rebuilds them in bounded batches.
+
+### LLM translation
+
+The `llm_providers` setting stores administrator-configured origins and the OpenAI-compatible, native Anthropic or Ollama protocol. Each endpoint declares an external or private data boundary and an explicit `allowSensitive` capability, off by default. API keys stay server-side; changing origin, preset or Ollama location clears the old key and model list. Provider saves advance a revision. Same-machine Ollama derives its origin on the server and discards a request-body address. All LLM requests use the shared outbound policy, including the configured private-origin exception, DNS pinning and refusal of redirects. Discovery has a 20-second timeout; translation requests have a 60-second timeout within a two-minute operation. Two operations may run concurrently, responses are limited to 2 MiB and encoded request bodies to 128 KiB.
+
+The `llm_content_policy` setting stores a revision, stable sensitive tag IDs, literal keyword rules and remote-lyrics opt-in. Validation rejects the whole invalid or excessive configuration. Rules have stable identities and explicit field scopes and actions; matching never recovers an action by keyword spelling. Assessment covers origin and manual title/description evidence and retained tags independently of fields sent. Manual age overrides cannot lower an original restriction. Explicitly selected lyrics are checked as complete text before chunking. Exact shared age-rating aliases identify known ratings; restricted ratings are sensitive. Blocking matches take priority at every rating. The all-ages option only skips additional sensitive keyword checks. Unknown and blocked content are refused; sensitive content requires an explicitly allowed private endpoint. Declared boundaries are routing policy, not a provider compliance or account safety guarantee.
+
+`llm_translation_preview` retains source and translated text, user, work, target language, fields, expiry and digests of source input, policy revision and provider configuration. It contains no API key. Synchronous previews expire after 15 minutes and workflow previews after 24 hours. Acceptance checks current permissions and re-evaluates policy and source hashes in a transaction; reviewed tokens cannot apply twice or belong to another user or work. Rejection and invalidation retain review status. Accepted fields live in `work_llm_translation` separately from original snapshots and manual overrides. Source-field changes retire the corresponding translation, and `work_llm_translation_review` retains values for replacement, revocation and restoration against matching source input. Ordinary metadata sync preserves accepted values.
+
+Tag candidates in `metadata_tag_llm_candidate` reuse the same concept, target
+language, source text, author and configuration/policy digests across works.
+They have no presentation effect. Confirmed names live in
+`metadata_tag_llm_name` with source text, provider, model and author. Known
+manual, provider and matching accepted names are reused. Confirmation changes
+shared language names without creating tags or changing work membership.
+Manual, dictionary and provider names precede LLM names. Risk evidence retains
+base IDs, hidden tags and every concept in a merge component independently of
+displayed names.
+
+`llm_lyrics_asset` keeps the confirmed result, original lyrics location, audio item, language and source hash before publication. An independent text asset is published on the online destination pool using rooted pool handles and same-filesystem staging/rename. Failed publication retains the result for recovery without another model request. Only an explicitly selected file is read; remote reads require opt-in and remote-fetch permission. Templates preserve timing and order for LRC, WebVTT, SRT, standard ASS Dialogue and plain text. Input and output are each bounded to 128 KiB, 4,000 source lines and 4,096 bytes per text line. Chunked requests check complete sending text first.
+
+`llm_translation_task` connects explicitly selected existing works to durable workflow jobs. Deduplication includes user, work, input hash, language, fields and configuration/policy revisions. Each outgoing chunk records requesting state before network access and retains its result before advancing. Restart resumes completed chunks and unsent work. Uncertain requests cannot retry automatically. Explicit acknowledgement can resubmit only to the original unchanged endpoint/model with unchanged policy, source and permissions; another charge may occur. Activity exposes fixed states and sanitized diagnostics, never credentials, origins, paths or full source text. Demo disables LLM configuration and translation.
 
 ### DLsite Genres
 
@@ -176,8 +198,8 @@ locale; an empty locale applies to all languages. Personal `user_tag` records
 remain account-owned and separate.
 
 A display name tries each locale of a priority in order: that locale's manual
-name, the universal manual name, then its genre dictionary name, then Japanese
-manual/dictionary names, then any known name. The edition token `origin` does
+name, the universal manual name, then its genre dictionary name, its provider name, and its accepted LLM name;
+Japanese names and any known name follow the same precedence. The edition token `origin` does
 not stop this dictionary fallback. The single stored `tag.display_name` always
 uses the `origin` priority. Synchronization and manual renaming refresh it.
 Dictionary learning and concept creation refresh only the changed concepts in
@@ -291,16 +313,17 @@ invalidation triggers on title, circle, series, and voice actor overrides also
 fire on a language-only update.
 
 Display title selection picks the first preferred language with its own manual
-title or DLsite edition, then shows its language manual title, the universal
-manual title, or that edition's title. A universal manual title replaces only
+title, provider edition or accepted translation, then shows its language manual title, the universal
+manual title, the matching provider edition title, an accepted machine title, or
+the original title. A universal manual title replaces only
 the text: it never selects an edition, so the default edition, description, and
 tags match the presentation without it. `origin` matches the canonical
 edition's declared language and never infers a language from text or request
 locale. Unknown origin languages use the universal manual title or original
-title. Manual titles without a corresponding provider edition use the original
-description; otherwise the description is read from the selected edition's work
-row. Missing translated introductions remain empty rather than silently
-borrowing Japanese text.
+title. Descriptions use a separate priority: the universal manual description, the
+matching provider introduction, then an accepted machine introduction. A title-only
+translation without a matching edition retains the original introduction. A
+matching edition without either introduction remains empty.
 
 `metadatatitles` holds the shared pure selection/display policy. Every
 non-canonical edition is a translation, independent of translator classification.
@@ -312,8 +335,8 @@ cards, search results, circle and voice actor lists without reading introduction
 Each edition list entry uses its own provider title, never a sibling's title.
 Detail variants carry their effective title and
 plain-text introduction, including manual-only language choices. Universal manual
-titles overlay existing choices without creating a language; only a specific
-manual language may add a choice. Unknown original languages stay unknown in
+titles overlay existing choices without creating a language; a specific manual language or accepted machine field may add a choice, and
+machine choices carry an LLM marker without adding a media edition. Unknown original languages stay unknown in
 the menu, selection and editor sources. All manual languages are
 indexed and scoped writes/reset invalidate search. A work without DLsite data
 falls back to the title a remote source filled (see

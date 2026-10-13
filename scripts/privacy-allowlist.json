@@ -180,6 +180,41 @@
       "reason": "Standard Apple property-list DOCTYPE identifier in Xcode-generated plists; it is not fetched."
     },
     {
+      "url": "https://api.openai.com",
+      "files": ["backend/internal/llm/config.go"],
+      "reason": "Public OpenAI API origin built into the administrator LLM provider preset."
+    },
+    {
+      "url": "https://api.anthropic.com",
+      "files": ["backend/internal/llm/config.go"],
+      "reason": "Public Anthropic API origin built into the administrator LLM provider preset."
+    },
+    {
+      "url": "https://generativelanguage.googleapis.com",
+      "files": ["backend/internal/llm/config.go"],
+      "reason": "Public Google Gemini API origin built into the administrator LLM provider preset."
+    },
+    {
+      "url": "https://api.deepseek.com",
+      "files": ["backend/internal/llm/config.go"],
+      "reason": "Public DeepSeek API origin built into the administrator LLM provider preset."
+    },
+    {
+      "url": "https://openrouter.ai",
+      "files": ["backend/internal/llm/config.go"],
+      "reason": "Public OpenRouter API origin built into the administrator LLM provider preset."
+    },
+    {
+      "url": "https://api.mistral.ai",
+      "files": ["backend/internal/llm/config.go"],
+      "reason": "Public Mistral API origin built into the administrator LLM provider preset."
+    },
+    {
+      "url": "https://api.groq.com",
+      "files": ["backend/internal/llm/config.go"],
+      "reason": "Public Groq API origin built into the administrator LLM provider preset."
+    },
+    {
       "url": "https://registry.npmjs.org/**",
       "files": ["frontend/package-lock.json"],
       "reason": "Public npm registry tarball URLs resolved in the npm lockfile."

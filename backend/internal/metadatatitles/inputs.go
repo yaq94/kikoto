@@ -124,29 +124,67 @@ func LoadInputs(ctx context.Context, db Querier, ids []int64, descriptions bool)
 			return nil, err
 		}
 		_ = rows.Close()
-		rows, err = db.QueryContext(ctx, `SELECT work_id,language,value_json FROM work_manual_override WHERE field_name='title' AND work_id IN (`+placeholders+`)`, args...)
+		machineValue := "CASE WHEN field_name='title' THEN value_text ELSE '' END"
+		machineSource := "CASE WHEN field_name='title' THEN source_text ELSE '' END"
+		if descriptions {
+			machineValue, machineSource = "value_text", "source_text"
+		}
+		rows, err = db.QueryContext(ctx, `SELECT work_id,language,field_name,value_json,'manual','' FROM work_manual_override WHERE field_name='title' AND work_id IN (`+placeholders+`)
+ UNION ALL SELECT work_id,language,field_name,`+machineValue+`,'llm',`+machineSource+` FROM work_llm_translation WHERE status='accepted' AND work_id IN (`+placeholders+`) ORDER BY work_id,language`, append(append([]any{}, args...), args...)...)
 		if err != nil {
 			return nil, err
 		}
+		machines := map[int64]map[string]Variant{}
 		for rows.Next() {
 			var id int64
-			var language, encoded, title string
-			if err := rows.Scan(&id, &language, &encoded); err != nil {
+			var language, field, value, kind, source string
+			if err := rows.Scan(&id, &language, &field, &value, &kind, &source); err != nil {
 				_ = rows.Close()
 				return nil, err
 			}
-			if json.Unmarshal([]byte(encoded), &title) == nil {
-				input, exists := result[id]
-				if exists {
+			input, exists := result[id]
+			if !exists {
+				continue
+			}
+			if kind == "manual" {
+				var title string
+				if json.Unmarshal([]byte(value), &title) == nil {
 					input.Manual[language] = title
 				}
+				continue
 			}
+			origin := Original(input.Variants, input.Fallback)
+			if field == "title" && source != origin.Title || field == "description" && descriptions && source != origin.Description {
+				continue
+			}
+			if machines[id] == nil {
+				machines[id] = map[string]Variant{}
+			}
+			v := machines[id][language]
+			v.Code, v.Language, v.LLM = origin.Code, language, true
+			if field == "title" {
+				v.Title = value
+			} else {
+				v.Description = value
+				v.LLMDescription = true
+			}
+			machines[id][language] = v
 		}
 		if err := rows.Err(); err != nil {
 			_ = rows.Close()
 			return nil, err
 		}
 		_ = rows.Close()
+		for id, languages := range machines {
+			input := result[id]
+			for _, language := range []string{"ja-jp", "zh-cn", "zh-tw", "en-us", "ko-kr"} {
+				if v, exists := languages[language]; exists {
+					input.Variants = append(input.Variants, v)
+				}
+			}
+			result[id] = input
+		}
+
 	}
 	return result, nil
 }

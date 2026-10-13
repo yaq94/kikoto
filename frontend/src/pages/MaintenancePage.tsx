@@ -34,8 +34,9 @@ import { api, type AppSettings, type FileSource, type LibraryLayout } from "@/li
 import { NAVIGATION_EVENT } from "@/lib/browserHistory";
 import { draftAfterSectionSave, sectionSettings } from "@/pages/settingsDraft";
 import { UsersPage } from "@/pages/UsersPage";
+import { LLMSettingsSection } from "@/features/maintenance/LLMSettingsSection";
 
-type MaintenanceTab = "library" | "cache" | "proxy" | "users";
+type MaintenanceTab = "library" | "cache" | "proxy" | "llm" | "users";
 
 type RuntimeDraft = {
   localScanDepth: number;
@@ -473,6 +474,8 @@ export function MaintenancePage({
               onSaved={setSettings}
             />
           </div>
+        ) : activeTab === "llm" ? (
+          <LLMSettingsSection readOnly={readOnly} />
         ) : activeTab === "users" ? (
           <div className="space-y-6">
             {canManageUsers && (

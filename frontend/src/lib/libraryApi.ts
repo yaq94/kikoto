@@ -5,6 +5,7 @@ export type Work = {
   id: number;
   primaryCode: string;
   title: string;
+  titleSource?: string;
   ageRating: string;
   createdAt: string;
   updatedAt: string;

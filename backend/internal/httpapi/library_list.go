@@ -177,6 +177,7 @@ type libraryWorkSummary struct {
 	ID                     int64                `json:"id"`
 	PrimaryCode            string               `json:"primaryCode"`
 	Title                  string               `json:"title"`
+	TitleSource            string               `json:"titleSource,omitempty"`
 	AgeRating              string               `json:"ageRating"`
 	CreatedAt              string               `json:"createdAt"`
 	UpdatedAt              string               `json:"updatedAt"`

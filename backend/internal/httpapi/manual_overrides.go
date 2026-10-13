@@ -539,8 +539,21 @@ func (s *Server) applyManualOverridesToDetail(ctx context.Context, work *workDet
 			break
 		}
 	}
+	if selectedTitle.Source == "llm" {
+		work.Title, work.Description = selectedTitle.Title, selectedTitle.Description
+		work.MetadataLanguage = selectedTitle.Language
+	}
 	if overrides.Description != nil {
 		work.Description = *overrides.Description
+		for i := range work.MetadataView.Variants {
+			work.MetadataView.Variants[i].Description = *overrides.Description
+			work.MetadataView.Variants[i].DescriptionSource = "manual"
+		}
+		for language, choice := range work.TitleChoices {
+			choice.Description = *overrides.Description
+			choice.DescriptionSource = "manual"
+			work.TitleChoices[language] = choice
+		}
 	}
 	if overrides.ReleaseDate != nil {
 		work.ReleaseDate = overrides.ReleaseDate

@@ -818,7 +818,8 @@ export const japaneseResource = {
           jellyfin: "再生イベントと定期的な進捗報告を組み合わせる方式。",
           comfy:
             "かつてのワークフローキャンバスの操作設計。Kikoto がソースコードを含めたり改変したりしたことはなく、キャンバスは @xyflow/react で独自に実装していましたが、現在は廃止されています。",
-          cherry: "AGENTS.md の設定方法、アプリケーションのバージョン管理、GitHub Actions の設計。",
+          cherry:
+            "AGENTS.md の設定方法、アプリケーションのバージョン管理、LLM サービスとモデル接続、GitHub Actions の設計。",
           uv: "GitHub Actions の plan ジョブ、再利用可能なワークフロー、単一のマージゲート。",
           tailscale: "race テストスイートを個々のテスト単位でシャードに分ける方式。",
           grafana: "パッケージ単位でテストをシャードに分ける方式。テスト単位の分割と比較する対象として検討しました。",

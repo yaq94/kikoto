@@ -59,6 +59,7 @@ export type WorkCardBadge = {
 };
 
 export type WorkCardViewModel = {
+  titleSource?: string;
   code: string;
   title: string;
   circle: string;
@@ -550,6 +551,15 @@ function WorkCardBody({
           title={work.title}
         >
           {work.title}
+          {work.titleSource === "llm" && (
+            <span
+              className="ml-1 rounded border px-1 text-[10px] font-normal text-muted-foreground"
+              title={t("workTitles.llm")}
+              aria-label={t("workTitles.llm")}
+            >
+              {t("workTitles.llmBadge")}
+            </span>
+          )}
         </h3>
         <div
           className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-left text-[0.8125rem] text-muted-foreground @max-[12.5rem]/work-card:text-xs"

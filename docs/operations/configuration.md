@@ -60,6 +60,13 @@ Administrators manage the instance from the administration tabs in Settings:
 - **Cache & Fetch**: playback and transcode cache limits, the remote per-file
   download limit, failed Fetch staging retention, and remote download pacing.
 - **Proxy**: outbound proxies and their scopes.
+- **LLM**: built-in or custom OpenAI-compatible, Anthropic-compatible, and
+  Ollama endpoints, discovered models, and the content safety policy. Service
+  origins are entered without protocol paths. The same-machine Ollama option
+  uses the server's host gateway and keeps its address read-only; a remote
+  Ollama instance accepts an administrator-entered origin.
+  [Settings → LLM](../user/en/settings.md#llm) defines credential clearing,
+  model discovery, declared content boundaries and structured safety rules.
 - **Cleanup**: cache cleanup and database backups.
 - **Users**: accounts and production instance access.
 

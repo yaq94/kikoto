@@ -1,6 +1,6 @@
 import { useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import { Image, Link2, Tags, Type, Users, type LucideIcon } from "lucide-react";
+import { Image, Link2, Sparkles, Tags, Type, Users, type LucideIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogBody, DialogFooter, DialogHeader } from "@/components/ui/dialog";
 import { toastFromError, useToast } from "@/components/ui/toast";
@@ -12,6 +12,7 @@ import { MetadataEditorFamilySection } from "./MetadataEditorFamilySection";
 import { MetadataEditorSourceSection, type StagedMetadataLink } from "./MetadataEditorSourceSection";
 import { MetadataEditorPurchaseBonusSection, type StagedPurchaseBonus } from "./MetadataEditorPurchaseBonusSection";
 import { WorkMetadataTagsSection } from "./WorkMetadataTagsSection";
+import { LLMTranslationDialog } from "./LLMTranslationDialog";
 import { WorkTitleEditor } from "./WorkTitleEditor";
 import { MetadataLanguageScopeTabs } from "./MetadataLanguageScopeTabs";
 import {
@@ -97,6 +98,7 @@ export function WorkMetadataEditorModal({
   const [stagedBonus, setStagedBonus] = useState<StagedPurchaseBonus>(null);
   const [saving, setSaving] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
+  const [translationOpen, setTranslationOpen] = useState(false);
   const [confirmingDiscard, setConfirmingDiscard] = useState(false);
   const tabRefs = useRef<Partial<Record<MetadataEditorSection, HTMLButtonElement | null>>>({});
 
@@ -217,6 +219,21 @@ export function WorkMetadataEditorModal({
     });
     toast.success(t("metadataEditor.previewSaved"));
     onSaved();
+  };
+
+  const applyTranslation = async (translation: import("@/lib/api").LLMTranslation) => {
+    setSaving(true);
+    try {
+      await api.applyTranslation(work.id, translation.previewId);
+      toast.success(t("llmTranslation.saved"));
+      setTranslationOpen(false);
+      onSaved();
+      onClose();
+    } catch (error) {
+      toast.notify(toastFromError(error, t("llmTranslation.saveFailed")));
+    } finally {
+      setSaving(false);
+    }
   };
 
   const onTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
@@ -381,6 +398,17 @@ export function WorkMetadataEditorModal({
                     {t("metadataEditor.fetchForEdit")}
                   </Button>
                 )}
+                {canSyncMetadata && !readOnly && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={dirty || saving}
+                    onClick={() => setTranslationOpen(true)}
+                  >
+                    <Sparkles className="h-4 w-4" />
+                    {t("llmTranslation.translate")}
+                  </Button>
+                )}
                 {refreshActions}
               </div>
               <span
@@ -422,6 +450,14 @@ export function WorkMetadataEditorModal({
         onClose={() => setPreviewOpen(false)}
         onApply={applyPreview}
       />
+      {translationOpen && (
+        <LLMTranslationDialog
+          work={work}
+          applying={saving}
+          onClose={() => setTranslationOpen(false)}
+          onApply={(translation) => void applyTranslation(translation)}
+        />
+      )}
     </>
   );
 }

@@ -34,6 +34,7 @@ export type MetadataVariantLabels = {
  */
 export function metadataVariantLabel(variant: WorkMetadataVariant, labels: MetadataVariantLabels): string {
   const label = labels.language(variant.language);
+  if (variant.key.startsWith("llm:")) return `${label} · LLM`;
   if (!variant.origin) return label;
   return variant.language.trim() ? `${labels.original} · ${label}` : labels.original;
 }
@@ -61,7 +62,11 @@ export function metadataLanguageChoices(
   const groups = new Map<string, WorkMetadataVariant[]>();
   for (const variant of variants) {
     const language = variant.language.trim().toLowerCase();
-    const key = language ? `language:${language}` : `edition:${variant.key}`;
+    const key = variant.key.startsWith("llm:")
+      ? variant.key
+      : language
+        ? `language:${language}`
+        : `edition:${variant.key}`;
     groups.set(key, [...(groups.get(key) ?? []), variant]);
   }
   return Array.from(groups, ([key, members]) => {

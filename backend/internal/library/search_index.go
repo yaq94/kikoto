@@ -291,6 +291,7 @@ func loadSearchDocuments(ctx context.Context, tx *sql.Tx, ids []int64) (map[int6
 		query string
 		field func(*searchDocument) *[]string
 	}{
+		{`SELECT work_id,value_text FROM work_llm_translation WHERE status='accepted' AND field_name='title' AND work_id IN (%s)`, func(d *searchDocument) *[]string { return &d.title }},
 		{`SELECT edition.work_id, alias.primary_code
 			FROM work_edition AS edition
 			INNER JOIN work_code_alias AS alias ON alias.logical_work_id = edition.logical_work_id
@@ -345,6 +346,7 @@ func loadSearchDocuments(ctx context.Context, tx *sql.Tx, ids []int64) (map[int6
    INNER JOIN tag AS alias ON alias.id = resolution.source_tag_id
    WHERE link.work_id IN (%s)`, func(d *searchDocument) *[]string { return &d.tag }},
 		// Compatibility while the startup backfill has not replaced legacy links.
+		{`SELECT link.work_id,name.name FROM work_tag link JOIN metadata_tag_resolution resolution ON resolution.resolved_tag_id=link.tag_id JOIN metadata_tag_llm_name name ON name.tag_id=resolution.source_tag_id WHERE link.work_id IN (%s)`, func(d *searchDocument) *[]string { return &d.tag }},
 		{`SELECT genre.work_id, name.name FROM work_dlsite_genre AS genre
    INNER JOIN dlsite_genre_name AS name ON name.genre_id=genre.genre_id
    WHERE NOT EXISTS (SELECT 1 FROM work_tag_override WHERE work_id=genre.work_id)

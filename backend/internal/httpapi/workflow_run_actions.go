@@ -69,6 +69,11 @@ func (s *Server) cancelWorkflowRun(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) cancelWorkflowRunTx(ctx context.Context, tx *sql.Tx, run workflowRunRecord, runID int64) (bool, error) {
+	if run.WorkflowCode == "llm_translation" {
+		if _, err := tx.ExecContext(ctx, `UPDATE llm_translation_task SET state=CASE WHEN state='requesting' THEN 'uncertain' ELSE 'cancelled' END,failure_code=CASE WHEN state='requesting' THEN 'cancelled_result_unknown' ELSE 'cancelled' END,updated_at=CURRENT_TIMESTAMP WHERE workflow_run_id=? AND state IN ('pending','failed','requesting')`, runID); err != nil {
+			return false, err
+		}
+	}
 	summary := mergeJSONObjects(run.SummaryJSON, map[string]any{"cancelled": true, "cancel_reason": "manual"})
 	if _, err := tx.ExecContext(ctx, `
 		UPDATE workflow_node_run
@@ -184,6 +189,8 @@ type workflowRetryDispatchResult struct {
 
 func (s *Server) dispatchWorkflowRetry(ctx context.Context, actor currentUser, run workflowRunRecord, runID int64) (workflowRetryDispatchResult, error) {
 	switch run.WorkflowCode {
+	case "llm_translation":
+		return s.retryLLMTranslationRun(ctx, actor, runID)
 	case "local_library_scan":
 		if !userHasPermission(actor, "metadata:sync") {
 			return workflowRetryDispatchResult{}, errWorkflowRetryPermission
@@ -467,7 +474,7 @@ func (s *Server) retryFailedWorkflowJobFor(ctx context.Context, actor *currentUs
 			AND worker_type IN (
 				'remote_work_fetch', 'remote_media_cache', 'remote_popular_collection',
 				'media_cache_limit_cleanup', 'media_cache_cleanup', 'local_media_delete', 'local_location_cleanup',
-				'media_location_cleanup', 'metadata_family_sync', 'custom_workflow', 'metadata_genre_names'
+				'media_location_cleanup', 'metadata_family_sync', 'custom_workflow', 'metadata_genre_names', 'llm_translation'
 			)
 		ORDER BY id DESC LIMIT 1
 	`, runID).Scan(
@@ -488,6 +495,8 @@ func (s *Server) retryFailedWorkflowJobFor(ctx context.Context, actor *currentUs
 // Graph jobs are checked against their graph by canRetryWorkflowGraphRun.
 func workflowJobRetryPermissions(job workflowJobRecord) []string {
 	switch job.WorkerType {
+	case "llm_translation":
+		return []string{"metadata:sync", "library:write", "workflows:run"}
 	case "remote_work_fetch", "remote_media_cache":
 		if job.WorkerType == "remote_work_fetch" {
 			return []string{"remote:fetch", "metadata:sync"}

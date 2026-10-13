@@ -183,6 +183,7 @@ function libraryWorkCardView(
   return {
     code: work.primaryCode,
     title: work.title,
+    titleSource: work.titleSource,
     circle: work.circle || i18n.t("workCard.unknownCircle"),
     circleExternalId: work.circleExternalId,
     ageRating: work.ageRating,

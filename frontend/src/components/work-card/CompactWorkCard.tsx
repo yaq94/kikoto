@@ -88,6 +88,15 @@ export function CompactWorkCardShell({
                   <CodeLine work={work} />
                   <h3 className="line-clamp-2 text-[0.9375rem] font-semibold leading-5" title={work.title}>
                     {work.title}
+                    {work.titleSource === "llm" && (
+                      <span
+                        className="ml-1 rounded border px-1 text-[10px] font-normal text-muted-foreground"
+                        title={t("workTitles.llm")}
+                        aria-label={t("workTitles.llm")}
+                      >
+                        {t("workTitles.llmBadge")}
+                      </span>
+                    )}
                   </h3>
                   <CreditLine work={work} onCircleOpen={circleOpen} onVoiceOpen={voiceOpen} />
                   <MetricLine work={work} className="mt-auto pt-0.5" />
@@ -113,6 +122,15 @@ export function CompactWorkCardShell({
                 <CodeLine work={work} />
                 <h3 className="line-clamp-2 min-h-10 text-sm font-semibold leading-5" title={work.title}>
                   {work.title}
+                  {work.titleSource === "llm" && (
+                    <span
+                      className="ml-1 rounded border px-1 text-[10px] font-normal text-muted-foreground"
+                      title={t("workTitles.llm")}
+                      aria-label={t("workTitles.llm")}
+                    >
+                      {t("workTitles.llmBadge")}
+                    </span>
+                  )}
                 </h3>
                 <CreditLine work={work} onCircleOpen={circleOpen} />
                 <MetricLine work={work} hidePrice className="mt-auto pt-0.5" />
@@ -124,6 +142,15 @@ export function CompactWorkCardShell({
               <div className="px-2 pb-2 pt-1.5">
                 <h3 className="line-clamp-2 min-h-9 text-[0.8125rem] font-medium leading-[1.125rem]" title={work.title}>
                   {work.title}
+                  {work.titleSource === "llm" && (
+                    <span
+                      className="ml-1 rounded border px-1 text-[10px] font-normal text-muted-foreground"
+                      title={t("workTitles.llm")}
+                      aria-label={t("workTitles.llm")}
+                    >
+                      {t("workTitles.llmBadge")}
+                    </span>
+                  )}
                 </h3>
               </div>
             </>

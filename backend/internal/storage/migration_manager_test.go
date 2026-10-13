@@ -16,7 +16,7 @@ import (
 
 var numberedMigrationFilePattern = regexp.MustCompile(`^[0-9]{3}_[a-z0-9][a-z0-9_]*\.sql$`)
 
-const latestNumberedMigrationVersion = 70
+const latestNumberedMigrationVersion = 74
 
 // latestReleasedBaseline is the newest file in migrations/baseline/, which
 // production uses for a fresh database.
@@ -119,8 +119,8 @@ func TestMigrateUpgradesExistingDatabaseThroughNumberedChain(t *testing.T) {
 	if err := db.QueryRow("SELECT filename FROM schema_migration WHERE version = ?", latestNumberedMigrationVersion).Scan(&filename); err != nil {
 		t.Fatal(err)
 	}
-	if filename != "070_media_location_content_hash.sql" {
-		t.Fatalf("applied migration = %q, want 070_media_location_content_hash.sql", filename)
+	if filename != "074_llm_lyrics_and_tasks.sql" {
+		t.Fatalf("applied migration = %q, want 074_llm_lyrics_and_tasks.sql", filename)
 	}
 }
 
@@ -244,7 +244,7 @@ func TestMigrateUpgradesRetiredBaselineLedger(t *testing.T) {
 			if err := rows.Err(); err != nil {
 				t.Fatal(err)
 			}
-			wantHistory := testCase.wantHistory + ",063_recommendation_catalog.sql,064_retire_source_health_check.sql,065_availability_watch_family.sql,066_contributor_role.sql,067_user_time_zone.sql,068_listening_hours.sql,069_lyrics_assignment_language.sql,070_media_location_content_hash.sql"
+			wantHistory := testCase.wantHistory + ",063_recommendation_catalog.sql,064_retire_source_health_check.sql,065_availability_watch_family.sql,066_contributor_role.sql,067_user_time_zone.sql,068_listening_hours.sql,069_lyrics_assignment_language.sql,070_media_location_content_hash.sql,071_llm_translation.sql,072_llm_review.sql,073_llm_tag_names.sql,074_llm_lyrics_and_tasks.sql"
 			if got := strings.Join(filenames, ","); got != wantHistory {
 				t.Fatalf("upgraded migration history = %q, want %q", got, wantHistory)
 			}

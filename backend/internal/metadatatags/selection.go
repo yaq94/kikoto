@@ -40,6 +40,7 @@ func FindByNames(ctx context.Context, q Querier, names []string) (map[string]int
 	rows, err := q.QueryContext(ctx, `SELECT tag.id,tag.display_name FROM tag INNER JOIN metadata_tag ON tag_id=tag.id
  UNION SELECT tag_id,name FROM metadata_tag_name
  UNION SELECT tag_id,name FROM metadata_tag_provider_name
+ UNION SELECT tag_id,name FROM metadata_tag_llm_name
  UNION SELECT concept.tag_id,name.name FROM metadata_tag AS concept INNER JOIN dlsite_genre_name AS name ON name.genre_id=concept.dlsite_genre_id ORDER BY 1`)
 	if err != nil {
 		return nil, err

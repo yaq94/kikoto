@@ -77,7 +77,13 @@ export function metadataTagLanguageName(
 ): MetadataTagName | undefined {
   const find = (source: string, nameLanguage: string) =>
     tag.names.find((name) => name.source === source && name.language === nameLanguage && name.name.trim() !== "");
-  return find("manual", language) ?? find("manual", "") ?? find("dlsite", language) ?? find("provider", language);
+  return (
+    find("manual", language) ??
+    find("manual", "") ??
+    find("dlsite", language) ??
+    find("provider", language) ??
+    find("llm", language)
+  );
 }
 
 /**

@@ -17,16 +17,19 @@ type Variant struct {
 	// RemoteSource names the remote source whose title the work row holds.
 	// Remote titles use only provider-declared edition languages. A title
 	// without such a declaration remains the languageless fallback.
-	RemoteSource string
+	RemoteSource   string
+	LLM            bool
+	LLMDescription bool
 }
 
 type Selection struct {
-	Title       string `json:"title"`
-	Language    string `json:"language"`
-	Source      string `json:"source"`
-	SourceName  string `json:"sourceName,omitempty"`
-	Code        string `json:"code"`
-	Description string `json:"description"`
+	Title             string `json:"title"`
+	Language          string `json:"language"`
+	Source            string `json:"source"`
+	SourceName        string `json:"sourceName,omitempty"`
+	Code              string `json:"code"`
+	Description       string `json:"description"`
+	DescriptionSource string `json:"descriptionSource,omitempty"`
 }
 
 // EditionLanguage preserves declared unsupported languages and never infers a
@@ -80,12 +83,27 @@ func ForLanguage(variants []Variant, manual map[string]string, language string, 
 		language = origin.Language
 	}
 	for _, variant := range variants {
-		if !originalRequested && language != "" && variant.Language == language && strings.TrimSpace(variant.Title) != "" {
+		if !variant.LLM && !originalRequested && language != "" && variant.Language == language && strings.TrimSpace(variant.Title) != "" {
 			selected, found = variant, true
 			break
 		}
 	}
-	result := Selection{Language: selected.Language, Code: selected.Code, Description: selected.Description}
+	var machine Variant
+	for _, variant := range variants {
+		if !originalRequested && variant.LLM && variant.Language == language {
+			machine = variant
+			break
+		}
+	}
+	result := Selection{Language: selected.Language, Code: selected.Code, Description: selected.Description, DescriptionSource: "original"}
+	if found {
+		result.DescriptionSource = "dlsite"
+	}
+	// A machine field fills only its own gap. A title never selects a media
+	// edition or suppresses the original introduction.
+	if strings.TrimSpace(machine.Description) != "" && (!found || strings.TrimSpace(selected.Description) == "") {
+		result.Description, result.DescriptionSource = machine.Description, "llm"
+	}
 	if title := strings.TrimSpace(manual[language]); language != "" && title != "" {
 		result.Title, result.Source, result.Language = title, "manual", language
 		return result, true
@@ -96,6 +114,14 @@ func ForLanguage(variants []Variant, manual map[string]string, language string, 
 		result.Source, result.SourceName = "remote", selected.RemoteSource
 	} else if found {
 		result.Source = "dlsite"
+	}
+	if !found && strings.TrimSpace(machine.Title) != "" {
+		result.Title, result.Source, result.Language = machine.Title, "llm", language
+		result.SourceName = ""
+		found = true
+	} else if !found && (machine.LLMDescription || strings.TrimSpace(machine.Description) != "") {
+		result.Language = language
+		found = true
 	}
 	if title := strings.TrimSpace(manual[""]); title != "" {
 		result.Title, result.Source, result.SourceName = title, "manual", ""

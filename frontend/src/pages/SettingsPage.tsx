@@ -13,6 +13,7 @@ import {
   Eraser,
   FastForward,
   Folder,
+  Bot,
   KeyRound,
   LoaderCircle,
   Network,
@@ -56,11 +57,11 @@ const emptyPasswordDraft: PasswordChangeDraft = {
 };
 
 type SettingsTab =
-  "account" | "playback" | "recommendation" | "tags" | "library" | "cache" | "proxy" | "cleanup" | "users";
+  "account" | "playback" | "recommendation" | "tags" | "library" | "cache" | "proxy" | "llm" | "cleanup" | "users";
 type SettingsSectionTarget = "data" | "time-zone";
 type SettingsLocation = { tab: SettingsTab; section?: SettingsSectionTarget };
 
-const adminSettingsTabs: SettingsTab[] = ["library", "cache", "proxy", "cleanup", "users"];
+const adminSettingsTabs: SettingsTab[] = ["library", "cache", "proxy", "llm", "cleanup", "users"];
 // Personal tags need library access; the other personal tabs do not.
 const libraryReaderTabs: SettingsTab[] = ["tags"];
 const allSettingsTabs: SettingsTab[] = ["account", "playback", "recommendation", "tags", ...adminSettingsTabs];
@@ -83,6 +84,7 @@ const settingsTabs: Array<{ id: SettingsTab; labelKey: string; icon: LucideIcon 
   { id: "library", labelKey: "maintenance.tabs.library", icon: Folder },
   { id: "cache", labelKey: "maintenance.tabs.cache", icon: Download },
   { id: "proxy", labelKey: "maintenance.tabs.proxy", icon: Network },
+  { id: "llm", labelKey: "maintenance.tabs.llm", icon: Bot },
   { id: "cleanup", labelKey: "cleanup.tab", icon: Eraser },
   { id: "users", labelKey: "maintenance.tabs.users", icon: Shield },
 ];
