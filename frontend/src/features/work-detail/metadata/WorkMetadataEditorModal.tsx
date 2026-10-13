@@ -399,7 +399,12 @@ export function WorkMetadataEditorModal({
                   </Button>
                 )}
                 {canSyncMetadata && !readOnly && (
-                  <Button variant="outline" size="sm" disabled={dirty || saving} onClick={() => setTranslationOpen(true)}>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={dirty || saving}
+                    onClick={() => setTranslationOpen(true)}
+                  >
                     <Sparkles className="h-4 w-4" />
                     {t("llmTranslation.translate")}
                   </Button>
