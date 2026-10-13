@@ -64,6 +64,10 @@
 
 - About lists its reference projects as compact credits, one line of project
   names per area. **Show details** adds what each project informed.
+- Settings -> LLM lists the configured providers and adds or edits each one in
+  a dialog. A provider's switch turns it on or off from the list, and deleting
+  one asks for confirmation. The content safety policy edits sensitive tags as
+  removable chips and keyword rules as compact rows.
 
 </details>
 

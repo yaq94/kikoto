@@ -145,7 +145,8 @@ test("LLM settings save connection drafts before discovery and edit structured c
     return route.fulfill({ json: policy });
   });
   await page.goto("/settings?tab=llm");
-  const connection = page.getByRole("region", { name: "Example LLM", exact: true });
+  await page.getByRole("button", { name: "Edit Example LLM", exact: true }).click();
+  const connection = page.getByRole("dialog", { name: "Edit LLM provider", exact: true });
   await connection.getByLabel("Endpoint", { exact: true }).fill("https://second.example.invalid");
   await connection.getByLabel("Default model", { exact: true }).fill("manual-model");
   await connection.getByLabel("Clear stored API key", { exact: true }).check();
@@ -157,11 +158,15 @@ test("LLM settings save connection drafts before discovery and edit structured c
     apiKey: "",
   });
   await expect(connection.getByLabel("Default model", { exact: true })).toHaveValue("manual-model");
-  await connection.getByLabel("Data boundary", { exact: true }).selectOption("private");
-  await connection.getByLabel("Allow sensitive content", { exact: true }).check();
+  await connection
+    .getByRole("radiogroup", { name: "Data boundary", exact: true })
+    .getByRole("radio", { name: "Private", exact: true })
+    .click();
+  await connection.getByRole("switch", { name: "Allow sensitive content", exact: true }).check();
   await connection.getByRole("button", { name: "Save", exact: true }).click();
   await expect.poll(() => writes.length).toBe(2);
   expect(writes[1]).toMatchObject({ boundary: "private", allowSensitive: true });
+  await expect(connection).toBeHidden();
   const rules = page.getByRole("region", { name: "Content safety policy", exact: true });
   await rules.getByRole("combobox", { name: "Sensitive metadata tags", exact: true }).fill("Example");
   await rules.getByRole("option", { name: "Example risk tag", exact: true }).click();
@@ -173,6 +178,95 @@ test("LLM settings save connection drafts before discovery and edit structured c
   await expect.poll(() => policy.tagIds).toEqual([1]);
   expect(policy.keywords[0]).toMatchObject({ term: "restricted phrase", fields: ["all", "lyrics"], action: "blocked" });
   expect(policy.keywords[0].id).toBeTruthy();
+});
+
+test("LLM settings add a provider in a dialog and confirm before deleting it", async ({ page }) => {
+  await application(page);
+  let providers: LLMProvider[] = [];
+  const created: Record<string, unknown>[] = [];
+  const updates: Record<string, unknown>[] = [];
+  await page.route("**/api/llm/providers", (route) => {
+    if (route.request().method() === "POST") {
+      const body = route.request().postDataJSON() as Record<string, unknown>;
+      created.push(body);
+      const next: LLMProvider = {
+        ...provider,
+        id: "synthetic-created",
+        name: "Custom OpenAI-compatible",
+        baseUrl: String(body.baseUrl),
+        hasApiKey: Boolean(body.apiKey),
+        defaultModel: "",
+      };
+      providers = [next];
+      return route.fulfill({ json: next });
+    }
+    return route.fulfill({
+      json: {
+        providers,
+        presets: [
+          {
+            id: "hosted",
+            name: "Hosted service",
+            kind: "openai",
+            defaultUrl: "https://hosted.example.invalid",
+            modelPath: "/v1/models",
+            boundary: "external",
+          },
+          {
+            id: "custom-openai",
+            name: "Custom OpenAI-compatible",
+            kind: "openai",
+            defaultUrl: "",
+            modelPath: "/v1/models",
+            boundary: "external",
+          },
+        ],
+        policy: { alwaysScanAllAges: false, tagIds: [], keywords: [] },
+      } satisfies ApiResponse<"listProviders">,
+    });
+  });
+  await page.route("**/api/llm/providers/synthetic-created", (route) => {
+    if (route.request().method() === "DELETE") {
+      providers = [];
+      return route.fulfill({ json: { ok: true } });
+    }
+    const body = route.request().postDataJSON() as Record<string, unknown>;
+    updates.push(body);
+    providers = [{ ...providers[0], ...body }];
+    return route.fulfill({ json: providers[0] });
+  });
+
+  await page.goto("/settings?tab=llm");
+  const list = page.getByRole("region", { name: "LLM providers", exact: true });
+  await expect(list.getByText("No LLM providers configured.", { exact: true })).toBeVisible();
+  await list.getByRole("button", { name: "Add provider", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Add LLM provider", exact: true });
+  await dialog.getByRole("radio", { name: "Custom OpenAI-compatible", exact: true }).click();
+  await dialog.getByRole("button", { name: "Add provider", exact: true }).click();
+  await expect(dialog.getByRole("alert")).toHaveText("Enter the endpoint for this provider.");
+  expect(created).toEqual([]);
+  await dialog.getByLabel("Endpoint", { exact: true }).fill("https://llm.example.invalid");
+  await dialog.getByLabel("API key", { exact: true }).fill("synthetic-key");
+  await dialog.getByRole("button", { name: "Add provider", exact: true }).click();
+  await expect(dialog).toBeHidden();
+  expect(created).toEqual([
+    expect.objectContaining({
+      presetId: "custom-openai",
+      kind: "openai",
+      baseUrl: "https://llm.example.invalid",
+      apiKey: "synthetic-key",
+      enabled: true,
+    }),
+  ]);
+
+  await list.getByRole("switch", { name: "Enable Custom OpenAI-compatible", exact: true }).uncheck();
+  await expect.poll(() => updates).toEqual([{ enabled: false }]);
+
+  await list.getByRole("button", { name: "Delete Custom OpenAI-compatible", exact: true }).click();
+  const confirm = page.getByRole("dialog", { name: "Delete LLM provider?", exact: true });
+  await expect(list.getByRole("button", { name: "Edit Custom OpenAI-compatible", exact: true })).toBeVisible();
+  await confirm.getByRole("button", { name: "Delete", exact: true }).click();
+  await expect(list.getByText("No LLM providers configured.", { exact: true })).toBeVisible();
 });
 
 test("LLM dialog prechecks without translation, uses minimal models and confirms the preview", async ({ page }) => {
