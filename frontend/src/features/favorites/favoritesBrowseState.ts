@@ -3,6 +3,8 @@ import { currentScopedStorageKey, type ClientPrincipalID } from "@/lib/clientSto
 
 export type FavoriteEntity = "works" | "circles" | "voices";
 export type FavoriteAvailability = "all" | "available" | "local" | "remote" | "missing";
+export const favoritePageSizeOptions = [24, 48, 96] as const;
+export type FavoritePageSize = (typeof favoritePageSizeOptions)[number];
 
 export type FavoritesBrowseState = {
   entity: FavoriteEntity;
@@ -11,7 +13,7 @@ export type FavoritesBrowseState = {
   availability: FavoriteAvailability;
   list: "all" | number;
   page: number;
-  pageSize: 24 | 48;
+  pageSize: FavoritePageSize;
   sort: FavoriteSort;
   direction: SortDirection;
   randomSeed: number;
@@ -75,7 +77,7 @@ export function favoritesBrowseStateFromSearch(
           ? listID
           : fallback.list,
     page: Number.isInteger(page) && page > 0 ? page : fallback.page,
-    pageSize: pageSize === 48 ? 48 : pageSize === 24 ? 24 : fallback.pageSize,
+    pageSize: favoritePageSizeOptions.find((option) => option === pageSize) ?? fallback.pageSize,
     sort: sorts.includes(sort as FavoriteSort) ? (sort as FavoriteSort) : fallback.sort,
     direction:
       params.get("direction") === "asc" || params.get("direction") === "desc"
@@ -111,7 +113,7 @@ export function favoritesBrowseStateFromValue(
       : fallback.availability,
     list: state.list === "all" ? "all" : Number.isInteger(listID) && listID > 0 ? listID : fallback.list,
     page: Number.isInteger(page) && page > 0 ? page : fallback.page,
-    pageSize: pageSize === 48 ? 48 : pageSize === 24 ? 24 : fallback.pageSize,
+    pageSize: favoritePageSizeOptions.find((option) => option === pageSize) ?? fallback.pageSize,
     sort: sorts.includes(sort as FavoriteSort) ? (sort as FavoriteSort) : fallback.sort,
     direction: state.direction === "asc" || state.direction === "desc" ? state.direction : fallback.direction,
     randomSeed:

@@ -5,8 +5,8 @@ import {
   libraryBrowseStateFromSearch,
   libraryBrowseStateFromValue,
   type LibraryColumnSetting,
-  type LocalWorkPageSize,
-  localWorkPageSizeOptions,
+  type LibraryPageSize,
+  libraryPageSizeOptions,
   readLibraryBrowseState,
   readLibrarySortPreference,
 } from "@/lib/libraryBrowseState";
@@ -38,7 +38,7 @@ export function createRandomSortSeed() {
   return (window.crypto.getRandomValues(new Uint32Array(1))[0] % 2147483646) + 1;
 }
 
-export type RemoteSourceViewState = { page: number; pageSize: number };
+export type RemoteSourceViewState = { page: number; pageSize: LibraryPageSize };
 
 export const defaultRemoteSourceViewState: RemoteSourceViewState = { page: 1, pageSize: 24 };
 
@@ -125,7 +125,7 @@ export function activeLibraryBrowseState({
   remoteSourceState: RemoteSourceViewState;
   searchQuery: string;
   workPage: number;
-  workPageSize: LocalWorkPageSize;
+  workPageSize: LibraryPageSize;
   statusFilter: ListeningStatus | "all";
   librarySort: LibrarySort;
   sortDirection: SortDirection;
@@ -161,7 +161,7 @@ export function libraryBrowseSurfaceState({
   optimisticSearchClauses: SearchClause[] | null;
   workTotal: number;
   workPage: number;
-  workPageSize: LocalWorkPageSize;
+  workPageSize: LibraryPageSize;
   activeTab: LibraryTab;
   remoteSourceState: RemoteSourceViewState;
 }) {
@@ -175,6 +175,6 @@ export function libraryBrowseSurfaceState({
     totalWorkPages,
     currentWorkPage: Math.min(workPage, totalWorkPages),
     activePageSize: remoteSelected ? remoteSourceState.pageSize : workPageSize,
-    activePageSizeOptions: remoteSelected ? ([12, 24, 48, 96] as const) : localWorkPageSizeOptions,
+    activePageSizeOptions: libraryPageSizeOptions,
   };
 }

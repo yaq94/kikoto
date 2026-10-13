@@ -62,7 +62,7 @@ describe("favorites browse state", () => {
 
   it("normalizes invalid values", () => {
     expect(
-      favoritesBrowseStateFromSearch("?entity=nope&page=-1&pageSize=96&list=bad&sort=nope&direction=sideways&seed=0"),
+      favoritesBrowseStateFromSearch("?entity=nope&page=-1&pageSize=12&list=bad&sort=nope&direction=sideways&seed=0"),
     ).toEqual(defaultFavoritesBrowseState);
   });
 
