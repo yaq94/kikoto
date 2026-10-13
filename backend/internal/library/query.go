@@ -608,6 +608,18 @@ func searchNumericClause(kind, needle string) (string, []any) {
 	}
 }
 
+// TextSearchWhereForUser returns the predicate of one plain-text needle over
+// the work table: text is matched literally and never parsed into search
+// clauses. It reads the work_search index, so callers run
+// Store.PrepareTextSearch first. An empty needle returns "".
+func TextSearchWhereForUser(text string, userID int64) (string, []any) {
+	folded := searchtext.Fold(strings.TrimSpace(text))
+	if folded == "" {
+		return "", nil
+	}
+	return searchTextClause(folded, userID)
+}
+
 func searchTextClause(folded string, userID int64) (string, []any) {
 	where, args := familySearchIndexClause("", folded, false)
 	if userID > 0 {

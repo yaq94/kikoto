@@ -521,6 +521,28 @@ func (s *Server) loadVoiceUserTagsBatch(ctx context.Context, userID int64) (map[
 }
 
 func (s *Server) loadVoiceKnownWorks(ctx context.Context, userID int64, personID int64) ([]voiceKnownWork, error) {
+	workRows, err := s.loadVoiceWorkRows(ctx, userID, personID, nil)
+	if err != nil {
+		return nil, err
+	}
+	works, _, err := s.buildVoiceKnownWorks(ctx, userID, workRows, nil)
+	return works, err
+}
+
+// loadVoiceWorkRows reads the works crediting the voice actor, newest release
+// first. A non-nil workIDs keeps only those works.
+func (s *Server) loadVoiceWorkRows(ctx context.Context, userID int64, personID int64, workIDs []int64) ([]voiceWorkRow, error) {
+	workWhere := ""
+	args := []any{userID, personID}
+	if workIDs != nil {
+		if len(workIDs) == 0 {
+			return []voiceWorkRow{}, nil
+		}
+		workWhere = " AND work.id IN (" + sqlPlaceholders(len(workIDs)) + ")"
+		for _, id := range workIDs {
+			args = append(args, id)
+		}
+	}
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT
 			work.id,
@@ -571,14 +593,15 @@ func (s *Server) loadVoiceKnownWorks(ctx context.Context, userID int64, personID
 			AND user_work_state.user_id = ?
 		WHERE credit.person_id = ?
 			AND credit.role = 'voice_actor'
+			`+workWhere+`
 		ORDER BY COALESCE(work.release_date, '') DESC, work.primary_code DESC
-	`, userID, personID)
+	`, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	// Close the cursor before enrichment queries so this request never holds
-	// one pooled connection while waiting for another.
+	// The caller's enrichment issues further queries, so the cursor releases
+	// its pooled connection before this returns.
 	workRows := []voiceWorkRow{}
 	for rows.Next() {
 		row, err := scanVoiceWorkRow(rows)
@@ -590,26 +613,35 @@ func (s *Server) loadVoiceKnownWorks(ctx context.Context, userID int64, personID
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
+	return workRows, rows.Close()
+}
+
+// buildVoiceKnownWorks enriches the rows and merges the editions of one work
+// into its newest row. groupOf names the work a row belongs to; nil groups by
+// the canonical code. The second result names each work's group.
+func (s *Server) buildVoiceKnownWorks(ctx context.Context, userID int64, workRows []voiceWorkRow, groupOf func(voiceWorkRow) string) ([]voiceKnownWork, []string, error) {
 	works := []voiceKnownWork{}
+	groups := []string{}
 	seen := map[string]int{}
 	for _, row := range workRows {
 		item, include, err := s.buildVoiceKnownWork(ctx, userID, row)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if !include {
 			continue
 		}
 		key := strings.ToUpper(strings.TrimSpace(item.PrimaryCode))
+		if groupOf != nil {
+			key = groupOf(row)
+		}
 		if index, ok := seen[key]; ok {
 			mergeVoiceKnownWork(&works[index], item)
 			continue
 		}
 		seen[key] = len(works)
 		works = append(works, item)
+		groups = append(groups, key)
 	}
 	workIDs := make([]int64, 0, len(works))
 	for _, work := range works {
@@ -617,15 +649,15 @@ func (s *Server) loadVoiceKnownWorks(ctx context.Context, userID int64, personID
 	}
 	tagsByWork, err := s.loadWorkUserTagsBatch(ctx, userID, workIDs)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	worksWithLyrics, err := s.loadWorksWithLyrics(ctx, workIDs)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	titles, err := s.loadWorkTitles(ctx, workIDs)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	for index := range works {
 		if title, ok := titles[works[index].WorkID]; ok {
@@ -634,7 +666,7 @@ func (s *Server) loadVoiceKnownWorks(ctx context.Context, userID int64, personID
 		works[index].UserTags = tagsByWork[works[index].WorkID]
 		works[index].HasLyrics = worksWithLyrics[works[index].WorkID]
 	}
-	return works, nil
+	return works, groups, nil
 }
 
 func (s *Server) buildVoiceKnownWork(ctx context.Context, userID int64, row voiceWorkRow) (voiceKnownWork, bool, error) {

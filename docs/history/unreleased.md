@@ -14,6 +14,9 @@
 
 - A voice actor's works are paged on the server. The search, the availability
   filter, and the chosen order apply across all of the voice actor's works
-  before a page is returned, and selection covers the page on screen.
+  before a page is returned, and selection covers the page on screen. The
+  search matches like a plain Library search, including titles in other
+  languages and voice actor names, and every edition of a work counts as one
+  work.
 
 </details>

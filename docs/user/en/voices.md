@@ -39,7 +39,11 @@ Voice pages present persisted person and credit data.
 - Paginates a voice actor's works on the server. Known works and the remote
   catalog merge into one list, and the search, the availability filter, and
   the chosen order apply before pagination; bulk selection covers the loaded
-  page. Person detail and the remote sources' catalog state load separately.
+  page. The search matches a work the way a plain Library search does, by
+  code, title, circle, voice actor, tag, or personal tag, and a work only the
+  remote catalog holds by its code, title, circle, or tag. Every edition of a
+  work counts as one work, available when any edition is. Person detail and
+  the remote sources' catalog state load separately.
   Remote source searches use bounded concurrency, while voice counts and user
   tags are aggregated in batches.
 - Keeps Favorite, the common refresh actions, and a **More** menu in the

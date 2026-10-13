@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -11,18 +12,17 @@ import (
 	"github.com/yexca/kikoto/backend/internal/config"
 )
 
-func TestMergeVoiceWorkViewsKeepsKnownIdentityWithItsRemoteObservations(t *testing.T) {
+func TestKnownVoiceWorkViewKeepsIdentityWithItsRemoteObservations(t *testing.T) {
 	known := voiceKnownWork{WorkID: 11, PrimaryCode: "RJ00000001", Title: "Example Work 1"}
-	origin := voiceCatalogRemoteWorkForTest("rj00000001", "RJ00000001", "available")
-	translation := voiceCatalogRemoteWorkForTest("rj00000001", "RJ00000002", "available")
-
-	views := mergeVoiceWorkViews([]voiceKnownWork{known}, []voiceRemoteSourceSet{
-		{SourceID: 7, Status: "ok", Works: []voiceRemoteWork{origin, translation}},
-	})
-	if len(views) != 1 || views[0].Known == nil || views[0].Known.WorkID != 11 {
-		t.Fatalf("views = %+v, want the one known work", views)
+	matches := []voiceRemoteWork{
+		voiceCatalogRemoteWorkForTest("rj00000001", "RJ00000001", "available"),
+		voiceCatalogRemoteWorkForTest("rj00000001", "RJ00000002", "available"),
 	}
-	merged := views[0].Known
+
+	merged := knownVoiceWorkView(known, matches).Known
+	if merged == nil || merged.WorkID != 11 {
+		t.Fatalf("view = %+v, want the known work", merged)
+	}
 	if merged.Remote {
 		t.Fatalf("remote = true, want the known work's own availability flag untouched")
 	}
@@ -35,67 +35,52 @@ func TestMergeVoiceWorkViewsKeepsKnownIdentityWithItsRemoteObservations(t *testi
 	}
 
 	known.RemoteCode = "RJ00000002"
-	views = mergeVoiceWorkViews([]voiceKnownWork{known}, []voiceRemoteSourceSet{
-		{SourceID: 7, Status: "ok", Works: []voiceRemoteWork{origin, translation}},
-	})
-	if got := voiceObservationCodes(views[0].Known.RemoteObservations); !reflect.DeepEqual(got, []string{"RJ00000002", "RJ00000001"}) {
+	merged = knownVoiceWorkView(known, matches).Known
+	if got := voiceObservationCodes(merged.RemoteObservations); !reflect.DeepEqual(got, []string{"RJ00000002", "RJ00000001"}) {
 		t.Fatalf("observations = %v, want the known exact edition first", got)
 	}
 }
 
-func TestMergeVoiceWorkViewsPrefersPersistedObservationWhenCatalogHasNoRow(t *testing.T) {
+func TestKnownVoiceWorkViewKeepsPersistedObservationWithoutCatalogRows(t *testing.T) {
 	known := voiceKnownWork{
 		WorkID: 11, PrimaryCode: "RJ00000001",
 		RemoteObservations: []voiceRemoteObservation{
 			{SourceID: 9, SourceCode: "example_remote_b", SourceName: "Example Remote B", RemoteCode: "RJ00000003", Status: "available"},
 		},
 	}
-	views := mergeVoiceWorkViews([]voiceKnownWork{known}, []voiceRemoteSourceSet{{SourceID: 9, Status: "error"}})
-	if len(views) != 1 || views[0].Known == nil {
-		t.Fatalf("views = %+v, want the one known work", views)
-	}
-	observations := views[0].Known.RemoteObservations
+	observations := knownVoiceWorkView(known, nil).Known.RemoteObservations
 	if len(observations) != 1 || observations[0].SourceID != 9 || observations[0].RemoteCode != "RJ00000003" || observations[0].Status != "available" {
 		t.Fatalf("observations = %+v, want the persisted exact source route", observations)
 	}
 }
 
-func TestMergeVoiceWorkViewsKeepsOneRemoteOnlyWorkPerCode(t *testing.T) {
+func TestRemoteVoiceWorkViewDescribesOneWorkAcrossSources(t *testing.T) {
 	missing := voiceCatalogRemoteWorkForTest("RJ00000004", "RJ00000004", "not_found")
-	missing.RemotePlayable, missing.HasRemote = false, false
 	other := missing
 	other.SourceID, other.SourceCode, other.SourceName = 8, "example_remote_b", "Example Remote B"
 
-	views := mergeVoiceWorkViews(nil, []voiceRemoteSourceSet{
-		{SourceID: 7, Status: "error", Works: []voiceRemoteWork{missing}},
-		{SourceID: 8, Status: "ok", Works: []voiceRemoteWork{other}},
-	})
-	if len(views) != 1 || views[0].Remote == nil || views[0].Remote.SourceID != 7 {
-		t.Fatalf("views = %+v, want one remote-only work from the first source", views)
+	view := remoteVoiceWorkView([]voiceRemoteWork{missing, other})
+	if view.Remote == nil || view.Remote.SourceID != 7 {
+		t.Fatalf("view = %+v, want the work described by its first catalog row", view)
 	}
-	if len(views[0].RemoteObservations) != 2 {
-		t.Fatalf("observations = %+v, want one per source", views[0].RemoteObservations)
-	}
-	if _, remote, _ := views[0].availability(); remote || !views[0].observedMissing() {
-		t.Fatalf("view = %+v, want an explicitly missing work", views[0])
+	if len(view.RemoteObservations) != 2 || view.RemoteObservations[0].Status != "not_found" {
+		t.Fatalf("observations = %+v, want one negative observation per source", view.RemoteObservations)
 	}
 }
 
-func TestFilterVoiceWorkViewsByAvailabilityAndQuery(t *testing.T) {
-	sourceID := int64(7)
-	observed := func(status string) []circleSourceStat {
-		return []circleSourceStat{{Key: "source:7", SourceID: &sourceID, DisplayName: "Example Remote A", Status: status}}
-	}
-	remoteOnly := voiceCatalogRemoteWorkForTest("RJ00000005", "RJ00000005", "available")
-	views := []voiceWorkView{
-		{Known: &voiceKnownWork{PrimaryCode: "RJ00000001", Title: "Example Work 1", Local: true}},
-		{Known: &voiceKnownWork{PrimaryCode: "RJ00000002", Title: "Example Work 2", SourceTags: observed("not_found")}},
-		{Known: &voiceKnownWork{PrimaryCode: "RJ00000003", Title: "Example Work 3", SourceTags: observed("error")}},
-		{Known: &voiceKnownWork{
-			PrimaryCode: "RJ00000004", Title: "Example Work 4", Cache: true,
-			UserTags: []workUserTag{{Name: "Example Tag"}},
-		}},
-		{Remote: &remoteOnly},
+func TestVoiceWorksPageFiltersAndOrdersInSQL(t *testing.T) {
+	server := voiceWorksPageFixture(t)
+	codes := func(query voiceWorksQuery) []string {
+		t.Helper()
+		query.Page, query.PageSize = 1, 24
+		page, err := server.loadVoiceWorksPage(context.Background(), 1, 1, query)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if page.Total != len(page.Works) {
+			t.Fatalf("total = %d with %d works on one page", page.Total, len(page.Works))
+		}
+		return voiceWorkViewCodes(page.Works)
 	}
 	for _, test := range []struct {
 		availability, query string
@@ -107,49 +92,76 @@ func TestFilterVoiceWorkViewsByAvailabilityAndQuery(t *testing.T) {
 		{"remote", "", []string{"RJ00000005"}},
 		// A source that failed, or was never checked, is not a missing work.
 		{"missing", "", []string{"RJ00000002"}},
+		// The search reads the Library search document, personal tags, and the catalog row.
+		{"all", "gamma", []string{"RJ00000003"}},
 		{"all", "example tag", []string{"RJ00000004"}},
 		{"all", "rj00000005", []string{"RJ00000005"}},
-		{"local", "work 4", []string{}},
+		{"all", "catalog tag", []string{"RJ00000005"}},
+		{"local", "epsilon", []string{}},
 	} {
-		if got := voiceWorkViewCodes(filterVoiceWorkViews(views, test.query, test.availability)); !reflect.DeepEqual(got, test.want) {
+		got := codes(voiceWorksQuery{Availability: test.availability, Query: test.query, Sort: "code", Direction: "asc"})
+		if !reflect.DeepEqual(got, test.want) {
 			t.Errorf("availability %q query %q = %v, want %v", test.availability, test.query, got, test.want)
 		}
 	}
-}
-
-func TestSortVoiceWorkViewsKeepsWorksWithoutTheFactLast(t *testing.T) {
-	known := func(code, title, releaseDate string, rating float64, sales int64) voiceWorkView {
-		return voiceWorkView{Known: &voiceKnownWork{
-			PrimaryCode: code, Title: title, ReleaseDate: &releaseDate, Rating: &rating, Sales: &sales,
-		}}
-	}
-	// A remote match can arrive without a release date, rating, or sales count.
-	bare := voiceCatalogRemoteWorkForTest("RJ00000003", "RJ00000003", "available")
-	bare.Title = "Delta"
-	works := []voiceWorkView{
-		known("RJ00000000", "Beta", "2024-03-01", 4.1, 300),
-		known("RJ00000001", "alpha", "2024-01-01", 4.9, 100),
-		known("RJ00000002", "Gamma", "2024-02-01", 4.5, 200),
-		{Remote: &bare},
-	}
+	// The catalog-only work has no release date, rating, or sales count, and
+	// stays last in either direction.
 	for _, test := range []struct {
 		sort, direction string
 		want            []string
 	}{
-		{"code", "asc", []string{"RJ00000000", "RJ00000001", "RJ00000002", "RJ00000003"}},
-		{"code", "desc", []string{"RJ00000003", "RJ00000002", "RJ00000001", "RJ00000000"}},
-		{"title", "asc", []string{"RJ00000001", "RJ00000000", "RJ00000003", "RJ00000002"}},
-		{"sales", "desc", []string{"RJ00000000", "RJ00000002", "RJ00000001", "RJ00000003"}},
-		{"release", "desc", []string{"RJ00000000", "RJ00000002", "RJ00000001", "RJ00000003"}},
-		{"release", "asc", []string{"RJ00000001", "RJ00000002", "RJ00000000", "RJ00000003"}},
-		{"rating", "desc", []string{"RJ00000001", "RJ00000002", "RJ00000000", "RJ00000003"}},
-		{"rating", "asc", []string{"RJ00000000", "RJ00000002", "RJ00000001", "RJ00000003"}},
+		{"code", "desc", []string{"RJ00000005", "RJ00000004", "RJ00000003", "RJ00000002", "RJ00000001"}},
+		{"title", "asc", []string{"RJ00000002", "RJ00000001", "RJ00000005", "RJ00000004", "RJ00000003"}},
+		{"sales", "desc", []string{"RJ00000001", "RJ00000003", "RJ00000002", "RJ00000004", "RJ00000005"}},
+		{"release", "desc", []string{"RJ00000001", "RJ00000003", "RJ00000002", "RJ00000004", "RJ00000005"}},
+		{"release", "asc", []string{"RJ00000004", "RJ00000002", "RJ00000003", "RJ00000001", "RJ00000005"}},
+		{"rating", "desc", []string{"RJ00000002", "RJ00000003", "RJ00000001", "RJ00000004", "RJ00000005"}},
+		{"rating", "asc", []string{"RJ00000004", "RJ00000001", "RJ00000003", "RJ00000002", "RJ00000005"}},
 	} {
-		sorted := append([]voiceWorkView{}, works...)
-		sortVoiceWorkViews(sorted, test.sort, test.direction)
-		if got := voiceWorkViewCodes(sorted); !reflect.DeepEqual(got, test.want) {
+		got := codes(voiceWorksQuery{Availability: "all", Sort: test.sort, Direction: test.direction})
+		if !reflect.DeepEqual(got, test.want) {
 			t.Errorf("sort %s %s = %v, want %v", test.sort, test.direction, got, test.want)
 		}
+	}
+}
+
+func TestVoiceWorksPagePagesOneLogicalWorkPerEditionFamily(t *testing.T) {
+	db := openMigratedTestDB(t)
+	execVoiceWorksFixture(t, db,
+		"INSERT INTO person (id, display_name) VALUES (1, 'Example Voice')",
+		// Works 1 and 2 are the origin and a translation of one logical work.
+		"INSERT INTO work (id, primary_code, title, release_date) VALUES (1, 'RJ00000001', 'Example Work 1', '2024-01-01'), (2, 'RJ00000002', 'Example Work 1 translated', '2024-06-01'), (3, 'RJ00000003', 'Example Work 3', '2024-03-01')",
+		"INSERT INTO logical_work (id, canonical_work_id, canonical_code) VALUES (1, 1, 'RJ00000001')",
+		"INSERT INTO work_edition (work_id, logical_work_id, primary_code, base_code, is_canonical) VALUES (1, 1, 'RJ00000001', 'RJ00000001', 1), (2, 1, 'RJ00000002', 'RJ00000001', 0)",
+		"INSERT INTO work_credit (work_id, person_id, role, source) VALUES (1, 1, 'voice_actor', 'test'), (2, 1, 'voice_actor', 'test'), (3, 1, 'voice_actor', 'test')",
+		"INSERT INTO file_source (id, code, display_name, source_type, enabled) VALUES (10, 'example_local', 'Example Local', 'local_scan', 1)",
+		// Only the translation has a local copy.
+		"INSERT INTO media_item (id, work_id, kind, title) VALUES (21, 2, 'audio', 'Track 1')",
+		"INSERT INTO media_file_location (id, media_item_id, file_source_id, location_type, path, availability) VALUES (31, 21, 10, 'local', 'RJ00000002/track.mp3', 'available')",
+	)
+	server := NewServer(db, config.Config{})
+
+	first, err := server.loadVoiceWorksPage(context.Background(), 0, 1, voiceWorksQuery{Page: 1, PageSize: 1, Availability: "all"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The family is ordered by its newest edition and counted once.
+	if first.Total != 2 || len(first.Works) != 1 || first.Works[0].Known == nil || first.Works[0].Known.PrimaryCode != "RJ00000001" || !first.Works[0].Known.Local {
+		t.Fatalf("first page = %+v, want the one logical work with its translation's local copy", first)
+	}
+	second, err := server.loadVoiceWorksPage(context.Background(), 0, 1, voiceWorksQuery{Page: 2, PageSize: 1, Availability: "all"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Page != 2 || !reflect.DeepEqual(voiceWorkViewCodes(second.Works), []string{"RJ00000003"}) {
+		t.Fatalf("second page = %+v, want the other work", second)
+	}
+	local, err := server.loadVoiceWorksPage(context.Background(), 0, 1, voiceWorksQuery{Page: 1, PageSize: 24, Availability: "local"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if local.Total != 1 || !reflect.DeepEqual(voiceWorkViewCodes(local.Works), []string{"RJ00000001"}) {
+		t.Fatalf("local works = %+v, want the family holding a local edition", local)
 	}
 }
 
@@ -260,6 +272,63 @@ func TestVoiceWorksEndpointPagesKnownAndRemoteCatalogWorks(t *testing.T) {
 	get("/api/voices/1/remote-matches?includeWorks=false", &matches)
 	if len(matches.RemoteMatches) != 1 || matches.RemoteMatches[0].Total != 3 || len(matches.RemoteMatches[0].Works) != 0 {
 		t.Fatalf("remote matches = %+v, want the source state and total without its works", matches.RemoteMatches)
+	}
+}
+
+// voiceWorksPageFixture builds one voice actor with four credited works and
+// one catalog-only work:
+//
+//	RJ00000001 Beta     local copy
+//	RJ00000002 alpha    reported absent by the remote source
+//	RJ00000003 Gamma    remote source check failed
+//	RJ00000004 Epsilon  cached copy, personal tag "Example Tag"
+//	RJ00000005 Delta    remote catalog only, without release date, rating, or sales
+func voiceWorksPageFixture(t *testing.T) *Server {
+	t.Helper()
+	db := openMigratedTestDB(t)
+	execVoiceWorksFixture(t, db,
+		"INSERT INTO user_account (id, username, role) VALUES (1, 'synthetic-user', 'user')",
+		"INSERT INTO person (id, display_name) VALUES (1, 'Example Voice')",
+		`INSERT INTO work (id, primary_code, title, release_date, rating_average, sales_count) VALUES
+			(1, 'RJ00000001', 'Beta', '2024-03-01', 4.1, 300),
+			(2, 'RJ00000002', 'alpha', '2024-01-01', 4.9, 100),
+			(3, 'RJ00000003', 'Gamma', '2024-02-01', 4.5, 200),
+			(4, 'RJ00000004', 'Epsilon', '2023-12-01', 3.0, 50)`,
+		"INSERT INTO work_credit (work_id, person_id, role, source) VALUES (1, 1, 'voice_actor', 'test'), (2, 1, 'voice_actor', 'test'), (3, 1, 'voice_actor', 'test'), (4, 1, 'voice_actor', 'test')",
+		"INSERT INTO file_source (id, code, display_name, source_type, enabled) VALUES (10, 'example_local', 'Example Local', 'local_scan', 1), (11, 'example_remote_a', 'Example Remote A', 'kikoeru_compatible', 1)",
+		"INSERT INTO file_source_endpoint (file_source_id, base_url, api_url) VALUES (11, 'https://source.example.invalid', 'https://source.example.invalid/api')",
+		"INSERT INTO media_item (id, work_id, kind, title) VALUES (21, 1, 'audio', 'Track 1'), (24, 4, 'audio', 'Track 1')",
+		`INSERT INTO media_file_location (id, media_item_id, file_source_id, location_type, path, availability) VALUES
+			(31, 21, 10, 'local', 'RJ00000001/track.mp3', 'available'),
+			(34, 24, 11, 'cache', 'cache/RJ00000004/track.mp3', 'available')`,
+		`INSERT INTO work_source_presence (work_id, file_source_id, presence_type, remote_code, availability) VALUES
+			(2, 11, 'source', 'RJ00000002', 'not_found'),
+			(3, 11, 'source', 'RJ00000003', 'error')`,
+		"INSERT INTO user_tag (id, user_id, name) VALUES (1, 1, 'Example Tag')",
+		"INSERT INTO user_work_tag (user_id, work_id, user_tag_id) VALUES (1, 4, 1)",
+	)
+	server := NewServer(db, config.Config{})
+	source := remoteSourceForUse{ID: 11, Code: "example_remote_a", DisplayName: "Example Remote A", Enabled: true, SourceType: sourceTypeKikoeruCompatible}
+	if _, err := server.persistVoiceCatalogSource(context.Background(), 1, 1, voiceCatalogSourceResult{
+		Source: source, Complete: true,
+		Candidates: []voiceCatalogCandidate{{
+			CanonicalCode: "RJ00000005", RemoteCode: "RJ00000005", RawJSON: "{}",
+			Projection: remoteCatalogWorkProjection{
+				RemoteID: "RJ00000005", RemoteCode: "RJ00000005", Title: "Delta", Tags: []string{"Catalog Tag"}, VoiceActors: []string{},
+			},
+		}},
+	}, true); err != nil {
+		t.Fatal(err)
+	}
+	return server
+}
+
+func execVoiceWorksFixture(t *testing.T, db *sql.DB, statements ...string) {
+	t.Helper()
+	for _, statement := range statements {
+		if _, err := db.Exec(statement); err != nil {
+			t.Fatalf("%v: %s", err, statement)
+		}
 	}
 }
 
