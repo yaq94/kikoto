@@ -120,7 +120,9 @@ func run() error {
 	slog.Info("kikoto api listening", "addr", cfg.HTTPAddr)
 	server.Go(server.RunStatisticsMaintenance)
 	server.Go(server.RunSearchIndexWorker)
-	if !cfg.IsDemo() {
+	if cfg.IsDemo() {
+		server.Go(server.RunDemoListeningRefresh)
+	} else {
 		server.Go(server.RunRecommendationWorker)
 		server.Go(server.ResumeLibraryMigration)
 		server.Go(func(ctx context.Context) {

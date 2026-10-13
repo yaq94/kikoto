@@ -6,7 +6,6 @@ import (
 	"fmt"
 
 	"github.com/yexca/kikoto/backend/internal/account"
-	"github.com/yexca/kikoto/backend/internal/contentpolicy"
 )
 
 // Demo favorites are disposable presentation data owned by the read-only Demo
@@ -27,13 +26,7 @@ func seedDemoFavorites(ctx context.Context, tx *sql.Tx) error {
 		}
 	}
 
-	// A local presence alone is insufficient: the work must also pass Demo's
-	// all-age, permanently-free policy before it can appear on a personal shelf.
-	eligibleWork := contentpolicy.DemoEligibleWorkSQL("work") + `
-		AND EXISTS (SELECT 1 FROM work_source_presence AS presence
-			JOIN file_source AS source ON source.id = presence.file_source_id
-			WHERE presence.work_id = work.id AND presence.presence_type = 'local'
-				AND presence.availability = 'available' AND source.source_type = 'local_folder')`
+	eligibleWork := demoShelfWorkSQL
 	workIDs, err := demoRandomIDs(ctx, tx, "SELECT work.id FROM work WHERE "+eligibleWork+" ORDER BY RANDOM() LIMIT 12")
 	if err != nil {
 		return err

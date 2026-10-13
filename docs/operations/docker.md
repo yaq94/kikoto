@@ -225,6 +225,15 @@ stream, so it can remain visible during a long-lived Demo deployment. Actual
 but are not exposed through the public workflow-run API. Repeated starts replace
 the examples and remove Tracked examples that no longer pass admission.
 
+Demo rejects every write, so no visitor's listening is recorded. Insights
+instead shows a simulated listening history of the Demo account over the
+admitted local works: plays, listening days, and hours of the day for the last
+400 days, with ratings on the works it plays most. It names no work of its own;
+it plays whichever works pass admission. Each day's listening depends only on
+its date, so the past stays the same across restarts, and a running Demo
+extends the history every hour. Insights states above the dashboard that the
+history is simulated.
+
 `./demo/config` contains the isolated Demo SQLite database. `./demo/cache` contains only isolated or sanitized assets; startup
 may add covers after the provider eligibility check. Never point a public Demo
 deployment at production or personal runtime directories. The

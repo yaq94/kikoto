@@ -245,7 +245,8 @@ viewer read LRC, WebVTT, and SRT files the same way.
   equivalent list for assistive technology. Report requests name the device's time zone, and the foot of the page
   names the zone its days follow with a link to the Account setting. The calendar, the report, the profile, and the rankings load independently, so one
   failed request leaves the others on screen. The app shell composes each
-  work, tag, voice, and circle link.
+  work, tag, voice, and circle link. Demo shows a notice above the dashboard
+  that its listening history is simulated.
 - Metadata: a Works group for saved metadata and attention categories, and an
   Entries group for Tags, Circles, and Voice actors. Each entry view owns a
   searchable table and management dialog. Tag and circle edits require

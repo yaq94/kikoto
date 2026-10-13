@@ -2,7 +2,7 @@ import { expect, test, type Page, type Route } from "@playwright/test";
 
 import { syntheticWorkCode } from "../../src/test-support/workCode";
 import type { DatedListeningReport, PlaybackReport } from "../../src/lib/playbackReportApi";
-import { authenticatedStateFixture } from "./fixtures/api";
+import { authenticatedStateFixture, runtimeSettingsFixture } from "./fixtures/api";
 import { playbackReportResultFixture, readPlaybackReportOutbox } from "./fixtures/playback-reports";
 import { mockApplication, queuedTrackFixture, seedPlayerQueue, silentWav } from "./fixtures/player-library";
 
@@ -485,6 +485,35 @@ test("@desktop the taste profile says what the listening leans toward", async ({
   await expect(profile.getByText("You 1 h 30 min · Library 1 h 0 min", { exact: true })).toBeVisible();
   // The radar's figures are also a list for assistive technology.
   await expect(profile.getByRole("listitem")).toHaveCount(3);
+});
+
+test("@desktop Demo says its listening history is simulated and offers no way to clear it", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await mockApplication(page, undefined, false, 1, 0, [], undefined, { authenticated: true });
+  await mockListeningServer(page);
+  await page.goto("/insights");
+  // An ordinary account sees its own history without the notice.
+  await expect(page.getByRole("region", { name: "Taste profile" })).toBeVisible();
+  await expect(page.getByText(/this listening history is simulated/)).toHaveCount(0);
+
+  await page.route("**/api/runtime-settings", (route) =>
+    route.fulfill({ json: runtimeSettingsFixture({ mode: "demo", demoMode: true }) }),
+  );
+  await page.route("**/api/auth/me", (route) =>
+    route.fulfill({
+      json: authenticatedStateFixture({
+        username: "__demo__",
+        displayName: "Demo",
+        role: "user",
+        permissions: ["library:read", "playback:use"],
+        demoMode: true,
+      }),
+    }),
+  );
+  await page.goto("/insights");
+  await expect(page.getByRole("status").filter({ hasText: "this listening history is simulated" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Taste profile" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Clear history" })).toHaveCount(0);
 });
 
 test("@desktop the listening dashboard ranks tags, voices, and circles and links each to its page", async ({

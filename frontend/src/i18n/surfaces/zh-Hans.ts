@@ -364,6 +364,7 @@ export const surfaceHans = {
     demoRemoteSourceNotice:
       "演示模式：{{source}} 是模拟的远程来源，并非真实服务器。其中的作品是从本演示的本地作品中随机选取的。",
     demoWorksNotice: "演示模式：作品仅用于演示，版权归原作者所有。",
+    demoListeningNotice: "演示模式：这里的收听记录是模拟生成的，并非真实收听；演示中的播放也不会被记录。",
     permissionDenied: "您的账户没有使用此功能的权限。",
   },
   workflow: {

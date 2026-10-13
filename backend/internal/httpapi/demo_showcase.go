@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/yexca/kikoto/backend/internal/workflow"
 )
@@ -68,6 +69,10 @@ func (s *Server) SeedDemoShowcase(ctx context.Context) error {
 		}
 	}
 	if err := seedDemoFavorites(ctx, tx); err != nil {
+		return err
+	}
+	// After the favorites, which reset the account's work state the ratings join.
+	if err := seedDemoListening(ctx, tx, time.Now()); err != nil {
 		return err
 	}
 	return tx.Commit()

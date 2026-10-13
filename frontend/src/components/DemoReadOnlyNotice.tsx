@@ -27,6 +27,12 @@ export function DemoRemoteSourceNotice({ sourceName }: { sourceName: string }) {
   return <DemoNotice message={t("permissions.demoRemoteSourceNotice", { source: sourceName })} />;
 }
 
+/** Demo rejects every write, so its listening history is simulated; say so above the listening dashboard. */
+export function DemoListeningNotice() {
+  const { t } = useTranslation();
+  return <DemoNotice message={t("permissions.demoListeningNotice")} />;
+}
+
 function DemoNotice({ message }: { message: string }) {
   return (
     <div

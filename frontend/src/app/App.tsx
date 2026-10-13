@@ -682,6 +682,7 @@ function AuthenticatedApp() {
                       workLink: listeningHistoryWorkLink,
                       entityLink: listeningEntityLink,
                     }}
+                    demoMode={auth.demoMode}
                     onOpenPath={openPath}
                   />
                 )}
