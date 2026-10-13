@@ -125,11 +125,11 @@ The Library is the main browsing surface for works.
   column settings remain shared. A source cannot restore stale query text after
   the user clears it elsewhere.
 - Keeps the active Local, Tracked, or remote-source page size in the toolbar's
-  display options. Local and Tracked offer 24, 48, or 96 works per page, and
-  remote sources also offer 12. Wide screens show a compact top pagination
-  with result context and page navigation. Phones show the result count and
-  the current page as a caption above the works and change pages from the
-  bottom pagination.
+  display options. Local, Tracked, and remote sources all offer 24, 48, or 96
+  works per page. Wide screens show a compact top pagination with result
+  context and page navigation. Phones show the result count and the current
+  page as a caption above the works and change pages from the bottom
+  pagination.
 - Keeps database cleanup out of Library. Metadata -> No available source
   provides paged search, source checks, and confirmed local-information
   deletion for logical families with no available source or media location.

@@ -23,6 +23,9 @@
   directory, lists one folder at a time in **Manage files**, and tells a
   library manager how to bring the copies into one. The same notice appears
   when another edition of the work is in the library.
+- The Library and Favorites offer 24, 48, or 96 works per page on every tab.
+  Remote sources drop the 12-per-page choice, and a device that had chosen it
+  shows 24. Favorites gains 96.
 
 </details>
 
@@ -64,5 +67,16 @@
 - Insights in Demo shows a simulated listening history over the admitted
   works, with a notice that it is simulated. Demo records no listening, so the
   dashboard was empty there.
+</details>
+
+<details>
+<summary><strong>Circles and voice actors</strong></summary>
+
+- A voice actor's works are paged on the server. The search, the availability
+  filter, and the chosen order apply across all of the voice actor's works
+  before a page is returned, and selection covers the page on screen. The
+  search matches like a plain Library search, including titles in other
+  languages and voice actor names, and every edition of a work counts as one
+  work.
 
 </details>

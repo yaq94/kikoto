@@ -52,6 +52,7 @@ import { useFavoriteViewMode } from "@/features/favorites/favoriteViewMode";
 import { useFavoriteShelfCovers } from "@/features/favorites/useFavoriteShelfCovers";
 import {
   defaultFavoritesBrowseState,
+  favoritePageSizeOptions,
   favoritesBrowseSearch,
   favoritesBrowseStateFromSearch,
   favoritesBrowseStateFromValue,
@@ -61,6 +62,7 @@ import {
   writeFavoritesBrowseState,
   type FavoriteAvailability,
   type FavoriteEntity,
+  type FavoritePageSize,
   type FavoritesBrowseState,
 } from "@/features/favorites/favoritesBrowseState";
 import { useBrowseHistoryState } from "@/hooks/useBrowseHistoryState";
@@ -81,7 +83,6 @@ import { currentClientStorageScope } from "@/lib/clientStorageScope";
 import { defaultLibraryBrowseState, libraryLocation } from "@/lib/libraryBrowseState";
 import { loadAllPages } from "@/lib/pagedList";
 
-const pageSizeOptions = [24, 48] as const;
 // The largest page the creator list endpoints serve.
 const favoriteCreatorPageSize = 100;
 
@@ -89,7 +90,6 @@ function createFavoriteRandomSeed() {
   return (window.crypto.getRandomValues(new Uint32Array(1))[0] % 2147483646) + 1;
 }
 
-type PageSize = (typeof pageSizeOptions)[number];
 type AvailabilityFilter = FavoriteAvailability;
 
 type FavoritesEntryState = {
@@ -134,7 +134,7 @@ export function FavoritesPage({ active = true }: { active?: boolean }) {
   const [availabilityFilter, setAvailabilityFilter] = useState<AvailabilityFilter>(initialBrowseState.availability);
   const [activeList, setActiveList] = useState<"all" | number>(initialBrowseState.list);
   const [page, setPage] = useState(initialBrowseState.page);
-  const [pageSize, setPageSize] = useState<PageSize>(initialBrowseState.pageSize);
+  const [pageSize, setPageSize] = useState<FavoritePageSize>(initialBrowseState.pageSize);
   const [sort, setSort] = useState<FavoriteSort>(initialBrowseState.sort);
   const [sortDirection, setSortDirection] = useState<SortDirection>(initialBrowseState.direction);
   const [randomSeed, setRandomSeed] = useState(initialBrowseState.randomSeed);
@@ -578,7 +578,7 @@ export function FavoritesPage({ active = true }: { active?: boolean }) {
     setPage(1);
   };
 
-  const changePageSize = (value: PageSize) => {
+  const changePageSize = (value: FavoritePageSize) => {
     setPageSize(value);
     setPage(1);
   };
@@ -920,8 +920,8 @@ export function FavoritesPage({ active = true }: { active?: boolean }) {
                       showColumns={viewMode === "grid"}
                       view={{ mode: viewMode, onChange: setViewMode }}
                       pageSize={pageSize}
-                      pageSizeOptions={pageSizeOptions}
-                      onPageSizeChange={(value) => changePageSize(value as PageSize)}
+                      pageSizeOptions={favoritePageSizeOptions}
+                      onPageSizeChange={(value) => changePageSize(value as FavoritePageSize)}
                     />
                     <FavoriteSelectionToggle active={selectionMode} onToggle={toggleSelectionMode} />
                   </div>

@@ -162,6 +162,14 @@ retryable errors. The list returns `recommendationContext` for owner- and
 generation-validated query explanations. Count, complex filters, deep offsets,
 and large user feedback profiles retain their corresponding read costs.
 
+Circle and voice actor work pages follow the same shape: one statement selects,
+filters, orders, and counts the logical works, and only the selected page is
+enriched. A voice actor's logical works are the canonical codes of the works
+crediting them plus the codes of their remote catalog, so every edition of a
+work counts once. The availability filter reads the available media locations
+and source presence of a work's editions and the catalog's source rows; the
+search reads the editions' Library search documents and the catalog row.
+
 Public errors use a stable code and retryability decision without returning raw
 database, upstream, endpoint, or filesystem details. Logs and workflow Activity
 may retain protected diagnostics when they are necessary to operate the

@@ -21,6 +21,7 @@ import {
   voiceCatalogRefreshFixture,
   voiceDetailFixture,
   voiceKnownWorkFixture,
+  voiceWorksPageFixture,
   voiceSummaryFixture,
   voiceSummaryPageFixture,
   workDetailFixture,
@@ -217,19 +218,16 @@ async function mockBrowsePages(page: Page, requests: Record<string, number>, opt
     }
     if (url.pathname === "/api/voices/7/works") {
       await route.fulfill({
-        json: {
-          personId: 7,
-          works: [
-            voiceKnownWorkFixture({
-              primaryCode: cachedWork.primaryCode,
-              workId: cachedWork.id,
-              title: cachedWork.title,
-              circle: cachedWork.circle,
-              circleExternalId: cachedCircle.externalId,
-              local: true,
-            }),
-          ],
-        } satisfies ApiResponse<"getVoiceWorks">,
+        json: voiceWorksPageFixture([
+          voiceKnownWorkFixture({
+            primaryCode: cachedWork.primaryCode,
+            workId: cachedWork.id,
+            title: cachedWork.title,
+            circle: cachedWork.circle,
+            circleExternalId: cachedCircle.externalId,
+            local: true,
+          }),
+        ]),
       });
       return;
     }
