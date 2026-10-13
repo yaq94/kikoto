@@ -6,12 +6,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { SettingsRow, SettingsSection } from "@/components/settings/SettingsSection";
 import { toastFromError, useToast } from "@/components/ui/toast";
+import { LLMPolicyEditor } from "./LLMPolicyEditor";
 import { api, type LLMPolicy, type LLMProvider, type LLMProviderPreset } from "@/lib/api";
 
-type ProviderDraft = LLMProvider & { apiKey: string };
+type ProviderDraft = LLMProvider & { apiKey: string; clearKey: boolean };
 
 function draftFromProvider(provider: LLMProvider): ProviderDraft {
-  return { ...provider, apiKey: "", models: [...provider.models] };
+  return { ...provider, apiKey: "", clearKey: false, models: [...provider.models] };
 }
 
 export function LLMSettingsSection({ readOnly = false }: { readOnly?: boolean }) {
@@ -20,8 +21,6 @@ export function LLMSettingsSection({ readOnly = false }: { readOnly?: boolean })
   const [providers, setProviders] = useState<LLMProvider[]>([]);
   const [presets, setPresets] = useState<LLMProviderPreset[]>([]);
   const [policy, setPolicy] = useState<LLMPolicy>({ alwaysScanAllAges: false, tagIds: [], keywords: [] });
-  const [keywordText, setKeywordText] = useState("");
-  const [tagText, setTagText] = useState("");
   const [savingPolicy, setSavingPolicy] = useState(false);
   const [selectedPreset, setSelectedPreset] = useState("openai");
   const [newName, setNewName] = useState("");
@@ -42,10 +41,6 @@ export function LLMSettingsSection({ readOnly = false }: { readOnly?: boolean })
       setProviders(result.providers);
       setPresets(result.presets);
       setPolicy(result.policy);
-      setTagText(result.policy.tagIds.join(", "));
-      setKeywordText(
-        result.policy.keywords.map((rule) => `${rule.term} | ${rule.fields.join(",")} | ${rule.action}`).join("\n"),
-      );
       setDrafts(Object.fromEntries(result.providers.map((provider) => [provider.id, draftFromProvider(provider)])));
     } catch (error) {
       toast.notify(toastFromError(error, t("maintenance.llm.loadFailed")));
@@ -55,8 +50,8 @@ export function LLMSettingsSection({ readOnly = false }: { readOnly?: boolean })
   }, [t, toast]);
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    if (!readOnly) void load();
+  }, [load, readOnly]);
 
   const selectedPresetData = useMemo(
     () => presets.find((preset) => preset.id === selectedPreset) ?? null,
@@ -72,7 +67,7 @@ export function LLMSettingsSection({ readOnly = false }: { readOnly?: boolean })
         name: newName.trim() || selectedPresetData.name,
         kind: selectedPresetData.kind,
         baseUrl: selectedPresetData.id === "ollama" && newOllamaScope === "local_machine" ? undefined : newBaseUrl,
-        ["api" + "Key"]: newAPIKey,
+        apiKey: newAPIKey,
         boundary: selectedPresetData.boundary,
         ollamaScope: selectedPresetData.id === "ollama" ? newOllamaScope : undefined,
         enabled: true,
@@ -97,9 +92,11 @@ export function LLMSettingsSection({ readOnly = false }: { readOnly?: boolean })
         enabled: draft.enabled,
         defaultModel: draft.defaultModel ?? "",
         ollamaScope: draft.ollamaScope,
+        boundary: draft.boundary,
+        allowSensitive: draft.allowSensitive,
       };
       if (!(draft.kind === "ollama" && draft.ollamaScope === "local_machine")) payload.baseUrl = draft.baseUrl;
-      if (draft.apiKey) payload.apiKey = draft.apiKey;
+      if (draft.clearKey || draft.apiKey) payload.apiKey = draft.clearKey ? "" : draft.apiKey;
       const next = await api.updateProvider(draft.id, payload);
       setProviders((current) => current.map((provider) => (provider.id === next.id ? next : provider)));
       setDrafts((current) => ({ ...current, [next.id]: draftFromProvider(next) }));
@@ -114,6 +111,19 @@ export function LLMSettingsSection({ readOnly = false }: { readOnly?: boolean })
   const fetchModels = async (draft: ProviderDraft) => {
     setFetchingID(draft.id);
     try {
+      const payload = {
+        name: draft.name,
+        enabled: draft.enabled,
+        defaultModel: draft.defaultModel ?? "",
+        boundary: draft.boundary,
+        allowSensitive: draft.allowSensitive,
+        ollamaScope: draft.ollamaScope,
+        ...(draft.kind === "ollama" && draft.ollamaScope === "local_machine" ? {} : { baseUrl: draft.baseUrl }),
+        ...(draft.clearKey || draft.apiKey ? { apiKey: draft.clearKey ? "" : draft.apiKey } : {}),
+      };
+      const saved = await api.updateProvider(draft.id, payload);
+      setProviders((current) => current.map((provider) => (provider.id === saved.id ? saved : provider)));
+      setDrafts((current) => ({ ...current, [saved.id]: draftFromProvider(saved) }));
       const next = await api.fetchModels(draft.id);
       setProviders((current) => current.map((provider) => (provider.id === next.id ? next : provider)));
       setDrafts((current) => ({ ...current, [next.id]: draftFromProvider(next) }));
@@ -144,6 +154,7 @@ export function LLMSettingsSection({ readOnly = false }: { readOnly?: boolean })
     }
   };
 
+  if (readOnly) return <p className="text-sm text-muted-foreground">{t("maintenance.llm.demoDisabled")}</p>;
   return (
     <div className="space-y-6">
       <SettingsSection
@@ -279,35 +290,8 @@ export function LLMSettingsSection({ readOnly = false }: { readOnly?: boolean })
             onClick={async () => {
               setSavingPolicy(true);
               try {
-                const keywords = keywordText
-                  .split("\n")
-                  .map((line) => line.trim())
-                  .filter(Boolean)
-                  .map((line) => {
-                    const [term, fields = "all", action = "sensitive"] = line.split("|").map((value) => value.trim());
-                    return {
-                      term,
-                      fields: fields
-                        .split(",")
-                        .map((value) => value.trim())
-                        .filter(Boolean),
-                      action: action === "blocked" ? ("blocked" as const) : ("sensitive" as const),
-                    };
-                  })
-                  .filter((rule) => rule.term);
-                const next = await api.updatePolicy({
-                  alwaysScanAllAges: policy.alwaysScanAllAges,
-                  tagIds: tagText
-                    .split(",")
-                    .map((value) => Number(value.trim()))
-                    .filter((value) => Number.isInteger(value) && value > 0),
-                  keywords,
-                });
+                const next = await api.updatePolicy(policy);
                 setPolicy(next);
-                setTagText(next.tagIds.join(", "));
-                setKeywordText(
-                  next.keywords.map((rule) => `${rule.term} | ${rule.fields.join(",")} | ${rule.action}`).join("\n"),
-                );
                 toast.success(t("maintenance.llm.policySaved"));
               } catch (error) {
                 toast.notify(toastFromError(error, t("maintenance.llm.policySaveFailed")));
@@ -321,42 +305,7 @@ export function LLMSettingsSection({ readOnly = false }: { readOnly?: boolean })
           </Button>
         }
       >
-        <SettingsRow
-          title={t("maintenance.llm.alwaysScanAllAges")}
-          description={t("maintenance.llm.alwaysScanAllAgesDescription")}
-        >
-          <input
-            type="checkbox"
-            aria-label={t("maintenance.llm.alwaysScanAllAges")}
-            checked={policy.alwaysScanAllAges}
-            disabled={readOnly}
-            onChange={(event) => setPolicy((current) => ({ ...current, alwaysScanAllAges: event.target.checked }))}
-          />
-        </SettingsRow>
-        <SettingsRow
-          title={t("maintenance.llm.sensitiveTags")}
-          description={t("maintenance.llm.sensitiveTagsDescription")}
-          stack
-        >
-          <Input
-            aria-label={t("maintenance.llm.sensitiveTags")}
-            value={tagText}
-            disabled={readOnly}
-            placeholder="123, 456"
-            onChange={(event) => setTagText(event.target.value)}
-          />
-        </SettingsRow>
-        <SettingsRow title={t("maintenance.llm.keywords")} description={t("maintenance.llm.keywordsDescription")} stack>
-          <textarea
-            aria-label={t("maintenance.llm.keywords")}
-            value={keywordText}
-            disabled={readOnly}
-            rows={5}
-            className="w-full resize-y rounded-[var(--control-radius)] border border-input bg-background px-3 py-2 text-sm"
-            placeholder={t("maintenance.llm.keywordsPlaceholder")}
-            onChange={(event) => setKeywordText(event.target.value)}
-          />
-        </SettingsRow>
+        <LLMPolicyEditor policy={policy} onChange={setPolicy} readOnly={readOnly} />
       </SettingsSection>
     </div>
   );
@@ -440,26 +389,70 @@ function LLMProviderCard({
       </SettingsRow>
       <SettingsRow title={t("maintenance.llm.model")} description={t("maintenance.llm.modelDescription")}>
         <div className="flex w-full min-w-0 gap-2 sm:w-96">
-          <select
+          <Input
             aria-label={t("maintenance.llm.model")}
             value={draft.defaultModel ?? ""}
-            disabled={readOnly || draft.models.length === 0}
-            className="h-[var(--control-height)] min-w-0 flex-1 rounded-[var(--control-radius)] border border-input bg-background px-3 text-sm"
+            disabled={readOnly}
+            list={draft.id + "-models"}
             onChange={(event) => onChange({ defaultModel: event.target.value })}
-          >
-            <option value="">{t("maintenance.llm.modelNone")}</option>
+          />
+          <datalist id={draft.id + "-models"}>
             {draft.models.map((model) => (
               <option key={model.id} value={model.id}>
-                {model.name && model.name !== model.id ? `${model.name} (${model.id})` : model.id}
+                {model.name}
               </option>
             ))}
-          </select>
+          </datalist>
           <Button variant="outline" size="sm" disabled={readOnly || fetching} onClick={onFetch}>
             {fetching ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
             {t("maintenance.llm.fetchModels")}
           </Button>
         </div>
       </SettingsRow>
+      <SettingsRow title={t("maintenance.llm.boundary")}>
+        <select
+          aria-label={t("maintenance.llm.boundary")}
+          value={draft.boundary}
+          disabled={readOnly}
+          onChange={(event) => onChange({ boundary: event.target.value as LLMProvider["boundary"] })}
+          className="rounded border bg-background px-3 py-2 text-sm"
+        >
+          <option value="external">{t("maintenance.llm.externalBoundary")}</option>
+          <option value="private">{t("maintenance.llm.privateBoundary")}</option>
+        </select>
+      </SettingsRow>
+      <SettingsRow title={t("maintenance.llm.allowSensitive")} description={t("maintenance.llm.boundaryHint")}>
+        <input
+          type="checkbox"
+          aria-label={t("maintenance.llm.allowSensitive")}
+          checked={draft.allowSensitive ?? false}
+          disabled={readOnly || draft.boundary !== "private"}
+          onChange={(event) => onChange({ allowSensitive: event.target.checked })}
+        />
+      </SettingsRow>
+      <SettingsRow title={t("maintenance.llm.clearKey")}>
+        <input
+          type="checkbox"
+          aria-label={t("maintenance.llm.clearKey")}
+          checked={draft.clearKey}
+          disabled={readOnly}
+          onChange={(event) => onChange({ clearKey: event.target.checked })}
+        />
+      </SettingsRow>
+      {draft.kind === "ollama" && (
+        <SettingsRow title={t("maintenance.llm.ollamaLocation")}>
+          <select
+            aria-label={t("maintenance.llm.ollamaLocation")}
+            disabled={readOnly}
+            value={draft.ollamaScope}
+            onChange={(event) => onChange({ ollamaScope: event.target.value as LLMProvider["ollamaScope"] })}
+            className="rounded border bg-background px-3 py-2 text-sm"
+          >
+            <option value="local_machine">{t("maintenance.llm.ollamaLocal")}</option>
+            <option value="other_machine">{t("maintenance.llm.ollamaOther")}</option>
+          </select>
+        </SettingsRow>
+      )}
       <SettingsRow title={t("maintenance.llm.enabled")}>
         <input
           type="checkbox"

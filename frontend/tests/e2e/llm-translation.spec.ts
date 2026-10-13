@@ -1,0 +1,315 @@
+import { expect, test, type Page } from "@playwright/test";
+import type { LLMPolicy, LLMProvider, LLMTranslation, WorkDetail } from "../../src/lib/api";
+import {
+  appSettingsFixture,
+  authenticatedStateFixture,
+  metadataTagFixture,
+  mediaItemFixture,
+  mediaLocationFixture,
+  workDetailFixture,
+  type ApiResponse,
+} from "./fixtures/api";
+import { mockApplication, work } from "./fixtures/player-library";
+
+const provider: LLMProvider = {
+  id: "synthetic-provider",
+  presetId: "custom-openai",
+  name: "Example LLM",
+  kind: "openai",
+  baseUrl: "https://first.example.invalid",
+  boundary: "external",
+  allowSensitive: false,
+  enabled: true,
+  hasApiKey: true,
+  defaultModel: "example-model",
+  models: [],
+};
+const translation: LLMTranslation = {
+  previewId: "synthetic-preview",
+  providerId: provider.id,
+  providerName: provider.name,
+  model: "example-model",
+  targetLanguage: "zh-cn",
+  assessment: { class: "safe", reason: "no configured rule matched", matches: [] },
+  source: { title: "Example original", description: "Original description" },
+  translation: { title: "Example translation", description: "Translated description" },
+};
+
+async function application(page: Page) {
+  await mockApplication(page, undefined, false, 1, 0, [], undefined, {
+    authenticated: true,
+    permissions: ["system:admin"],
+  });
+  await page.route("**/api/auth/me", (route) =>
+    route.fulfill({ json: authenticatedStateFixture({ role: "admin", permissions: ["system:admin"] }) }),
+  );
+  await page.route("**/api/settings", (route) => route.fulfill({ json: appSettingsFixture() }));
+}
+async function openTranslation(page: Page, detailOverrides: Partial<WorkDetail> = {}) {
+  await application(page);
+  await page.route(/\/api\/works\/(?:1|RJ00000000)(?:\?includeMedia=false)?$/, (route) =>
+    route.fulfill({
+      json: workDetailFixture(
+        { ...work, title: "Example original", ageRating: "general" },
+        { description: "Original description", manualOverrides: {}, ...detailOverrides },
+      ),
+    }),
+  );
+  await page.route("**/api/works/1/cover-candidates", (route) =>
+    route.fulfill({ json: { candidates: [], providerCoverUrl: "" } satisfies ApiResponse<"listWorkCoverCandidates"> }),
+  );
+  await page.route("**/api/works/1/metadata-tags", (route) =>
+    route.fulfill({
+      json: { tags: [], inheritedTags: [], overrides: [] } satisfies ApiResponse<"getWorkMetadataTags">,
+    }),
+  );
+  await page.route("**/api/llm/translation-models", (route) =>
+    route.fulfill({
+      json: [
+        {
+          id: provider.id,
+          name: provider.name,
+          defaultModel: provider.defaultModel,
+          boundary: provider.boundary,
+          allowSensitive: false,
+        },
+      ] satisfies ApiResponse<"listTranslationModels">,
+    }),
+  );
+  await page.route("**/api/works/1/llm-reviews", (route) =>
+    route.fulfill({ json: [] satisfies ApiResponse<"listTranslationReviews"> }),
+  );
+  await page.route("**/api/works/1/llm-translations", (route) =>
+    route.fulfill({ json: { current: [], history: [] } satisfies ApiResponse<"listTranslations"> }),
+  );
+  await page.route("**/api/works/1/llm-lyrics-assets", (route) =>
+    route.fulfill({ json: [] satisfies ApiResponse<"listTranslatedLyrics"> }),
+  );
+  await page.goto("/RJ00000000");
+  await page.getByRole("button", { name: "Edit metadata", exact: true }).click();
+  await page
+    .getByRole("dialog", { name: "Edit metadata", exact: true })
+    .getByRole("button", { name: "Translate", exact: true })
+    .click();
+  return page.getByRole("dialog", { name: "Translate with LLM", exact: true });
+}
+
+test("LLM settings save connection drafts before discovery and edit structured content rules", async ({ page }) => {
+  await application(page);
+  let current = { ...provider };
+  let policy: LLMPolicy = { alwaysScanAllAges: false, tagIds: [], keywords: [] };
+  const writes: Record<string, unknown>[] = [];
+  const calls: string[] = [];
+  await page.route("**/api/llm/providers", (route) =>
+    route.fulfill({
+      json: {
+        providers: [current],
+        presets: [
+          {
+            id: "custom-openai",
+            name: "Custom OpenAI-compatible",
+            kind: "openai",
+            defaultUrl: "",
+            modelPath: "/v1/models",
+            boundary: "external",
+          },
+        ],
+        policy,
+      } satisfies ApiResponse<"listProviders">,
+    }),
+  );
+  await page.route("**/api/llm/providers/synthetic-provider", (route) => {
+    const body = route.request().postDataJSON() as Record<string, unknown>;
+    writes.push(body);
+    calls.push("save");
+    current = {
+      ...current,
+      ...body,
+      hasApiKey: body.apiKey === undefined ? current.hasApiKey : body.apiKey !== "",
+      models: [],
+    };
+    return route.fulfill({ json: current });
+  });
+  await page.route("**/api/llm/providers/synthetic-provider/fetch-models", (route) => {
+    calls.push("fetch");
+    return route.fulfill({ status: 502, json: { error: "Models could not be fetched." } });
+  });
+  const tag = metadataTagFixture({ id: 1, displayName: "Example risk tag" });
+  await page.route("**/api/metadata/tags?*", (route) =>
+    route.fulfill({ json: { tags: [tag], total: 1, page: 1, pageSize: 20, pendingWorkCount: 0 } }),
+  );
+  await page.route("**/api/metadata/tags/1", (route) => route.fulfill({ json: tag }));
+  await page.route("**/api/llm/policy", (route) => {
+    policy = route.request().postDataJSON() as LLMPolicy;
+    policy.keywords = policy.keywords.map((rule, index) => ({ ...rule, id: rule.id ?? "synthetic-rule-" + index }));
+    return route.fulfill({ json: policy });
+  });
+  await page.goto("/settings?tab=llm");
+  const connection = page.getByRole("region", { name: "Example LLM", exact: true });
+  await connection.getByLabel("Endpoint", { exact: true }).fill("https://second.example.invalid");
+  await connection.getByLabel("Default model", { exact: true }).fill("manual-model");
+  await connection.getByLabel("Clear stored API key", { exact: true }).check();
+  await connection.getByRole("button", { name: "Fetch models", exact: true }).click();
+  await expect.poll(() => calls).toEqual(["save", "fetch"]);
+  expect(writes[0]).toMatchObject({
+    baseUrl: "https://second.example.invalid",
+    defaultModel: "manual-model",
+    apiKey: "",
+  });
+  await expect(connection.getByLabel("Default model", { exact: true })).toHaveValue("manual-model");
+  await connection.getByLabel("Data boundary", { exact: true }).selectOption("private");
+  await connection.getByLabel("Allow sensitive content", { exact: true }).check();
+  await connection.getByRole("button", { name: "Save", exact: true }).click();
+  await expect.poll(() => writes.length).toBe(2);
+  expect(writes[1]).toMatchObject({ boundary: "private", allowSensitive: true });
+  const rules = page.getByRole("region", { name: "Content safety policy", exact: true });
+  await rules.getByRole("combobox", { name: "Sensitive metadata tags", exact: true }).fill("Example");
+  await rules.getByRole("option", { name: "Example risk tag", exact: true }).click();
+  await rules.getByRole("button", { name: "Add keyword rule", exact: true }).click();
+  await rules.getByLabel("Keyword for rule 1", { exact: true }).fill("restricted phrase");
+  await rules.getByLabel("Action for rule 1", { exact: true }).selectOption("blocked");
+  await rules.getByRole("checkbox", { name: "Lyrics", exact: true }).check();
+  await rules.getByRole("button", { name: "Save", exact: true }).click();
+  await expect.poll(() => policy.tagIds).toEqual([1]);
+  expect(policy.keywords[0]).toMatchObject({ term: "restricted phrase", fields: ["all", "lyrics"], action: "blocked" });
+  expect(policy.keywords[0].id).toBeTruthy();
+});
+
+test("LLM dialog prechecks without translation, uses minimal models and confirms the preview", async ({ page }) => {
+  let administratorReads = 0;
+  let requests = 0;
+  let applied: unknown;
+  await page.route("**/api/llm/providers", (route) => {
+    administratorReads++;
+    return route.fulfill({ status: 403, json: { error: "permission denied" } });
+  });
+  const dialog = await openTranslation(page);
+  await page.route("**/api/works/1/llm-precheck", (route) =>
+    route.fulfill({
+      json: {
+        assessment: translation.assessment,
+        checkedFields: ["title", "description", "tags"],
+        sentFields: [],
+      } satisfies ApiResponse<"precheckWork">,
+    }),
+  );
+  await page.route("**/api/works/1/llm-translate", (route) => {
+    requests++;
+    expect(route.request().postDataJSON()).toMatchObject({ targetLanguage: "zh-cn", fields: ["title", "description"] });
+    return route.fulfill({ json: translation });
+  });
+  await page.route("**/api/works/1/llm-translation", (route) => {
+    applied = route.request().postDataJSON();
+    return route.fulfill({ json: { ok: true } });
+  });
+  await dialog.getByRole("button", { name: "Check content without sending", exact: true }).click();
+  await expect(dialog.getByRole("status")).toContainText("safe");
+  expect(requests).toBe(0);
+  await dialog.getByRole("button", { name: "Translate", exact: true }).click();
+  await expect(dialog.getByText("Example translation", { exact: true })).toBeVisible();
+  await dialog.getByRole("button", { name: "Use translation", exact: true }).click();
+  await expect.poll(() => applied).toEqual({ previewId: "synthetic-preview" });
+  await expect(dialog).toHaveCount(0);
+  expect(administratorReads).toBe(0);
+});
+
+test("LLM background review recovers a durable preview and rejects it explicitly", async ({ page }) => {
+  const dialog = await openTranslation(page);
+  let queued: unknown;
+  let rejected = 0;
+  await page.route("**/api/llm/translation-runs", (route) => {
+    queued = route.request().postDataJSON();
+    return route.fulfill({
+      json: {
+        runs: [{ workId: 1, runId: 1, state: "ready", deduplicated: false }],
+      } satisfies ApiResponse<"queueTranslations">,
+    });
+  });
+  await dialog.getByRole("button", { name: "Queue background translation", exact: true }).click();
+  await expect.poll(() => queued).toMatchObject({ workCodes: ["RJ00000000"], fields: ["title", "description"] });
+  await expect(dialog.getByRole("link", { name: "Activity #1" })).toBeVisible();
+  await page.route("**/api/works/1/llm-reviews", (route) =>
+    route.fulfill({
+      json: [
+        { ...translation, status: "proposed", fields: ["title", "description"], expiresAt: 1791907200 },
+      ] satisfies ApiResponse<"listTranslationReviews">,
+    }),
+  );
+  await page.route("**/api/works/1/llm-previews/synthetic-preview", (route) => {
+    rejected++;
+    return route.fulfill({ json: { ok: true } });
+  });
+  await dialog.getByRole("button", { name: "Refresh", exact: true }).click();
+  await dialog.getByRole("button", { name: "Review", exact: true }).click();
+  await expect(dialog.getByText("Translated description", { exact: true })).toBeVisible();
+  await dialog.getByRole("button", { name: "Back", exact: true }).click();
+  await expect.poll(() => rejected).toBe(1);
+});
+
+test("LLM lyrics reads inventory only after explicit selection and previews ordered text @desktop", async ({
+  page,
+}) => {
+  let inventoryReads = 0;
+  const dialog = await openTranslation(page, {
+    localFolders: [
+      {
+        id: 1,
+        workId: 1,
+        fileSourceId: 1,
+        rootPath: "Library/RJ00000000",
+        role: "primary",
+        state: "active",
+        primary: true,
+      },
+    ],
+  });
+  await page.route("**/api/works/1/media", (route) => {
+    inventoryReads++;
+    return route.fulfill({
+      json: {
+        workId: 1,
+        mediaWorkId: 1,
+        mediaItems: [
+          mediaItemFixture({ id: 1, kind: "audio", title: "Example audio", locations: [] }),
+          mediaItemFixture({
+            id: 2,
+            kind: "text",
+            title: "Example lyrics",
+            locations: [
+              mediaLocationFixture({
+                id: 2,
+                locationType: "local",
+                path: "Library/RJ00000000/example.lrc",
+                availability: "available",
+              }),
+            ],
+          }),
+        ],
+      } satisfies ApiResponse<"getWorkMedia">,
+    });
+  });
+  expect(inventoryReads).toBe(0);
+  await dialog.getByRole("checkbox", { name: "Title", exact: true }).uncheck();
+  await dialog.getByRole("checkbox", { name: "Description", exact: true }).uncheck();
+  await dialog.getByRole("checkbox", { name: "Lyrics", exact: true }).check();
+  await expect.poll(() => inventoryReads).toBe(1);
+  await dialog.getByLabel("Lyrics file", { exact: true }).selectOption("2");
+  await dialog.getByLabel("Audio track", { exact: true }).selectOption("1");
+  await page.route("**/api/works/1/llm-translate", (route) => {
+    expect(route.request().postDataJSON()).toMatchObject({
+      fields: ["lyrics"],
+      lyricsLocationId: 2,
+      audioMediaItemId: 1,
+      folderId: 1,
+    });
+    return route.fulfill({
+      json: {
+        ...translation,
+        source: { lyrics: ["First original line", "Second original line"] },
+        translation: { lyrics: ["First translated line", "Second translated line"] },
+      } satisfies LLMTranslation,
+    });
+  });
+  await dialog.getByRole("button", { name: "Translate", exact: true }).click();
+  await expect(dialog.getByText("First translated line Second translated line", { exact: true })).toBeVisible();
+});

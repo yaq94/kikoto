@@ -453,6 +453,7 @@ export function WorkMetadataEditorModal({
       {translationOpen && (
         <LLMTranslationDialog
           work={work}
+          applying={saving}
           onClose={() => setTranslationOpen(false)}
           onApply={(translation) => void applyTranslation(translation)}
         />

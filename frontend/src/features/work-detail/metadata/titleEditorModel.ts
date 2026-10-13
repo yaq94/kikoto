@@ -78,6 +78,7 @@ export function titleSourceLabel(
   if (manual[language]) return { key: language ? "workTitles.manual" : "workTitles.manualAll" };
   if (manual[""]) return { key: "workTitles.manualAll" };
   if (choice?.source === "dlsite") return { key: "workTitles.dlsite", values: { code: choice.code } };
+  if (choice?.source === "llm") return { key: "workTitles.llm" };
   if (choice?.source === "remote" && choice.sourceName)
     return { key: "workTitles.remote", values: { source: choice.sourceName } };
   return { key: "workTitles.original" };

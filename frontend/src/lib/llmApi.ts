@@ -25,6 +25,7 @@ export type LLMProvider = {
   baseUrl: string;
   boundary: "external" | "private";
   ollamaScope?: "local_machine" | "other_machine";
+  allowSensitive: boolean;
   enabled: boolean;
   hasApiKey: boolean;
   defaultModel?: string;
@@ -39,6 +40,7 @@ export type LLMProviderPayload = {
   baseUrl?: string;
   apiKey?: string;
   boundary?: LLMProvider["boundary"];
+  allowSensitive?: boolean;
   ollamaScope?: LLMProvider["ollamaScope"];
   enabled?: boolean;
   defaultModel?: string;
@@ -50,8 +52,14 @@ export type LLMProviderList = {
   policy: LLMPolicy;
 };
 
-export type LLMKeywordRule = { term: string; fields: string[]; action: "sensitive" | "blocked" };
-export type LLMPolicy = { alwaysScanAllAges: boolean; tagIds: number[]; keywords: LLMKeywordRule[] };
+export type LLMKeywordRule = { id?: string; term: string; fields: string[]; action: "sensitive" | "blocked" };
+export type LLMPolicy = {
+  alwaysScanAllAges: boolean;
+  remoteLyrics?: boolean;
+  tagIds: number[];
+  keywords: LLMKeywordRule[];
+};
+export type LLMTranslationModel = Pick<LLMProvider, "id" | "name" | "defaultModel" | "boundary" | "allowSensitive">;
 export type LLMAssessment = {
   class: "safe" | "sensitive" | "unknown" | "blocked";
   reason: string;
@@ -64,13 +72,59 @@ export type LLMTranslation = {
   model: string;
   targetLanguage: string;
   assessment: LLMAssessment;
-  source: { title?: string; description?: string };
-  translation: { title?: string; description?: string };
+  source: { title?: string; description?: string; tags?: string[]; lyrics?: string[] };
+  translation: { title?: string; description?: string; tags?: string[]; lyrics?: string[] };
+};
+export type LLMTranslationRequest = {
+  providerId: string;
+  targetLanguage: string;
+  fields: string[];
+  lyricsLocationId?: number;
+  audioMediaItemId?: number;
+  folderId?: number;
+};
+export type LLMReview = LLMTranslation & { status: string; fields: string[]; expiresAt: number };
+export type LLMTranslationHistory = {
+  current: { language: string; field: string; value: string; status: string }[];
+  history: { id: number; language: string; field: string; action: string; createdAt: string }[];
+};
+export type LLMLyricsAsset = {
+  id: string;
+  audioMediaItemId: number;
+  language: string;
+  status: string;
+  downloadUrl: string;
 };
 
 export const llmApi = {
-  listTranslationModels: () =>
-    getJSON<Array<Pick<LLMProvider, "id" | "name" | "defaultModel" | "boundary">>>("/api/llm/translation-models"),
+  listTranslationModels: () => getJSON<LLMTranslationModel[]>("/api/llm/translation-models"),
+  precheckWork: (id: number, payload: Partial<LLMTranslationRequest> = {}) =>
+    postJSONBody<{ assessment: LLMAssessment; checkedFields: string[]; sentFields: string[] }>(
+      `/api/works/${id}/llm-precheck`,
+      payload,
+    ),
+  listTranslationReviews: (id: number) => getJSON<LLMReview[]>(`/api/works/${id}/llm-reviews`),
+  listTranslations: (id: number) => getJSON<LLMTranslationHistory>(`/api/works/${id}/llm-translations`),
+  restoreTranslation: (id: number, reviewId: number) =>
+    postJSONBody<{ ok: boolean }>(`/api/works/${id}/llm-reviews/${reviewId}/restore`, {}),
+  listTranslatedLyrics: (id: number) => getJSON<LLMLyricsAsset[]>(`/api/works/${id}/llm-lyrics-assets`),
+  publishTranslatedLyrics: (asset: string) =>
+    postJSONBody<{ ok: boolean }>(`/api/llm/lyrics-assets/${encodeURIComponent(asset)}/publish`, {}),
+  queueTranslations: (workCodes: string[], payload: LLMTranslationRequest) =>
+    postJSONBody<{ runs: { workId: number; runId: number; state: string; deduplicated: boolean }[] }>(
+      "/api/llm/translation-runs",
+      { workCodes, ...payload },
+    ),
+  resubmitUncertainTranslation: (runId: number) =>
+    postJSONBody<{ runId: number; status: string }>(`/api/workflow-runs/${runId}/llm-resubmit`, {
+      acknowledgeUncertain: true,
+    }),
+  rejectTranslation: (id: number, preview: string) =>
+    deleteJSON<{ ok: boolean }>(`/api/works/${id}/llm-previews/${encodeURIComponent(preview)}`),
+  revokeTranslation: (id: number, language: string, field: string) =>
+    deleteJSON<{ ok: boolean }>(
+      `/api/works/${id}/llm-translations/${encodeURIComponent(language)}/${encodeURIComponent(field)}`,
+    ),
   listProviders: () => getJSON<LLMProviderList>("/api/llm/providers"),
   createProvider: (payload: LLMProviderPayload) => postJSONBody<LLMProvider>("/api/llm/providers", payload),
   updateProvider: (id: string, payload: Partial<LLMProviderPayload>) =>
@@ -79,11 +133,8 @@ export const llmApi = {
   fetchModels: (id: string) =>
     postJSONBody<LLMProvider>(`/api/llm/providers/${encodeURIComponent(id)}/fetch-models`, {}),
   updatePolicy: (policy: LLMPolicy) => putJSONBody<LLMPolicy>("/api/llm/policy", policy),
-  translateWork: (
-    id: number,
-    payload: { providerId: string; targetLanguage: string; fields: string[] },
-    signal?: AbortSignal,
-  ) => postJSONBody<LLMTranslation>(`/api/works/${id}/llm-translate`, payload, signal),
+  translateWork: (id: number, payload: LLMTranslationRequest, signal?: AbortSignal) =>
+    postJSONBody<LLMTranslation>(`/api/works/${id}/llm-translate`, payload, signal),
   applyTranslation: (id: number, previewId: string) =>
     putJSONBody<{ ok: boolean }>(`/api/works/${id}/llm-translation`, { previewId }),
 };

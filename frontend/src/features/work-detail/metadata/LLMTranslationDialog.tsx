@@ -1,37 +1,52 @@
 import { Loader2, Sparkles } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogBody, DialogFooter, DialogHeader } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { toastFromError, useToast } from "@/components/ui/toast";
-import { api, type LLMProvider, type LLMTranslation, type WorkDetail } from "@/lib/api";
+import { api, type LLMTranslation, type WorkDetail, type MediaItem } from "@/lib/api";
+import { NAVIGATION_EVENT } from "@/lib/browserHistory";
+import { metadataTagNameLanguages } from "@/lib/metadataTagModel";
+import { LLMTranslationReviews } from "./LLMTranslationReviews";
+import type { LLMTranslationModel, LLMAssessment } from "@/lib/llmApi";
 
 export function LLMTranslationDialog({
   work,
   onClose,
   onApply,
+  applying = false,
 }: {
   work: WorkDetail;
   onClose: () => void;
   onApply: (translation: LLMTranslation) => void;
+  applying?: boolean;
 }) {
   const { t } = useTranslation();
   const toast = useToast();
-  const [providers, setProviders] = useState<LLMProvider[]>([]);
+  const translationController = useRef<AbortController | null>(null);
+  useEffect(() => () => translationController.current?.abort(), []);
+  const [providers, setProviders] = useState<LLMTranslationModel[]>([]);
+  const [assessment, setAssessment] = useState<LLMAssessment | null>(null);
   const [providerID, setProviderID] = useState("");
   const [targetLanguage, setTargetLanguage] = useState("zh-cn");
-  const [fields, setFields] = useState({ title: true, description: true });
+  const [fields, setFields] = useState({ title: true, description: true, tags: false, lyrics: false });
+  const [media, setMedia] = useState<MediaItem[]>([]);
+  const [lyricsLocationId, setLyricsLocationId] = useState(0);
+  const [audioMediaItemId, setAudioMediaItemId] = useState(0);
+  const [folderId, setFolderId] = useState(work.localFolders?.find((folder) => folder.state === "active")?.id ?? 0);
+  const [workCodes, setWorkCodes] = useState(work.primaryCode);
+  const [runs, setRuns] = useState<{ runId: number; state: string }[]>([]);
   const [preview, setPreview] = useState<LLMTranslation | null>(null);
   const [loading, setLoading] = useState(false);
   const [loadingProviders, setLoadingProviders] = useState(true);
 
   useEffect(() => {
     void api
-      .listProviders()
+      .listTranslationModels()
       .then((result) => {
-        const enabled = result.providers.filter((provider) => provider.enabled && provider.defaultModel);
+        const enabled = result;
         setProviders(enabled);
         setProviderID(enabled[0]?.id ?? "");
       })
@@ -39,15 +54,43 @@ export function LLMTranslationDialog({
       .finally(() => setLoadingProviders(false));
   }, [toast, t]);
 
-  const translate = async () => {
-    if (!providerID || !targetLanguage.trim() || (!fields.title && !fields.description)) return;
+  useEffect(() => {
+    if (!fields.lyrics) return;
+    const controller = new AbortController();
+    void api
+      .getWorkMedia(work.id, controller.signal)
+      .then((result) => setMedia(result.mediaItems))
+      .catch((error) => {
+        if (!controller.signal.aborted) toast.notify(toastFromError(error, t("llmTranslation.failed")));
+      });
+    return () => controller.abort();
+  }, [fields.lyrics, work.id, t, toast]);
+  const selectedFields = Object.entries(fields)
+    .filter(([, selected]) => selected)
+    .map(([field]) => field);
+  const request = {
+    providerId: providerID,
+    targetLanguage: targetLanguage.trim(),
+    fields: selectedFields,
+    ...(fields.lyrics ? { lyricsLocationId, audioMediaItemId, folderId } : {}),
+  };
+  const queue = async () => {
     setLoading(true);
     try {
-      const result = await api.translateWork(work.id, {
-        providerId: providerID,
-        targetLanguage: targetLanguage.trim(),
-        fields: [fields.title && "title", fields.description && "description"].filter(Boolean) as string[],
-      });
+      const result = await api.queueTranslations(workCodes.split(/[\s,]+/).filter(Boolean), request);
+      setRuns(result.runs);
+    } catch (error) {
+      toast.notify(toastFromError(error, t("llmTranslation.failed")));
+    } finally {
+      setLoading(false);
+    }
+  };
+  const translate = async () => {
+    if (!providerID || !targetLanguage.trim() || selectedFields.length === 0) return;
+    setLoading(true);
+    try {
+      translationController.current = new AbortController();
+      const result = await api.translateWork(work.id, request, translationController.current.signal);
       setPreview(result);
     } catch (error) {
       toast.notify(toastFromError(error, t("llmTranslation.failed")));
@@ -57,7 +100,7 @@ export function LLMTranslationDialog({
   };
 
   return (
-    <Dialog onClose={onClose} size="lg" dismissible={!loading}>
+    <Dialog onClose={onClose} size="lg" dismissible={!loading && !applying}>
       <DialogHeader title={t("llmTranslation.title")} description={work.title} />
       <DialogBody>
         {preview ? (
@@ -68,18 +111,34 @@ export function LLMTranslationDialog({
               </div>
               <div className="mt-1 text-xs text-muted-foreground">{preview.assessment.reason}</div>
             </div>
-            {fields.title && (
+            {preview.translation.title && (
               <PreviewField
                 label={t("metadataEditor.sections.title")}
                 source={preview.source.title}
                 result={preview.translation.title}
               />
             )}
-            {fields.description && (
+            {preview.translation.description && (
               <PreviewField
                 label={t("workTitles.description")}
                 source={preview.source.description}
                 result={preview.translation.description}
+                multiline
+              />
+            )}
+            {preview.translation.tags?.map((name, index) => (
+              <PreviewField
+                key={index}
+                label={t("metadataEntries.tags")}
+                source={preview.source.tags?.[index]}
+                result={name}
+              />
+            ))}
+            {preview.translation.lyrics && (
+              <PreviewField
+                label={t("llmTranslation.lyrics")}
+                source={preview.source.lyrics?.join("\n")}
+                result={preview.translation.lyrics.join("\n")}
                 multiline
               />
             )}
@@ -107,13 +166,19 @@ export function LLMTranslationDialog({
             </label>
             <label className="block text-sm font-medium">
               {t("llmTranslation.targetLanguage")}
-              <Input
-                className="mt-1"
+              <select
+                aria-label={t("llmTranslation.targetLanguage")}
+                className="mt-1 w-full rounded border bg-background p-2 text-sm"
                 value={targetLanguage}
                 disabled={loading}
-                placeholder="zh-cn"
                 onChange={(event) => setTargetLanguage(event.target.value)}
-              />
+              >
+                {metadataTagNameLanguages.map(([language, label]) => (
+                  <option key={language} value={language}>
+                    {t(label)}
+                  </option>
+                ))}
+              </select>
             </label>
             <fieldset className="space-y-2 rounded-lg border px-3 py-3">
               <legend className="px-1 text-sm font-medium">{t("llmTranslation.fields")}</legend>
@@ -136,17 +201,213 @@ export function LLMTranslationDialog({
                 {t("llmTranslation.description")}
               </label>
             </fieldset>
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={fields.tags}
+                disabled={loading}
+                onChange={(event) => setFields((current) => ({ ...current, tags: event.target.checked }))}
+              />
+              {t("llmTranslation.sharedTags")}
+            </label>
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={fields.lyrics}
+                disabled={loading}
+                onChange={(event) => setFields((current) => ({ ...current, lyrics: event.target.checked }))}
+              />
+              {t("llmTranslation.lyrics")}
+            </label>
+            {fields.lyrics && (
+              <fieldset className="space-y-2 rounded border p-3">
+                <legend className="px-1 text-sm">{t("llmTranslation.lyricsSelection")}</legend>
+                <label className="block text-sm">
+                  {t("llmTranslation.lyricsFile")}
+                  <select
+                    className="mt-1 w-full rounded border bg-background p-2"
+                    aria-label={t("llmTranslation.lyricsFile")}
+                    value={lyricsLocationId}
+                    onChange={(event) => setLyricsLocationId(Number(event.target.value))}
+                  >
+                    <option value={0}>{t("llmTranslation.chooseFile")}</option>
+                    {media
+                      .filter((item) => item.kind === "text")
+                      .flatMap((item) =>
+                        item.locations
+                          .filter(
+                            (location) => location.availability === "available" || location.availability === "remote",
+                          )
+                          .map((location) => (
+                            <option key={location.id} value={location.id}>
+                              {item.title} · {location.fileSourceName}
+                            </option>
+                          )),
+                      )}
+                  </select>
+                </label>
+                <label className="block text-sm">
+                  {t("llmTranslation.audioTrack")}
+                  <select
+                    className="mt-1 w-full rounded border bg-background p-2"
+                    aria-label={t("llmTranslation.audioTrack")}
+                    value={audioMediaItemId}
+                    onChange={(event) => setAudioMediaItemId(Number(event.target.value))}
+                  >
+                    <option value={0}>{t("llmTranslation.chooseTrack")}</option>
+                    {media
+                      .filter((item) => item.kind === "audio")
+                      .map((item) => (
+                        <option key={item.id} value={item.id}>
+                          {item.title}
+                        </option>
+                      ))}
+                  </select>
+                </label>
+                <label className="block text-sm">
+                  {t("llmTranslation.destination")}
+                  <select
+                    className="mt-1 w-full rounded border bg-background p-2"
+                    aria-label={t("llmTranslation.destination")}
+                    value={folderId}
+                    onChange={(event) => setFolderId(Number(event.target.value))}
+                  >
+                    {work.localFolders
+                      ?.filter((folder) => folder.state === "active")
+                      .map((folder) => (
+                        <option key={folder.id} value={folder.id}>
+                          {folder.rootPath}
+                        </option>
+                      ))}
+                  </select>
+                </label>
+              </fieldset>
+            )}
+            <LLMTranslationReviews
+              workId={work.id}
+              onSelect={(review) => {
+                setPreview(review);
+                setTargetLanguage(review.targetLanguage);
+              }}
+            />
+            <label className="block text-sm">
+              {t("llmTranslation.batchCodes")}
+              <Input
+                aria-label={t("llmTranslation.batchCodes")}
+                value={workCodes}
+                disabled={loading || fields.lyrics}
+                onChange={(event) => setWorkCodes(event.target.value)}
+              />
+            </label>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={loading || !providerID || selectedFields.length === 0}
+              onClick={() => void queue()}
+            >
+              {t("llmTranslation.queue")}
+            </Button>
+            {runs.map((run) => (
+              <div key={run.runId} className="flex items-center justify-between gap-2 text-sm">
+                <a
+                  href={"/workflows?activity=1&run=" + run.runId}
+                  onClick={(event) => {
+                    event.preventDefault();
+                    window.history.pushState({}, "", "/workflows?activity=1&run=" + run.runId);
+                    window.dispatchEvent(new Event(NAVIGATION_EVENT));
+                  }}
+                >
+                  {t("llmTranslation.activity")} #{run.runId}
+                </a>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={async () => {
+                    try {
+                      await api.cancelWorkflowRun(run.runId);
+                      setRuns((current) => current.filter((item) => item.runId !== run.runId));
+                    } catch (error) {
+                      toast.notify(toastFromError(error, t("llmTranslation.failed")));
+                    }
+                  }}
+                >
+                  {t("common.cancel")}
+                </Button>
+                {run.state === "uncertain" && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={async () => {
+                      try {
+                        await api.resubmitUncertainTranslation(run.runId);
+                        setRuns((current) =>
+                          current.map((item) => (item.runId === run.runId ? { ...item, state: "pending" } : item)),
+                        );
+                      } catch (error) {
+                        toast.notify(toastFromError(error, t("llmTranslation.failed")));
+                      }
+                    }}
+                  >
+                    {t("llmTranslation.resubmit")}
+                  </Button>
+                )}
+              </div>
+            ))}
             <p className="text-xs leading-5 text-muted-foreground">{t("llmTranslation.safetyHint")}</p>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={loading}
+              onClick={async () => {
+                try {
+                  const result = await api.precheckWork(work.id, request);
+                  setAssessment(result.assessment);
+                } catch (error) {
+                  toast.notify(toastFromError(error, t("llmTranslation.failed")));
+                }
+              }}
+            >
+              {t("llmTranslation.precheck")}
+            </Button>
+            {assessment && (
+              <div role="status" className="space-y-1 text-sm">
+                <p>
+                  {assessment.class} · {assessment.reason}
+                </p>
+                {assessment.matches.map((match, index) => (
+                  <p key={index}>
+                    {match.rule} · {match.field}
+                  </p>
+                ))}
+              </div>
+            )}
           </div>
         )}
       </DialogBody>
       <DialogFooter>
+        {loading && (
+          <Button variant="outline" size="sm" onClick={() => translationController.current?.abort()}>
+            {t("common.cancel")}
+          </Button>
+        )}
         {preview ? (
           <>
-            <Button variant="outline" size="sm" onClick={() => setPreview(null)}>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={applying}
+              onClick={async () => {
+                try {
+                  await api.rejectTranslation(work.id, preview.previewId);
+                  setPreview(null);
+                } catch (error) {
+                  toast.notify(toastFromError(error, t("llmTranslation.failed")));
+                }
+              }}
+            >
               {t("llmTranslation.back")}
             </Button>
-            <Button size="sm" onClick={() => onApply(preview)}>
+            <Button size="sm" disabled={applying} onClick={() => onApply(preview)}>
               <Sparkles className="h-4 w-4" />
               {t("llmTranslation.apply")}
             </Button>
@@ -154,7 +415,7 @@ export function LLMTranslationDialog({
         ) : (
           <Button
             size="sm"
-            disabled={loading || loadingProviders || !providerID || (!fields.title && !fields.description)}
+            disabled={loading || loadingProviders || !providerID || selectedFields.length === 0}
             onClick={() => void translate()}
           >
             {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}

@@ -61,7 +61,7 @@ export type WorkMetadataFieldSource = {
 export type WorkTitleChoice = {
   title: string;
   language: string;
-  source: "manual" | "dlsite" | "original" | "remote";
+  source: "manual" | "dlsite" | "original" | "remote" | "llm";
   /** Remote source display name when source is "remote". */
   sourceName?: string;
   code: string;
@@ -71,6 +71,7 @@ export type WorkTitleChoice = {
 export type WorkMetadataVariant = {
   description?: string;
   titleSource?: WorkTitleChoice["source"];
+  descriptionSource?: WorkTitleChoice["source"];
   key: string;
   language: string;
   title: string;
