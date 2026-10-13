@@ -794,6 +794,8 @@ export const japaneseResource = {
         overviewTwo:
           "ライブラリ、お気に入り、サークル、声優、ワークフロー、リモート取得、ブラウザーオーディオプレイヤーを備えています。",
         referenceProjects: "参考プロジェクト",
+        showReferenceDetails: "詳細を表示",
+        hideReferenceDetails: "詳細を非表示",
         referenceAreas: {
           recommendation: "推薦設計",
           remoteSources: "リモートソース",

@@ -105,3 +105,21 @@ test("@smoke opens About without an update icon when current", async ({ page }) 
   await expect(identity.getByText(appVersion, { exact: true })).toBeVisible();
   await expect(identity.getByRole("link", { name: /Update available/ })).toHaveCount(0);
 });
+
+test("About lists reference projects compactly until details are requested", async ({ page }) => {
+  await mockAppShell(page);
+  await page.goto("/about");
+
+  const references = page.getByRole("region", { name: "Reference projects", exact: true });
+  const note = references.getByText("Reports that combine playback position with listening time.");
+  await expect(references.getByText("Playback reporting", { exact: true })).toBeVisible();
+  await expect(references.getByRole("link", { name: "advplyr/audiobookshelf" })).toBeVisible();
+  await expect(note).toHaveCount(0);
+
+  await references.getByRole("button", { name: "Show details", exact: true }).click();
+  await expect(note).toBeVisible();
+  await expect(references.getByRole("link", { name: "advplyr/audiobookshelf" })).toBeVisible();
+
+  await references.getByRole("button", { name: "Hide details", exact: true }).click();
+  await expect(note).toHaveCount(0);
+});

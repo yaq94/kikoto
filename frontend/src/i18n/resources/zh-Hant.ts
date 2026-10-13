@@ -767,6 +767,8 @@ export const zhHantResource = {
         overviewOne: "Kikoto 將本機資料夾、DLsite 元資料和 Kikoeru 相容遠端來源統一到一個作品模型中。",
         overviewTwo: "它包含媒體庫瀏覽、收藏、社團、聲優、工作流程可見性、遠端取得流程和瀏覽器音訊播放器。",
         referenceProjects: "參考專案",
+        showReferenceDetails: "顯示詳情",
+        hideReferenceDetails: "隱藏詳情",
         referenceAreas: {
           recommendation: "推薦設計",
           remoteSources: "遠端來源",

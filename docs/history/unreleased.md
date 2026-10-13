@@ -49,3 +49,11 @@
   the lyrics list names each file's language.
 
 </details>
+
+<details>
+<summary><strong>Settings and interface</strong></summary>
+
+- About lists its reference projects as compact credits, one line of project
+  names per area. **Show details** adds what each project informed.
+
+</details>
