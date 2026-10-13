@@ -43,16 +43,18 @@ type Model struct {
 }
 
 type Provider struct {
-	ID           string  `json:"id"`
-	PresetID     string  `json:"presetId"`
-	Name         string  `json:"name"`
-	BaseURL      string  `json:"baseUrl"`
-	APIKey       string  `json:"apiKey,omitempty"`
-	Boundary     string  `json:"boundary"`
-	OllamaScope  string  `json:"ollamaScope,omitempty"`
-	Enabled      bool    `json:"enabled"`
-	DefaultModel string  `json:"defaultModel"`
-	Models       []Model `json:"models"`
+	ID             string  `json:"id"`
+	Revision       int64   `json:"revision"`
+	PresetID       string  `json:"presetId"`
+	Name           string  `json:"name"`
+	BaseURL        string  `json:"baseUrl"`
+	APIKey         string  `json:"apiKey,omitempty"`
+	Boundary       string  `json:"boundary"`
+	AllowSensitive bool    `json:"allowSensitive"`
+	OllamaScope    string  `json:"ollamaScope,omitempty"`
+	Enabled        bool    `json:"enabled"`
+	DefaultModel   string  `json:"defaultModel"`
+	Models         []Model `json:"models"`
 }
 
 func (p Provider) Preset() Preset {

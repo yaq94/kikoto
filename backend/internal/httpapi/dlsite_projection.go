@@ -109,7 +109,11 @@ func (s *Server) loadWorkMetadataPresentation(ctx context.Context, workID int64)
 			break
 		}
 	}
-	if len(result.Variants) == 0 && len(overrides.Titles) > 0 {
+	hasMachine := false
+	for _, choice := range choices {
+		hasMachine = hasMachine || choice.Source == "llm" || choice.DescriptionSource == "llm"
+	}
+	if len(result.Variants) == 0 && (len(overrides.Titles) > 0 || hasMachine) {
 		shared, projected, err := s.loadProjectedDLsiteTags(ctx, workID)
 		if err != nil {
 			return result, err
@@ -126,8 +130,26 @@ func (s *Server) loadWorkMetadataPresentation(ctx context.Context, workID int64)
 		result.Variants = append(result.Variants, workMetadataVariant{PresentationOnly: true, Key: originTitle.Code, Language: originTitle.Language, Title: originTitle.Title, Description: originTitle.Description, TitleSource: originTitle.Source, Origin: true, Tags: fallbackTags})
 		result.DefaultVariantKey = originTitle.Code
 	}
+	// Machine translations are metadata choices on this work, never editions.
+	for _, language := range []string{"ja-jp", "zh-cn", "zh-tw", "en-us", "ko-kr"} {
+		choice := choices[language]
+		if choice.Source != "llm" && choice.DescriptionSource != "llm" {
+			continue
+		}
+		key := "llm:" + language
+		result.Variants = append(result.Variants, workMetadataVariant{PresentationOnly: true, Key: key, Language: language, Title: choice.Title, Description: choice.Description, TitleSource: choice.Source, DescriptionSource: choice.DescriptionSource, Tags: fallbackTags})
+		if selectedTitle.Language == language {
+			result.DefaultVariantKey = key
+		}
+	}
 	matched := false
+	if strings.HasPrefix(result.DefaultVariantKey, "llm:") {
+		matched = true
+	}
 	for _, variant := range result.Variants {
+		if matched {
+			break
+		}
 		if (variant.Language == selectedTitle.Language || selectedTitle.Language == "") && firstNonEmpty(variant.MetadataCode, variant.Key) == selectedTitle.Code {
 			result.DefaultVariantKey, matched = variant.Key, true
 			break

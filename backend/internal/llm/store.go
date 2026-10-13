@@ -81,6 +81,8 @@ func (s *Store) Mutate(ctx context.Context, id string, input Provider, key *stri
 		if err != nil {
 			return Provider{}, err
 		}
+		input.APIKey = ""
+		input.Models = []Model{}
 		if key != nil {
 			input.APIKey = *key
 		} else if index >= 0 && providers[index].BaseURL == input.BaseURL && providers[index].PresetID == input.PresetID && providers[index].OllamaScope == input.OllamaScope {
@@ -91,11 +93,13 @@ func (s *Store) Mutate(ctx context.Context, id string, input Provider, key *stri
 			return Provider{}, err
 		}
 		if index >= 0 {
+			input.Revision = providers[index].Revision + 1
 			if providers[index].BaseURL == input.BaseURL && providers[index].PresetID == input.PresetID && providers[index].OllamaScope == input.OllamaScope && providers[index].APIKey == input.APIKey {
 				input.Models = providers[index].Models
 			}
 			providers[index] = input
 		} else {
+			input.Revision = 1
 			providers = append(providers, input)
 		}
 	}
@@ -137,13 +141,22 @@ func (s *Store) Policy(ctx context.Context) (Policy, error) {
 	if json.Unmarshal([]byte(raw), &policy) != nil {
 		return Policy{}, ErrInvalid
 	}
-	return policy.Normalized(), nil
+	return policy.Validate()
 }
 
 func (s *Store) SavePolicy(ctx context.Context, policy Policy) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.write(ctx, PolicyKey, policy.Normalized())
+	normalized, err := policy.Validate()
+	if err != nil {
+		return err
+	}
+	current, err := s.Policy(ctx)
+	if err != nil {
+		return err
+	}
+	normalized.Revision = current.Revision + 1
+	return s.write(ctx, PolicyKey, normalized)
 }
 
 func (s *Store) write(ctx context.Context, key string, value any) error {

@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/yexca/kikoto/backend/internal/llm"
@@ -14,24 +16,29 @@ import (
 )
 
 type llmProviderResponse struct {
-	ID           string      `json:"id"`
-	PresetID     string      `json:"presetId"`
-	Name         string      `json:"name"`
-	Kind         string      `json:"kind"`
-	BaseURL      string      `json:"baseUrl"`
-	Boundary     string      `json:"boundary"`
-	OllamaScope  string      `json:"ollamaScope,omitempty"`
-	Enabled      bool        `json:"enabled"`
-	HasAPIKey    bool        `json:"hasApiKey"`
-	DefaultModel string      `json:"defaultModel"`
-	Models       []llm.Model `json:"models"`
+	ID             string      `json:"id"`
+	PresetID       string      `json:"presetId"`
+	Name           string      `json:"name"`
+	Kind           string      `json:"kind"`
+	BaseURL        string      `json:"baseUrl"`
+	Boundary       string      `json:"boundary"`
+	AllowSensitive bool        `json:"allowSensitive"`
+	OllamaScope    string      `json:"ollamaScope,omitempty"`
+	Enabled        bool        `json:"enabled"`
+	HasAPIKey      bool        `json:"hasApiKey"`
+	DefaultModel   string      `json:"defaultModel"`
+	Models         []llm.Model `json:"models"`
 }
 
 func (s *Server) llmResponse(p llm.Provider) llmProviderResponse {
-	return llmProviderResponse{p.ID, p.PresetID, p.Name, p.Preset().Kind, p.Endpoint(s.cfg.HostProxyAddress()), p.Boundary, p.OllamaScope, p.Enabled, p.APIKey != "", p.DefaultModel, p.Models}
+	return llmProviderResponse{ID: p.ID, PresetID: p.PresetID, Name: p.Name, Kind: p.Preset().Kind, BaseURL: p.Endpoint(s.cfg.HostProxyAddress()), Boundary: p.Boundary, AllowSensitive: p.AllowSensitive, OllamaScope: p.OllamaScope, Enabled: p.Enabled, HasAPIKey: p.APIKey != "", DefaultModel: p.DefaultModel, Models: p.Models}
 }
 
 func (s *Server) listLLMProviders(w http.ResponseWriter, r *http.Request) {
+	if s.cfg.IsDemo() {
+		writeAPIError(w, 403, "llm_disabled", "LLM translation is unavailable in Demo.", false)
+		return
+	}
 	if _, ok := s.requirePermission(w, r, "sources:write"); !ok {
 		return
 	}
@@ -53,6 +60,10 @@ func (s *Server) listLLMProviders(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) getLLMPolicy(w http.ResponseWriter, r *http.Request) {
+	if s.cfg.IsDemo() {
+		writeAPIError(w, 403, "llm_disabled", "LLM translation is unavailable in Demo.", false)
+		return
+	}
 	if _, ok := s.requirePermission(w, r, "sources:write"); !ok {
 		return
 	}
@@ -65,16 +76,51 @@ func (s *Server) getLLMPolicy(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) updateLLMPolicy(w http.ResponseWriter, r *http.Request) {
+	if s.cfg.IsDemo() {
+		writeAPIError(w, 403, "llm_disabled", "LLM translation is unavailable in Demo.", false)
+		return
+	}
 	if _, ok := s.requirePermission(w, r, "sources:write"); !ok {
 		return
 	}
 	var policy llm.Policy
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&policy); err != nil {
-		writeAPIError(w, http.StatusBadRequest, "invalid_llm_policy", "Invalid LLM safety policy.", false)
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&policy); err != nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid_llm_policy", "Invalid policy fields or JSON. Policy requests must fit within 64 KiB.", false)
 		return
 	}
-	policy = policy.Normalized()
+	if decoder.Decode(new(any)) != io.EOF {
+		writeAPIError(w, 400, "invalid_llm_policy", "Send exactly one policy object.", false)
+		return
+	}
+	var err error
+	policy, err = policy.Validate()
+	if err != nil {
+		writeAPIError(w, 400, "invalid_llm_policy", err.Error(), false)
+		return
+	}
+	if len(policy.TagIDs) > 0 {
+		args := make([]any, len(policy.TagIDs))
+		for i, id := range policy.TagIDs {
+			args[i] = id
+		}
+		var count int
+		if err := s.db.QueryRowContext(r.Context(), "SELECT COUNT(*) FROM metadata_tag WHERE tag_id IN ("+strings.TrimSuffix(strings.Repeat("?,", len(args)), ",")+")", args...).Scan(&count); err != nil {
+			writeError(w, err)
+			return
+		}
+		if count != len(policy.TagIDs) {
+			writeAPIError(w, 400, "invalid_llm_policy", "A selected metadata tag does not exist. Choose an existing shared tag.", false)
+			return
+		}
+	}
 	if err := s.llmStore.SavePolicy(r.Context(), policy); err != nil {
+		writeError(w, err)
+		return
+	}
+	policy, err = s.llmStore.Policy(r.Context())
+	if err != nil {
 		writeError(w, err)
 		return
 	}
@@ -82,26 +128,44 @@ func (s *Server) updateLLMPolicy(w http.ResponseWriter, r *http.Request) {
 }
 
 type llmProviderPayload struct {
-	PresetID     string  `json:"presetId"`
-	Name         string  `json:"name"`
-	BaseURL      string  `json:"baseUrl"`
-	APIKey       *string `json:"apiKey"`
-	Boundary     string  `json:"boundary"`
-	OllamaScope  string  `json:"ollamaScope"`
-	Enabled      *bool   `json:"enabled"`
-	DefaultModel string  `json:"defaultModel"`
+	Kind           string  `json:"kind"`
+	PresetID       string  `json:"presetId"`
+	Name           string  `json:"name"`
+	BaseURL        *string `json:"baseUrl"`
+	APIKey         *string `json:"apiKey"`
+	Boundary       string  `json:"boundary"`
+	AllowSensitive *bool   `json:"allowSensitive"`
+	OllamaScope    string  `json:"ollamaScope"`
+	Enabled        *bool   `json:"enabled"`
+	DefaultModel   *string `json:"defaultModel"`
 }
 
 func (s *Server) saveLLMProvider(w http.ResponseWriter, r *http.Request) {
+	if s.cfg.IsDemo() {
+		writeAPIError(w, 403, "llm_disabled", "LLM translation is unavailable in Demo.", false)
+		return
+	}
 	if _, ok := s.requirePermission(w, r, "sources:write"); !ok {
 		return
 	}
 	var body llmProviderPayload
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&body); err != nil {
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&body); err != nil {
 		writeAPIError(w, 400, "invalid_llm_config", "Invalid LLM configuration.", false)
 		return
 	}
-	p := llm.Provider{PresetID: body.PresetID, Name: body.Name, BaseURL: body.BaseURL, Boundary: body.Boundary, OllamaScope: body.OllamaScope, DefaultModel: body.DefaultModel}
+	if decoder.Decode(new(any)) != io.EOF {
+		writeAPIError(w, 400, "invalid_llm_config", "Send exactly one provider configuration.", false)
+		return
+	}
+	p := llm.Provider{PresetID: body.PresetID, Name: body.Name, Boundary: body.Boundary, OllamaScope: body.OllamaScope}
+	if body.BaseURL != nil {
+		p.BaseURL = *body.BaseURL
+	}
+	if body.DefaultModel != nil {
+		p.DefaultModel = *body.DefaultModel
+	}
 	if id := r.PathValue("id"); id != "" {
 		current, loadErr := s.llmProvider(r.Context(), id)
 		if errors.Is(loadErr, llm.ErrNotFound) {
@@ -119,11 +183,14 @@ func (s *Server) saveLLMProvider(w http.ResponseWriter, r *http.Request) {
 		if body.Name != "" {
 			p.Name = body.Name
 		}
-		if body.BaseURL != "" {
-			p.BaseURL = body.BaseURL
+		if body.BaseURL != nil {
+			p.BaseURL = *body.BaseURL
 		}
 		if body.Boundary != "" {
 			p.Boundary = body.Boundary
+		}
+		if body.AllowSensitive != nil {
+			p.AllowSensitive = *body.AllowSensitive
 		}
 		if body.OllamaScope != "" {
 			p.OllamaScope = body.OllamaScope
@@ -131,9 +198,16 @@ func (s *Server) saveLLMProvider(w http.ResponseWriter, r *http.Request) {
 		if body.Enabled != nil {
 			p.Enabled = *body.Enabled
 		}
-		if body.DefaultModel != "" {
-			p.DefaultModel = body.DefaultModel
+		if body.DefaultModel != nil {
+			p.DefaultModel = *body.DefaultModel
 		}
+	}
+	if body.AllowSensitive != nil {
+		p.AllowSensitive = *body.AllowSensitive
+	}
+	if body.Kind != "" && body.Kind != p.Preset().Kind {
+		writeAPIError(w, 400, "invalid_llm_config", "The preset selects the provider protocol.", false)
+		return
 	}
 	if body.Enabled != nil && r.PathValue("id") == "" {
 		p.Enabled = *body.Enabled
@@ -151,6 +225,10 @@ func (s *Server) saveLLMProvider(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) deleteLLMProvider(w http.ResponseWriter, r *http.Request) {
+	if s.cfg.IsDemo() {
+		writeAPIError(w, 403, "llm_disabled", "LLM translation is unavailable in Demo.", false)
+		return
+	}
 	if _, ok := s.requirePermission(w, r, "sources:write"); !ok {
 		return
 	}
@@ -176,6 +254,10 @@ func (s *Server) llmProvider(ctx context.Context, id string) (llm.Provider, erro
 }
 
 func (s *Server) fetchLLMModels(w http.ResponseWriter, r *http.Request) {
+	if s.cfg.IsDemo() {
+		writeAPIError(w, 403, "llm_disabled", "LLM translation is unavailable in Demo.", false)
+		return
+	}
 	if _, ok := s.requirePermission(w, r, "sources:write"); !ok {
 		return
 	}

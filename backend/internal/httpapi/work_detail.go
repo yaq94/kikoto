@@ -70,14 +70,15 @@ type workMetadataPresentation struct {
 type workMetadataVariant struct {
 	MetadataCode string `json:"-"`
 	// A manual-only language choice is presentation, not evidence of provider sync.
-	PresentationOnly bool     `json:"-"`
-	Description      string   `json:"description"`
-	TitleSource      string   `json:"titleSource"`
-	Key              string   `json:"key"`
-	Language         string   `json:"language"`
-	Title            string   `json:"title"`
-	Tags             []string `json:"tags"`
-	Origin           bool     `json:"origin"`
+	PresentationOnly  bool     `json:"-"`
+	Description       string   `json:"description"`
+	TitleSource       string   `json:"titleSource"`
+	DescriptionSource string   `json:"descriptionSource,omitempty"`
+	Key               string   `json:"key"`
+	Language          string   `json:"language"`
+	Title             string   `json:"title"`
+	Tags              []string `json:"tags"`
+	Origin            bool     `json:"origin"`
 }
 
 type workFolderLocationDetail struct {

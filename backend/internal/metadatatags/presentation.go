@@ -184,8 +184,8 @@ func loadNamesBatch(ctx context.Context, q Querier, ids []int64) (map[int64][]Na
 	for start := 0; start < len(ids); start += 300 {
 		end := min(start+300, len(ids))
 		placeholders := strings.TrimSuffix(strings.Repeat("?,", end-start), ",")
-		args := make([]any, 0, 3*(end-start))
-		for range 3 {
+		args := make([]any, 0, 4*(end-start))
+		for range 4 {
 			for _, id := range ids[start:end] {
 				args = append(args, id)
 			}
@@ -194,6 +194,7 @@ func loadNamesBatch(ctx context.Context, q Querier, ids []int64) (map[int64][]Na
  UNION ALL SELECT concept.tag_id,name.language,name.name,'dlsite',1 FROM metadata_tag AS concept
   INNER JOIN dlsite_genre_name AS name ON name.genre_id=concept.dlsite_genre_id WHERE concept.tag_id IN (`+placeholders+`)
  UNION ALL SELECT tag_id,language,name,'provider',2 FROM metadata_tag_provider_name WHERE tag_id IN (`+placeholders+`)
+ UNION ALL SELECT tag_id,language,name,'llm',3 FROM metadata_tag_llm_name WHERE tag_id IN (`+placeholders+`)
  ORDER BY 1,5,2`, args...)
 		if err != nil {
 			return nil, err

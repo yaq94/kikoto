@@ -204,7 +204,8 @@ func loadNames(ctx context.Context, q Querier, id, genre int64) ([]Name, error) 
 	rows, err := q.QueryContext(ctx, `SELECT language,name,'manual',0 FROM metadata_tag_name WHERE tag_id=?
  UNION ALL SELECT language,name,'dlsite',1 FROM dlsite_genre_name WHERE genre_id=?
  UNION ALL SELECT language,name,'provider',2 FROM metadata_tag_provider_name WHERE tag_id=?
- ORDER BY 4,1`, id, genre, id)
+ UNION ALL SELECT language,name,'llm',3 FROM metadata_tag_llm_name WHERE tag_id=?
+ ORDER BY 4,1`, id, genre, id, id)
 	if err != nil {
 		return nil, err
 	}
@@ -229,7 +230,7 @@ func languageName(names []Name, language string) string {
 		}
 		return ""
 	}
-	for _, value := range []struct{ source, language string }{{"manual", language}, {"manual", ""}, {"dlsite", language}, {"provider", language}} {
+	for _, value := range []struct{ source, language string }{{"manual", language}, {"manual", ""}, {"dlsite", language}, {"provider", language}, {"llm", language}} {
 		if name := find(value.source, value.language); name != "" {
 			return name
 		}

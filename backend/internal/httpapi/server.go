@@ -35,8 +35,6 @@ type updateCheckCache struct {
 type Server struct {
 	llmStore                       *llm.Store
 	llmRequestSlots                chan struct{}
-	llmPreviewMu                   sync.Mutex
-	llmPreviews                    map[string]llmPreview
 	db                             *sql.DB
 	statistics                     *storage.StatisticsMaintainer
 	accountStore                   *account.Store
@@ -114,7 +112,6 @@ func NewServer(db *sql.DB, cfg config.Config) *Server {
 	server := &Server{
 		llmStore:        llm.NewStore(db),
 		llmRequestSlots: make(chan struct{}, 2),
-		llmPreviews:     map[string]llmPreview{},
 		statistics:      storage.NewStatisticsMaintainer(db),
 		db:              db, accountStore: account.NewStore(db), accessPolicy: accesspolicy.NewStore(db), libraryStore: library.NewStore(db), workflowStore: workflow.NewStore(db), cfg: cfg,
 		loginThrottle:                  auththrottle.New(),
@@ -234,6 +231,17 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("PATCH /api/works/{id}/manual-overrides", s.updateWorkManualOverrides)
 	handleSlowFirstResponse("POST /api/works/{id}/llm-translate", s.translateWorkWithLLM)
 	mux.HandleFunc("PUT /api/works/{id}/llm-translation", s.applyLLMTranslation)
+	mux.HandleFunc("POST /api/works/{id}/llm-precheck", s.precheckLLMWork)
+	mux.HandleFunc("POST /api/llm/translation-runs", s.createLLMTranslationRuns)
+	mux.HandleFunc("POST /api/workflow-runs/{id}/llm-resubmit", s.resubmitUncertainLLMRun)
+	mux.HandleFunc("GET /api/works/{id}/llm-lyrics-assets", s.listLLMLyricsAssets)
+	mux.HandleFunc("GET /api/llm/lyrics-assets/{asset}", s.downloadLLMLyricsAsset)
+	mux.HandleFunc("POST /api/llm/lyrics-assets/{asset}/publish", s.retryLLMLyricsPublication)
+	mux.HandleFunc("GET /api/works/{id}/llm-reviews", s.listLLMReviews)
+	mux.HandleFunc("GET /api/works/{id}/llm-translations", s.listLLMTranslations)
+	mux.HandleFunc("POST /api/works/{id}/llm-reviews/{review}/restore", s.restoreLLMTranslation)
+	mux.HandleFunc("DELETE /api/works/{id}/llm-previews/{preview}", s.rejectLLMPreview)
+	mux.HandleFunc("DELETE /api/works/{id}/llm-translations/{language}/{field}", s.revokeLLMTranslation)
 	mux.HandleFunc("DELETE /api/works/{id}/manual-overrides/{field}", s.deleteWorkManualOverride)
 	mux.HandleFunc("GET /api/works/{id}/cover-candidates", s.listWorkCoverCandidates)
 	mux.HandleFunc("POST /api/works/{id}/cover-override", s.setWorkCoverOverride)

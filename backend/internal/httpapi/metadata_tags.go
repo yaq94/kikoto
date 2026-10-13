@@ -62,11 +62,12 @@ func (s *Server) listMetadataTags(w http.ResponseWriter, r *http.Request) {
  OR (?>0 AND (tag.id=? OR concept.dlsite_genre_id=?))
  OR EXISTS(SELECT 1 FROM metadata_tag_name WHERE tag_id=tag.id AND INSTR(LOWER(name),LOWER(?))>0)
  OR EXISTS(SELECT 1 FROM metadata_tag_provider_name WHERE tag_id=tag.id AND INSTR(LOWER(name),LOWER(?))>0)
+ OR EXISTS(SELECT 1 FROM metadata_tag_llm_name WHERE tag_id=tag.id AND INSTR(LOWER(name),LOWER(?))>0)
  OR EXISTS(SELECT 1 FROM dlsite_genre_name WHERE genre_id=concept.dlsite_genre_id AND INSTR(LOWER(name),LOWER(?))>0))`
 	if s.cfg.IsDemo() {
 		where += ` AND EXISTS(SELECT 1 FROM work_tag AS link JOIN work AS demo_work ON demo_work.id=link.work_id WHERE link.tag_id=concept.tag_id AND ` + contentpolicy.DemoEligibleWorkSQL("demo_work") + `)`
 	}
-	args := []any{includeHidden, query, query, queryID, queryID, queryID, query, query, query}
+	args := []any{includeHidden, query, query, queryID, queryID, queryID, query, query, query, query}
 	resolveMerged := !s.cfg.IsDemo() && r.URL.Query().Get("resolveMerged") == "true"
 	from := "metadata_tag AS concept INNER JOIN tag ON tag.id=concept.tag_id"
 	selectedID, order := "tag.id", "LOWER(tag.display_name),tag.id"
