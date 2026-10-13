@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 
 import { useStableCallback } from "@/hooks/useStableCallback";
 import { api, type LibrarySort, type ListeningStatus, type SortDirection, type Work, type WorksPage } from "@/lib/api";
-import type { LocalWorkPageSize } from "@/lib/libraryBrowseState";
+import type { LibraryPageSize } from "@/lib/libraryBrowseState";
 import type { SearchClause } from "@/lib/librarySearchClauses";
 import { RECOMMENDATION_ALGORITHM_VERSION } from "@/lib/recommendationSession";
 
@@ -12,7 +12,7 @@ import type { LibraryRecommendations } from "./useLibraryRecommendations";
 
 export type LocalLibraryWorksRequest = {
   page: number;
-  pageSize: LocalWorkPageSize;
+  pageSize: LibraryPageSize;
   /** The compiled Library search query. */
   query: string;
   scope: LocalLibraryScope;

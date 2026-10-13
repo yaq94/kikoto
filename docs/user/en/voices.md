@@ -36,9 +36,16 @@ Voice pages present persisted person and credit data.
   without the chosen fact stay last in either direction. The order and the
   page size (24, 48, or 96) are remembered on the device for each account and
   apply to every voice actor.
-- Loads person detail, known works, and remote matches independently. Remote
-  source searches use bounded concurrency, while voice counts and user tags are
-  aggregated in batches.
+- Paginates a voice actor's works on the server. Known works and the remote
+  catalog merge into one list, and the search, the availability filter, and
+  the chosen order apply before pagination; bulk selection covers the loaded
+  page. The search matches a work the way a plain Library search does, by
+  code, title, circle, voice actor, tag, or personal tag, and a work only the
+  remote catalog holds by its code, title, circle, or tag. Every edition of a
+  work counts as one work, available when any edition is. Person detail and
+  the remote sources' catalog state load separately.
+  Remote source searches use bounded concurrency, while voice counts and user
+  tags are aggregated in batches.
 - Keeps Favorite, the common refresh actions, and a **More** menu in the
   detail summary. **First pull** or **Refresh** queues a Follow a voice actor
   run with only known works' metadata across every compatible remote source, and

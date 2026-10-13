@@ -28,8 +28,16 @@ test("remote source reuses the library grid, source sorting, localized tags, and
   await displayButton.click();
   const displayOptions = page.getByRole("dialog", { name: "Display options" });
   await expect(displayOptions.getByRole("radiogroup", { name: "Items per page" })).toBeVisible();
-  await displayOptions.getByRole("radio", { name: "12 per page" }).click();
-  await expect.poll(() => requests.some((url) => url.searchParams.get("pageSize") === "12")).toBe(true);
+  await expect(displayOptions.getByRole("radiogroup", { name: "Items per page" }).getByRole("radio")).toHaveText([
+    "24",
+    "48",
+    "96",
+  ]);
+  await displayOptions.getByRole("radio", { name: "48 per page" }).click();
+  await expect.poll(() => requests.some((url) => url.searchParams.get("pageSize") === "48")).toBe(true);
+  // The source's 30 works span two pages again at 24 per page.
+  await displayOptions.getByRole("radio", { name: "24 per page" }).click();
+  await expect.poll(() => requests.at(-1)?.searchParams.get("pageSize")).toBe("24");
   await page.keyboard.press("Escape");
   const selectButton = page.getByRole("button", { name: "Select", exact: true });
   await expect(selectButton).toBeVisible();

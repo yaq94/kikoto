@@ -62,8 +62,8 @@ import {
   type LibraryBrowseState,
   libraryBrowseStateFromSearch,
   libraryLocation,
-  localPageSize,
-  type LocalWorkPageSize,
+  libraryPageSize,
+  type LibraryPageSize,
   readLibraryBrowseState,
   readLibrarySortPreference,
   withSharedLibraryQuery,
@@ -203,7 +203,7 @@ export function LibraryPage({ active = true }: { active?: boolean }) {
   const [sortDirection, setSortDirection] = useState<SortDirection>(initialBrowseState.direction);
   const [randomSeed, setRandomSeed] = useState(initialBrowseState.randomSeed);
   const [workPage, setWorkPage] = useState(initialBrowseState.page);
-  const [workPageSize, setWorkPageSize] = useState<LocalWorkPageSize>(localPageSize(initialBrowseState.pageSize));
+  const [workPageSize, setWorkPageSize] = useState<LibraryPageSize>(libraryPageSize(initialBrowseState.pageSize));
   const [isUntracking, setIsUntracking] = useState(false);
   const requireUntrack = usePermissionGate(REMOTE_TRACK_PERMISSIONS, { deferDemo: true });
   const wasActive = useRef(active);
@@ -281,7 +281,7 @@ export function LibraryPage({ active = true }: { active?: boolean }) {
       ...state,
       status: tab.kind === "source" ? "all" : state.status,
       sort: tab.kind === "source" ? remoteLibrarySort(state.sort) : state.sort,
-      pageSize: tab.kind === "source" ? state.pageSize : localPageSize(state.pageSize),
+      pageSize: libraryPageSize(state.pageSize),
     });
     pendingBrowseKey.current = key === currentBrowseKey() ? null : key;
     setSearchQuery(state.query);
@@ -295,11 +295,11 @@ export function LibraryPage({ active = true }: { active?: boolean }) {
     if (tab.kind === "source") {
       setRemoteSourceStates((states) => ({
         ...states,
-        [tab.source.id]: { page: state.page, pageSize: state.pageSize },
+        [tab.source.id]: { page: state.page, pageSize: libraryPageSize(state.pageSize) },
       }));
     } else {
       setWorkPage(state.page);
-      setWorkPageSize(localPageSize(state.pageSize));
+      setWorkPageSize(libraryPageSize(state.pageSize));
     }
   });
 
@@ -914,7 +914,7 @@ export function LibraryPage({ active = true }: { active?: boolean }) {
     queueResultsScroll();
     setWorkPage(page);
   };
-  const changeWorkPageSize = (pageSize: LocalWorkPageSize) => {
+  const changeWorkPageSize = (pageSize: LibraryPageSize) => {
     queueResultsScroll();
     setWorkPage(1);
     setWorkPageSize(pageSize);
@@ -988,10 +988,10 @@ export function LibraryPage({ active = true }: { active?: boolean }) {
       onPageSizeChange={(value) => {
         queueResultsScroll();
         if (activeTab.kind === "source") {
-          updateRemoteSourceState(activeTab.source.id, { pageSize: value, page: 1 });
+          updateRemoteSourceState(activeTab.source.id, { pageSize: libraryPageSize(value), page: 1 });
           return;
         }
-        changeWorkPageSize(value as LocalWorkPageSize);
+        changeWorkPageSize(libraryPageSize(value));
       }}
       coverSources={{ mode: coverSourceMode, onChange: setCoverSourceMode }}
     />

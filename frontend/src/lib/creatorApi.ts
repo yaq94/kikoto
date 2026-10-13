@@ -258,6 +258,31 @@ export type VoiceRemoteWork = {
   availability?: string;
 };
 
+/** One work of a voice actor: a known work, or a remote catalog work no local credit names. */
+export type VoiceWork = (VoiceKnownWork | VoiceRemoteWork) & {
+  remoteObservations?: VoiceRemoteObservation[];
+};
+
+export type VoiceWorksPage = {
+  personId: number;
+  works: VoiceWork[];
+  page: number;
+  pageSize: number;
+  total: number;
+};
+
+export type VoiceWorksOptions = {
+  page?: number;
+  pageSize?: number;
+  query?: string;
+  /** all, available, local, remote, or missing; omitted keeps every work. */
+  availability?: string;
+  /** Omitted orders by newest release first. */
+  sort?: string;
+  direction?: "asc" | "desc";
+  signal?: AbortSignal;
+};
+
 export type VoiceRemoteSourceSet = {
   sourceId: number;
   sourceCode: string;
@@ -391,20 +416,28 @@ export const creatorApi = {
     const page = await getJSON<VoiceSummaryPage>(`/api/voices${search}`, options.signal);
     return { ...page, voices: page.voices.map(normalizeCreatorSyncState) };
   },
-  getVoice: async (personId: number | string) =>
-    normalizeCreatorSyncState(await getJSON<VoiceDetail>(`/api/voices/${encodeURIComponent(String(personId))}`)),
   getVoiceSummary: async (personId: number | string, signal?: AbortSignal) =>
     normalizeCreatorSyncState(
       await getJSON<VoiceDetail>(`/api/voices/${encodeURIComponent(String(personId))}?includeWorks=false`, signal),
     ),
-  getVoiceWorks: (personId: number | string, signal?: AbortSignal) =>
-    getJSON<{ personId: number; works: VoiceKnownWork[] }>(
-      `/api/voices/${encodeURIComponent(String(personId))}/works`,
-      signal,
-    ),
+  getVoiceWorks: (personId: number | string, options: VoiceWorksOptions = {}) => {
+    const search = new URLSearchParams();
+    if (options.page !== undefined) search.set("page", String(options.page));
+    if (options.pageSize !== undefined) search.set("pageSize", String(options.pageSize));
+    if (options.query?.trim()) search.set("q", options.query.trim());
+    if (options.availability && options.availability !== "all") search.set("availability", options.availability);
+    if (options.sort && options.sort !== "release") search.set("sort", options.sort);
+    if (options.direction === "asc") search.set("direction", "asc");
+    const suffix = search.toString() ? `?${search.toString()}` : "";
+    return getJSON<VoiceWorksPage>(
+      `/api/voices/${encodeURIComponent(String(personId))}/works${suffix}`,
+      options.signal,
+    );
+  },
+  /** The remote sources' catalog state for a voice actor; their works are read with `getVoiceWorks`. */
   getVoiceRemoteMatches: (personId: number | string, signal?: AbortSignal) =>
     getJSON<{ personId: number; remoteMatches: VoiceRemoteSourceSet[]; refresh: VoiceCatalogRefreshState }>(
-      `/api/voices/${encodeURIComponent(String(personId))}/remote-matches`,
+      `/api/voices/${encodeURIComponent(String(personId))}/remote-matches?includeWorks=false`,
       signal,
     ),
   refreshVoiceCatalog: (personId: number | string, payload: CreatorRefreshRequest) =>

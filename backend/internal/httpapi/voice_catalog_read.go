@@ -137,6 +137,12 @@ func persistVoiceCatalogRefreshOutcome(
 // removes its previous rows; the source status explains whether those rows are
 // current or stale to the caller.
 func (s *Server) loadVoiceCatalogMatches(ctx context.Context, personID int64) ([]voiceRemoteSourceSet, error) {
+	return s.loadVoiceCatalogMatchesForCodes(ctx, personID, nil)
+}
+
+// loadVoiceCatalogMatchesForCodes is loadVoiceCatalogMatches limited to the
+// catalog works with the given uppercase codes; nil keeps every work.
+func (s *Server) loadVoiceCatalogMatchesForCodes(ctx context.Context, personID int64, codes []string) ([]voiceRemoteSourceSet, error) {
 	state, err := s.currentVoiceCatalogRefreshState(ctx, personID)
 	if err != nil {
 		return nil, err
@@ -146,7 +152,7 @@ func (s *Server) loadVoiceCatalogMatches(ctx context.Context, personID int64) ([
 		return nil, err
 	}
 	sets, setIndexes := initialVoiceCatalogSourceSets(sources, state)
-	sets, err = s.loadVoiceCatalogMatchRows(ctx, personID, sets, setIndexes)
+	sets, err = s.loadVoiceCatalogMatchRows(ctx, personID, codes, sets, setIndexes)
 	if err != nil {
 		return nil, err
 	}
@@ -168,7 +174,18 @@ func initialVoiceCatalogSourceSets(sources []remoteSourceForUse, state voiceCata
 	return sets, setIndexes
 }
 
-func (s *Server) loadVoiceCatalogMatchRows(ctx context.Context, personID int64, sets []voiceRemoteSourceSet, setIndexes map[int64]int) ([]voiceRemoteSourceSet, error) {
+func (s *Server) loadVoiceCatalogMatchRows(ctx context.Context, personID int64, codes []string, sets []voiceRemoteSourceSet, setIndexes map[int64]int) ([]voiceRemoteSourceSet, error) {
+	args := []any{personID}
+	codeWhere := ""
+	if codes != nil {
+		if len(codes) == 0 {
+			return sets, nil
+		}
+		codeWhere = " AND UPPER(TRIM(item.primary_code)) IN (" + sqlPlaceholders(len(codes)) + ")"
+		for _, code := range codes {
+			args = append(args, code)
+		}
+	}
 	demoWhere := ""
 	if s.cfg.IsDemo() {
 		demoWhere = `
@@ -194,9 +211,9 @@ func (s *Server) loadVoiceCatalogMatchRows(ctx context.Context, personID int64, 
 		INNER JOIN file_source ON provider.code = 'kikoeru_source_' || file_source.code
 			AND file_source.source_type IN ('kikoeru_compatible', 'kikoeru_compatible_number178')
 		WHERE item.person_id = ?
-			`+demoWhere+`
+			`+codeWhere+demoWhere+`
 		ORDER BY item.primary_code ASC, file_source.id ASC, catalog_source.remote_code ASC
-	`, personID)
+	`, args...)
 	if err != nil {
 		return nil, err
 	}

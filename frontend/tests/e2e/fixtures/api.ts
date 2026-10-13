@@ -32,6 +32,8 @@ import type {
   VoiceKnownWork,
   VoiceSummary,
   VoiceSummaryPage,
+  VoiceWork,
+  VoiceWorksPage,
   Work,
   WorkDetail,
   WorkflowRun,
@@ -688,6 +690,14 @@ export function voiceDetailFixture(
   overrides: Partial<VoiceDetail> = {},
 ): VoiceDetail {
   return { ...voice, aliasRecords: [], works: [], remoteMatches: [], ...overrides };
+}
+
+/** One server page of a voice actor's works; `total` defaults to the works given. */
+export function voiceWorksPageFixture(
+  works: VoiceWork[] = [],
+  overrides: Partial<VoiceWorksPage> = {},
+): VoiceWorksPage {
+  return { personId: 7, works, page: 1, pageSize: 24, total: works.length, ...overrides };
 }
 
 export function voiceKnownWorkFixture(overrides: Partial<VoiceKnownWork> = {}): VoiceKnownWork {

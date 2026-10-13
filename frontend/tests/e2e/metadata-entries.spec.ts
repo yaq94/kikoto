@@ -210,7 +210,11 @@ test("inherited titles prefill without becoming overrides and clearing matches v
   expect(writes).toEqual([]);
   await open();
   await expect(japaneseTitle).toHaveValue("Example Japanese");
-  await japaneseTitle.press("End");
+  // The caret is placed directly: End leaves it at the start of a text field on macOS.
+  await japaneseTitle.focus();
+  await japaneseTitle.evaluate((input: HTMLInputElement) =>
+    input.setSelectionRange(input.value.length, input.value.length),
+  );
   await japaneseTitle.pressSequentially(" revised");
   await expect(japaneseTitle).toHaveValue("Example Japanese revised");
   await save.click();

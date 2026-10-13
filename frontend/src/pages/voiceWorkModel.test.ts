@@ -1,159 +1,59 @@
 import { describe, expect, it } from "vitest";
 
-import type { VoiceKnownWork, VoiceRemoteSourceSet, VoiceRemoteWork } from "@/lib/api";
+import type { VoiceKnownWork, VoiceRemoteObservation, VoiceRemoteWork } from "@/lib/api";
 import { workDetailRoute } from "../app/workDetailNavigation";
 
-import { mergeVoiceWorks, sortVoiceWorks, voiceWorkRemoteTarget } from "./voiceWorkModel";
+import { voiceWorkObservedSourceTags, voiceWorkRemoteTarget, type VoiceWorkView } from "./voiceWorkModel";
 
-describe("mergeVoiceWorks", () => {
-  it("keeps known identity while retaining the exact live remote observation", () => {
-    const known = knownWork();
-    const remote = remoteWork();
-    const [merged] = mergeVoiceWorks([known], [sourceSet(remote)]);
-
-    expect("workId" in merged && merged.workId).toBe(11);
-    expect("remote" in merged && merged.remote).toBe(false);
-    expect("sourceTags" in merged ? merged.sourceTags : []).toContainEqual(
-      expect.objectContaining({
-        sourceId: 7,
-        status: "available",
-      }),
-    );
-    expect(voiceWorkRemoteTarget(merged)).toEqual({ sourceId: 7, code: "SAMPLE-TRANSLATION" });
-  });
-
-  it("does not treat a failed source response as an availability observation", () => {
-    const result = mergeVoiceWorks([knownWork()], [{ ...sourceSet(remoteWork()), status: "unavailable" }]);
-    expect(result[0]).not.toHaveProperty("remoteObservations");
-  });
-
-  it("keeps the persisted exact source route when live source search fails", () => {
+describe("voiceWorkRemoteTarget", () => {
+  it("routes a known work to the first available observation the server lists", () => {
     const known: VoiceKnownWork = {
       ...knownWork(),
-      remoteObservations: [
-        {
-          sourceId: 9,
-          sourceCode: "persisted-source",
-          sourceName: "Persisted Source",
-          remoteCode: "PERSISTED-REMOTE-EDITION",
-          status: "available",
-        },
-      ],
+      remoteObservations: [observation("SAMPLE-TRANSLATION", "available"), observation("SAMPLE-ORIGIN", "available")],
     };
-    const [merged] = mergeVoiceWorks(
-      [known],
-      [{ ...sourceSet(remoteWork()), sourceId: 9, status: "error", works: [] }],
-    );
-    const target = voiceWorkRemoteTarget(merged);
+    const target = voiceWorkRemoteTarget(known);
 
-    expect(target).toEqual({ sourceId: 9, code: "PERSISTED-REMOTE-EDITION" });
+    expect(target).toEqual({ sourceId: 7, code: "SAMPLE-TRANSLATION" });
     expect(
       workDetailRoute({
         kind: "known",
-        canonicalCode: merged.primaryCode,
+        canonicalCode: known.primaryCode,
         source: target ? { sourceId: target.sourceId, remoteCode: target.code } : null,
       }),
-    ).toBe("/SAMPLE-ORIGIN?view=remote&source=9&remoteCode=PERSISTED-REMOTE-EDITION");
+    ).toBe("/SAMPLE-ORIGIN?view=remote&source=7&remoteCode=SAMPLE-TRANSLATION");
   });
 
-  it("prefers the persisted exact edition when live search also returns the canonical edition", () => {
-    const persisted = remoteWork();
+  it("skips an observation that is not available", () => {
     const known: VoiceKnownWork = {
       ...knownWork(),
-      remoteObservations: [
-        {
-          sourceId: persisted.sourceId,
-          sourceCode: persisted.sourceCode,
-          sourceName: persisted.sourceName,
-          remoteCode: persisted.remoteCode,
-          status: "available",
-        },
-      ],
+      remoteObservations: [observation("SAMPLE-ORIGIN", "not_found"), observation("SAMPLE-TRANSLATION", "available")],
     };
-    const origin = { ...persisted, remoteCode: "SAMPLE-ORIGIN" };
-    const [merged] = mergeVoiceWorks([known], [{ ...sourceSet(origin), works: [origin, persisted], total: 2 }]);
-
-    expect(known.remoteCode).toBe("");
-    expect(voiceWorkRemoteTarget(merged)).toEqual({ sourceId: 7, code: "SAMPLE-TRANSLATION" });
+    expect(voiceWorkRemoteTarget(known)).toEqual({ sourceId: 7, code: "SAMPLE-TRANSLATION" });
   });
 
-  it("prefers the known exact edition when several remote editions share an identity", () => {
-    const known = { ...knownWork(), remoteCode: "SAMPLE-TRANSLATION" };
-    const origin = { ...remoteWork(), remoteCode: "SAMPLE-ORIGIN" };
-    const translation = remoteWork();
-    const [merged] = mergeVoiceWorks([known], [{ ...sourceSet(origin), works: [origin, translation], total: 2 }]);
-
-    expect(voiceWorkRemoteTarget(merged)).toEqual({ sourceId: 7, code: "SAMPLE-TRANSLATION" });
+  it("falls back to the remote catalog work's own source", () => {
+    expect(voiceWorkRemoteTarget(remoteWork())).toEqual({ sourceId: 7, code: "SAMPLE-TRANSLATION" });
   });
 
-  it("sorts local works before newer catalog-only works", () => {
-    const local = {
-      ...knownWork(),
-      primaryCode: "RJ00000008",
-      releaseDate: "2024-01-01",
-      local: true,
-    };
-    const remote = {
+  it("keeps a negative observation visible without exposing a remote action target", () => {
+    const unavailable: VoiceWorkView = {
       ...remoteWork(),
-      primaryCode: "RJ00000009",
-      remoteCode: "RJ00000009",
-      releaseDate: "2026-01-01",
-    };
-
-    const result = mergeVoiceWorks([local], [sourceSet(remote)]);
-
-    expect(result.map((work) => work.primaryCode)).toEqual(["RJ00000008", "RJ00000009"]);
-  });
-
-  it("keeps persisted negative observations visible without exposing a remote action target", () => {
-    const unavailable = {
-      ...remoteWork(),
-      primaryCode: "RJ00000009",
-      remoteCode: "RJ00000009",
       remotePlayable: false,
       hasRemote: false,
       availability: "not_found",
+      remoteObservations: [observation("SAMPLE-TRANSLATION", "not_found")],
     };
 
-    const [result] = mergeVoiceWorks([], [{ ...sourceSet(unavailable), status: "error" }]);
-
-    expect(result.primaryCode).toBe("RJ00000009");
-    expect(result.remoteObservations).toContainEqual(expect.objectContaining({ status: "not_found" }));
-    expect(voiceWorkRemoteTarget(result)).toBeNull();
+    expect(voiceWorkRemoteTarget(unavailable)).toBeNull();
+    expect(voiceWorkObservedSourceTags(unavailable)).toEqual([
+      expect.objectContaining({ sourceId: 7, status: "not_found", count: 0 }),
+    ]);
   });
 });
 
-describe("sortVoiceWorks", () => {
-  const works = [
-    { ...knownWork(), primaryCode: "RJ00000000", title: "Beta", releaseDate: "2024-03-01", rating: 4.1, sales: 300 },
-    { ...knownWork(), primaryCode: "RJ00000001", title: "alpha", releaseDate: "2024-01-01", rating: 4.9, sales: 100 },
-    { ...knownWork(), primaryCode: "RJ00000002", title: "Gamma", releaseDate: "2024-02-01", rating: 4.5, sales: 200 },
-    // A remote match can arrive without a release date, rating, or sales count.
-    { ...remoteWork(), primaryCode: "RJ00000003", title: "Delta" },
-  ];
-  const order = (...args: Parameters<typeof sortVoiceWorks> extends [unknown, ...infer Rest] ? Rest : never) =>
-    sortVoiceWorks(works, ...args).map((work) => work.primaryCode.slice(-1));
-
-  it("orders by the chosen fact in either direction", () => {
-    expect(order("code", "asc")).toEqual(["0", "1", "2", "3"]);
-    expect(order("code", "desc")).toEqual(["3", "2", "1", "0"]);
-    expect(order("title", "asc")).toEqual(["1", "0", "3", "2"]);
-    expect(order("sales", "desc")).toEqual(["0", "2", "1", "3"]);
-  });
-
-  it("keeps works without the fact last in both directions", () => {
-    expect(order("release", "desc")).toEqual(["0", "2", "1", "3"]);
-    expect(order("release", "asc")).toEqual(["1", "2", "0", "3"]);
-    expect(order("rating", "desc")).toEqual(["1", "2", "0", "3"]);
-    expect(order("rating", "asc")).toEqual(["0", "2", "1", "3"]);
-  });
-
-  it("leaves the given works untouched", () => {
-    const before = works.map((work) => work.primaryCode);
-    sortVoiceWorks(works, "sales", "asc");
-    expect(works.map((work) => work.primaryCode)).toEqual(before);
-  });
-});
+function observation(remoteCode: string, status: VoiceRemoteObservation["status"]): VoiceRemoteObservation {
+  return { sourceId: 7, sourceCode: "sample-source", sourceName: "Sample Source", remoteCode, status };
+}
 
 function knownWork(): VoiceKnownWork {
   return {
@@ -227,18 +127,5 @@ function remoteWork(): VoiceRemoteWork {
     hasLocal: false,
     hasCache: false,
     hasRemote: false,
-  };
-}
-
-function sourceSet(work: VoiceRemoteWork): VoiceRemoteSourceSet {
-  return {
-    sourceId: work.sourceId,
-    sourceCode: work.sourceCode,
-    displayName: work.sourceName,
-    status: "ok",
-    error: "",
-    elapsedMs: 1,
-    total: 1,
-    works: [work],
   };
 }

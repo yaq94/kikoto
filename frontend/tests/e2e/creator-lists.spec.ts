@@ -21,6 +21,7 @@ import {
   voiceCatalogRefreshFixture,
   voiceDetailFixture,
   voiceKnownWorkFixture,
+  voiceWorksPageFixture,
   voiceSummaryFixture,
   type ApiErrorBody,
   type ApiResponse,
@@ -273,7 +274,7 @@ async function mockCreatorDetails(
       return;
     }
     if (url.pathname === "/api/voices/7/works") {
-      await route.fulfill({ json: { personId: 7, works: [] } satisfies ApiResponse<"getVoiceWorks"> });
+      await route.fulfill({ json: voiceWorksPageFixture() });
       return;
     }
     if (url.pathname === "/api/voices/7/remote-matches") {
@@ -639,11 +640,11 @@ test("voice detail renders one stable work-loading region for local and remote d
     releaseRemote = resolve;
   });
   await mockCreatorDetails(page);
-  await page.route("**/api/voices/7/works", async (route) => {
+  await page.route("**/api/voices/7/works*", async (route) => {
     await worksGate;
-    await route.fulfill({ json: { personId: 7, works: [] } satisfies ApiResponse<"getVoiceWorks"> });
+    await route.fulfill({ json: voiceWorksPageFixture() });
   });
-  await page.route("**/api/voices/7/remote-matches", async (route) => {
+  await page.route("**/api/voices/7/remote-matches*", async (route) => {
     await remoteGate;
     await route.fulfill({
       json: {
@@ -793,18 +794,21 @@ test("@desktop voice detail orders its works and switches card modes like the Li
       sales,
       local: true,
     });
-  await page.route("**/api/voices/7/works", (route) =>
-    route.fulfill({
-      json: {
-        personId: 7,
-        works: [
-          voiceWork(0, "Beta work", "2026-03-01", 300),
-          voiceWork(1, "Alpha work", "2026-01-01", 100),
-          voiceWork(2, "Gamma work", "2026-02-01", 200),
-        ],
-      } satisfies ApiResponse<"getVoiceWorks">,
-    }),
-  );
+  const works = [
+    voiceWork(0, "Beta work", "2026-03-01", 300),
+    voiceWork(1, "Alpha work", "2026-01-01", 100),
+    voiceWork(2, "Gamma work", "2026-02-01", 200),
+  ];
+  // The server orders the works; this stand-in orders by the requested fact.
+  await page.route("**/api/voices/7/works*", (route) => {
+    const params = new URL(route.request().url()).searchParams;
+    const fact = (work: (typeof works)[number]) =>
+      params.get("sort") === "title" ? work.title : (work.releaseDate ?? "");
+    const sign = params.get("direction") === "asc" ? 1 : -1;
+    return route.fulfill({
+      json: voiceWorksPageFixture([...works].sort((left, right) => sign * fact(left).localeCompare(fact(right)))),
+    });
+  });
   await page.goto("/voices/7");
 
   const titles = page.getByTestId("work-card").getByRole("heading");
@@ -832,6 +836,48 @@ test("@desktop voice detail orders its works and switches card modes like the Li
   await page.reload();
   await expect(page.getByRole("button", { name: "Sort: Title" })).toBeVisible();
   await expect(titles).toHaveText(["Alpha work", "Beta work", "Gamma work"]);
+});
+
+test("@desktop voice detail reads its works one server page at a time", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await mockCreatorDetails(page);
+  const requests: Record<string, string>[] = [];
+  await page.route("**/api/voices/7/works*", (route) => {
+    const params = new URL(route.request().url()).searchParams;
+    requests.push(Object.fromEntries(params));
+    const requestedPage = Number(params.get("page"));
+    const filtered = params.has("q") || params.has("availability");
+    return route.fulfill({
+      json: voiceWorksPageFixture(
+        [
+          voiceKnownWorkFixture({
+            workId: 30 + requestedPage,
+            primaryCode: `RJ0000002${requestedPage}`,
+            title: filtered ? "Filtered work" : `Page ${requestedPage} work`,
+          }),
+        ],
+        { page: requestedPage, total: filtered ? 1 : 60 },
+      ),
+    });
+  });
+  await page.goto("/voices/7");
+
+  const titles = page.getByTestId("work-card").getByRole("heading");
+  await expect(titles).toHaveText(["Page 1 work"]);
+  expect(requests.at(-1)).toEqual({ page: "1", pageSize: "24" });
+
+  const pagination = page.getByRole("navigation", { name: "Pages", exact: true });
+  await pagination.getByRole("button", { name: "Page 3", exact: true }).click();
+  await expect(titles).toHaveText(["Page 3 work"]);
+  expect(requests.at(-1)).toEqual({ page: "3", pageSize: "24" });
+
+  // A filter or search returns to the first page of the narrowed works.
+  await page.getByRole("button", { name: "Voice work availability: All works" }).click();
+  await page.getByRole("menuitemradio", { name: "Local", exact: true }).click();
+  await expect(titles).toHaveText(["Filtered work"]);
+  expect(requests.at(-1)).toEqual({ page: "1", pageSize: "24", availability: "local" });
+  await page.getByRole("textbox", { name: "Search voice works" }).fill("  filtered ");
+  await expect.poll(() => requests.at(-1)).toEqual({ page: "1", pageSize: "24", availability: "local", q: "filtered" });
 });
 
 test("circle detail keeps availability and primary actions compact on mobile", async ({ page }) => {

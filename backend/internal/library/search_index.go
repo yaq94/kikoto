@@ -101,6 +101,12 @@ func (s *Store) PrepareSearch(ctx context.Context, queryText string) {
 	if !searchUsesIndex(queryText) {
 		return
 	}
+	s.PrepareTextSearch(ctx)
+}
+
+// PrepareTextSearch brings a short search index queue up to date before a
+// plain-text search reads the index, under the same bounds as PrepareSearch.
+func (s *Store) PrepareTextSearch(ctx context.Context) {
 	var pending int
 	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM (SELECT 1 FROM work_search_dirty LIMIT ?)`, searchIndexInlineLimit+1).Scan(&pending); err != nil {
 		if ctx.Err() == nil {
