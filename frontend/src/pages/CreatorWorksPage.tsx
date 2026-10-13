@@ -9,7 +9,7 @@ import {
   Rss,
   SlidersHorizontal,
 } from "lucide-react";
-import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 
@@ -83,7 +83,6 @@ import {
   type VoiceCatalogRefreshState,
   type CreatorRefreshRequest,
   type VoiceDetail,
-  type VoiceKnownWork,
   type VoiceRemoteSourceSet,
   type VoiceSummary,
 } from "@/lib/api";
@@ -108,14 +107,7 @@ import {
   writeLastVoiceListLocation,
 } from "@/lib/voiceNavigationState";
 import { openLibraryTagSearch } from "@/lib/libraryTagSearch";
-import {
-  mergeVoiceWorks,
-  voiceWorkHasRemoteAvailability,
-  voiceWorkObservedSourceTags,
-  voiceWorkRemoteTarget,
-  type VoiceWorkView,
-  sortVoiceWorks,
-} from "@/pages/voiceWorkModel";
+import { voiceWorkObservedSourceTags, voiceWorkRemoteTarget, type VoiceWorkView } from "@/pages/voiceWorkModel";
 import { voiceWorkIsExplicitlyUnavailable } from "@/pages/voiceWorkAvailabilityModel";
 
 type CreatorKind = "circle" | "voice";
@@ -131,9 +123,9 @@ const voiceFilterOptions: readonly { value: VoiceFilter; label: string }[] = [
   { value: "missing", label: "Missing" },
 ];
 const voiceFilters: readonly VoiceFilter[] = voiceFilterOptions.map((option) => option.value);
-// A stable fallback keeps the works-derived memos, and the selection sync
-// effect that depends on them, from re-running while the detail is absent.
-const emptyKnownWorks: VoiceKnownWork[] = [];
+// A stable empty page keeps the selection sync effect from re-running while a
+// voice actor's works are absent.
+const emptyVoiceWorks: VoiceWorkView[] = [];
 function voiceWorkFilterOptions(t: TFunction): readonly { value: VoiceWorkFilter; label: string }[] {
   return [
     { value: "all", label: t("detailActions.allWorks") },
@@ -302,6 +294,10 @@ function VoiceDetailPage({ personId, active }: { personId: number; active: boole
   const [detail, setDetail] = useState<VoiceDetail | null>(null);
   const [notFound, setNotFound] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  // One server page of the works; the server merges, filters, and orders them.
+  const [works, setWorks] = useState<VoiceWorkView[]>(emptyVoiceWorks);
+  const [totalWorks, setTotalWorks] = useState(0);
+  const [worksReloadToken, setWorksReloadToken] = useState(0);
   const [isWorksLoading, setIsWorksLoading] = useState(false);
   const [remoteMatches, setRemoteMatches] = useState<VoiceRemoteSourceSet[]>([]);
   const [catalogRefresh, setCatalogRefresh] = useState<VoiceCatalogRefreshState | null>(null);
@@ -314,6 +310,7 @@ function VoiceDetailPage({ personId, active }: { personId: number; active: boole
   });
   const [message, setMessage] = useState("");
   const [query, setQuery] = useState("");
+  const [requestQuery, setRequestQuery] = useState("");
   const [filter, setFilter] = useState<VoiceWorkFilter>("all");
   const [workOptionsOpen, setWorkOptionsOpen] = useState(false);
   const [page, setPage] = useState(1);
@@ -348,6 +345,8 @@ function VoiceDetailPage({ personId, active }: { personId: number; active: boole
   const remoteWorkActions = useRemoteWorkActions();
   const loadedPersonID = useRef<number | null>(null);
   const loadedCatalogPersonID = useRef<number | null>(null);
+  const loadedWorksKey = useRef("");
+  const reloadWorks = () => setWorksReloadToken((value) => value + 1);
 
   useEffect(() => {
     if (!active || loadedPersonID.current === personId) return;
@@ -357,26 +356,19 @@ function VoiceDetailPage({ personId, active }: { personId: number; active: boole
     setRemoteMatches([]);
     setCatalogRefresh(null);
     setNotFound(false);
+    setWorks(emptyVoiceWorks);
+    setTotalWorks(0);
+    setPage(1);
+    loadedWorksKey.current = "";
     void (async () => {
       try {
         const item = await api.getVoiceSummary(personId, controller.signal);
         if (controller.signal.aborted) return;
+        loadedPersonID.current = personId;
         setDetail(item);
         setMessage("");
-        setIsLoading(false);
+        // The works load starts once the summary is shown.
         setIsWorksLoading(true);
-        try {
-          const result = await api.getVoiceWorks(personId, controller.signal);
-          if (controller.signal.aborted) return;
-          setDetail((current) => (current?.personId === personId ? { ...current, works: result.works } : current));
-          loadedPersonID.current = personId;
-        } catch (error) {
-          if (!controller.signal.aborted) {
-            toast.notify(toastFromError(error, t("errors.unavailable")));
-          }
-        } finally {
-          if (!controller.signal.aborted) setIsWorksLoading(false);
-        }
       } catch (error) {
         if (controller.signal.aborted) return;
         setDetail(null);
@@ -392,6 +384,73 @@ function VoiceDetailPage({ personId, active }: { personId: number; active: boole
     })();
     return () => controller.abort();
   }, [active, personId, t, toast]);
+
+  useEffect(() => {
+    if (query === requestQuery) return;
+    const timer = window.setTimeout(() => {
+      setRequestQuery(query);
+      setPage(1);
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [query, requestQuery]);
+
+  const detailPersonID = detail?.personId ?? 0;
+  useEffect(() => {
+    if (!active || detailPersonID !== personId) return;
+    const requestKey = (requestPage: number) =>
+      JSON.stringify([
+        personId,
+        requestPage,
+        pageSize,
+        requestQuery,
+        filter,
+        workSort,
+        workSortDirection,
+        worksReloadToken,
+      ]);
+    // A re-run for a new `t` finds the page already loaded.
+    if (loadedWorksKey.current === requestKey(page)) return;
+    const controller = new AbortController();
+    setIsWorksLoading(true);
+    api
+      .getVoiceWorks(personId, {
+        page,
+        pageSize,
+        query: requestQuery,
+        availability: filter,
+        sort: workSort,
+        direction: workSortDirection,
+        signal: controller.signal,
+      })
+      .then((result) => {
+        if (controller.signal.aborted) return;
+        // A page past the end resolves to the last page.
+        loadedWorksKey.current = requestKey(result.page);
+        setWorks(result.works);
+        setTotalWorks(result.total);
+        if (result.page !== page) setPage(result.page);
+      })
+      .catch((error) => {
+        if (!controller.signal.aborted) toast.notify(toastFromError(error, t("errors.unavailable")));
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setIsWorksLoading(false);
+      });
+    return () => controller.abort();
+  }, [
+    active,
+    detailPersonID,
+    filter,
+    page,
+    pageSize,
+    personId,
+    requestQuery,
+    t,
+    toast,
+    workSort,
+    workSortDirection,
+    worksReloadToken,
+  ]);
 
   const loadRemoteMatches = async (notify = false) => {
     setIsRemoteLoading(true);
@@ -467,6 +526,7 @@ function VoiceDetailPage({ personId, active }: { personId: number; active: boole
     if (!active || !catalogRefreshActive) return;
     let cancelled = false;
     let requestRunning = false;
+    let catalogSignature: string | null = null;
     const poll = async () => {
       // A hidden tab skips ticks and catches up as soon as it is shown again.
       if (requestRunning || document.hidden) return;
@@ -476,13 +536,15 @@ function VoiceDetailPage({ personId, active }: { personId: number; active: boole
         if (cancelled) return;
         setRemoteMatches(result.remoteMatches);
         const stillActive = result.refresh.status === "queued" || result.refresh.status === "running";
+        // The works page follows the catalog as each source's pass lands.
+        const signature = voiceCatalogSignature(result.remoteMatches);
+        if (!stillActive || (catalogSignature !== null && catalogSignature !== signature)) reloadWorks();
+        catalogSignature = signature;
         if (!stillActive) {
           notifyRefreshSettled(result.refresh);
           try {
             const summary = await api.getVoiceSummary(personId);
-            if (!cancelled) {
-              setDetail((current) => (current ? { ...summary, works: current.works, remoteMatches: [] } : current));
-            }
+            if (!cancelled) setDetail((current) => (current ? summary : current));
           } catch {
             // The persisted catalog remains usable if only the summary refresh fails.
           }
@@ -548,53 +610,19 @@ function VoiceDetailPage({ personId, active }: { personId: number; active: boole
       t("creatorBrowse.firstVoiceCatalogQueued"),
     );
 
-  const knownWorks = detail?.works ?? emptyKnownWorks;
   const failedRemoteSources = remoteMatches.filter(remoteSourceFailed).length;
-  const mergedWorks = useMemo(() => mergeVoiceWorks(knownWorks, remoteMatches), [knownWorks, remoteMatches]);
-  const filteredWorks = useMemo(() => {
-    const needle = query.trim().toLowerCase();
-    const matching = mergedWorks.filter((work) => {
-      const userTagNames = "userTags" in work ? work.userTags.map((tag) => tag.name) : [];
-      const matchesQuery =
-        !needle ||
-        [work.primaryCode, work.title, work.circle, ...work.tags, ...userTagNames].some((value) =>
-          value.toLowerCase().includes(needle),
-        );
-      if (!matchesQuery) return false;
-      const local = "local" in work ? work.local : work.hasLocal;
-      const remote = voiceWorkHasRemoteAvailability(work);
-      const cache = "cache" in work ? work.cache : work.hasCache;
-      switch (filter) {
-        case "available":
-          return local || remote || cache;
-        case "local":
-          return local;
-        case "remote":
-          return remote;
-        case "missing":
-          return voiceWorkIsExplicitlyUnavailable(work);
-        default:
-          return true;
-      }
-    });
-    return sortVoiceWorks(matching, workSort, workSortDirection);
-  }, [filter, mergedWorks, query, workSort, workSortDirection]);
-  const totalPages = Math.max(1, Math.ceil(filteredWorks.length / pageSize));
+  const totalPages = Math.max(1, Math.ceil(totalWorks / pageSize));
   const currentPage = Math.min(page, totalPages);
-  const pageWorks = filteredWorks.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+  const pageWorks = works;
   const changeWorkFilter = (value: VoiceWorkFilter) => {
     setFilter(value);
     setPage(1);
   };
-  const changeWorkQuery = (value: string) => {
-    setQuery(value);
-    setPage(1);
-  };
-  useEffect(() => setPage(1), [filter, pageSize, query]);
+  // Bulk selection covers the loaded page.
   useEffect(() => {
-    setSelectedWorkKeys((current) => retainVisibleSelection(current, filteredWorks, voiceWorkSelectionKey));
-  }, [filteredWorks]);
-  const selectedWorks = mergedWorks.filter((work) => selectedWorkKeys.has(voiceWorkSelectionKey(work)));
+    setSelectedWorkKeys((current) => retainVisibleSelection(current, works, voiceWorkSelectionKey));
+  }, [works]);
+  const selectedWorks = pageWorks.filter((work) => selectedWorkKeys.has(voiceWorkSelectionKey(work)));
   const selectablePageWorks = pageWorks.filter(isVoiceBulkSelectable);
   const selectedSaveable = selectedWorks.filter(voiceWorkRemoteTarget);
   const selectedForkable = selectedWorks.filter(
@@ -607,17 +635,15 @@ function VoiceDetailPage({ personId, active }: { personId: number; active: boole
       const next = await api.updateVoiceUserState(detail.personId, {
         favorite: !detail.favorite,
       });
-      setDetail((current) =>
-        current ? { ...current, ...next, works: current.works, remoteMatches: current.remoteMatches } : current,
-      );
+      setDetail((current) => (current ? { ...current, ...next } : current));
     } catch (error) {
       toast.notify(toastFromError(error, t("errors.unavailable")));
     }
   };
 
   const refreshDetail = useStableCallback(async () => {
-    const item = await api.getVoice(personId);
-    setDetail((current) => (item ? { ...item, remoteMatches: current?.remoteMatches ?? [] } : item));
+    setDetail(await api.getVoiceSummary(personId));
+    reloadWorks();
     void loadRemoteMatches(false);
   });
 
@@ -628,7 +654,7 @@ function VoiceDetailPage({ personId, active }: { personId: number; active: boole
       if (
         !terminal ||
         (terminal.status !== "succeeded" && terminal.status !== "partial") ||
-        !mergedWorks.some((work) => {
+        !works.some((work) => {
           const target = voiceWorkRemoteTarget(work);
           return target && isMatchingRemoteTrack(terminal, target.sourceId, target.code, work.primaryCode);
         })
@@ -638,7 +664,7 @@ function VoiceDetailPage({ personId, active }: { personId: number; active: boole
     };
     window.addEventListener(REMOTE_TRACK_TERMINAL_EVENT, refreshTrackedWork);
     return () => window.removeEventListener(REMOTE_TRACK_TERMINAL_EVENT, refreshTrackedWork);
-  }, [active, mergedWorks, refreshDetail]);
+  }, [active, works, refreshDetail]);
   const fetchWorkspace = useRemoteFetchWorkspace({ onWorksChanged: refreshDetail });
 
   const saveVoiceTags = async (tags: string[]) => {
@@ -660,15 +686,10 @@ function VoiceDetailPage({ personId, active }: { personId: number; active: boole
     }
     try {
       const result = await api.updateWorkUserState(workId, { listeningStatus: status });
-      setDetail((current) =>
-        current
-          ? {
-              ...current,
-              works: current.works.map((item) =>
-                item.workId === workId ? { ...item, listeningMark: result.listeningStatus } : item,
-              ),
-            }
-          : current,
+      setWorks((current) =>
+        current.map((item) =>
+          "listeningMark" in item && item.workId === workId ? { ...item, listeningMark: result.listeningStatus } : item,
+        ),
       );
     } catch (error) {
       toast.notify(toastFromError(error, t("creatorBrowse.markUpdateFailed")));
@@ -952,7 +973,7 @@ function VoiceDetailPage({ personId, active }: { personId: number; active: boole
         <CatalogWorkToolbar
           query={query}
           searchLabel={t("sheets.searchVoiceWorks")}
-          onQueryChange={changeWorkQuery}
+          onQueryChange={setQuery}
           sort={<LibrarySortButton {...sortProps} variant="toolbar" />}
           mobileSort={<LibrarySortButton {...sortProps} />}
           cardModes={{
@@ -984,7 +1005,7 @@ function VoiceDetailPage({ personId, active }: { personId: number; active: boole
             placement="top"
             page={currentPage}
             pageSize={pageSize}
-            totalItems={filteredWorks.length}
+            totalItems={totalWorks}
             totalPages={totalPages}
             compactMobile
             refreshing={isWorksLoading || isRemoteLoading || catalogRefreshActive}
@@ -1015,7 +1036,7 @@ function VoiceDetailPage({ personId, active }: { personId: number; active: boole
           filter={filter}
           onFilterChange={changeWorkFilter}
           query={query}
-          onQueryChange={changeWorkQuery}
+          onQueryChange={setQuery}
           pageSize={pageSize}
           pageSizeOptions={creatorWorkPageSizeOptions}
           onPageSizeChange={changeWorkPageSize}
@@ -1079,15 +1100,10 @@ function VoiceDetailPage({ personId, active }: { personId: number; active: boole
                   onStatusChange={(status) => void updateWorkMark(work, status)}
                   canMark={() => canStateVoiceWork(work)}
                   onFavoriteSaved={(favorite) => {
-                    setDetail((current) =>
-                      current
-                        ? {
-                            ...current,
-                            works: current.works.map((item) =>
-                              item.primaryCode === work.primaryCode ? { ...item, favorite } : item,
-                            ),
-                          }
-                        : current,
+                    setWorks((current) =>
+                      current.map((item) =>
+                        "favorite" in item && item.primaryCode === work.primaryCode ? { ...item, favorite } : item,
+                      ),
                     );
                   }}
                   onEnsureWork={() => ensureVoiceWorkForList(work)}
@@ -1112,7 +1128,7 @@ function VoiceDetailPage({ personId, active }: { personId: number; active: boole
           placement="bottom"
           page={currentPage}
           pageSize={pageSize}
-          totalItems={filteredWorks.length}
+          totalItems={totalWorks}
           totalPages={totalPages}
           onPageChange={setPage}
         />
@@ -1332,6 +1348,11 @@ function VoiceDetailSkeleton() {
       <WorkCollectionLoadingState label={t("creatorBrowse.loadingVoiceWorks")} />
     </div>
   );
+}
+
+/** Changes when a source's catalog pass lands, so the works page reloads with it. */
+function voiceCatalogSignature(sources: readonly VoiceRemoteSourceSet[]) {
+  return sources.map((source) => `${source.sourceId}:${source.status}:${source.total}`).join("|");
 }
 
 function voiceRemoteTargets(works: readonly VoiceWorkView[]) {

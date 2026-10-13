@@ -99,12 +99,12 @@ func (s *Server) getVoiceWorks(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid voice person id"})
 		return
 	}
-	works, err := s.loadVoiceKnownWorks(r.Context(), userID, personID)
+	page, err := s.loadVoiceWorksPage(r.Context(), userID, personID, parseVoiceWorksQuery(r))
 	if err != nil {
 		writeError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"personId": personID, "works": works})
+	writeJSON(w, http.StatusOK, page)
 }
 
 func (s *Server) getVoiceRemoteMatches(w http.ResponseWriter, r *http.Request) {
@@ -130,6 +130,12 @@ func (s *Server) getVoiceRemoteMatches(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, err)
 		return
+	}
+	if r.URL.Query().Get("includeWorks") == "false" {
+		// The source states and totals stay; the works are read in pages.
+		for index := range matches {
+			matches[index].Works = []voiceRemoteWork{}
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"personId": personID, "remoteMatches": matches, "refresh": state})
 }

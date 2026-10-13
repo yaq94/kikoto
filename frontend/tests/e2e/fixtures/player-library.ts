@@ -48,6 +48,7 @@ import {
   voiceCatalogRefreshFixture,
   voiceDetailFixture,
   voiceSummaryFixture,
+  voiceWorksPageFixture,
   workDetailFixture,
   workflowRunDetailFixture,
   workflowRunFixture,
@@ -319,7 +320,7 @@ export async function mockApplication(
       return;
     }
     if (url.pathname === "/api/voices/7/works") {
-      await route.fulfill({ json: { personId: 7, works: [] } satisfies ApiResponse<"getVoiceWorks"> });
+      await route.fulfill({ json: voiceWorksPageFixture() });
       return;
     }
     if (url.pathname === "/api/voices/7/remote-matches") {
