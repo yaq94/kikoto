@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Captions, CloudDownload, FileText, Folder, ListChecks, ListOrdered, RotateCcw } from "lucide-react";
+import { Captions, CloudDownload, FileText, Folder, Languages, ListChecks, ListOrdered, RotateCcw } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { Badge } from "@/components/ui/badge";
@@ -10,12 +10,15 @@ import { segmentedItemClassName, segmentedListClassName } from "@/components/ui/
 import { toastFromError, useToast } from "@/components/ui/toast";
 import {
   alignLyricsByOrder,
+  draftLyricsMediaItemId,
   effectiveLyricsMediaItemId,
-  initialLyricsAssignmentDraft,
+  initialLyricsAssignmentDrafts,
   lyricsAssignmentChanges,
   lyricsFolders,
+  lyricsLanguageTrackCounts,
   lyricsManagerEntries,
-  rebaseLyricsAssignmentDraft,
+  rebaseLyricsAssignmentDrafts,
+  storedLyricsMediaItemId,
   type LyricsManagerAudio,
   type LyricsManagerFile,
 } from "@/features/work-detail/lyrics/lyricsManagerModel";
@@ -27,14 +30,16 @@ import {
 } from "@/features/work-detail/lyrics/RemoteLyricsPanel";
 import { formatTrackDuration } from "@/features/work-detail/media/mediaTreeModel";
 import { api, type LibrarySource, type WorkDetail } from "@/lib/api";
+import { allLyricsLanguages, lyricsLanguages } from "@/lib/lyricsLanguage";
 
 const automaticValue = "auto";
 
 type LyricsManagerTab = "assign" | "remote";
 
 /**
- * Lets a library manager choose the lyrics file every listener uses for each
- * local track. Personal player choices still override these assignments.
+ * Lets a library manager choose, per language, the lyrics file every listener
+ * uses for each local track. Personal player choices still override these
+ * assignments.
  */
 export function LyricsManagerDialog({
   work,
@@ -58,7 +63,8 @@ export function LyricsManagerDialog({
   const entries = useMemo(() => lyricsManagerEntries(work.mediaItems), [work.mediaItems]);
   const folders = useMemo(() => lyricsFolders(entries.lyrics), [entries.lyrics]);
   const lyricsByID = useMemo(() => new Map(entries.lyrics.map((file) => [file.mediaItemId, file])), [entries.lyrics]);
-  const [draft, setDraft] = useState(() => initialLyricsAssignmentDraft(entries.audio));
+  const [drafts, setDrafts] = useState(() => initialLyricsAssignmentDrafts(entries.audio));
+  const [language, setLanguage] = useState<string>(allLyricsLanguages);
   const [tab, setTab] = useState<LyricsManagerTab>("assign");
   const remote = useRemoteLyricsFetch({
     work,
@@ -77,37 +83,45 @@ export function LyricsManagerDialog({
     if (previousAudio.current === entries.audio) return;
     const previous = previousAudio.current;
     previousAudio.current = entries.audio;
-    setDraft((current) => rebaseLyricsAssignmentDraft(previous, entries.audio, current));
+    setDrafts((current) => rebaseLyricsAssignmentDrafts(previous, entries.audio, current));
   }, [entries.audio]);
   const [alignFolder, setAlignFolder] = useState(() => folders[0]?.folder ?? "");
   const [alignMessage, setAlignMessage] = useState("");
   const [previewAudioID, setPreviewAudioID] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
-  const changes = useMemo(() => lyricsAssignmentChanges(entries.audio, draft), [entries.audio, draft]);
+  const changes = useMemo(() => lyricsAssignmentChanges(entries.audio, drafts), [entries.audio, drafts]);
+  const languageCounts = useMemo(() => lyricsLanguageTrackCounts(entries.audio, drafts), [entries.audio, drafts]);
   const groups = useMemo(() => groupByFolder(entries.audio), [entries.audio]);
   const editable = !readOnly && !saving && entries.lyrics.length > 0;
   const busy = saving || remote.fetching;
 
-  const assign = (audioID: number, lyricsID: number | null) =>
-    setDraft((current) => new Map(current).set(audioID, lyricsID));
+  /** Replaces the selected language's assignments for the given tracks. */
+  const assignMany = (assignments: Iterable<[number, number | null]>) =>
+    setDrafts((current) => {
+      const draft = new Map(current.get(language));
+      for (const [audioID, lyricsID] of assignments) draft.set(audioID, lyricsID);
+      return new Map(current).set(language, draft);
+    });
+
+  const assign = (audioID: number, lyricsID: number | null) => assignMany([[audioID, lyricsID]]);
 
   const alignByOrder = () => {
     const aligned = alignLyricsByOrder(entries.audio, entries.lyrics, alignFolder);
-    if (aligned.size > 0) {
-      setDraft((current) => {
-        const next = new Map(current);
-        for (const [audioID, lyricsID] of aligned) next.set(audioID, lyricsID);
-        return next;
-      });
-    }
+    if (aligned.size > 0) assignMany(aligned);
     setAlignMessage(
       aligned.size > 0 ? t("lyricsManager.alignResult", { count: aligned.size }) : t("lyricsManager.alignNone"),
     );
   };
 
-  const restoreAutomatic = () => {
-    setDraft(new Map(entries.audio.map((entry) => [entry.mediaItemId, null])));
+  const clearLanguage = () => {
+    assignMany(entries.audio.map((entry): [number, null] => [entry.mediaItemId, null]));
     setAlignMessage("");
+  };
+
+  const selectLanguage = (value: string) => {
+    setLanguage(value);
+    setAlignMessage("");
+    setPreviewAudioID(null);
   };
 
   const save = async () => {
@@ -193,6 +207,9 @@ export function LyricsManagerDialog({
         </>
       ) : (
         <>
+          {entries.audio.length > 0 && entries.lyrics.length > 0 && (
+            <LyricsLanguageTabs selected={language} counts={languageCounts} onSelect={selectLanguage} />
+          )}
           {editable && folders.length > 0 && (
             <div className="flex shrink-0 flex-wrap items-end gap-2 border-b px-5 py-3">
               <div className="min-w-0 flex-1 basis-56">
@@ -211,9 +228,11 @@ export function LyricsManagerDialog({
                 <ListOrdered className="h-4 w-4" />
                 {t("lyricsManager.alignByOrder")}
               </Button>
-              <Button variant="ghost" onClick={restoreAutomatic}>
+              <Button variant="ghost" onClick={clearLanguage}>
                 <RotateCcw className="h-4 w-4" />
-                {t("lyricsManager.restoreAutomatic")}
+                {language === allLyricsLanguages
+                  ? t("lyricsManager.restoreAutomatic")
+                  : t("lyricsManager.clearLanguage")}
               </Button>
               {alignMessage && (
                 <p role="status" className="w-full text-xs text-muted-foreground">
@@ -242,8 +261,11 @@ export function LyricsManagerDialog({
                       <LyricsAssignmentRow
                         key={entry.mediaItemId}
                         entry={entry}
-                        draftValue={draft.has(entry.mediaItemId) ? (draft.get(entry.mediaItemId) ?? null) : null}
-                        effectiveLyrics={lyricsByID.get(effectiveLyricsMediaItemId(entry, draft) ?? 0) ?? null}
+                        language={language}
+                        draftValue={draftLyricsMediaItemId(entry, drafts, language)}
+                        effectiveLyrics={
+                          lyricsByID.get(effectiveLyricsMediaItemId(entry, drafts, language) ?? 0) ?? null
+                        }
                         lyrics={entries.lyrics}
                         lyricsByID={lyricsByID}
                         disabled={!editable}
@@ -280,8 +302,56 @@ export function LyricsManagerDialog({
   );
 }
 
+/** The language strip: every language, then each language lyrics can declare, with its track count. */
+function LyricsLanguageTabs({
+  selected,
+  counts,
+  onSelect,
+}: {
+  selected: string;
+  counts: ReadonlyMap<string, number>;
+  onSelect: (language: string) => void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <div className="shrink-0 space-y-2 border-b px-5 py-3">
+      <p className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+        <Languages className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+        {t("lyricsManager.language")}
+      </p>
+      <div
+        role="tablist"
+        aria-label={t("lyricsManager.language")}
+        className={segmentedListClassName("![scrollbar-width:none] [&::-webkit-scrollbar]:hidden")}
+      >
+        {lyricsLanguages.map(([language, labelKey]) => {
+          const active = language === selected;
+          const count = counts.get(language) ?? 0;
+          return (
+            <button
+              key={language || "all"}
+              type="button"
+              role="tab"
+              aria-selected={active}
+              className={segmentedItemClassName(active, "h-9 gap-1.5 sm:h-8")}
+              onClick={() => onSelect(language)}
+            >
+              {t(labelKey)}
+              {count > 0 && <span className="tabular-nums text-muted-foreground">{count}</span>}
+            </button>
+          );
+        })}
+      </div>
+      <p className="text-xs text-muted-foreground">
+        {selected === allLyricsLanguages ? t("lyricsManager.allLanguagesHint") : t("lyricsManager.languageHint")}
+      </p>
+    </div>
+  );
+}
+
 function LyricsAssignmentRow({
   entry,
+  language,
   draftValue,
   effectiveLyrics,
   lyrics,
@@ -292,6 +362,7 @@ function LyricsAssignmentRow({
   onTogglePreview,
 }: {
   entry: LyricsManagerAudio;
+  language: string;
   draftValue: number | null;
   effectiveLyrics: LyricsManagerFile | null;
   lyrics: LyricsManagerFile[];
@@ -303,19 +374,22 @@ function LyricsAssignmentRow({
 }) {
   const { t } = useTranslation();
   const automatic = entry.autoLyricsMediaItemId ? lyricsByID.get(entry.autoLyricsMediaItemId) : undefined;
-  const options: FloatingSelectOption[] = [
-    {
-      value: automaticValue,
-      label: automatic
+  // Only the every-language row falls back to a name match; a language without
+  // lyrics leaves the choice to the other languages.
+  const unassignedLabel =
+    language !== allLyricsLanguages
+      ? t("lyricsManager.languageUnset")
+      : automatic
         ? t("lyricsManager.automaticMatch", { title: automatic.title })
-        : t("lyricsManager.automaticNone"),
-    },
+        : t("lyricsManager.automaticNone");
+  const options: FloatingSelectOption[] = [
+    { value: automaticValue, label: unassignedLabel },
     ...lyrics.map((file) => ({
       value: String(file.mediaItemId),
       label: <LyricsFileLabel file={file} />,
     })),
   ];
-  const changed = draftValue !== entry.assignedLyricsMediaItemId;
+  const changed = draftValue !== storedLyricsMediaItemId(entry, language);
   const duration = formatTrackDuration(entry.durationSeconds);
   return (
     <li className="px-3 py-2.5">

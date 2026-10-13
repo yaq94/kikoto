@@ -1,4 +1,5 @@
 import type { MediaItem, RemoteTrack, RemoteWorkDetail, WorkDetail, WorkProgressSummary } from "../../../lib/api";
+import { mediaItemLyricsAssignments } from "../../../lib/lyricsLanguage";
 import type { PlayerTrack, PlayerTrackLocation } from "../../../player/playerTypes";
 import {
   findLocalLyricsChoices,
@@ -73,6 +74,7 @@ export function emptyTree(): TreeNode {
 export function buildTree(items: MediaItem[], fileSourceId: number | null, workCode: string): TreeNode {
   const root = emptyTree();
   const lyricsMatchPathsByLocationID = new Map<number, string>();
+  const folderLabels = localWorkFolderLabels(items, fileSourceId, workCode);
   for (const item of items) {
     const sourceLocations =
       fileSourceId === null
@@ -95,7 +97,7 @@ export function buildTree(items: MediaItem[], fileSourceId: number | null, workC
     const localLocation = sourceLocations.find(
       (candidate) => candidate.locationType === "local" && candidate.availability === "available",
     );
-    const parts = displayPathParts(location.path, location.locationType, workCode);
+    const parts = displayPathParts(location.path, location.locationType, workCode, folderLabels);
     const fileName = parts.pop() ?? item.title;
     const locationStreamUrl = playbackStreamURLForLocation(
       location.id,
@@ -476,7 +478,7 @@ export function toPlayerTrack(track: TreeTrack, work: WorkDetail, fallbackCoverU
   const audioItem = work.mediaItems.find((item) => item.id === track.mediaItemId);
   const lyricsChoices =
     track.lyricsChoices ??
-    findLocalLyricsChoices(track.sourcePath || track.title, work.mediaItems, audioItem?.assignedLyricsMediaItemId);
+    findLocalLyricsChoices(track.sourcePath || track.title, work.mediaItems, mediaItemLyricsAssignments(audioItem));
   const automaticLyrics = lyricsChoices[0] ?? null;
   const preferredLyricsMediaItemId =
     track.preferredLyricsMediaItemId !== undefined
@@ -600,7 +602,7 @@ function attachLocalLyricsChoices(
     const choices = findLocalLyricsChoices(
       lyricsMatchPathsByLocationID.get(file.locationId) || file.sourcePath || file.title,
       items,
-      item?.assignedLyricsMediaItemId,
+      mediaItemLyricsAssignments(item),
     ).map((choice) => ({
       ...choice,
       displayPath: displayFilesByLocationID.get(choice.locationId)?.sourcePath,
@@ -640,16 +642,65 @@ function remoteLyricsCandidate(file: TreeTrack) {
   };
 }
 
-function displayPathParts(path: string, locationType: string, workCode: string) {
+function displayPathParts(
+  path: string,
+  locationType: string,
+  workCode: string,
+  folderLabels: ReadonlyMap<string, string> = noFolderLabels,
+) {
   const parts = path.split("/").filter(Boolean);
   if (locationType !== "local" || !workCode) return parts;
+  const workRootIndex = localWorkRootIndex(parts, workCode);
+  if (workRootIndex < 0 || workRootIndex >= parts.length - 1) return parts;
+  const inside = parts.slice(workRootIndex + 1);
+  const label = folderLabels.get(parts.slice(0, workRootIndex + 1).join("/"));
+  return label ? [label, ...inside] : inside;
+}
+
+const noFolderLabels: ReadonlyMap<string, string> = new Map();
+
+/** The index of the path segment that is the work's folder, or -1 when no segment names the work. */
+function localWorkRootIndex(parts: string[], workCode: string) {
   const code = workCode.toUpperCase();
-  const workRootIndex = parts.findIndex((part) => {
+  return parts.findIndex((part) => {
     const normalized = part.toUpperCase();
     return normalized.includes(code) || /\b(RJ|BJ|VJ)[0-9]{5,8}\b/i.test(part);
   });
-  if (workRootIndex < 0 || workRootIndex >= parts.length - 1) return parts;
-  return parts.slice(workRootIndex + 1);
+}
+
+/**
+ * Names each work folder when the work's local files lie in several, so the
+ * tree shows one folder per copy instead of mixing their files. A work in a
+ * single folder needs no labels. A label is the folder's name, extended by its
+ * parent folders while two folders share a name.
+ */
+function localWorkFolderLabels(items: MediaItem[], fileSourceId: number | null, workCode: string) {
+  const roots = new Set<string>();
+  if (!workCode) return noFolderLabels;
+  for (const item of items) {
+    for (const location of item.locations) {
+      if (location.locationType !== "local" || location.availability !== "available") continue;
+      if (fileSourceId !== null && location.fileSourceId !== fileSourceId) continue;
+      const parts = location.path.split("/").filter(Boolean);
+      const index = localWorkRootIndex(parts, workCode);
+      if (index >= 0 && index < parts.length - 1) roots.add(parts.slice(0, index + 1).join("/"));
+    }
+  }
+  if (roots.size < 2) return noFolderLabels;
+  const labels = new Map<string, string>();
+  for (const root of roots) {
+    const segments = root.split("/");
+    let depth = 1;
+    const label = () => segments.slice(-depth).join(" / ");
+    while (
+      depth < segments.length &&
+      [...roots].some((other) => other !== root && other.split("/").slice(-depth).join(" / ") === label())
+    ) {
+      depth += 1;
+    }
+    labels.set(root, label());
+  }
+  return labels;
 }
 
 function normalizeDisplayTree(root: TreeNode): TreeNode {

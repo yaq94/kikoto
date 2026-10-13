@@ -59,6 +59,8 @@ export function PersistedDirectoryManagerOverlay({
   workID,
   canForgetWork,
   localRoot,
+  localFolders = [],
+  onSelectLocalFolder,
   onClose,
 }: {
   open: boolean;
@@ -71,9 +73,15 @@ export function PersistedDirectoryManagerOverlay({
   workID: number;
   canForgetWork: boolean;
   localRoot: { folderId: number; path: string } | null;
+  /** The work's local folders when it has several; file management then shows one at a time. */
+  localFolders?: { id: number; rootPath: string }[];
+  onSelectLocalFolder?: (folderId: number) => void;
   onClose: () => void;
 }) {
+  const { demoMode, hasPermission } = useAuth();
   if (!open) return null;
+  // Comparing files reads the library, which the server allows only to users who manage its files.
+  const canCheckDuplicates = !demoMode && hasPermission("downloads:manage");
   const title = selectedTrackedPresence ? i18n.t("libraryDetail.manageCache") : i18n.t("libraryDetail.manageFiles");
   const description = selectedTrackedPresence
     ? i18n.t("libraryDetail.reviewCachedFiles")
@@ -98,7 +106,10 @@ export function PersistedDirectoryManagerOverlay({
       canForgetWork={canForgetWork}
       allowCacheDelete={!selectedRemoteSource}
       allowLocalDelete={!selectedRemoteSource && !selectedTrackedPresence}
+      duplicateWorkId={canCheckDuplicates ? workID : 0}
       localRoot={localRoot}
+      localFolders={localFolders}
+      onSelectLocalFolder={onSelectLocalFolder}
       showCachedFilter={Boolean(selectedTrackedPresence)}
     />
   );

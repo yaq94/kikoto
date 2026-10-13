@@ -551,6 +551,46 @@ export function DirectoryMessage({ message }: { message: string }) {
   return <div className="mb-4 rounded-md border bg-background px-3 py-2 text-sm text-muted-foreground">{message}</div>;
 }
 
+/**
+ * Tells a library manager that a work's files lie in several local folders or
+ * editions, and opens the tools that bring them into one.
+ */
+export function LocalCopiesBanner({
+  folderCount,
+  editionCount,
+  onManageFiles,
+  onManageLyrics,
+}: {
+  folderCount: number;
+  editionCount: number;
+  onManageFiles: () => void;
+  onManageLyrics?: () => void;
+}) {
+  const severalFolders = folderCount > 1;
+  return (
+    <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-md border bg-background px-3 py-2 text-sm">
+      <div className="min-w-0 flex-1 basis-64">
+        <div className="font-medium">
+          {severalFolders
+            ? i18n.t("libraryDetail.localCopiesFolders", { count: folderCount })
+            : i18n.t("libraryDetail.localCopiesEditions", { count: editionCount })}
+        </div>
+        <div className="text-xs text-muted-foreground">{i18n.t("libraryDetail.localCopiesHint")}</div>
+      </div>
+      <div className="flex shrink-0 flex-wrap gap-2">
+        {onManageLyrics && (
+          <Button size="sm" variant="outline" onClick={onManageLyrics}>
+            {i18n.t("detailActions.manageLyrics")}
+          </Button>
+        )}
+        <Button size="sm" variant="outline" onClick={onManageFiles}>
+          {i18n.t("libraryDetail.manageFiles")}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 export function DirectoryOperationBanner({
   runId,
   status,

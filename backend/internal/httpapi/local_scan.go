@@ -177,22 +177,6 @@ func parseMediaProbeOutput(output []byte) (int64, bool, bool) {
 	return int64(seconds + 0.5), hasAudio, true
 }
 
-func insertLocalDuplicateCandidates(ctx context.Context, tx *sql.Tx, runID int64, groups []localfs.DuplicateGroup) error {
-	for _, group := range groups {
-		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO workflow_candidate (workflow_run_id, candidate_type, external_key, status, payload_json)
-			VALUES (?, 'local_duplicate_work_folder', ?, 'pending', ?)
-		`, runID, group.Code, mustJSON(map[string]any{
-			"code":    group.Code,
-			"folders": localDuplicateFolderSummaries(group.Folders),
-			"message": "Multiple local folders were detected for the same work code. Review before deleting or hiding any files.",
-		})); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 func upsertDetectedWork(ctx context.Context, tx *sql.Tx, folder localfs.WorkFolder) (int64, error) {
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO work (primary_code, work_type, title, description)

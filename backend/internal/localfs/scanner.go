@@ -394,7 +394,20 @@ func duplicateGroups(folders []WorkFolder) []DuplicateGroup {
 	return groups
 }
 
+// downloadedLyricsFolderPattern matches the folders a remote lyrics download
+// names after the edition it read: "Lyrics", the edition's language and code,
+// and the download time, such as
+// "Lyrics - CHI_HANS - RJ00000001 - 20261008-153012".
+var downloadedLyricsFolderPattern = regexp.MustCompile(`^Lyrics(?: - [A-Z0-9_-]+)* - [0-9]{8}-[0-9]{6}(?: \([0-9]+\))?$`)
+
+// ExtractWorkCode returns the work code a folder name carries and whether the
+// name carries more than one. A downloaded lyrics folder carries the code of
+// the edition its lyrics came from, but it is part of the work folder that
+// holds it, so it names no work.
 func ExtractWorkCode(name string) (string, bool) {
+	if downloadedLyricsFolderPattern.MatchString(strings.TrimSpace(name)) {
+		return "", false
+	}
 	indices := workCodePattern.FindAllStringSubmatchIndex(name, -1)
 	codes := make([]string, 0, len(indices))
 	for _, match := range indices {

@@ -113,6 +113,64 @@ func TestLyricsAssignmentsAreSharedAndIndependentOfPersonalPreference(t *testing
 	}
 }
 
+func TestLyricsAssignmentsKeepOneFilePerLanguage(t *testing.T) {
+	db := seedLyricsAssignmentFamily(t)
+	if _, err := db.Exec(`INSERT INTO user_preference (user_id, metadata_languages) VALUES (7, '["zh-cn"]')`); err != nil {
+		t.Fatal(err)
+	}
+	server := NewServer(db, config.Config{})
+	response := putLyricsAssignments(server, "11", `{"assignments":[
+		{"audioMediaItemId":21,"lyricsMediaItemId":23},
+		{"audioMediaItemId":21,"language":"CHI_HANS","lyricsMediaItemId":22},
+		{"audioMediaItemId":21,"language":"en-us","lyricsMediaItemId":23}
+	]}`, "library:write")
+	if response.Code != http.StatusOK {
+		t.Fatalf("save status = %d, body = %s", response.Code, response.Body.String())
+	}
+
+	lyricsOrder := func(ctx context.Context) (int64, string) {
+		t.Helper()
+		items, err := server.loadWorkMediaItems(ctx, optionalUserID(ctx), 11)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, item := range items {
+			if item.ID != 21 {
+				continue
+			}
+			languages := []string{}
+			for _, assignment := range item.LyricsAssignments {
+				languages = append(languages, assignment.Language)
+			}
+			if item.AssignedLyricsMediaItemID == nil {
+				return 0, strings.Join(languages, ",")
+			}
+			return *item.AssignedLyricsMediaItemID, strings.Join(languages, ",")
+		}
+		t.Fatal("audio item 21 was not loaded")
+		return 0, ""
+	}
+
+	// A viewer's own language leads; the every-language file follows it.
+	viewer := context.WithValue(context.Background(), currentUserKey, currentUser{ID: 7})
+	if first, order := lyricsOrder(viewer); first != 22 || order != "zh-cn,,en-us" {
+		t.Fatalf("zh-cn viewer gets lyrics %d in order %q", first, order)
+	}
+	// Without a preference the original language leads; this track has no
+	// Japanese lyrics, so the every-language file is first.
+	if first, order := lyricsOrder(context.Background()); first != 23 || order != ",en-us,zh-cn" {
+		t.Fatalf("viewer without a preference gets lyrics %d in order %q", first, order)
+	}
+
+	response = putLyricsAssignments(server, "11", `{"assignments":[{"audioMediaItemId":21,"language":"zh-cn","lyricsMediaItemId":null}]}`, "library:write")
+	if response.Code != http.StatusOK {
+		t.Fatalf("clear status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if first, order := lyricsOrder(viewer); first != 23 || order != ",en-us" {
+		t.Fatalf("after clearing zh-cn the viewer gets lyrics %d in order %q", first, order)
+	}
+}
+
 func TestLyricsAssignmentsRejectInvalidLinksAtomically(t *testing.T) {
 	for _, testCase := range []struct {
 		name   string
@@ -125,6 +183,9 @@ func TestLyricsAssignmentsRejectInvalidLinksAtomically(t *testing.T) {
 		{name: "audio item as lyrics", body: `{"assignments":[{"audioMediaItemId":21,"lyricsMediaItemId":21}]}`, status: http.StatusBadRequest},
 		{name: "missing lyrics item", body: `{"assignments":[{"audioMediaItemId":21,"lyricsMediaItemId":999}]}`, status: http.StatusNotFound},
 		{name: "duplicate audio item", body: `{"assignments":[{"audioMediaItemId":21,"lyricsMediaItemId":22},{"audioMediaItemId":21,"lyricsMediaItemId":23}]}`, status: http.StatusBadRequest},
+		{name: "duplicate audio item and language", body: `{"assignments":[{"audioMediaItemId":21,"language":"zh-cn","lyricsMediaItemId":22},{"audioMediaItemId":21,"language":"CHI_HANS","lyricsMediaItemId":23}]}`, status: http.StatusBadRequest},
+		{name: "unsupported language", body: `{"assignments":[{"audioMediaItemId":21,"language":"tlh","lyricsMediaItemId":22}]}`, status: http.StatusBadRequest},
+		{name: "origin is not a language", body: `{"assignments":[{"audioMediaItemId":21,"language":"origin","lyricsMediaItemId":22}]}`, status: http.StatusBadRequest},
 		{name: "empty request", body: `{"assignments":[]}`, status: http.StatusBadRequest},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {

@@ -538,6 +538,19 @@ Fetch published; `state` is `active`, `missing`, or a review-driven cleanup
 state (`pending_cleanup`, `ignored`). A scan marks only folders it could
 observe as missing.
 
+A work may have several active folders: a scan that finds one work code in
+several folders records each of them for that work. The local presence names
+one of them, the folder flagged `is_primary`, and keeps naming it while that
+folder exists, so repeated scans do not move the work between its folders.
+Every active folder's files are indexed as media of the work, and each file
+belongs to the folder its path lies in. Several folders are a state the work
+detail offers to tidy up, not an error.
+
+A work folder is the deepest folder within the scan depth whose name carries a
+work code. A folder named `Lyrics - <language> - <code> - <date>-<time>`, the
+name a remote lyrics download gives a folder after the edition it read, names
+no work: it stays part of the work folder that holds it.
+
 `media_item.file_version` and `media_file_location.file_version` version local
 file observations. Local scans observe file size and nanosecond modification
 time independently of the stable path fingerprint. Changed observations clear
@@ -546,14 +559,30 @@ compare their location id and expected version in the write transaction,
 rejecting delayed results after a rescan. An empty version is established on
 the next visible scan or probe.
 
-`media_lyrics_assignment` is the library-level lyrics file of an audio media
-item. It relates two media items of the same work, so a rescan that keeps media
-ids keeps the assignment; deleting either item removes it. The audio item may
-belong to any edition of the requested work's family, because a work detail can
-show a sibling edition's local media. `origin` records how the row was made:
-`manual` from the lyrics manager, or `remote_fetch` when a remote lyrics
-download assigned the file it published. Clients rank a user's
-`user_media_lyrics_preference` first, then this assignment, then name matching.
+`media_file_location.content_hash` caches the SHA-256 of a local file for
+identical-file detection, and `content_hash_version` holds the size and
+modification time it was computed for. A file observed with another version has
+no usable hash until it is hashed again. Only files that share a size with
+another local file of the same work family are ever hashed.
+
+`media_lyrics_assignment` holds the library-level lyrics files of an audio
+media item, one per `language`: `ja-jp`, `zh-cn`, `zh-tw`, `en-us`, `ko-kr`,
+or the empty language, which applies to every language. The language is
+declared by whoever assigns the file and is never inferred from a file name or
+its text. A row relates two media items of the same work, so a rescan that
+keeps media ids keeps the assignment; deleting either item removes it. The
+audio item may belong to any edition of the requested work's family, because a
+work detail can show a sibling edition's local media. `origin` records how the
+row was made: `manual` from the lyrics manager, `remote_fetch` when a remote
+lyrics download assigned the file it published, or `library_import` when the
+file was copied from another local folder of the family.
+
+A media read lists an audio item's assignments in the order that viewer's
+playback tries them: the viewer's metadata languages in priority order, where
+`origin` stands for the declared language of the family's original edition,
+then the every-language assignment, then the remaining languages in the fixed
+supported order. Clients rank a user's `user_media_lyrics_preference` first,
+then these assignments in that order, then name matching.
 
 The lyrics indicator of a work card is the same resolution run on the server
 for every track of the work. The personal preference takes no part, because it

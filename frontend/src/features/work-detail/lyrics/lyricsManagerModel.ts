@@ -1,4 +1,5 @@
 import type { LyricsAssignmentChange, MediaItem } from "@/lib/api";
+import { allLyricsLanguages, lyricsLanguages, mediaItemLyricsAssignments } from "@/lib/lyricsLanguage";
 import { parseTimedLyrics } from "@/lib/timedLyrics";
 import { findLyricsMatches, isLyricsPath } from "@/player/lyricsMatching";
 
@@ -10,7 +11,8 @@ export type LyricsManagerAudio = {
   path: string;
   folder: string;
   durationSeconds: number | null;
-  assignedLyricsMediaItemId: number | null;
+  /** The stored library lyrics file per language; the empty language applies to every language. */
+  assignedLyrics: Readonly<Record<string, number>>;
   /** The name match used when no assignment exists. */
   autoLyricsMediaItemId: number | null;
 };
@@ -29,8 +31,15 @@ export type LyricsManagerEntries = {
   lyrics: LyricsManagerFile[];
 };
 
-/** Desired library assignment per audio media item; null restores automatic matching. */
+/**
+ * The desired library lyrics of one language per audio media item. Null leaves
+ * the track without lyrics in that language, so playback falls back to another
+ * language and then to automatic name matching.
+ */
 export type LyricsAssignmentDraft = ReadonlyMap<number, number | null>;
+
+/** One draft per lyrics language. */
+export type LyricsAssignmentDrafts = ReadonlyMap<string, LyricsAssignmentDraft>;
 
 const naturalCollator = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
 
@@ -56,7 +65,9 @@ export function lyricsManagerEntries(items: MediaItem[]): LyricsManagerEntries {
         path: displayPath,
         folder: directoryName(displayPath),
         durationSeconds: location.durationSeconds ?? item.durationSeconds,
-        assignedLyricsMediaItemId: item.assignedLyricsMediaItemId ?? null,
+        assignedLyrics: Object.fromEntries(
+          mediaItemLyricsAssignments(item).map((assignment) => [assignment.language, assignment.lyricsMediaItemId]),
+        ),
         autoLyricsMediaItemId: findLyricsMatches(path, items)[0]?.mediaItemId ?? null,
       };
     })
@@ -77,48 +88,99 @@ export function lyricsManagerEntries(items: MediaItem[]): LyricsManagerEntries {
   return { audio, lyrics };
 }
 
-export function initialLyricsAssignmentDraft(audio: LyricsManagerAudio[]): Map<number, number | null> {
-  return new Map(audio.map((entry) => [entry.mediaItemId, entry.assignedLyricsMediaItemId]));
+/** The stored library lyrics of a track in one language. */
+export function storedLyricsMediaItemId(entry: LyricsManagerAudio, language: string): number | null {
+  return entry.assignedLyrics[language] ?? null;
+}
+
+export function initialLyricsAssignmentDrafts(audio: LyricsManagerAudio[]): Map<string, Map<number, number | null>> {
+  return new Map(
+    lyricsLanguages.map(([language]) => [
+      language,
+      new Map(audio.map((entry) => [entry.mediaItemId, storedLyricsMediaItemId(entry, language)])),
+    ]),
+  );
 }
 
 /**
- * Moves the draft onto reloaded entries, for example after a download stored
+ * Moves the drafts onto reloaded entries, for example after a download stored
  * new assignments: rows the user edited keep their edit, others take the new
  * stored value.
  */
-export function rebaseLyricsAssignmentDraft(
+export function rebaseLyricsAssignmentDrafts(
   previous: LyricsManagerAudio[],
   next: LyricsManagerAudio[],
-  draft: LyricsAssignmentDraft,
-): Map<number, number | null> {
-  const stored = new Map(previous.map((entry) => [entry.mediaItemId, entry.assignedLyricsMediaItemId]));
+  drafts: LyricsAssignmentDrafts,
+): Map<string, Map<number, number | null>> {
+  const previousByID = new Map(previous.map((entry) => [entry.mediaItemId, entry]));
   return new Map(
-    next.map((entry) => {
-      const id = entry.mediaItemId;
-      const edited = draft.has(id) && stored.has(id) && draft.get(id) !== stored.get(id);
-      return [id, edited ? (draft.get(id) ?? null) : entry.assignedLyricsMediaItemId];
+    lyricsLanguages.map(([language]) => {
+      const draft = drafts.get(language);
+      return [
+        language,
+        new Map(
+          next.map((entry) => {
+            const id = entry.mediaItemId;
+            const before = previousByID.get(id);
+            const edited =
+              draft?.has(id) === true &&
+              before !== undefined &&
+              draft.get(id) !== storedLyricsMediaItemId(before, language);
+            return [id, edited ? (draft.get(id) ?? null) : storedLyricsMediaItemId(entry, language)];
+          }),
+        ),
+      ];
     }),
   );
 }
 
-/** The changes needed to turn the stored assignments into the draft. */
+/** The changes needed to turn the stored assignments into the drafts. */
 export function lyricsAssignmentChanges(
   audio: LyricsManagerAudio[],
-  draft: LyricsAssignmentDraft,
+  drafts: LyricsAssignmentDrafts,
 ): LyricsAssignmentChange[] {
-  return audio.flatMap((entry) => {
-    if (!draft.has(entry.mediaItemId)) return [];
-    const next = draft.get(entry.mediaItemId) ?? null;
-    return next === entry.assignedLyricsMediaItemId
-      ? []
-      : [{ audioMediaItemId: entry.mediaItemId, lyricsMediaItemId: next }];
+  return lyricsLanguages.flatMap(([language]) => {
+    const draft = drafts.get(language);
+    if (!draft) return [];
+    return audio.flatMap((entry) => {
+      if (!draft.has(entry.mediaItemId)) return [];
+      const next = draft.get(entry.mediaItemId) ?? null;
+      return next === storedLyricsMediaItemId(entry, language)
+        ? []
+        : [{ audioMediaItemId: entry.mediaItemId, language, lyricsMediaItemId: next }];
+    });
   });
 }
 
-/** The lyrics file an audio file will use: its draft assignment, else its name match. */
-export function effectiveLyricsMediaItemId(entry: LyricsManagerAudio, draft: LyricsAssignmentDraft) {
-  const assigned = draft.has(entry.mediaItemId) ? draft.get(entry.mediaItemId) : entry.assignedLyricsMediaItemId;
-  return assigned ?? entry.autoLyricsMediaItemId;
+/** The lyrics a track's draft holds in one language. */
+export function draftLyricsMediaItemId(entry: LyricsManagerAudio, drafts: LyricsAssignmentDrafts, language: string) {
+  const draft = drafts.get(language);
+  return draft?.has(entry.mediaItemId)
+    ? (draft.get(entry.mediaItemId) ?? null)
+    : storedLyricsMediaItemId(entry, language);
+}
+
+/**
+ * The lyrics file a language's row shows: its draft assignment, and for every
+ * language also the name match that applies when nothing is assigned.
+ */
+export function effectiveLyricsMediaItemId(
+  entry: LyricsManagerAudio,
+  drafts: LyricsAssignmentDrafts,
+  language: string,
+) {
+  const assigned = draftLyricsMediaItemId(entry, drafts, language);
+  return assigned ?? (language === allLyricsLanguages ? entry.autoLyricsMediaItemId : null);
+}
+
+/** How many tracks the drafts give lyrics in each language. */
+export function lyricsLanguageTrackCounts(audio: LyricsManagerAudio[], drafts: LyricsAssignmentDrafts) {
+  return new Map(
+    lyricsLanguages.map(([language]) => [
+      language,
+      audio.filter((entry) => draftLyricsMediaItemId(entry, drafts, language) !== null).length,
+    ]),
+  );
 }
 
 export function lyricsFolders(lyrics: LyricsManagerFile[]) {
