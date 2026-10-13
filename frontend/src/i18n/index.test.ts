@@ -110,6 +110,7 @@ describe("translation resources", () => {
     const intentionallyEnglish = new Set([
       // Interpolation-only format.
       "collection.filterValue",
+      "workCard.moreLists",
       "maintenance.library.apiUrl",
       // Product name.
       "maintenance.proxy.scopes.dlsite",

@@ -1240,7 +1240,7 @@ export function WorkCardListButton({
   };
 
   const members = memberLists ?? [];
-  const firstMemberList = members.at(0);
+  const firstMemberList: FavoriteList | undefined = members[0];
   const otherMemberListCount = members.length - 1;
 
   return (
