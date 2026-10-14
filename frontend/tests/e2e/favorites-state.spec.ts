@@ -207,7 +207,13 @@ async function mockFavorites(
       const body = request.postDataJSON() as { listeningStatus?: ListeningStatus };
       quickMark = body.listeningStatus ?? quickMark;
       await route.fulfill({
-        json: { workId: 1, listeningStatus: quickMark, favorite: false } satisfies ApiResponse<"updateWorkUserState">,
+        json: {
+          workId: 1,
+          listeningStatus: quickMark,
+          favorite: false,
+          personalRating: null,
+          personalNote: "",
+        } satisfies ApiResponse<"updateWorkUserState">,
       });
       return;
     }

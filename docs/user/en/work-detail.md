@@ -4,6 +4,12 @@
 Work detail presents metadata, editions, file trees, source availability, and
 playback actions for one work.
 
+## Personal review
+
+**Personal review** saves your own integer rating from 0 to 5 and a private note. Zero is a rating; **Unrated** means no rating. **Save review** sends only changed fields. **Clear rating** and **Clear note** immediately clear that field alone and keep any unsaved edit to the other field. Failed saves keep the draft for retry.
+
+The review belongs to your account and the work, so switching sources or reopening the work shows the same saved record. Public source ratings remain separate. A remote work that is not in the library can be registered with its necessary metadata when you save; this requires the existing remote tracking permission in addition to personal-state permission. It adds a library card without fetching a file tree, caching a cover, downloading media, or creating a media task. Anonymous visitors and Demo cannot save reviews.
+
 ## Multilingual titles
 
 The editor's Title section lists Japanese, Simplified Chinese, Traditional Chinese, English, and Korean first, each in a full-width row. The original language has an `origin` badge, and the currently displayed metadata language has a `current` badge; both can appear on the same row. **Universal title** appears below them under **Advanced title options**, collapsed by default. Existing universal titles open those options automatically for editing or clearing. The hint explains that a universal title overrides provider titles in every language, while per-language manual titles take precedence; the edition and description stay the same. A row's own manual title is editable text; provider and inherited titles stay grey hints and are never saved unchanged. Each row names its current source and marks a manual or edited title. Save sends only changed fields and title languages; clearing an existing manual title, or choosing Revert on its row, removes that scope when you save, while clearing an inherited hint makes no change. The same editor opens from Metadata → Works.

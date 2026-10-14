@@ -1,5 +1,18 @@
 export const personalHans = {
   personal: {
+    review: {
+      title: "个人评价",
+      rating: "个人评分",
+      note: "个人备注",
+      unrated: "未评分",
+      clearRating: "清除评分",
+      clearNote: "清除备注",
+      save: "保存评价",
+      saved: "评价已保存。",
+      failed: "评价未能保存。修改已保留，请重试。",
+      privateHint: "只有你能读取此评价。同一作品的各个来源共用这份记录。",
+      registrationHint: "保存时会将作品登记到作品库，不下载媒体。",
+    },
     readOnlyAccount: "你的账户可以查看此页面，但不能进行更改。",
     duration: {
       hoursMinutes: "{{hours}} 小时 {{minutes}} 分钟",

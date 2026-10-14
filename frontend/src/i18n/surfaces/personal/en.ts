@@ -1,5 +1,18 @@
 export const personalEnglish = {
   personal: {
+    review: {
+      title: "Personal review",
+      rating: "Personal rating",
+      note: "Personal note",
+      unrated: "Unrated",
+      clearRating: "Clear rating",
+      clearNote: "Clear note",
+      save: "Save review",
+      saved: "Review saved.",
+      failed: "Could not save the review. Your changes are kept; try again.",
+      privateHint: "Only you can read this review. It is shared across sources for this work.",
+      registrationHint: "Saving adds the work to the library without downloading media.",
+    },
     readOnlyAccount: "Your account can view this page but cannot change it.",
     duration: {
       hoursMinutes: "{{hours}} h {{minutes}} min",
