@@ -60,6 +60,14 @@ export function lyricsLanguageFolderName(language: string): string {
   }
 }
 
+/**
+ * The language whose lyrics folder has this name, or null for any other
+ * folder. The lyrics in these folders are the ones Kikoto manages.
+ */
+export function lyricsFolderLanguage(name: string): string | null {
+  return lyricsLanguages.find(([language]) => lyricsLanguageFolderName(language) === name)?.[0] ?? null;
+}
+
 /** The translation key naming a lyrics language, or null for an unknown one. */
 export function lyricsLanguageLabelKey(language: string) {
   return lyricsLanguages.find(([value]) => value === language)?.[1] ?? null;

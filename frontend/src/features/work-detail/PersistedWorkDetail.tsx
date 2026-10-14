@@ -62,6 +62,7 @@ import {
 import { useRemoteFetchWorkspace } from "@/features/work-detail/workflows/useRemoteFetchWorkspace";
 import { useFolderEditWorkflow } from "@/features/work-detail/folder-edit/useFolderEditWorkflow";
 import type { FolderEditInitialRemote } from "@/features/work-detail/folder-edit/useFolderEditWorkspace";
+import type { LyricsManagerRequest } from "@/features/work-detail/lyrics/LyricsManagerDialog";
 import { invalidateCachedWorkMedia, setCachedWorkMedia } from "@/features/work-detail/media/workMediaCache";
 import { PageHeaderBackAction } from "@/app/pageHeader";
 import { Card, CardContent } from "@/components/ui/card";
@@ -211,7 +212,7 @@ export function PersistedWorkDetailController({
     initialRemote: FolderEditInitialRemote | null;
     fromManage: boolean;
   } | null>(null);
-  const [isLyricsManagerOpen, setIsLyricsManagerOpen] = useState(false);
+  const [lyricsManagerRequest, setLyricsManagerRequest] = useState<LyricsManagerRequest | null>(null);
   const [metadataEditorSection, setMetadataEditorSection] = useState<MetadataEditorSection | null>(null);
   const [preview, setPreview] = useState<FilePreviewRequest | null>(null);
   const [isRefreshingLocalFiles, setIsRefreshingLocalFiles] = useState(false);
@@ -751,10 +752,12 @@ export function PersistedWorkDetailController({
     onFetch: openFetchWorkspace,
     onManage: () => setIsManageOpen(true),
     onManageLyrics: localDirectoryWork?.mediaItems.some((item) => item.kind === "audio")
-      ? () => setIsLyricsManagerOpen(true)
+      ? () => setLyricsManagerRequest({ tab: "assign" })
       : undefined,
     onRefreshLocalFiles: () => void refreshLocalFiles(),
   };
+  // The lyrics manager handles lyrics files only for a manager of the listed local folder.
+  const canManageLyricsFiles = canEditFolders && selectedSource?.kind === "local" && !selectedTrackedPresence;
   const heroActions = <PersistedIdentityActions {...detailActionProps} />;
   const renderSourceActions = (layout: SourceActionLayout) => (
     <PersistedMediaActions {...detailActionProps} layout={layout} />
@@ -872,6 +875,26 @@ export function PersistedWorkDetailController({
               }
             : undefined
         }
+        onManageAsLyrics={
+          canManageLyricsFiles
+            ? (files) => {
+                setIsManageOpen(false);
+                setLyricsManagerRequest({
+                  tab: "files",
+                  folderId: files[0]?.folderId,
+                  paths: files.map((file) => file.path),
+                });
+              }
+            : undefined
+        }
+        onManageLyrics={
+          canManageLyricsFiles
+            ? () => {
+                setIsManageOpen(false);
+                setLyricsManagerRequest({ tab: "files", folderId: manageFolder?.id });
+              }
+            : undefined
+        }
         onClose={() => setIsManageOpen(false)}
       />
       <PersistedFolderEditOverlay
@@ -893,10 +916,9 @@ export function PersistedWorkDetailController({
         }}
       />
       <PersistedLyricsManagerOverlay
-        open={isLyricsManagerOpen}
+        request={lyricsManagerRequest}
         work={localDirectoryWork}
-        remoteSources={remoteSources}
-        onClose={() => setIsLyricsManagerOpen(false)}
+        onClose={() => setLyricsManagerRequest(null)}
         onSaved={lyricsAssignmentsSaved}
       />
       <PersistedMetadataEditorOverlay

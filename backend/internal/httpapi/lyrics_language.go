@@ -56,6 +56,17 @@ func lyricsLanguageFolderName(language string) string {
 	}
 }
 
+// lyricsFolderLanguage returns the language whose lyrics folder has this name,
+// and false for any other folder.
+func lyricsFolderLanguage(name string) (string, bool) {
+	for _, language := range append([]string{""}, dlsite.SupportedMetadataLanguages...) {
+		if lyricsLanguageFolderName(language) == name {
+			return language, true
+		}
+	}
+	return "", false
+}
+
 // lyricsLanguageOrder ranks lyrics languages for a viewer: the viewer's
 // languages in order, where the origin token stands for the work's original
 // language when it is known, then the every-language assignment, then the

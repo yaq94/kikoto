@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
+  Captions,
   ChevronDown,
   ChevronRight,
   CopyCheck,
@@ -40,6 +41,11 @@ import {
   formatFolderStats,
   mediaDeleteTargetKindLabel,
 } from "@/features/work-detail/dialogs/mediaFilePresentation";
+import {
+  folderLyricsFiles,
+  splitManagedLyrics,
+  type FolderLyricsFile,
+} from "@/features/work-detail/lyrics/managedLyricsModel";
 import {
   formatBytes,
   formatDuration,
@@ -129,30 +135,27 @@ function directoryManagerRootTarget({
 
 function canForgetSelection({
   selectedTargets,
-  fileTargets,
-  selectedKeys,
+  wholeFolderSelected,
   canForgetWork,
 }: {
   selectedTargets: MediaDeleteTarget[];
-  fileTargets: MediaDeleteTarget[];
-  selectedKeys: Set<string>;
+  /** The work root and every file in it are selected. */
+  wholeFolderSelected: boolean;
   canForgetWork: boolean;
 }) {
   const selectedRootTarget = selectedTargets.find((target) => target.kind === "local_root") ?? null;
-  const allFileTargetsSelected =
-    fileTargets.length > 0 && fileTargets.every((target) => selectedKeys.has(mediaDeleteTargetKey(target)));
   const selectedWorkIDs = new Set(selectedTargets.map((target) => target.workId).filter((id) => id > 0));
   return Boolean(
     canForgetWork &&
     selectedRootTarget &&
-    allFileTargetsSelected &&
+    wholeFolderSelected &&
     selectedWorkIDs.size === 1 &&
     selectedRootTarget.workId > 0,
   );
 }
 
 export function DirectoryManagerDialog({
-  root,
+  root: givenRoot,
   title = i18n.t("libraryDetail.manageFiles"),
   description = i18n.t("libraryDetail.reviewFileOperations"),
   emptyLabel,
@@ -165,6 +168,8 @@ export function DirectoryManagerDialog({
   localFolders = [],
   onSelectLocalFolder,
   onEditFiles,
+  onManageAsLyrics,
+  onManageLyrics,
   showCachedFilter = false,
   workId = 0,
   canForgetWork = false,
@@ -185,6 +190,13 @@ export function DirectoryManagerDialog({
   onSelectLocalFolder?: (folderId: number) => void;
   /** Opens the edit that adds files from other editions and sources to the listed folder. */
   onEditFiles?: () => void;
+  /** Declares the language of the selected lyrics files of the listed folder, which Kikoto then manages. */
+  onManageAsLyrics?: (files: FolderLyricsFile[]) => void;
+  /**
+   * Opens the lyrics manager on its files. When it is given, the lyrics Kikoto
+   * manages in the listed folder are handled there and not listed here.
+   */
+  onManageLyrics?: () => void;
   showCachedFilter?: boolean;
   workId?: number;
   canForgetWork?: boolean;
@@ -192,6 +204,14 @@ export function DirectoryManagerDialog({
   duplicateWorkId?: number;
 }) {
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
+  const listedFolderPath = allowLocalDelete && onManageLyrics ? localRoot?.path : undefined;
+  const split = useMemo(
+    () => (listedFolderPath ? splitManagedLyrics(givenRoot, listedFolderPath) : { listed: givenRoot, managed: [] }),
+    [givenRoot, listedFolderPath],
+  );
+  // The lyrics Kikoto manages stay out of the list until the viewer asks for them.
+  const [showManagedLyrics, setShowManagedLyrics] = useState(false);
+  const root = showManagedLyrics ? givenRoot : split.listed;
   const duplicateCheck = useDuplicateFileCheck(duplicateWorkId);
   const [confirmation, setConfirmation] = useState<{
     mode: MediaCleanupMode;
@@ -207,16 +227,41 @@ export function DirectoryManagerDialog({
     () => directoryManageTargets(root, options).map((target) => ({ ...target, workId })),
     [root, options, workId],
   );
+  const managedLyricsTargets = useMemo(
+    () =>
+      split.managed
+        .flatMap((file) => mediaDeleteTargetsForFile(file, { allowLocalDelete: true }))
+        .map((target) => ({ ...target, workId })),
+    [split.managed, workId],
+  );
+  // While they have no row here, the managed lyrics go only with the whole folder.
+  const managedTargets = showManagedLyrics ? noTargets : managedLyricsTargets;
   const rootTarget = useMemo<MediaDeleteTarget | null>(() => {
-    return directoryManagerRootTarget({ fileTargets, allowLocalDelete, localRoot, workId });
-  }, [allowLocalDelete, fileTargets, localRoot, workId]);
+    return directoryManagerRootTarget({
+      fileTargets: [...fileTargets, ...managedTargets],
+      allowLocalDelete,
+      localRoot,
+      workId,
+    });
+  }, [allowLocalDelete, fileTargets, localRoot, managedTargets, workId]);
   const targets = useMemo(() => (rootTarget ? [...fileTargets, rootTarget] : fileTargets), [fileTargets, rootTarget]);
   const allKeys = useMemo(() => targets.map(mediaDeleteTargetKey), [targets]);
   const formatGroups = useMemo(() => directoryManagerFormatGroups(root, options), [root, options]);
   const locationGroups = useMemo(() => directoryManagerLocationGroups(fileTargets), [fileTargets]);
-  const selectedTargets = useMemo(
-    () => targets.filter((target) => selectedKeys.has(mediaDeleteTargetKey(target))),
-    [targets, selectedKeys],
+  const wholeFolderSelected = Boolean(rootTarget) && allKeys.every((key) => selectedKeys.has(key));
+  const selectedTargets = useMemo(() => {
+    const selected = targets.filter((target) => selectedKeys.has(mediaDeleteTargetKey(target)));
+    return wholeFolderSelected ? [...managedTargets, ...selected] : selected;
+  }, [managedTargets, targets, selectedKeys, wholeFolderSelected]);
+  const lyricsCandidates = useMemo(
+    () =>
+      onManageAsLyrics && allowLocalDelete && localRoot
+        ? folderLyricsFiles(
+            fileTargets.filter((target) => selectedKeys.has(mediaDeleteTargetKey(target))),
+            { id: localRoot.folderId, rootPath: localRoot.path },
+          )
+        : [],
+    [allowLocalDelete, fileTargets, localRoot, onManageAsLyrics, selectedKeys],
   );
   const duplicateGroups = duplicateCheck.check.status === "done" ? duplicateCheck.check.groups : null;
   const duplicates = useMemo(
@@ -226,9 +271,14 @@ export function DirectoryManagerDialog({
   const canCheckDuplicates = duplicateWorkId > 0 && Boolean(allowLocalDelete) && fileTargets.length > 0;
   const forgetAvailable = Boolean(canForgetWork && rootTarget && onDeleteTargets);
   // Forgetting a work removes its complete folder, so it unlocks only once everything is selected.
-  const canReviewForget = canForgetSelection({ selectedTargets, fileTargets, selectedKeys, canForgetWork });
+  const canReviewForget = canForgetSelection({ selectedTargets, wholeFolderSelected, canForgetWork });
   const toggleKeys = (keys: string[], included: boolean) =>
     setSelectedKeys((current) => withTargetKeys(current, keys, included));
+  // Rows that appear inside a selected folder join its selection; rows that go take theirs along.
+  const showManagedLyricsRows = (shown: boolean) => {
+    setShowManagedLyrics(shown);
+    toggleKeys(managedLyricsTargets.map(mediaDeleteTargetKey), shown && wholeFolderSelected);
+  };
   const startConfirmation = (mode: MediaCleanupMode) => {
     if (mode === "files_and_forget_work" && !canReviewForget) return;
     setConfirmation({ mode, step: 1, targets: selectedTargets });
@@ -343,11 +393,22 @@ export function DirectoryManagerDialog({
                 onToggle={toggleKeys}
               />
             </DuplicateMarksContext.Provider>
+            {split.managed.length > 0 && (
+              <ManagedLyricsNote
+                files={split.managed.length}
+                sizeBytes={selectedBytes(managedLyricsTargets)}
+                shown={showManagedLyrics}
+                deletedWithFolder={wholeFolderSelected}
+                disabled={deleting}
+                onShownChange={showManagedLyricsRows}
+                onManageLyrics={onManageLyrics}
+              />
+            )}
           </div>
         </div>
         <DirectoryManagerFooter
           selectedTargets={selectedTargets}
-          total={targets.length}
+          total={targets.length + (wholeFolderSelected ? managedTargets.length : 0)}
           allKeys={allKeys}
           selectedKeys={selectedKeys}
           forgetAvailable={forgetAvailable}
@@ -356,6 +417,10 @@ export function DirectoryManagerDialog({
           onToggleAll={toggleKeys}
           onStartConfirmation={startConfirmation}
           onEditFiles={onEditFiles}
+          lyricsCandidates={lyricsCandidates.length}
+          onManageAsLyrics={
+            onManageAsLyrics && allowLocalDelete && localRoot ? () => onManageAsLyrics(lyricsCandidates) : undefined
+          }
         />
       </Dialog>
       {confirmation && (
@@ -374,6 +439,7 @@ export function DirectoryManagerDialog({
 }
 
 const noDuplicateMarks: ReadonlyMap<number, DuplicateFileMark> = new Map();
+const noTargets: MediaDeleteTarget[] = [];
 
 /** The identical-file check: its start button, its progress, and the selections it offers. */
 function DuplicateFileControls({
@@ -444,6 +510,69 @@ function DuplicateFileControls({
         />
       )}
     </>
+  );
+}
+
+/**
+ * Stands in for the lyrics Kikoto manages in the listed folder, which the
+ * lyrics manager handles, and offers to list them with the other files.
+ */
+function ManagedLyricsNote({
+  files,
+  sizeBytes,
+  shown,
+  deletedWithFolder,
+  disabled,
+  onShownChange,
+  onManageLyrics,
+}: {
+  files: number;
+  sizeBytes: number;
+  /** The managed lyrics are listed in the tree. */
+  shown: boolean;
+  deletedWithFolder: boolean;
+  disabled: boolean;
+  onShownChange: (shown: boolean) => void;
+  onManageLyrics?: () => void;
+}) {
+  const hint = shown
+    ? i18n.t("lyricsManager.managedLyricsListed")
+    : deletedWithFolder
+      ? i18n.t("lyricsManager.deletedWithFolder")
+      : i18n.t("lyricsManager.managedByKikotoHint");
+  return (
+    <div
+      className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-md border border-dashed px-3 py-2 text-sm"
+      role="note"
+    >
+      <Captions className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+      <div className="min-w-0 flex-1 basis-56">
+        <div className="font-medium">{i18n.t("lyricsManager.managedByKikoto")}</div>
+        <div className="text-xs text-muted-foreground">
+          <span className="tabular-nums">
+            {i18n.t("libraryDetail.filesCount", { count: files })}
+            {sizeBytes > 0 ? ` · ${formatBytes(sizeBytes)}` : ""}
+          </span>
+          {" · "}
+          {hint}
+        </div>
+      </div>
+      <label className="inline-flex h-8 shrink-0 cursor-pointer items-center gap-2 rounded-md px-1 text-xs text-muted-foreground hover:text-foreground">
+        <Checkbox
+          className="h-4 w-4"
+          checked={shown}
+          disabled={disabled}
+          onCheckedChange={onShownChange}
+          aria-label={i18n.t("lyricsManager.showManagedLyrics")}
+        />
+        <span>{i18n.t("lyricsManager.showManagedLyrics")}</span>
+      </label>
+      {onManageLyrics && (
+        <Button variant="outline" size="sm" className="h-8 shrink-0" onClick={onManageLyrics}>
+          {i18n.t("detailActions.manageLyrics")}
+        </Button>
+      )}
+    </div>
   );
 }
 
@@ -539,7 +668,8 @@ function DirectoryManagerTree({
   onToggle: (keys: string[], included: boolean) => void;
 }) {
   const hasFiles = useMemo(() => sortedFilesDeep(root).length > 0, [root]);
-  if (!hasFiles) {
+  // A folder that holds only managed lyrics still lists its root, which removes the folder.
+  if (!hasFiles && !rootTarget) {
     return <div className="px-2 py-10 text-center text-sm text-muted-foreground">{emptyLabel}</div>;
   }
   const children = (
@@ -808,6 +938,8 @@ function DirectoryManagerFooter({
   onToggleAll,
   onStartConfirmation,
   onEditFiles,
+  lyricsCandidates,
+  onManageAsLyrics,
 }: {
   selectedTargets: MediaDeleteTarget[];
   total: number;
@@ -819,6 +951,9 @@ function DirectoryManagerFooter({
   onToggleAll: (keys: string[], included: boolean) => void;
   onStartConfirmation: (mode: MediaCleanupMode) => void;
   onEditFiles?: () => void;
+  /** How many selected files can be managed as lyrics. */
+  lyricsCandidates: number;
+  onManageAsLyrics?: () => void;
 }) {
   const all = directoryManagerSelectionState(allKeys, selectedKeys);
   const bytes = selectedBytes(selectedTargets);
@@ -851,6 +986,19 @@ function DirectoryManagerFooter({
           >
             <FolderPlus className="h-4 w-4" />
             {i18n.t("folderEdit.editFiles")}
+          </Button>
+        )}
+        {onManageAsLyrics && (
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={lyricsCandidates === 0 || deleting}
+            title={i18n.t("lyricsManager.manageAsLyricsHint")}
+            onClick={onManageAsLyrics}
+          >
+            <Captions className="h-4 w-4" />
+            {i18n.t("lyricsManager.manageAsLyrics")}
+            {lyricsCandidates > 0 && <span className="tabular-nums text-muted-foreground">{lyricsCandidates}</span>}
           </Button>
         )}
         {forgetAvailable && (
