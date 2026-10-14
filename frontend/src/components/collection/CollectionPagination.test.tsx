@@ -47,4 +47,20 @@ describe("CollectionPagination", () => {
     expect(rendered).toContain("1-24 of 30 circles");
     expect(rendered).toContain("Page 1 of 2, 30 circles");
   });
+
+  it("offers a page jump at each gap between the bottom page numbers", () => {
+    const rendered = renderToStaticMarkup(
+      <CollectionPagination
+        placement="bottom"
+        page={6}
+        pageSize={24}
+        totalItems={480}
+        totalPages={20}
+        itemLabel="circles"
+        onPageChange={() => undefined}
+      />,
+    );
+
+    expect(rendered.match(/<button[^>]*aria-label="Go to page"/g)).toHaveLength(2);
+  });
 });

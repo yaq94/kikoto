@@ -75,6 +75,8 @@
   a dialog. A provider's switch turns it on or off from the list, and deleting
   one asks for confirmation. The content safety policy edits sensitive tags as
   removable chips and keyword rules as compact rows.
+- The ellipsis between the page numbers below a list opens a field that goes
+  to a typed page number.
 
 </details>
 

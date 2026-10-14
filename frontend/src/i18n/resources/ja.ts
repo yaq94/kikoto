@@ -164,6 +164,7 @@ const collectionJapanese = {
   previousPage: "前のページ",
   nextPage: "次のページ",
   page: "{{page}}ページ",
+  jumpToPage: "ページを指定して移動",
   pageOf: "{{totalPages}}ページ中{{page}}ページ、{{totalItems}}{{itemLabel}}",
   rangeOf: "{{first}}～{{last}} / {{totalItems}}{{itemLabel}}",
   refreshing: "{{itemLabel}}を更新中",
