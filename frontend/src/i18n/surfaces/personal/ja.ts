@@ -1,5 +1,18 @@
 export const personalJapanese = {
   personal: {
+    review: {
+      title: "個人レビュー",
+      rating: "個人評価",
+      note: "個人メモ",
+      unrated: "未評価",
+      clearRating: "評価を消去",
+      clearNote: "メモを消去",
+      save: "レビューを保存",
+      saved: "レビューを保存しました。",
+      failed: "レビューを保存できませんでした。変更は保持されています。再試行してください。",
+      privateHint: "このレビューは本人だけが閲覧できます。同じ作品の各ソースで共有されます。",
+      registrationHint: "保存すると作品がライブラリに登録されます。メディアはダウンロードされません。",
+    },
     readOnlyAccount: "このアカウントではこのページを閲覧できますが、変更はできません。",
     duration: {
       hoursMinutes: "{{hours}} 時間 {{minutes}} 分",

@@ -39,6 +39,8 @@ type remoteWorkDetail struct {
 	VoiceRefs        []remoteEntityRef        `json:"voiceRefs"`
 	ImportStatus     string                   `json:"importStatus"`
 	WorkID           *int64                   `json:"workId"`
+	PersonalRating   *int64                   `json:"personalRating"`
+	PersonalNote     string                   `json:"personalNote"`
 	MetadataView     workMetadataPresentation `json:"metadataPresentation"`
 	Tracks           []remoteTrackDetail      `json:"tracks,omitempty"`
 	LanguageEditions []remoteLanguageEdition  `json:"languageEditions"`
@@ -111,6 +113,17 @@ func (s *Server) getRemoteSourceWork(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, err)
 		return
+	}
+	if detail.WorkID != nil {
+		var rating sql.NullInt64
+		err := s.db.QueryRowContext(r.Context(), `SELECT rating, note FROM user_work_state WHERE user_id = ? AND work_id = ?`, optionalUserID(r.Context()), *detail.WorkID).Scan(&rating, &detail.PersonalNote)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			writeError(w, err)
+			return
+		}
+		if rating.Valid {
+			detail.PersonalRating = &rating.Int64
+		}
 	}
 	if s.remoteAddressesHidden(r.Context()) {
 		// The source's site link and the upstream work link both name the

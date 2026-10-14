@@ -1,6 +1,7 @@
 import { libraryEnglish, collectionEnglish, workCardEnglish } from "../resources";
 import { surfaceJapanese } from "../surfaces/ja";
 import { personalJapanese } from "../surfaces/personal/ja";
+import { translationAdmin } from "../surfaces/translation/ja";
 
 const libraryJapanese = {
   ...libraryEnglish,
@@ -688,6 +689,7 @@ export const japaneseResource = {
       ...surfaceJapanese,
       ...adminToolsJapanese,
       ...personalJapanese,
+      translationAdmin,
       appearance: {
         title: "外観",
         subtitle: "モード、スタイル、カラー",

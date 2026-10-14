@@ -1,6 +1,7 @@
 import { surfaceEnglish } from "./surfaces/en";
 import { adminToolsEnglish } from "./surfaces/adminTools";
 import { personalEnglish } from "./surfaces/personal/en";
+import { translationAdmin } from "./surfaces/translation/en";
 
 export const libraryEnglish = {
   workNotFound: "Work not found",
@@ -345,6 +346,7 @@ export const englishResource = {
       ...surfaceEnglish,
       ...adminToolsEnglish,
       ...personalEnglish,
+      translationAdmin,
       appearance: {
         title: "Appearance",
         subtitle: "Mode, style, and color",

@@ -58,6 +58,8 @@ export type WorkDetail = {
   voiceCredits: VoiceCredit[];
   listeningStatus: ListeningStatus;
   favorite: boolean;
+  personalRating?: number | null;
+  personalNote?: string;
   metadataPresentation: WorkMetadataPresentation;
   metadataSync: WorkMetadataSyncStatus;
   translations: WorkTranslation[];
@@ -70,6 +72,14 @@ export type WorkDetail = {
   sourcePresence: SourcePresenceItem[] | null;
   localFolders: WorkFolderLocation[];
   mediaItems: MediaItem[];
+};
+
+export type PersonalReview = { personalRating: number | null; personalNote: string };
+export type PersonalReviewPatch = { rating?: number | null; note?: string };
+export type WorkUserState = PersonalReview & {
+  workId: number;
+  listeningStatus: ListeningStatus;
+  favorite: boolean;
 };
 
 export type WorkFolderLocation = {
@@ -163,9 +173,11 @@ export const workApi = {
     }),
   setWorkUserTags: (id: number, tags: string[]) =>
     putJSONBody<{ workId: number; userTags: UserTag[] }>(`/api/works/${id}/tags`, { tags }),
-  updateWorkUserState: (id: number, payload: { listeningStatus?: ListeningStatus }) =>
-    patchJSONBody<{ workId: number; listeningStatus: ListeningStatus; favorite: boolean }>(
-      `/api/works/${id}/user-state`,
+  updateRemoteWorkUserState: (sourceId: number, code: string, payload: PersonalReviewPatch) =>
+    patchJSONBody<WorkUserState>(
+      `/api/remote-sources/${sourceId}/works/${encodeURIComponent(code)}/user-state`,
       payload,
     ),
+  updateWorkUserState: (id: number, payload: PersonalReviewPatch & { listeningStatus?: ListeningStatus }) =>
+    patchJSONBody<WorkUserState>(`/api/works/${id}/user-state`, payload),
 };

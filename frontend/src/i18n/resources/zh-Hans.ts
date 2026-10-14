@@ -1,6 +1,7 @@
 import { libraryEnglish, collectionEnglish, workCardEnglish } from "../resources";
 import { surfaceHans } from "../surfaces/zh-Hans";
 import { personalHans } from "../surfaces/personal/zh-Hans";
+import { translationAdmin } from "../surfaces/translation/zh-Hans";
 
 export const libraryHans = {
   ...libraryEnglish,
@@ -658,6 +659,7 @@ export const zhHansResource = {
       ...surfaceHans,
       ...adminToolsHans,
       ...personalHans,
+      translationAdmin,
       appearance: {
         title: "外观",
         subtitle: "模式、样式和颜色",

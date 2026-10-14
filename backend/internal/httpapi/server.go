@@ -21,6 +21,7 @@ import (
 	"github.com/yexca/kikoto/backend/internal/dlsite"
 	"github.com/yexca/kikoto/backend/internal/library"
 	"github.com/yexca/kikoto/backend/internal/metasync"
+	"github.com/yexca/kikoto/backend/internal/outbound"
 	"github.com/yexca/kikoto/backend/internal/proxyconfig"
 	"github.com/yexca/kikoto/backend/internal/storage"
 	"github.com/yexca/kikoto/backend/internal/workflow"
@@ -97,6 +98,8 @@ type Server struct {
 	appUpdateEndpoints             appUpdateEndpoints
 	lifetime                       *serverLifetime
 	startupRepairsOnce             sync.Once
+	translationNetwork             outbound.Options
+	translationTrialMu             sync.Mutex
 }
 
 type localMediaIndexCall struct {
@@ -330,6 +333,9 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("PATCH /api/media-items/{id}/progress", s.updateMediaProgress)
 	mux.HandleFunc("GET /api/auth/me/preferences", s.getUserPreferences)
 	mux.HandleFunc("PATCH /api/auth/me/preferences", s.updateUserPreferences)
+	handleSlowFirstResponse("POST /api/settings/translation/test", s.testTranslation)
+	mux.HandleFunc("GET /api/settings/translation", s.getTranslationSettings)
+	mux.HandleFunc("PATCH /api/settings/translation", s.updateTranslationSettings)
 	mux.HandleFunc("GET /api/settings", s.getSettings)
 	mux.HandleFunc("GET /api/runtime-settings", s.getRuntimeSettings)
 	handleSlowFirstResponse("PATCH /api/settings", s.updateSettings)
@@ -351,6 +357,7 @@ func (s *Server) Routes() http.Handler {
 	handleSlowFirstResponse("POST /api/remote-sources/{id}/works/{code}/save", s.saveRemoteSourceWork)
 	handleSlowFirstResponse("POST /api/remote-sources/{id}/works/{code}/fetch-plan", s.planRemoteSourceWorkSave)
 	handleSlowFirstResponse("POST /api/remote-sources/{id}/works/{code}/fetch", s.saveRemoteSourceWork)
+	mux.HandleFunc("PATCH /api/remote-sources/{id}/works/{code}/user-state", s.updateRemoteWorkUserState)
 	mux.HandleFunc("POST /api/remote-sources/{id}/works/{code}/track", s.trackRemoteSourceWork)
 	handleSlowFirstResponse("POST /api/remote-sources/{id}/works/{code}/sync", s.syncRemoteSourceWork)
 	handleSlowFirstResponse("POST /api/remote-sources/{id}/works/{code}/cache", s.cacheRemoteSourceWorkMedia)

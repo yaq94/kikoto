@@ -2,7 +2,7 @@
 
 **Status:** ready-for-agent
 **发布状态:** 用户已批准本拆分，17 张独立工单已发布。
-**Implementation:** in-progress；01、04 认领准备，其余 pending。
+**Implementation:** in-progress；01、04 已集成并验收，06 实施中，02 前置已解除；逐票状态见执行记录。
 **执行授权:** 用户已授权全部功能实现、必要依赖安装、测试、数据库迁移、部署与回滚；[执行记录](execution.md)维护当前状态与证据。
 **依据:** [正式规格](spec.md) · [领域词汇表](../../GLOSSARY.md) · [作品身份与个人记录 ADR](../../docs/adr/0001-work-identity-and-personal-state.md)
 

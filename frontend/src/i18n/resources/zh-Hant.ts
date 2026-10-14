@@ -2,6 +2,7 @@
 import { collectionHans, libraryHans, workCardHans } from "./zh-Hans";
 import { surfaceHant } from "../surfaces/zh-Hant";
 import { personalHant } from "../surfaces/personal/zh-Hant";
+import { translationAdmin } from "../surfaces/translation/zh-Hant";
 
 const libraryHant = {
   ...libraryHans,
@@ -663,6 +664,7 @@ export const zhHantResource = {
       ...surfaceHant,
       ...adminToolsHant,
       ...personalHant,
+      translationAdmin,
       appearance: {
         title: "外觀",
         subtitle: "模式、樣式和色彩",

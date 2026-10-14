@@ -48,6 +48,8 @@ type workDetail struct {
 	VoiceCredits     []voiceCredit              `json:"voiceCredits"`
 	ListeningStatus  string                     `json:"listeningStatus"`
 	Favorite         bool                       `json:"favorite"`
+	PersonalRating   *int64                     `json:"personalRating"`
+	PersonalNote     string                     `json:"personalNote"`
 	RecommendScore   *int                       `json:"recommendScore,omitempty"`
 	MetadataView     workMetadataPresentation   `json:"metadataPresentation"`
 	MetadataSync     workMetadataSyncStatus     `json:"metadataSync"`
@@ -291,6 +293,7 @@ func (s *Server) loadWorkDetailBase(ctx context.Context, userID int64, id int64)
 	var sales, regularPrice, currentPrice sql.NullInt64
 	var permanentlyFree sql.NullBool
 	var favorite int
+	var personalRating sql.NullInt64
 	if err := s.db.QueryRowContext(ctx, `
 		SELECT
 			work.id,
@@ -311,7 +314,9 @@ func (s *Server) loadWorkDetailBase(ctx context.Context, userID int64, id int64)
 			work.created_at,
 			work.updated_at,
 			COALESCE(user_work_state.listening_status, 'none') AS listening_status,
-			COALESCE(user_work_state.favorite, 0) AS favorite
+			COALESCE(user_work_state.favorite, 0) AS favorite,
+			user_work_state.rating,
+			COALESCE(user_work_state.note, '')
 		FROM work
 		LEFT JOIN user_work_state ON user_work_state.work_id = work.id
 			AND user_work_state.user_id = ?
@@ -336,10 +341,13 @@ func (s *Server) loadWorkDetailBase(ctx context.Context, userID int64, id int64)
 		&work.UpdatedAt,
 		&work.ListeningStatus,
 		&favorite,
+		&personalRating,
+		&work.PersonalNote,
 	); err != nil {
 		return workDetail{}, err
 	}
 	work.Favorite = favorite != 0
+	work.PersonalRating = sqlutil.Int64(personalRating)
 	work.ReleaseDate = sqlutil.String(releaseDate)
 	work.DurationSeconds = sqlutil.Int64(durationSeconds)
 	work.Rating = sqlutil.Float64(rating)

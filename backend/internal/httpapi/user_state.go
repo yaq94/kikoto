@@ -18,6 +18,8 @@ type workUserStateResponse struct {
 	WorkID          int64  `json:"workId"`
 	ListeningStatus string `json:"listeningStatus"`
 	Favorite        bool   `json:"favorite"`
+	PersonalRating  *int64 `json:"personalRating"`
+	PersonalNote    string `json:"personalNote"`
 }
 
 type favoriteListResponse struct {
@@ -62,50 +64,21 @@ func (s *Server) updateWorkUserState(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var payload struct {
-		ListeningStatus *string `json:"listeningStatus"`
-		Favorite        *bool   `json:"favorite"`
-	}
+	var payload workUserStatePatch
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
 		return
 	}
-	if payload.Favorite != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "use favorite lists to change list membership"})
+	if err := payload.validate(); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	var currentStatus string
-	var currentFavorite int
-	if err := s.db.QueryRowContext(r.Context(), `
-		SELECT COALESCE(listening_status, 'none'), COALESCE(favorite, 0)
-		FROM user_work_state
-		WHERE user_id = ? AND work_id = ?
-	`, user.ID, workID).Scan(&currentStatus, &currentFavorite); err != nil && !errors.Is(err, sql.ErrNoRows) {
+	state, err := patchWorkUserState(r.Context(), s.db, user.ID, workID, payload)
+	if err != nil {
 		writeError(w, err)
 		return
 	}
-	status := strings.TrimSpace(currentStatus)
-	if payload.ListeningStatus != nil {
-		status = strings.TrimSpace(*payload.ListeningStatus)
-	}
-	if status == "" {
-		status = "none"
-	}
-	if !validListeningStatus(status) {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid listening status"})
-		return
-	}
-	if _, err := s.db.ExecContext(r.Context(), `
-		INSERT INTO user_work_state (user_id, work_id, listening_status, favorite)
-		VALUES (?, ?, ?, ?)
-		ON CONFLICT(user_id, work_id) DO UPDATE SET
-			listening_status = excluded.listening_status,
-			updated_at = CURRENT_TIMESTAMP
-	`, user.ID, workID, status, currentFavorite); err != nil {
-		writeError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, workUserStateResponse{WorkID: workID, ListeningStatus: status, Favorite: currentFavorite != 0})
+	writeJSON(w, http.StatusOK, state)
 }
 
 func (s *Server) listFavoriteLists(w http.ResponseWriter, r *http.Request) {
