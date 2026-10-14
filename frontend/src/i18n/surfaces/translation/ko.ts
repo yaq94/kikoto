@@ -1,4 +1,16 @@
 export const translationAdmin = {
+  content: {
+    pending: "번역 중…",
+    failed: "번역하지 못했습니다. 원문을 표시합니다.",
+    retry: "번역 다시 시도",
+    original: "원문 보기",
+    translated: "번역문 보기",
+    paused: "디스크 공간 부족으로 캐시를 일시 중지했습니다.",
+    concurrency: "동시 번역 수",
+    queueLimit: "번역 대기 수 제한",
+    cacheBytes: "번역 캐시 제한(바이트)",
+    minFreeBytes: "최소 디스크 여유 공간(바이트)",
+  },
   title: "번역",
   description: "공용 번역 서비스를 설정합니다. UI 언어는 계정별로 따로 설정합니다.",
   loading: "번역 설정 불러오는 중…",

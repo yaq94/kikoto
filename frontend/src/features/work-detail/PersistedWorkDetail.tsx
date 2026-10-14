@@ -1,3 +1,4 @@
+import { ContentResourceScope } from "@/components/content-translation/ContentTranslation";
 import {
   availableForkSources,
   type DetailSourceIntent,
@@ -755,13 +756,26 @@ export function PersistedWorkDetailController({
 
   return (
     <UnifiedWorkDetailPage
-      presentation={presentation}
+      presentation={{ ...presentation, translationResource: { workId: work?.id } }}
       compact={isCompactDetailLayout}
       mobileTab={mobileDetailTab}
       onMobileTabChange={setMobileDetailTab}
       actions={heroActions}
       renderSourceActions={renderSourceActions}
-      directory={directoryPanel}
+      directory={
+        <ContentResourceScope
+          resource={
+            selectedRemoteDetail
+              ? {
+                  sourceId: selectedRemoteDetail.sourceId,
+                  code: selectedRemoteDetail.remoteCode || selectedRemoteDetail.primaryCode,
+                }
+              : { workId: localDirectoryWork?.id ?? work?.id }
+          }
+        >
+          {directoryPanel}
+        </ContentResourceScope>
+      }
       onBack={onBack}
     >
       {work && (

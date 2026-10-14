@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { currentClientStorageScope } from "@/lib/clientStorageScope";
 import { writeDemoMetadataLanguages } from "@/lib/demoMetadataLanguages";
-import { USER_PREFERENCES_CHANGED } from "@/lib/recommendationSession";
+import { CONTENT_LANGUAGE_CHANGED } from "@/lib/contentLanguageEvents";
 import {
   dlsiteMetadataLanguagesFor,
   preferredDlsiteMetadataLanguage,
@@ -67,7 +67,7 @@ export function useMetadataDisplayLanguage(
         const preferences = await api.updateUserPreferences({ metadataLanguages });
         setValue(preferredDlsiteMetadataLanguage(preferences.metadataLanguages));
       }
-      window.dispatchEvent(new CustomEvent(USER_PREFERENCES_CHANGED, { detail: currentClientStorageScope(userId) }));
+      window.dispatchEvent(new CustomEvent(CONTENT_LANGUAGE_CHANGED, { detail: currentClientStorageScope(userId) }));
     } catch {
       setFailed(true);
     } finally {

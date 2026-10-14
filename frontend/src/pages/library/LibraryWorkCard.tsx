@@ -181,6 +181,7 @@ function libraryWorkCardView(
   threshold = 50,
 ): WorkCardViewModel {
   return {
+    translationResource: { workId: work.id },
     code: work.primaryCode,
     title: work.title,
     circle: work.circle || i18n.t("workCard.unknownCircle"),

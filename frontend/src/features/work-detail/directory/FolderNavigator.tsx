@@ -1,3 +1,4 @@
+import { TranslatedText } from "@/components/content-translation/ContentTranslation";
 import { useRef, useState } from "react";
 import {
   AudioLines,
@@ -122,7 +123,14 @@ export function FolderNavigatorList({
                       (selected || holdsSelection) && "font-medium",
                     )}
                   >
-                    {label}
+                    {row.labelParts.length
+                      ? row.labelParts.map((part, index) => (
+                          <span key={index}>
+                            {index > 0 ? " / " : ""}
+                            <TranslatedText text={part} field="directory" controls={false} />
+                          </span>
+                        ))
+                      : label}
                   </span>
                   {recommended && (
                     <Sparkles className="h-3 w-3 shrink-0 text-primary" role="img" aria-label={recommendedReason} />

@@ -10,6 +10,7 @@ import {
 } from "react";
 import { AudioLines, Captions, Folder, Play, Sparkles } from "lucide-react";
 
+import { TranslatedText } from "@/components/content-translation/ContentTranslation";
 import { Button } from "@/components/ui/button";
 import type { FilePreviewRequest } from "@/features/work-detail/dialogs/FilePreviewDialog";
 import { DirectoryBreadcrumb } from "@/features/work-detail/directory/DirectoryBreadcrumb";
@@ -272,7 +273,7 @@ function FolderTile({
         </span>
         <span className="min-w-0 flex-1">
           <span className="block whitespace-normal break-words font-medium [overflow-wrap:anywhere]">
-            {folder.name}
+            <TranslatedText text={folder.name} field="directory" controls={false} />
           </span>
           <span className="mt-0.5 block text-xs text-muted-foreground">{folderSummary(folder)}</span>
         </span>

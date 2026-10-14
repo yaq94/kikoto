@@ -41,7 +41,8 @@ local paths, provider metadata and raw sessions. Treat an exported personal
 document as private collection data.
 
 The `/cache` mount may contain derived covers, media cache entries, playback
-derivatives, and other rebuildable assets. The `/data` mount contains operator
+derivatives, translated public text, and other rebuildable assets. Translation
+cache entries have bounded retention by size and recency. The `/data` mount contains operator
 media plus durable Fetch staging, rollback, and review directories. Treat all
 three mounts as private even when an operator enables anonymous access to a
 subset of Library data through the application.
@@ -86,9 +87,13 @@ Kikoto may send requests to:
 
 - Metadata providers used to identify or enrich a work.
 - Remote source endpoints configured by an administrator.
-- The configured translation service when an administrator submits a translation
-  trial. The short trial text and its target language are sent with the saved
-  model name and API key; trial text and results are not retained by Kikoto.
+- The configured translation service for administrator trials and missing
+  target-language public titles, descriptions, system tags and directory display
+  names when a signed-in user chooses a display language. Circle and voice actor
+  names inside automatic input are masked; personal tags and notes are excluded.
+  The text and target language are sent with the saved model name and API key.
+  Trial text and results are not retained; successful automatic results may be
+  stored in the bounded rebuildable [translation cache](docs/development/translation.md#resource-budgets-and-cache).
 - Media, cover, or public-work URLs returned by a configured source. By default
   these may use any public origin; a source with **Restrict outbound hosts**
   stays on its configured origins and allowed hosts. See

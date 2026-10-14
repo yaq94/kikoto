@@ -24,6 +24,7 @@ import (
 	"github.com/yexca/kikoto/backend/internal/outbound"
 	"github.com/yexca/kikoto/backend/internal/proxyconfig"
 	"github.com/yexca/kikoto/backend/internal/storage"
+	"github.com/yexca/kikoto/backend/internal/translation"
 	"github.com/yexca/kikoto/backend/internal/workflow"
 )
 
@@ -100,6 +101,11 @@ type Server struct {
 	startupRepairsOnce             sync.Once
 	translationNetwork             outbound.Options
 	translationTrialMu             sync.Mutex
+	translationQueueOnce           sync.Once
+	translationQueue               *translation.Queue
+	translationConfigMu            sync.Mutex
+	translationCacheOnce           sync.Once
+	translationCache               *translation.Cache
 }
 
 type localMediaIndexCall struct {
@@ -333,7 +339,9 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("PATCH /api/media-items/{id}/progress", s.updateMediaProgress)
 	mux.HandleFunc("GET /api/auth/me/preferences", s.getUserPreferences)
 	mux.HandleFunc("PATCH /api/auth/me/preferences", s.updateUserPreferences)
+	handleSlowFirstResponse("POST /api/content-translations", s.translateContent)
 	handleSlowFirstResponse("POST /api/settings/translation/test", s.testTranslation)
+	mux.HandleFunc("GET /api/settings/translation/runtime", s.getTranslationRuntime)
 	mux.HandleFunc("GET /api/settings/translation", s.getTranslationSettings)
 	mux.HandleFunc("PATCH /api/settings/translation", s.updateTranslationSettings)
 	mux.HandleFunc("GET /api/settings", s.getSettings)

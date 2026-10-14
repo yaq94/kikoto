@@ -1,3 +1,4 @@
+import { TranslatedText } from "@/components/content-translation/ContentTranslation";
 import { type ReactNode, type RefObject, useRef, useState } from "react";
 import {
   AudioLines,
@@ -310,7 +311,11 @@ export function DirectoryFileRow({
             isActive && "font-medium text-primary",
           )}
         >
-          {file.title}
+          <TranslatedText
+            text={file.title}
+            field="directory"
+            mediaId={file.mediaItemId > 0 ? file.mediaItemId : undefined}
+          />
         </span>
         <MetaList items={meta} lastItemCompactOnly={isTrack && state.lyricsChoices.length > 0} />
       </span>

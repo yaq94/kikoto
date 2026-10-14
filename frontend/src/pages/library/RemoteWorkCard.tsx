@@ -138,6 +138,7 @@ function remoteWorkCardView(
 ): WorkCardViewModel {
   const sourceLabel = source.displayName || source.code || i18n.t("workCard.remoteSource");
   return {
+    translationResource: { sourceId: source.id, code: work.remoteCode || work.primaryCode || work.remoteId },
     code: work.primaryCode || work.remoteId,
     title: work.title,
     circle: work.circle || sourceLabel || i18n.t("workCard.unknownCircle"),

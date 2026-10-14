@@ -19,8 +19,10 @@ personal Settings tabs as shortcuts, the UI language, Settings and Users, and
 sign-in or sign-out; on phones it also holds the native connection actions. A
 signed-in user also chooses the personal preferred metadata language there:
 **Origin** is shown when the user has no preference and choosing it clears the
-stored preference, and a saved change refreshes the routed page through the
-user preference event. Demo keeps the choice in browser storage scoped to the
+stored preference. A saved content-language change refreshes visible translated
+text without remounting the routed page or changing directory/player state;
+other account preference changes retain their own refresh event. See
+[Translation service](../development/translation.md#public-content). Demo keeps the choice in browser storage scoped to the
 server and Demo user, and the API client sends it with authenticated requests
 (see [Metadata Language](data-model.md#metadata-language)). The
 notification panel (`app/header/NotificationCenter`) splits personal workflow
