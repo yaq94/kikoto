@@ -61,11 +61,12 @@ func mergeRelations(ctx context.Context, tx *sql.Tx, target, source int64, sourc
 		{`INSERT INTO work_party(work_id,party_id,role,provider_id,source,created_at,updated_at)
    SELECT work_id,?,role,provider_id,source,created_at,updated_at FROM work_party WHERE party_id=?
    ON CONFLICT(work_id,party_id,role) DO NOTHING`, []any{target, source}},
-		{`INSERT INTO user_party_state(user_id,party_id,rating,note,favorite,last_viewed_at,created_at,updated_at)
-   SELECT user_id,?,rating,note,favorite,last_viewed_at,created_at,updated_at FROM user_party_state WHERE party_id=?
+		{`INSERT INTO user_party_state(user_id,party_id,rating,note,favorite,cover_primary_code,last_viewed_at,created_at,updated_at)
+   SELECT user_id,?,rating,note,favorite,cover_primary_code,last_viewed_at,created_at,updated_at FROM user_party_state WHERE party_id=?
    ON CONFLICT(user_id,party_id) DO UPDATE SET rating=COALESCE(user_party_state.rating,excluded.rating),
     note=CASE WHEN user_party_state.note='' THEN excluded.note ELSE user_party_state.note END,
     favorite=MAX(user_party_state.favorite,excluded.favorite),
+    cover_primary_code=CASE WHEN user_party_state.cover_primary_code='' THEN excluded.cover_primary_code ELSE user_party_state.cover_primary_code END,
     last_viewed_at=COALESCE(user_party_state.last_viewed_at,excluded.last_viewed_at)`, []any{target, source}},
 		{`INSERT INTO user_party_tag_assignment(user_id,party_id,user_party_tag_id,created_at)
    SELECT user_id,?,user_party_tag_id,created_at FROM user_party_tag_assignment WHERE party_id=?

@@ -18,6 +18,28 @@ export type CreatorLatestWork = {
   coverUrl: string;
 };
 
+/** The cover a circle or voice actor shows. */
+export type CreatorCover = {
+  primaryCode: string;
+  coverUrl: string;
+  /** True for a work the user chose; false for the latest work's cover. */
+  custom: boolean;
+};
+
+/** The personal state a user keeps on a circle or voice actor. */
+export type CreatorUserStatePatch = {
+  rating?: number | null;
+  note?: string;
+  favorite?: boolean;
+  /** The work whose cover the creator shows; an empty code restores the latest work's cover. */
+  coverPrimaryCode?: string;
+};
+
+/** The cover to show for a creator; a server that reports no cover shows the latest work's. */
+export function creatorCoverUrl(creator: { cover?: CreatorCover | null; latestWork: CreatorLatestWork | null }) {
+  return creator.cover?.coverUrl ?? creator.latestWork?.coverUrl ?? "";
+}
+
 export type CreatorListOptions = {
   page?: number;
   pageSize?: number;
@@ -48,6 +70,7 @@ export type CircleSummary = {
   syncReason: string;
   sourceSummaries: CircleSourceStat[];
   latestWork: CreatorLatestWork | null;
+  cover?: CreatorCover | null;
 };
 
 function normalizeCreatorSyncState<T extends { syncState?: unknown }>(creator: T): T & { syncState: CatalogSyncState } {
@@ -148,6 +171,7 @@ export type VoiceSummary = {
   userTags: VoiceUserTag[];
   sourceSummaries: CircleSourceStat[];
   latestWork: CreatorLatestWork | null;
+  cover?: CreatorCover | null;
 };
 
 export type VoiceSummaryPage = {
@@ -466,16 +490,11 @@ export const creatorApi = {
     postJSON<{ mergeId: number; targetPersonId: number; restoredPersonId: number; restoredName: string }>(
       `/api/voices/${personId}/merges/${mergeId}/undo`,
     ),
-  updateVoiceUserState: async (
-    personId: number,
-    payload: { rating?: number | null; note?: string; favorite?: boolean },
-  ) => normalizeCreatorSyncState(await patchJSONBody<VoiceSummary>(`/api/voices/${personId}/user-state`, payload)),
+  updateVoiceUserState: async (personId: number, payload: CreatorUserStatePatch) =>
+    normalizeCreatorSyncState(await patchJSONBody<VoiceSummary>(`/api/voices/${personId}/user-state`, payload)),
   setVoiceUserTags: (personId: number, tags: string[]) =>
     putJSONBody<{ personId: number; userTags: VoiceUserTag[] }>(`/api/voices/${personId}/tags`, { tags }),
-  updateCircleUserState: async (
-    externalId: string,
-    payload: { rating?: number | null; note?: string; favorite?: boolean },
-  ) =>
+  updateCircleUserState: async (externalId: string, payload: CreatorUserStatePatch) =>
     normalizeCreatorSyncState(
       await patchJSONBody<CircleSummary>(`/api/circles/${encodeURIComponent(externalId)}/user-state`, payload),
     ),

@@ -4,6 +4,7 @@ import {
   GitFork,
   HardDriveDownload,
   Heart,
+  Image,
   Loader2,
   RefreshCw,
   Rss,
@@ -22,6 +23,7 @@ import { UserTagRow } from "@/components/UserTagRow";
 import { CreatorCard } from "@/components/creator/CreatorCard";
 import { CatalogSyncBadge } from "@/components/creator/CatalogSyncBadge";
 import { CreatorActionMenu } from "@/components/creator/CreatorActionMenu";
+import { CreatorCoverDialog, type CreatorCoverWorksRequest } from "@/components/creator/CreatorCoverDialog";
 import { CreatorDetailHeader } from "@/components/creator/CreatorDetailHeader";
 import { CatalogWorkToolbar } from "@/components/creator/CatalogWorkToolbar";
 import { CompactWorkCardShell, type CompactWorkCardLayout } from "@/components/work-card/CompactWorkCard";
@@ -86,6 +88,7 @@ import {
   type VoiceRemoteSourceSet,
   type VoiceSummary,
 } from "@/lib/api";
+import { creatorCoverUrl } from "@/lib/creatorApi";
 import { DLSITE_ENDPOINTS } from "@/lib/official-links";
 import {
   NAVIGATION_EVENT,
@@ -210,6 +213,7 @@ const VoiceCard = memo(function VoiceCard({
       name={voice.displayName}
       identityLabel={voice.latestWork ? undefined : t("creatorBrowse.voiceActor")}
       aliases={voice.aliases}
+      coverUrl={creatorCoverUrl(voice)}
       latestWork={voice.latestWork}
       favorite={voice.favorite}
       userTags={voice.userTags}
@@ -508,6 +512,8 @@ function VoiceDetailPage({ personId, active }: { personId: number; active: boole
   }, [active, hasDetail, personId, t, toast]);
 
   const canOpenWorkflows = auth.hasPermission("workflows:run") && !auth.demoMode;
+  const canChangeCover = auth.hasPermission("favorites:write");
+  const [coverDialogOpen, setCoverDialogOpen] = useState(false);
   const openRefreshRun = (runId: number) => openWorkflowPath(workflowActivityRunPath(runId));
   const runAction = (runId?: number) =>
     canOpenWorkflows && runId ? { actionLabel: t("nav.activity"), onAction: () => openRefreshRun(runId) } : {};
@@ -666,6 +672,21 @@ function VoiceDetailPage({ personId, active }: { personId: number; active: boole
     return () => window.removeEventListener(REMOTE_TRACK_TERMINAL_EVENT, refreshTrackedWork);
   }, [active, works, refreshDetail]);
   const fetchWorkspace = useRemoteFetchWorkspace({ onWorksChanged: refreshDetail });
+
+  const loadCoverWorks = async ({ page, pageSize, query, signal }: CreatorCoverWorksRequest) => {
+    const result = await api.getVoiceWorks(personId, { page, pageSize, query, signal });
+    return { works: result.works, total: result.total };
+  };
+
+  const saveVoiceCover = async (primaryCode: string) => {
+    try {
+      const next = await api.updateVoiceUserState(personId, { coverPrimaryCode: primaryCode });
+      setDetail((current) => (current ? { ...current, ...next } : current));
+      setCoverDialogOpen(false);
+    } catch (error) {
+      toast.notify(toastFromError(error, t("creatorBrowse.coverUpdateFailed")));
+    }
+  };
 
   const saveVoiceTags = async (tags: string[]) => {
     if (!detail) return;
@@ -849,7 +870,7 @@ function VoiceDetailPage({ personId, active }: { personId: number; active: boole
 
       <CreatorDetailHeader
         name={detail.displayName}
-        coverUrl={detail.latestWork?.coverUrl}
+        coverUrl={creatorCoverUrl(detail)}
         aliases={detail.aliases}
         eyebrow={
           <>
@@ -942,6 +963,16 @@ function VoiceDetailPage({ personId, active }: { personId: number; active: boole
               label={t("detailActions.moreVoiceActions")}
               buttonLabel={t("detailActions.more")}
               items={[
+                ...(canChangeCover
+                  ? [
+                      {
+                        key: "cover",
+                        label: t("detailActions.changeCover"),
+                        icon: <Image className="h-4 w-4" />,
+                        onSelect: () => setCoverDialogOpen(true),
+                      },
+                    ]
+                  : []),
                 ...(canOpenWorkflows
                   ? [
                       {
@@ -1138,6 +1169,16 @@ function VoiceDetailPage({ personId, active }: { personId: number; active: boole
           count={saveConfirm.count}
           onClose={() => setSaveConfirm(null)}
           onConfirm={() => void saveConfirm.run()}
+        />
+      )}
+      {coverDialogOpen && (
+        <CreatorCoverDialog
+          name={detail.displayName}
+          cover={detail.cover ?? null}
+          latestWork={detail.latestWork}
+          loadWorks={loadCoverWorks}
+          onSelect={saveVoiceCover}
+          onClose={() => setCoverDialogOpen(false)}
         />
       )}
       <LazyRemoteFetchWorkspaceDialog workspace={fetchWorkspace} />

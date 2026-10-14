@@ -53,12 +53,13 @@ func (s *Server) loadVoiceSummaries(ctx context.Context, userID int64) ([]voiceS
 	for _, summary := range summaries {
 		personIDs = append(personIDs, summary.PersonID)
 	}
-	latestByPerson, err := s.loadVoiceLatestWorks(ctx, personIDs)
+	latestByPerson, coverByPerson, err := s.loadVoiceLatestWorks(ctx, personIDs, savedCreatorCoverChoice("user_person_state", "person_id", userID))
 	if err != nil {
 		return nil, err
 	}
 	for index := range summaries {
 		summaries[index].LatestWork = latestByPerson[summaries[index].PersonID]
+		summaries[index].coverWork = coverByPerson[summaries[index].PersonID]
 	}
 	return summaries, nil
 }
@@ -74,26 +75,45 @@ func (s *Server) loadVoiceSummary(ctx context.Context, userID int64, personID in
 		return voiceSummary{}, err
 	}
 	item = syncedItems[0]
-	latestByPerson, err := s.loadVoiceLatestWorks(ctx, []int64{personID})
+	latestByPerson, coverByPerson, err := s.loadVoiceLatestWorks(ctx, []int64{personID}, savedCreatorCoverChoice("user_person_state", "person_id", userID))
 	if err != nil {
 		return voiceSummary{}, err
 	}
 	item.LatestWork = latestByPerson[personID]
-	s.presentVoiceLatestWorkCover(ctx, item.LatestWork)
+	item.coverWork = coverByPerson[personID]
+	s.presentVoiceCover(ctx, &item)
 	return item, nil
 }
 
-// presentVoiceLatestWorkCover prefers the Library cover and otherwise shows
-// the catalog's remote cover through the address visibility rule.
-func (s *Server) presentVoiceLatestWorkCover(ctx context.Context, latest *creatorLatestWork) {
-	if latest == nil {
+// presentVoiceCover resolves the covers a summary shows.
+func (s *Server) presentVoiceCover(ctx context.Context, item *voiceSummary) {
+	s.presentVoiceWorkCover(ctx, item.LatestWork)
+	s.presentVoiceWorkCover(ctx, item.coverWork)
+	item.Cover = newCreatorCover(item.coverWork, item.LatestWork)
+}
+
+// presentVoiceWorkCover prefers the Library cover and otherwise shows the
+// catalog's remote cover through the address visibility rule.
+func (s *Server) presentVoiceWorkCover(ctx context.Context, work *creatorLatestWork) {
+	if work == nil {
 		return
 	}
-	if coverURL := s.coverURL(latest.PrimaryCode); coverURL != "" {
-		latest.CoverURL = coverURL
+	if coverURL := s.coverURL(work.PrimaryCode); coverURL != "" {
+		work.CoverURL = coverURL
 		return
 	}
-	latest.CoverURL = s.visibleRemoteImageURL(ctx, latest.CoverSourceID, latest.CoverURL)
+	work.CoverURL = s.visibleRemoteImageURL(ctx, work.CoverSourceID, work.CoverURL)
+}
+
+// voiceCoverWorkUsable reports whether a work can be saved as a voice actor's
+// cover: it is one of the voice actor's works and has a cover to show.
+func (s *Server) voiceCoverWorkUsable(ctx context.Context, personID int64, code string) (bool, error) {
+	_, chosen, err := s.loadVoiceLatestWorks(ctx, []int64{personID}, proposedCreatorCoverChoice(personID, code))
+	if err != nil {
+		return false, err
+	}
+	work := chosen[personID]
+	return work != nil && (s.coverURL(code) != "" || work.CoverURL != ""), nil
 }
 
 type voiceCatalogSyncProjection struct {
@@ -410,10 +430,14 @@ func voiceSummaryMatchesFilter(item voiceSummary, filter string) bool {
 	}
 }
 
-func (s *Server) loadVoiceLatestWorks(ctx context.Context, personIDs []int64) (map[int64]*creatorLatestWork, error) {
+// loadVoiceLatestWorks returns each voice actor's latest work and, for the
+// voice actors the choice names, the chosen cover work while it is still one
+// of the voice actor's works.
+func (s *Server) loadVoiceLatestWorks(ctx context.Context, personIDs []int64, choice creatorCoverChoice) (map[int64]*creatorLatestWork, map[int64]*creatorLatestWork, error) {
 	result := map[int64]*creatorLatestWork{}
+	chosen := map[int64]*creatorLatestWork{}
 	if len(personIDs) == 0 {
-		return result, nil
+		return result, chosen, nil
 	}
 	creditDemoWhere := ""
 	catalogDemoWhere := ""
@@ -429,7 +453,7 @@ func (s *Server) loadVoiceLatestWorks(ctx context.Context, personIDs []int64) (m
 		`
 	}
 	err := s.queryInt64Batches(ctx, `
-		WITH selected_people AS (SELECT id FROM person WHERE id IN (%s)), candidates AS (
+		WITH chosen AS (`+choice.sql+`), selected_people AS (SELECT id FROM person WHERE id IN (%s)), candidates AS (
 			SELECT
 				catalog.person_id,
 				UPPER(catalog.primary_code) AS primary_code,
@@ -476,24 +500,37 @@ func (s *Server) loadVoiceLatestWorks(ctx context.Context, personIDs []int64) (m
 				ROW_NUMBER() OVER (
 					PARTITION BY person_id
 					ORDER BY COALESCE(work.release_date, '') DESC, UPPER(work.primary_code) DESC
-				) AS position
+				) AS position,
+				EXISTS (
+					SELECT 1
+					FROM chosen
+					WHERE chosen.creator_id = work.person_id AND chosen.code = work.primary_code
+				) AS chosen_cover
 			FROM candidates AS work
 		)
-		SELECT person_id, primary_code, title, release_date, cover_url, cover_source_id
+		SELECT person_id, primary_code, title, release_date, cover_url, cover_source_id, position, chosen_cover
 		FROM ranked
-		WHERE position = 1
-	`, personIDs, nil, func(rows *sql.Rows) error {
+		WHERE position = 1 OR chosen_cover = 1
+	`, personIDs, choice.args, func(rows *sql.Rows) error {
 		var personID int64
 		var item creatorLatestWork
 		var releaseDate sql.NullString
-		if err := rows.Scan(&personID, &item.PrimaryCode, &item.Title, &releaseDate, &item.CoverURL, &item.CoverSourceID); err != nil {
+		var position int
+		var chosenCover bool
+		if err := rows.Scan(&personID, &item.PrimaryCode, &item.Title, &releaseDate, &item.CoverURL, &item.CoverSourceID, &position, &chosenCover); err != nil {
 			return err
 		}
 		item.ReleaseDate = sqlutil.String(releaseDate)
-		result[personID] = &item
+		if position == 1 {
+			latest := item
+			result[personID] = &latest
+		}
+		if chosenCover {
+			chosen[personID] = &item
+		}
 		return nil
 	})
-	return result, err
+	return result, chosen, err
 }
 
 func (s *Server) loadVoiceUserTagsBatch(ctx context.Context, userID int64) (map[int64][]voiceUserTag, error) {

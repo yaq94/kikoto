@@ -10,10 +10,17 @@ Voice pages present persisted person and credit data.
   solid segment for works with a local copy, a lighter segment for works only
   a remote source holds, and an empty track for the rest.
 - Uses server-paged, URL-backed list search and filters. Each tile shows the
-  latest known credited-work cover with the favorite control on it, the name,
-  aliases, the latest release date, and a dynamic user-tag row, with
-  Library-style pagination. Tiles fill the row on wide layouts and form two
-  columns on a phone.
+  voice actor's cover with the favorite control on it, the name, aliases, the
+  latest release date, and a dynamic user-tag row, with Library-style
+  pagination. Tiles fill the row on wide layouts and form two columns on a
+  phone.
+- Uses the latest known credited-work cover as the voice actor's cover.
+  **Change cover…** in the detail **More** menu lists the voice actor's works,
+  with a search, and makes the chosen work's cover the voice actor's cover on
+  the tile and detail summary. **Latest work** in the same dialog restores the
+  cover that follows each new release. The choice belongs to the account that
+  made it, and a chosen work that leaves the voice actor's works gives way to
+  the latest work's cover.
 - Keeps search, one-tap view chips, and the page-size action on one wrapping
   toolbar row. The chips are `All voices`, `Favorite`, `Tagged`,
   `Available`, `Local`, `Remote`, and `Missing`, and the pressed chip names
@@ -52,9 +59,9 @@ Voice pages present persisted person and credit data.
   **Retry metadata** appears only while known works still lack metadata. The
   button shows **Refreshing** until the run settles. A warning beside the sync
   state counts remote sources that failed their last pass and opens that run
-  in Activity. **More** holds **Follow this voice actor…**, which opens the
-  preset with this voice actor selected for source, filter, metadata, and tag
-  choices, and **Manage aliases**. The works toolbar mirrors the Library: a bounded search on the
+  in Activity. **More** holds **Change cover…**, **Follow this voice actor…**,
+  which opens the preset with this voice actor selected for source, filter,
+  metadata, and tag choices, and **Manage aliases**. The works toolbar mirrors the Library: a bounded search on the
   left, then the sort button that names the current order, display options,
   the availability filter, and selection on the right, with the shared
   collection pagination above and below the grid. Display options hold the

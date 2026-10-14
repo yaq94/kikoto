@@ -112,7 +112,7 @@ func (s *Server) loadCircleSummaries(ctx context.Context, userID int64) ([]circl
 	if err != nil {
 		return nil, err
 	}
-	latestByParty, err := s.loadCircleLatestWorks(ctx, partyIDs)
+	latestByParty, coverByParty, err := s.loadCircleLatestWorks(ctx, partyIDs, savedCreatorCoverChoice("user_party_state", "party_id", userID))
 	if err != nil {
 		return nil, err
 	}
@@ -128,6 +128,7 @@ func (s *Server) loadCircleSummaries(ctx context.Context, userID int64) ([]circl
 			items[index].UserTags = tags
 		}
 		items[index].LatestWork = latestByParty[items[index].ID]
+		items[index].coverWork = coverByParty[items[index].ID]
 	}
 	return items, nil
 }
@@ -147,9 +148,7 @@ func (s *Server) circleSummaryPage(ctx context.Context, userID int64, query, fil
 	page, start, end := creatorPageBounds(page, pageSize, len(items))
 	pageItems := items[start:end]
 	for index := range pageItems {
-		if pageItems[index].LatestWork != nil {
-			pageItems[index].LatestWork.CoverURL = s.coverURL(pageItems[index].LatestWork.PrimaryCode)
-		}
+		s.presentCircleCover(&pageItems[index])
 	}
 	return circleSummaryPage{
 		Circles: pageItems, Page: page, PageSize: minInt(pageSize, 100), Total: len(items),
@@ -305,14 +304,13 @@ func (s *Server) loadCircleSummary(ctx context.Context, userID int64, partyID in
 	if err := s.fillCircleStats(ctx, userID, &item); err != nil {
 		return circleSummary{}, err
 	}
-	latestByParty, err := s.loadCircleLatestWorks(ctx, []int64{item.ID})
+	latestByParty, coverByParty, err := s.loadCircleLatestWorks(ctx, []int64{item.ID}, savedCreatorCoverChoice("user_party_state", "party_id", userID))
 	if err != nil {
 		return circleSummary{}, err
 	}
 	item.LatestWork = latestByParty[item.ID]
-	if item.LatestWork != nil {
-		item.LatestWork.CoverURL = s.coverURL(item.LatestWork.PrimaryCode)
-	}
+	item.coverWork = coverByParty[item.ID]
+	s.presentCircleCover(&item)
 	return item, nil
 }
 
@@ -578,10 +576,14 @@ func circleSummaryMatchesFilter(item circleSummary, filter string) bool {
 	}
 }
 
-func (s *Server) loadCircleLatestWorks(ctx context.Context, partyIDs []int64) (map[int64]*creatorLatestWork, error) {
+// loadCircleLatestWorks returns each circle's latest work and, for the circles
+// the choice names, the chosen cover work while it is still one of the
+// circle's works.
+func (s *Server) loadCircleLatestWorks(ctx context.Context, partyIDs []int64, choice creatorCoverChoice) (map[int64]*creatorLatestWork, map[int64]*creatorLatestWork, error) {
 	result := map[int64]*creatorLatestWork{}
+	chosen := map[int64]*creatorLatestWork{}
 	if len(partyIDs) == 0 {
-		return result, nil
+		return result, chosen, nil
 	}
 	catalogDemoWhere := ""
 	relationDemoWhere := ""
@@ -590,7 +592,7 @@ func (s *Server) loadCircleLatestWorks(ctx context.Context, partyIDs []int64) (m
 		relationDemoWhere = " AND " + contentpolicy.DemoEligibleWorkSQL("work")
 	}
 	err := s.queryInt64Batches(ctx, `
-		WITH selected_parties AS (SELECT id FROM party WHERE id IN (%s)), candidates AS (
+		WITH chosen AS (`+choice.sql+`), selected_parties AS (SELECT id FROM party WHERE id IN (%s)), candidates AS (
 			SELECT
 				catalog.party_id,
 				UPPER(COALESCE(logical.canonical_code, catalog.primary_code)) AS primary_code,
@@ -626,24 +628,59 @@ func (s *Server) loadCircleLatestWorks(ctx context.Context, partyIDs []int64) (m
 			SELECT *, ROW_NUMBER() OVER (
 				PARTITION BY party_id
 				ORDER BY COALESCE(release_date, '') DESC, primary_code DESC
-			) AS position
+			) AS position,
+			EXISTS (
+				SELECT 1
+				FROM chosen
+				WHERE chosen.creator_id = candidates.party_id AND chosen.code = candidates.primary_code
+			) AS chosen_cover
 			FROM candidates
 		)
-		SELECT party_id, primary_code, title, release_date
+		SELECT party_id, primary_code, title, release_date, position, chosen_cover
 		FROM ranked
-		WHERE position = 1
-	`, partyIDs, nil, func(rows *sql.Rows) error {
+		WHERE position = 1 OR chosen_cover = 1
+	`, partyIDs, choice.args, func(rows *sql.Rows) error {
 		var partyID int64
 		var item creatorLatestWork
 		var releaseDate sql.NullString
-		if err := rows.Scan(&partyID, &item.PrimaryCode, &item.Title, &releaseDate); err != nil {
+		var position int
+		var chosenCover bool
+		if err := rows.Scan(&partyID, &item.PrimaryCode, &item.Title, &releaseDate, &position, &chosenCover); err != nil {
 			return err
 		}
 		item.ReleaseDate = sqlutil.String(releaseDate)
-		result[partyID] = &item
+		if position == 1 {
+			latest := item
+			result[partyID] = &latest
+		}
+		if chosenCover {
+			chosen[partyID] = &item
+		}
 		return nil
 	})
-	return result, err
+	return result, chosen, err
+}
+
+// presentCircleCover resolves the covers a summary shows from the Library's
+// cached covers.
+func (s *Server) presentCircleCover(item *circleSummary) {
+	if item.LatestWork != nil {
+		item.LatestWork.CoverURL = s.coverURL(item.LatestWork.PrimaryCode)
+	}
+	if item.coverWork != nil {
+		item.coverWork.CoverURL = s.coverURL(item.coverWork.PrimaryCode)
+	}
+	item.Cover = newCreatorCover(item.coverWork, item.LatestWork)
+}
+
+// circleCoverWorkUsable reports whether a work can be saved as a circle's
+// cover: it is one of the circle's works and has a cover to show.
+func (s *Server) circleCoverWorkUsable(ctx context.Context, partyID int64, code string) (bool, error) {
+	_, chosen, err := s.loadCircleLatestWorks(ctx, []int64{partyID}, proposedCreatorCoverChoice(partyID, code))
+	if err != nil {
+		return false, err
+	}
+	return chosen[partyID] != nil && s.coverURL(code) != "", nil
 }
 
 func (s *Server) loadCircleCatalogCounts(ctx context.Context, partyIDs []int64) (map[int64]int, error) {
