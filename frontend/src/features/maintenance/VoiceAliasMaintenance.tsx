@@ -9,6 +9,7 @@ import { useToast } from "@/components/ui/toast";
 import { CatalogSyncBadge } from "@/components/creator/CatalogSyncBadge";
 import { CollectionPagination } from "@/components/collection/CollectionPagination";
 import { api, type VoiceAlias, type VoiceSummary, type VoiceSummaryPage } from "@/lib/api";
+import { creatorCoverUrl } from "@/lib/creatorApi";
 import { NAVIGATION_EVENT } from "@/lib/browserHistory";
 import { MaintenanceToolbar, useMaintenanceSearch, type MaintenanceToolbarSlots } from "./MaintenanceControls";
 import { MetadataEntryCover } from "./MetadataEntryCover";
@@ -260,7 +261,7 @@ function VoiceAliasRow({
       </th>
       <td className="px-3 py-2">
         <div className="flex min-w-0 items-center gap-3">
-          <MetadataEntryCover url={voice.latestWork?.coverUrl} name={voice.displayName} />
+          <MetadataEntryCover url={creatorCoverUrl(voice)} name={voice.displayName} />
           <a
             onClick={onNavigate}
             href={`/voices/${voice.personId}`}

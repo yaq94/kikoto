@@ -10,6 +10,7 @@ import {
 import { Card, CardContent } from "@/components/ui/card";
 import { toastFromError, useToast } from "@/components/ui/toast";
 import { api, type CircleSummary, type VoiceSummary } from "@/lib/api";
+import { creatorCoverUrl } from "@/lib/creatorApi";
 import { openCircleRoute } from "@/lib/circleNavigationState";
 import { openVoiceRoute } from "@/lib/voiceNavigationState";
 import type { FavoriteEntity } from "./favoritesBrowseState";
@@ -124,6 +125,7 @@ const FavoriteCircleCard = memo(function FavoriteCircleCard({
       identityLabel={circle.externalId}
       aliases={circle.aliases}
       showAliases={false}
+      coverUrl={creatorCoverUrl(circle)}
       latestWork={circle.latestWork}
       favorite={circle.favorite}
       userTags={circle.userTags}
@@ -168,6 +170,7 @@ const FavoriteVoiceCard = memo(function FavoriteVoiceCard({
       name={voice.displayName}
       identityLabel={voice.latestWork ? undefined : t("creatorBrowse.voiceActor")}
       aliases={voice.aliases}
+      coverUrl={creatorCoverUrl(voice)}
       latestWork={voice.latestWork}
       favorite={voice.favorite}
       userTags={voice.userTags}

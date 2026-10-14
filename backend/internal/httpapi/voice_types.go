@@ -22,6 +22,9 @@ type voiceSummary struct {
 	UserTags        []voiceUserTag     `json:"userTags"`
 	SourceSummaries []circleSourceStat `json:"sourceSummaries"`
 	LatestWork      *creatorLatestWork `json:"latestWork"`
+	Cover           *creatorCover      `json:"cover"`
+	// coverWork is the user's chosen cover work before its cover is resolved.
+	coverWork *creatorLatestWork
 }
 
 type voiceSummaryPage struct {

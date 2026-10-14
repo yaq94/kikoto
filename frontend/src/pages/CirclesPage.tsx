@@ -6,6 +6,7 @@ import {
   GitFork,
   HardDriveDownload,
   Heart,
+  Image,
   Loader2,
   RefreshCw,
   Rss,
@@ -30,6 +31,7 @@ import { AvailabilityMeter } from "@/components/creator/AvailabilityMeter";
 import { CatalogStatStrip } from "@/components/creator/CatalogStatStrip";
 import { CatalogSyncBadge } from "@/components/creator/CatalogSyncBadge";
 import { CreatorActionMenu } from "@/components/creator/CreatorActionMenu";
+import { CreatorCoverDialog, type CreatorCoverWorksRequest } from "@/components/creator/CreatorCoverDialog";
 import { CreatorDetailHeader } from "@/components/creator/CreatorDetailHeader";
 import { CatalogWorkToolbar } from "@/components/creator/CatalogWorkToolbar";
 import {
@@ -70,6 +72,7 @@ import {
   type CircleSummary,
   type ListeningStatus,
 } from "@/lib/api";
+import { creatorCoverUrl } from "@/lib/creatorApi";
 import { currentInternalLocation, navigateToHistoryReturn, normalizeInternalLocation } from "@/lib/browserHistory";
 import { currentClientStorageScope } from "@/lib/clientStorageScope";
 import { coalesceRuns } from "@/lib/inflightRequests";
@@ -200,6 +203,7 @@ const CircleCard = memo(function CircleCard({
       identityLabel={circle.externalId}
       aliases={circle.aliases}
       showAliases={false}
+      coverUrl={creatorCoverUrl(circle)}
       latestWork={circle.latestWork}
       favorite={circle.favorite}
       userTags={circle.userTags}
@@ -312,6 +316,7 @@ function CircleDetailPage({
   );
   const storageScope = currentClientStorageScope(auth.user?.id ?? null);
   const [deleteTarget, setDeleteTarget] = useState<CircleCatalogWork | null>(null);
+  const [coverDialogOpen, setCoverDialogOpen] = useState(false);
   const [selectedWorkCodes, setSelectedWorkCodes] = useState<Set<string>>(new Set());
   const [selectionMode, setSelectionMode] = useState(false);
   const [isBulkSaving, setIsBulkSaving] = useState(false);
@@ -481,6 +486,7 @@ function CircleDetailPage({
     : circle.series.reduce((total, series) => total + series.works, 0);
 
   const canOpenWorkflows = auth.hasPermission("workflows:run") && !auth.demoMode;
+  const canChangeCover = auth.hasPermission("favorites:write");
   const openRefreshRun = (runId: number) => openWorkflowPath(workflowActivityRunPath(runId));
   const refreshRun = useCircleRefreshRun({
     run: detail?.refresh,
@@ -550,16 +556,45 @@ function CircleDetailPage({
         ? { catalogRefresh: "full", metadataRefresh: "missing" }
         : { catalogRefresh: "incremental", metadataRefresh: "missing", sourceCheck: true },
     );
-  const workflowMenuItems = canOpenWorkflows
-    ? [
-        {
-          key: "follow",
-          label: t("detailActions.followCircle"),
-          icon: <Rss className="h-4 w-4" />,
-          onSelect: openFollowCircle,
-        },
-      ]
-    : [];
+  const moreMenuItems = [
+    ...(canChangeCover
+      ? [
+          {
+            key: "cover",
+            label: t("detailActions.changeCover"),
+            icon: <Image className="h-4 w-4" />,
+            onSelect: () => setCoverDialogOpen(true),
+          },
+        ]
+      : []),
+    ...(canOpenWorkflows
+      ? [
+          {
+            key: "follow",
+            label: t("detailActions.followCircle"),
+            icon: <Rss className="h-4 w-4" />,
+            onSelect: openFollowCircle,
+          },
+        ]
+      : []),
+  ];
+
+  const loadCoverWorks = async ({ page, pageSize, query, signal }: CreatorCoverWorksRequest) => {
+    const result = await api.getCircle(externalId, { page, pageSize, query, signal });
+    return { works: result.works, total: result.worksMeta.total };
+  };
+
+  const saveCircleCover = async (primaryCode: string) => {
+    try {
+      const next = await api.updateCircleUserState(externalId, { coverPrimaryCode: primaryCode });
+      setDetail((current) =>
+        current ? { ...current, ...next, works: current.works, series: current.series } : current,
+      );
+      setCoverDialogOpen(false);
+    } catch (error) {
+      toast.notify(toastFromError(error, t("creatorBrowse.coverUpdateFailed")));
+    }
+  };
 
   const toggleCircleFavorite = async () => {
     try {
@@ -774,7 +809,7 @@ function CircleDetailPage({
       <CreatorDetailHeader
         label={t("detailActions.circleSummary")}
         name={circle.displayName}
-        coverUrl={circle.latestWork?.coverUrl}
+        coverUrl={creatorCoverUrl(circle)}
         aliases={circle.aliases}
         eyebrow={
           <>
@@ -855,7 +890,7 @@ function CircleDetailPage({
             <CreatorActionMenu
               label={t("detailActions.moreCircleActions")}
               buttonLabel={t("detailActions.more")}
-              items={workflowMenuItems}
+              items={moreMenuItems}
             />
           </div>
         }
@@ -1249,6 +1284,16 @@ function CircleDetailPage({
           count={saveConfirm.count}
           onClose={() => setSaveConfirm(null)}
           onConfirm={() => void saveConfirm.run()}
+        />
+      )}
+      {coverDialogOpen && (
+        <CreatorCoverDialog
+          name={circle.displayName}
+          cover={circle.cover ?? null}
+          latestWork={circle.latestWork}
+          loadWorks={loadCoverWorks}
+          onSelect={saveCircleCover}
+          onClose={() => setCoverDialogOpen(false)}
         />
       )}
       <LazyRemoteFetchWorkspaceDialog workspace={fetchWorkspace} />

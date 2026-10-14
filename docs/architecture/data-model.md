@@ -289,6 +289,15 @@ and the raw entry; a catalog item is not a work. `party_catalog_refresh_state`
 records each circle and provider's latest catalog refresh attempt, mode,
 status, run and error.
 
+`user_party_state` and `user_person_state` hold one account's rating, note,
+favorite, and cover choice for a circle or voice actor.
+`cover_primary_code` names the work whose cover represents the creator for
+that account; an empty value shows the latest work's cover. A summary applies
+the choice only while that code is one of the creator's works and has a cover
+to show, and a write rejects any other code. A merge keeps the surviving
+creator's choice and otherwise adopts the merged one's; Undo does not restore
+cover choices.
+
 A circle merge transfers work relations, every maker id, catalogs, retained
 snapshots, series membership, personal state and tags, and earlier merge
 reviews. Duplicate catalogs keep the newest observation; duplicate personal

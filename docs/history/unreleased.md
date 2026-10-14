@@ -95,6 +95,10 @@
   search matches like a plain Library search, including titles in other
   languages and voice actor names, and every edition of a work counts as one
   work.
+- **Change cover…** in the **More** menu of a circle or voice actor's detail
+  page chooses one of their works as their cover, on the tile and the detail
+  summary. **Latest work** in the same dialog restores the cover that follows
+  each new release. Each account keeps its own choice.
 </details>
 
 <details>
