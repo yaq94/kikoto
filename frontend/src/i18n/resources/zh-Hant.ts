@@ -165,6 +165,7 @@ const collectionHant = {
   previousPage: "上一頁",
   nextPage: "下一頁",
   page: "第 {{page}} 頁",
+  jumpToPage: "跳至指定頁",
   pageOf: "第 {{page}} / {{totalPages}} 頁，共 {{totalItems}} {{itemLabel}}",
   rangeOf: "{{first}}-{{last}}，共 {{totalItems}} {{itemLabel}}",
   refreshing: "正在重新整理 {{itemLabel}}",

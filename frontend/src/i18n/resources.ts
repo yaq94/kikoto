@@ -158,6 +158,7 @@ export const collectionEnglish = {
   previousPage: "Previous page",
   nextPage: "Next page",
   page: "Page {{page}}",
+  jumpToPage: "Go to page",
   pageOf: "Page {{page}} of {{totalPages}}, {{totalItems}} {{itemLabel}}",
   rangeOf: "{{first}}-{{last}} of {{totalItems}} {{itemLabel}}",
   refreshing: "Refreshing {{itemLabel}}",

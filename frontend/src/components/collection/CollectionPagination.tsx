@@ -1,9 +1,10 @@
 import { ChevronLeft, ChevronRight, RefreshCw } from "lucide-react";
-import type { ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
-import { paginationItems } from "@/components/work-collection/paginationModel";
+import { Input } from "@/components/ui/input";
+import { pageJumpTarget, paginationItems } from "@/components/work-collection/paginationModel";
 import i18n from "@/i18n";
 import { cn } from "@/lib/tailwindClassNames";
 
@@ -68,13 +69,7 @@ export function CollectionPagination({
           </Button>
           {paginationItems(currentPage, lastPage).map((item) =>
             item === "ellipsis-left" || item === "ellipsis-right" ? (
-              <span
-                key={item}
-                className="inline-flex h-8 w-6 shrink-0 items-center justify-center text-muted-foreground"
-                aria-hidden
-              >
-                ...
-              </span>
+              <PageJump key={item} currentPage={currentPage} lastPage={lastPage} onPageChange={onPageChange} />
             ) : (
               <Button
                 key={item}
@@ -248,6 +243,88 @@ export function CollectionPagination({
         </div>
       </div>
     </div>
+  );
+}
+
+/** An ellipsis between page numbers that turns into a page number field where it was pressed. */
+function PageJump({
+  currentPage,
+  lastPage,
+  onPageChange,
+}: {
+  currentPage: number;
+  lastPage: number;
+  onPageChange: (page: number) => void;
+}) {
+  const { t } = useTranslation("translation", { i18n });
+  const [open, setOpen] = useState(false);
+  const [value, setValue] = useState("");
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const restoreFocus = useRef(false);
+
+  useEffect(() => {
+    if (open) {
+      inputRef.current?.focus();
+      inputRef.current?.select();
+    } else if (restoreFocus.current) {
+      restoreFocus.current = false;
+      triggerRef.current?.focus();
+    }
+  }, [open]);
+
+  // Leaving the field by keyboard returns focus to the ellipsis; a blur leaves focus where the user put it.
+  const closeToTrigger = () => {
+    restoreFocus.current = true;
+    setOpen(false);
+  };
+
+  if (!open) {
+    return (
+      <Button
+        ref={triggerRef}
+        variant="ghost"
+        size="icon"
+        className="h-8 w-6 shrink-0 text-muted-foreground"
+        onClick={() => {
+          setValue(String(currentPage));
+          setOpen(true);
+        }}
+        aria-label={t("collection.jumpToPage")}
+        title={t("collection.jumpToPage")}
+      >
+        ...
+      </Button>
+    );
+  }
+
+  return (
+    <form
+      className="inline-flex shrink-0"
+      onSubmit={(event) => {
+        event.preventDefault();
+        const target = pageJumpTarget(value, lastPage);
+        closeToTrigger();
+        if (target !== null && target !== currentPage) onPageChange(target);
+      }}
+    >
+      <Input
+        ref={inputRef}
+        className="h-8 w-12 px-1 text-center text-xs tabular-nums"
+        value={value}
+        onChange={(event) => setValue(event.target.value.replace(/\D/g, ""))}
+        onBlur={() => setOpen(false)}
+        onKeyDown={(event) => {
+          if (event.key !== "Escape") return;
+          event.preventDefault();
+          closeToTrigger();
+        }}
+        inputMode="numeric"
+        enterKeyHint="go"
+        autoComplete="off"
+        aria-label={t("collection.jumpToPage")}
+      />
+    </form>
   );
 }
 
