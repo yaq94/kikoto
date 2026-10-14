@@ -14,6 +14,7 @@ import {
   FastForward,
   Folder,
   KeyRound,
+  Languages,
   LoaderCircle,
   Network,
   Save,
@@ -36,6 +37,7 @@ import { api, type CurrentUser } from "@/lib/api";
 import { validatePasswordChange, type PasswordChangeDraft } from "@/pages/accountSettings";
 import { CleanupPage } from "@/pages/CleanupPage";
 import { MaintenancePage } from "@/pages/MaintenancePage";
+import { TranslationSettingsPanel } from "@/features/translation";
 import { AccountTimeZoneSection } from "@/features/time-zone/AccountTimeZoneSection";
 import { PersonalTabPanel, type PersonalTabProps } from "@/pages/PersonalTabPanel";
 import {
@@ -56,11 +58,20 @@ const emptyPasswordDraft: PasswordChangeDraft = {
 };
 
 type SettingsTab =
-  "account" | "playback" | "recommendation" | "tags" | "library" | "cache" | "proxy" | "cleanup" | "users";
+  | "account"
+  | "playback"
+  | "recommendation"
+  | "tags"
+  | "library"
+  | "cache"
+  | "proxy"
+  | "translation"
+  | "cleanup"
+  | "users";
 type SettingsSectionTarget = "data" | "time-zone";
 type SettingsLocation = { tab: SettingsTab; section?: SettingsSectionTarget };
 
-const adminSettingsTabs: SettingsTab[] = ["library", "cache", "proxy", "cleanup", "users"];
+const adminSettingsTabs: SettingsTab[] = ["library", "cache", "proxy", "translation", "cleanup", "users"];
 // Personal tags need library access; the other personal tabs do not.
 const libraryReaderTabs: SettingsTab[] = ["tags"];
 const allSettingsTabs: SettingsTab[] = ["account", "playback", "recommendation", "tags", ...adminSettingsTabs];
@@ -83,6 +94,7 @@ const settingsTabs: Array<{ id: SettingsTab; labelKey: string; icon: LucideIcon 
   { id: "library", labelKey: "maintenance.tabs.library", icon: Folder },
   { id: "cache", labelKey: "maintenance.tabs.cache", icon: Download },
   { id: "proxy", labelKey: "maintenance.tabs.proxy", icon: Network },
+  { id: "translation", labelKey: "translationAdmin.title", icon: Languages },
   { id: "cleanup", labelKey: "cleanup.tab", icon: Eraser },
   { id: "users", labelKey: "maintenance.tabs.users", icon: Shield },
 ];
@@ -571,26 +583,39 @@ export function SettingsPage({
               <CleanupPage canManageCache={canManageCache} canManageDatabase={canManageSources} readOnly={readOnly} />
             </div>
           )}
-          {canViewAdministration && adminSettingsTabs.includes(activeTab) && activeTab !== "cleanup" && (
+          {canManageSources && activeTab === "translation" && (
             <div
               className={settingsPanelClassName}
               role="tabpanel"
-              id={`settings-panel-${activeTab}`}
-              aria-labelledby={`settings-tab-${activeTab}`}
+              id="settings-panel-translation"
+              aria-labelledby="settings-tab-translation"
             >
-              <MaintenancePage
-                canManageSources={canManageSources}
-                canManageUsers={canManageUsers}
-                canManageCleanup={canManageCleanup}
-                currentUserId={user.id}
-                isSuperAdmin={user.role === "super_admin"}
-                canManageAccessPolicy={canManageAccessPolicy}
-                readOnly={readOnly}
-                activeTab={activeTab as "library" | "cache" | "proxy" | "users"}
-                onAccessPolicyUpdated={onAccessPolicyUpdated}
-              />
+              <TranslationSettingsPanel readOnly={readOnly} />
             </div>
           )}
+          {canViewAdministration &&
+            adminSettingsTabs.includes(activeTab) &&
+            activeTab !== "cleanup" &&
+            activeTab !== "translation" && (
+              <div
+                className={settingsPanelClassName}
+                role="tabpanel"
+                id={`settings-panel-${activeTab}`}
+                aria-labelledby={`settings-tab-${activeTab}`}
+              >
+                <MaintenancePage
+                  canManageSources={canManageSources}
+                  canManageUsers={canManageUsers}
+                  canManageCleanup={canManageCleanup}
+                  currentUserId={user.id}
+                  isSuperAdmin={user.role === "super_admin"}
+                  canManageAccessPolicy={canManageAccessPolicy}
+                  readOnly={readOnly}
+                  activeTab={activeTab as "library" | "cache" | "proxy" | "users"}
+                  onAccessPolicyUpdated={onAccessPolicyUpdated}
+                />
+              </div>
+            )}
         </div>
       </div>
     </div>

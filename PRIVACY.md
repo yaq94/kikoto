@@ -10,7 +10,7 @@ source, metadata provider, reverse proxy, hosting provider, or network operator.
 The current Kikoto repository does not include a project-operated cloud sync,
 analytics upload, advertising, or crash-report upload service. Application data
 is stored by the Kikoto instance and its clients unless an operator configures an
-external source or a user deliberately opens or shares an external link.
+external source or translation service, or a user deliberately opens or shares an external link.
 
 Kikoto records bounded recommendation events locally so the instance can explain
 and tune its personal recommendation behavior. These events contain the local
@@ -29,6 +29,7 @@ The `/config/kikoto.db` SQLite database may contain:
 - Local media metadata and paths below configured roots.
 - Workflow definitions, inputs, events, errors, and review history.
 - Local recommendation events and settings.
+- Administrator translation-service URL, model invocation name and API key.
 - Account-owned listening sessions, lifetime totals, and daily listening time.
 
 Personal listening history is retained until cleared or its account/work is
@@ -85,6 +86,9 @@ Kikoto may send requests to:
 
 - Metadata providers used to identify or enrich a work.
 - Remote source endpoints configured by an administrator.
+- The configured translation service when an administrator submits a translation
+  trial. The short trial text and its target language are sent with the saved
+  model name and API key; trial text and results are not retained by Kikoto.
 - Media, cover, or public-work URLs returned by a configured source. By default
   these may use any public origin; a source with **Restrict outbound hosts**
   stays on its configured origins and allowed hosts. See

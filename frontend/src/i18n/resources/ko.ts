@@ -1,6 +1,7 @@
 import { libraryEnglish, collectionEnglish, workCardEnglish } from "../resources";
 import { surfaceKorean } from "../surfaces/ko";
 import { personalKorean } from "../surfaces/personal/ko";
+import { translationAdmin } from "../surfaces/translation/ko";
 
 const libraryKorean = {
   ...libraryEnglish,
@@ -680,6 +681,7 @@ export const koreanResource = {
       ...surfaceKorean,
       ...adminToolsKorean,
       ...personalKorean,
+      translationAdmin,
       appearance: {
         title: "외관",
         subtitle: "모드, 스타일 및 색상",

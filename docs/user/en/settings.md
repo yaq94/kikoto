@@ -5,7 +5,7 @@ Settings holds account controls, personal playback, recommendation, and tag pref
 
 ## Tabs
 
-Settings uses Account, Playback, Recommendations, and Tags tabs, shown as icons: hover or focus an icon for its name, and phones also name the active tab. Administrators, and Demo, also see the administration tabs (Library, Cache & Fetch, Proxy, Cleanup, and Users) after a divider, so the elevated scope stays separate. Wide screens show the tabs in a column beside the settings, with every tab named; phones show them as one row that scrolls sideways. Below the column, **Hide tab names** collapses it to icons and **Show tab names** expands it again. **Show tabs above** moves the tabs into one row above the settings. The row names every tab when there is room; otherwise it names the group holding the open tab (the personal or the administration tabs) and shows the other group as icons, and on the narrowest wide screens it names only the open tab. If even that does not fit, the row wraps onto a second line. The icon at the end of that row, **Show tabs beside**, returns them to the column. Settings remembers both choices on that device.
+Settings uses Account, Playback, Recommendations, and Tags tabs, shown as icons: hover or focus an icon for its name, and phones also name the active tab. Administrators, and Demo, also see the administration tabs (Library, Cache & Fetch, Proxy, Translation, Cleanup, and Users) after a divider, so the elevated scope stays separate. Wide screens show the tabs in a column beside the settings, with every tab named; phones show them as one row that scrolls sideways. Below the column, **Hide tab names** collapses it to icons and **Show tab names** expands it again. **Show tabs above** moves the tabs into one row above the settings. The row names every tab when there is room; otherwise it names the group holding the open tab (the personal or the administration tabs) and shows the other group as icons, and on the narrowest wide screens it names only the open tab. If even that does not fit, the row wraps onto a second line. The icon at the end of that row, **Show tabs beside**, returns them to the column. Settings remembers both choices on that device.
 
 `/maintenance`, `/users`, `/cleanup`, `/tags`, and `/user-data` links open the matching Settings tab. `/history` and `/settings?tab=history` open [Insights](personal-data.md#insights).
 
@@ -160,6 +160,14 @@ after a change. Cache contents are managed in the Cleanup tab.
   5 GB. This rebuildable cache lives under `/cache/transcodes` and does not
   change the managed remote-media cache limit.
 
+### Translation
+
+**Translation** (`/settings?tab=translation`) requires `sources:write`. Save the API base URL, API key and model invocation name. The default model is `Index-Translate-35B-A3B`; the invocation name is sent exactly as entered. The URL is unset until configured and includes the API version path, such as `/v1`.
+
+Saved keys are shown only as `********`. Leave the key field blank to keep it; select **Clear saved API key** and save to remove it. Configuration survives restarting Kikoto. The request timeout accepts 1–60 seconds, default 60. **Send no-thinking extension** is enabled by default; disable it only when your compatible service rejects that parameter.
+
+Save changes before choosing **Test saved configuration**. Enter a short, non-sensitive text and select its target language; the result shows the complete translation and elapsed time. Testing does not change your UI or metadata language. A failed or cancelled test shows an explanation and no successful result. Empty, unfinished, truncated or oversized responses, authentication failures, rate limits and timeouts are distinguished. Trials use one request, allow one active trial at a time, and can be cancelled. Input is limited to 8 KiB and the response to 256 KiB. The server sends text only to the configured origin, refuses every redirect and uses the Other proxy scope without replaying failed completion requests. Translation trials are not retried through another proxy or direct fallback.
+
 ### Proxy
 
 - The **Proxy** tab lists outbound proxies in priority order. Requests try them from
@@ -173,7 +181,7 @@ after a change. Cache contents are managed in the Cleanup tab.
   one. Every change saves immediately.
 - **Proxy scope** chooses where proxies apply: **DLsite** (metadata, covers,
   and creator catalogs), **Remote sources** (browsing, playback, and
-  downloads), and **Other** (update checks; personal Kikoeru account imports
+  downloads), and **Other** (update checks and translation trials; personal Kikoeru account imports
   always connect directly). **All**
   switches the three together. Each scope uses every proxy by priority or one
   chosen proxy. Every remote source can follow the remote-source scope, connect

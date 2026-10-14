@@ -41,6 +41,8 @@ The backend is a Go HTTP API with SQLite persistence.
   proxy dialing, and proxy failover.
 - `backend/internal/proxyconfig`: outbound proxy configuration validation and
   per-scope proxy resolution.
+- `backend/internal/translation`: private translation configuration and bounded
+  completion calls; see [Translation service](../development/translation.md).
 - `backend/internal/storage`: database opening and migrations.
 - `backend/internal/sqlutil`: shared `database/sql` helpers with no application imports.
 - `backend/internal/workflow`: workflow persistence helpers, lease-based
