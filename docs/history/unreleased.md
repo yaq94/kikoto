@@ -29,10 +29,15 @@
   moments, and gives the queue to other waiting work between parts. The result
   waits for review; **Add to lyrics** saves it as a WebVTT file in the
   language's lyrics folder and assigns it to the track.
-- **Manage files** has **Find identical files**, which compares the local
-  files of every edition and folder of the work by content, marks the files
-  that have an identical copy, and can select the copies that also exist in
-  another folder or are repeated in the listed one.
+- **Manage files** keeps the folder choice, **Quick select**, and **Edit
+  files** in one toolbar above the list. **Quick select** holds the selections
+  by location and format. The head of the list selects the whole folder, a
+  file names its copies only when it has more than one, and **Manage as
+  lyrics** and forgetting the work appear once the selection allows them.
+- **Quick select** in **Manage files** has **Find identical files**, which
+  compares the local files of every edition and folder of the work by content,
+  marks the files that have an identical copy, and can select the copies that
+  also exist in another folder or are repeated in the listed one.
 - **Manage files** has **Edit files**, a three-column edit of one local
   folder: the work's local folders and remote editions on the left, the files
   of the chosen place in the middle, and the final folder on the right. It

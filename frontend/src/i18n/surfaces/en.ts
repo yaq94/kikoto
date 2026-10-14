@@ -1819,6 +1819,7 @@ export const surfaceEnglish = {
     sharedInFolder: "Shared in this folder",
     workRoot: "Work root",
     includeExtension: "Include {{extension}}",
+    quickSelect: "Quick select",
     selectByLocation: "By location",
     selectByFormat: "By format",
     selectFileCopy: "{{location}} copy of {{name}}",
@@ -1987,9 +1988,7 @@ export const surfaceEnglish = {
     manageCache: "Manage cache",
     manageFiles: "Manage files",
     reviewCachedFiles: "Review cached files for this tracked source.",
-    reviewFileOperations: "Review file operations in the same folder structure as the directory tree.",
     deleteSelectedThenForget: "Delete the selected files, then forget the work if no source remains.",
-    selectCompleteWorkRoot: "Select the complete local work root and every deletable file from one work.",
     reviewDeletionForgetDescription:
       "The second confirmation will delete files first, then re-check every source before forgetting the work.",
     reviewDeletionFilesOnlyDescription: "The second confirmation deletes files only; work history and marks remain.",

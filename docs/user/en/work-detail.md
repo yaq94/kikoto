@@ -251,7 +251,8 @@ A purchase bonus, such as an early purchase bonus (`【早期購入特典】`), 
   workflow permission when a [speech recognition
   service](settings.md#speech-recognition) is configured. See
   [Transcribe](#transcribe).
-- **Manage files** on a local work has **Find identical files**. It compares
+- **Quick select** in **Manage files** selects files by location or format.
+  On a local work it also has **Find identical files**, which compares
   the local files of every edition and folder of the work by content, so a
   translated edition's renamed audio is recognized as the original's. A file
   with an identical copy is marked with the copy's location, and two

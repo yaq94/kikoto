@@ -97,9 +97,7 @@ export function PersistedDirectoryManagerOverlay({
   // Comparing files reads the library, which the server allows only to users who manage its files.
   const canCheckDuplicates = !demoMode && hasPermission("downloads:manage");
   const title = selectedTrackedPresence ? i18n.t("libraryDetail.manageCache") : i18n.t("libraryDetail.manageFiles");
-  const description = selectedTrackedPresence
-    ? i18n.t("libraryDetail.reviewCachedFiles")
-    : i18n.t("libraryDetail.reviewFileOperations");
+  const description = selectedTrackedPresence ? i18n.t("libraryDetail.reviewCachedFiles") : undefined;
   const emptyLabel = selectedTrackedPresence
     ? i18n.t("libraryDetail.noCachedFiles")
     : showNoSourceDirectory
