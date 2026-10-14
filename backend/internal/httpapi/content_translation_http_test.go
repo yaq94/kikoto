@@ -17,7 +17,7 @@ func TestContentTranslationReadsOnlyPublicWorkFields(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
 		body, _ := io.ReadAll(r.Body)
-		if !strings.Contains(string(body), "Example title") || strings.Contains(string(body), "Private note") {
+		if !strings.Contains(string(body), "Example title") || strings.Contains(string(body), "Private note") || strings.Contains(string(body), "Private tag") {
 			t.Error("unexpected model input")
 		}
 		_, _ = io.WriteString(w, `{"choices":[{"message":{"content":"示例标题"},"finish_reason":"stop"}]}`)
@@ -29,6 +29,8 @@ func TestContentTranslationReadsOnlyPublicWorkFields(t *testing.T) {
 	}
 	cfg, _ := json.Marshal(map[string]any{"baseUrl": upstream.URL, "model": "Example Model"})
 	translationRequest(t, host, admin, "PATCH", "/api/settings/translation", string(cfg), 200)
+	translationRequest(t, host, listener, "PATCH", "/api/works/1/user-state", `{"note":"Private note"}`, 200)
+	translationRequest(t, host, listener, "PUT", "/api/works/1/tags", `{"tags":["Private tag"]}`, 200)
 	const path = "/api/content-translations"
 	result := translationRequest(t, host, listener, "POST", path, `{"workId":1,"field":"title","text":"Example title","language":"zh-cn"}`, 200)
 	if result["text"] != "示例标题" || result["original"] != "Example title" || result["status"] != "translated" {
@@ -36,10 +38,15 @@ func TestContentTranslationReadsOnlyPublicWorkFields(t *testing.T) {
 	}
 	translationRequest(t, host, listener, "POST", path, `{"workId":1,"field":"note","text":"Private note","language":"zh-cn"}`, 400)
 	translationRequest(t, host, listener, "POST", path, `{"workId":1,"field":"title","text":"Private note","language":"zh-cn"}`, 409)
+	translationRequest(t, host, listener, "POST", path, `{"workId":1,"field":"tag","text":"Private tag","language":"zh-cn"}`, 409)
 	translationRequest(t, host, nil, "POST", path, `{"workId":1,"field":"title","text":"Example title","language":"zh-cn"}`, 401)
 	origin := translationRequest(t, host, listener, "POST", path, `{"workId":1,"field":"title","text":"Example title","language":"origin"}`, 200)
 	if origin["text"] != "Example title" || calls.Load() != 1 {
 		t.Fatalf("origin triggered translation: %#v; calls=%d", origin, calls.Load())
+	}
+	detail := translationRequest(t, host, listener, "GET", "/api/works/1?includeMedia=false", "", 200)
+	if detail["personalNote"] != "Private note" || detail["userTags"].([]any)[0].(map[string]any)["name"] != "Private tag" {
+		t.Fatalf("translation changed private content: %#v", detail)
 	}
 }
 
