@@ -5,7 +5,7 @@
 **Blocked by:** None (can start immediately)
 
 **Status:** ready-for-agent
-**Implementation:** in-progress
+**Implementation:** verified-local
 
 **依据:** [正式规格](../spec.md) · [工单总览](../ticket-proposal.md)
 
@@ -40,7 +40,10 @@ H 使用真实 HTTP 路由、会话与迁移 SQLite；R 实际关闭并重启同
 - 复用 `work.id`；只扩展个人状态 PATCH 的引用解析，保持数字精确 edition、编号/alias/legacy origin 解析 canonical。没有新增表、字段或迁移，069 预留已交还集成协调。
 - H 红灯：`go test ./internal/httpapi -run '^TestWorkReferencePersonalStateUsesCodeCompatibility$' -count=1`，退出 1；有效数字写入后，编号 PATCH 返回 400 `invalid work id`。首次夹具误用非有效 listening status 已修正，不计作功能红灯。
 - H 绿灯及既有只读解析回归：`go test ./internal/httpapi -run '^(TestWorkReferencePersonalStateUsesCodeCompatibility|TestResolveIsReadOnlyForCanonicalAliasEditionAndLegacySnapshot)$' -count=1`，退出 0。验证编号与别名读写同一对象、数字 edition 保持独立、非法/不存在引用返回 400/404。
-- 旧库、关闭重开与 04 个人评价联测仍待执行，验收清单保持未勾选。
+- 已合入集成 `15ee7e23023308d2f50ef9a921429a6b1c7ed646`。新增 H/R 从真实 067 编号链及 068 v0.8.3 基线建库，保存 canonical/edition/alias/legacy snapshot、两用户评价，再关闭并重开 HTTP、应用与同一 SQLite 三轮；关系、评分 0、备注、公共评分、独立 edition 状态与会话保留，Library 总数不增加。
+- 最终 H/R 与 04 五项个人评价回归共 8 个顶层测试通过，退出 0；同一选择的 race 检查通过，退出 0。`make backend-test backend-build`、格式/lint/vet 均通过；121 份公开文档相对链接通过。
+- lint 首次遇未配置进程代理的模块查询超时；按已授权代理重试后发现测试中的两处响应关闭返回值和一处布尔写法，修正并复验为 0 issues。未改全局配置或其他服务。
+- 当前产物已取得本票全部验收证据，完整命令及 AC 映射待最终证据文件落盘；未进行无码功能或部署验收。
 
 ## 07 接入契约
 
