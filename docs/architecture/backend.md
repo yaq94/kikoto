@@ -179,6 +179,25 @@ after the SQLite setting and audit entry commit.
 
 ## HTTP Responses
 
+`PATCH /api/works/{id}/user-state` requires `favorites:write`. It accepts
+`listeningStatus`, `rating` (integer 0–5 or null), and `note` (string). Omitted
+fields stay unchanged; null clears only the rating and an empty string clears
+only the note. `favorite` remains managed through favorite lists. The response
+and work detail expose `personalRating` and `personalNote` for the session's user;
+`rating` in detail remains the public provider rating. Numeric work IDs retain
+their exact edition semantics.
+
+`PATCH /api/remote-sources/{id}/works/{code}/user-state` accepts the same review
+fields and resolves the existing numbered work identity. A missing work also
+requires `remote:track`; it uses the configured source's bounded metadata client
+and atomically registers necessary metadata, source presence and personal state.
+The source must be enabled and Kikoeru-compatible. Metadata requests use the
+existing source outbound policy, origin rules and cancellation, with a 2 MiB
+metadata response limit.
+Registration does not fetch tracks or covers, create media locations, or enqueue
+workflows. Remote detail projects personal fields after the shared metadata cache
+lookup, so cached source responses never contain another user's review.
+
 `POST /api/playback-reports` requires `playback:use`, accepts up to 32 resume
 checkpoints and 64 dated cumulative listening reports, and bounds JSON to
 128 KiB. Strict JSON/envelope errors reject the request before mutation.

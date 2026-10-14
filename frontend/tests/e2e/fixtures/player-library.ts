@@ -273,6 +273,8 @@ export async function mockApplication(
                 workId: 1,
                 listeningStatus: "want_to_listen",
                 favorite: false,
+                personalRating: null,
+                personalNote: "",
               } satisfies ApiResponse<"updateWorkUserState">,
             }
           : { status: 401, json: { error: "login required" } satisfies ApiErrorBody },

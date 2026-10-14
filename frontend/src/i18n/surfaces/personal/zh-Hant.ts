@@ -1,5 +1,18 @@
 export const personalHant = {
   personal: {
+    review: {
+      title: "個人評價",
+      rating: "個人評分",
+      note: "個人備註",
+      unrated: "未評分",
+      clearRating: "清除評分",
+      clearNote: "清除備註",
+      save: "儲存評價",
+      saved: "評價已儲存。",
+      failed: "無法儲存評價。修改已保留，請重試。",
+      privateHint: "只有你能讀取此評價。同一作品的各個來源共用這份記錄。",
+      registrationHint: "儲存時會將作品登記到作品庫，不下載媒體。",
+    },
     readOnlyAccount: "你的帳戶可以檢視此頁面，但不能進行變更。",
     duration: {
       hoursMinutes: "{{hours}} 小時 {{minutes}} 分鐘",

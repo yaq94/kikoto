@@ -91,6 +91,7 @@ import {
   PersistedReforkOverlay,
 } from "@/features/work-detail/PersistedDetailOverlays";
 import { useWorkEditionSelection } from "@/features/work-detail/useWorkEditionSelection";
+import { PersonalReviewEditor } from "@/features/work-detail/PersonalReviewEditor";
 
 async function resolvePersistedResumeContext(
   cursor: WorkProgressSummary,
@@ -763,6 +764,13 @@ export function PersistedWorkDetailController({
       directory={directoryPanel}
       onBack={onBack}
     >
+      {work && (
+        <PersonalReviewEditor
+          key={`${principalID}:${work.id}`}
+          value={{ personalRating: work.personalRating ?? null, personalNote: work.personalNote ?? "" }}
+          onSave={(patch) => api.updateWorkUserState(work.id, patch)}
+        />
+      )}
       <PersistedFilePreviewOverlay
         preview={preview}
         work={work}

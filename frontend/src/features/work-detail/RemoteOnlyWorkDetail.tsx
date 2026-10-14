@@ -77,6 +77,8 @@ import {
 import { NotFoundPage } from "@/app/NotFoundPage";
 import { LazyRemoteFetchWorkspaceDialog } from "@/features/work-detail/workflows/LazyRemoteFetchWorkspaceDialog";
 import { defaultDirectoryRoutingRules } from "@/features/work-detail/directory/directoryModel";
+import { PersonalReviewEditor } from "@/features/work-detail/PersonalReviewEditor";
+import { useAuth } from "@/auth/AuthProvider";
 
 type RemoteOnlyDetailActionsProps = {
   detail: RemoteWorkDetail | null;
@@ -634,6 +636,7 @@ export function RemoteOnlyWorkDetailController({
 }) {
   const toast = useToast();
   const requireTrack = usePermissionGate(REMOTE_TRACK_PERMISSIONS, { deferDemo: true });
+  const auth = useAuth();
   const { t } = useTranslation();
   const [detail, setDetail] = useState<RemoteWorkDetail | null>(null);
   const [identityDetail, setIdentityDetail] = useState<RemoteWorkDetail | null>(null);
@@ -1201,6 +1204,25 @@ export function RemoteOnlyWorkDetailController({
       directory={directoryPanel}
       onBack={onBack}
     >
+      {detail?.primaryCode && (
+        <PersonalReviewEditor
+          key={`${auth.user?.id ?? "anonymous"}:${detail.primaryCode}`}
+          value={{ personalRating: detail.personalRating ?? null, personalNote: detail.personalNote ?? "" }}
+          needsRegistration={!detail.workId}
+          onSave={async (patch) => {
+            const result = await api.updateRemoteWorkUserState(source.id, remoteDetailActionCode(detail), patch);
+            setDetail((current) =>
+              current?.primaryCode === detail.primaryCode
+                ? { ...current, workId: result.workId, importStatus: "synced" }
+                : current,
+            );
+            if (!detail.workId) {
+              void onWorksChanged().catch((error) => toast.notify(toastFromError(error, t("errors.unavailable"))));
+            }
+            return result;
+          }}
+        />
+      )}
       <RemoteOnlyDetailOverlays
         manageOpen={isManageOpen}
         tree={tree}

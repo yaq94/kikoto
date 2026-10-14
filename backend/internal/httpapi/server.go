@@ -357,6 +357,7 @@ func (s *Server) Routes() http.Handler {
 	handleSlowFirstResponse("POST /api/remote-sources/{id}/works/{code}/save", s.saveRemoteSourceWork)
 	handleSlowFirstResponse("POST /api/remote-sources/{id}/works/{code}/fetch-plan", s.planRemoteSourceWorkSave)
 	handleSlowFirstResponse("POST /api/remote-sources/{id}/works/{code}/fetch", s.saveRemoteSourceWork)
+	mux.HandleFunc("PATCH /api/remote-sources/{id}/works/{code}/user-state", s.updateRemoteWorkUserState)
 	mux.HandleFunc("POST /api/remote-sources/{id}/works/{code}/track", s.trackRemoteSourceWork)
 	handleSlowFirstResponse("POST /api/remote-sources/{id}/works/{code}/sync", s.syncRemoteSourceWork)
 	handleSlowFirstResponse("POST /api/remote-sources/{id}/works/{code}/cache", s.cacheRemoteSourceWorkMedia)

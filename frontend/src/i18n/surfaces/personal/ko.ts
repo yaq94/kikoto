@@ -1,5 +1,18 @@
 export const personalKorean = {
   personal: {
+    review: {
+      title: "개인 리뷰",
+      rating: "개인 평점",
+      note: "개인 메모",
+      unrated: "평점 없음",
+      clearRating: "평점 지우기",
+      clearNote: "메모 지우기",
+      save: "리뷰 저장",
+      saved: "리뷰를 저장했습니다.",
+      failed: "리뷰를 저장하지 못했습니다. 변경 내용은 유지됩니다. 다시 시도하세요.",
+      privateHint: "이 리뷰는 본인만 볼 수 있으며 같은 작품의 모든 소스에서 공유됩니다.",
+      registrationHint: "저장하면 미디어 다운로드 없이 작품이 라이브러리에 등록됩니다.",
+    },
     readOnlyAccount: "이 계정은 이 페이지를 볼 수 있지만 변경할 수는 없습니다.",
     duration: {
       hoursMinutes: "{{hours}}시간 {{minutes}}분",
