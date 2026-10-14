@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Captions, CloudDownload, FileText, Folder, Languages, ListChecks, ListOrdered, RotateCcw } from "lucide-react";
+import { Captions, FileText, Files, Folder, Languages, ListChecks, ListOrdered, RotateCcw } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { Badge } from "@/components/ui/badge";
@@ -22,39 +22,47 @@ import {
   type LyricsManagerAudio,
   type LyricsManagerFile,
 } from "@/features/work-detail/lyrics/lyricsManagerModel";
+import { folderLyrics } from "@/features/work-detail/lyrics/lyricsEditModel";
+import { LyricsFilesWorkspace } from "@/features/work-detail/lyrics/LyricsFilesWorkspace";
 import { LyricsPreview, loadLocalLyricsText } from "@/features/work-detail/lyrics/LyricsPreview";
-import {
-  RemoteLyricsDownloadButton,
-  RemoteLyricsPanel,
-  useRemoteLyricsFetch,
-} from "@/features/work-detail/lyrics/RemoteLyricsPanel";
 import { formatTrackDuration } from "@/features/work-detail/media/mediaTreeModel";
-import { api, type LibrarySource, type WorkDetail } from "@/lib/api";
+import { api, type WorkDetail } from "@/lib/api";
 import { allLyricsLanguages, lyricsLanguages } from "@/lib/lyricsLanguage";
+import { cn } from "@/lib/tailwindClassNames";
 
 const automaticValue = "auto";
 
-type LyricsManagerTab = "assign" | "remote";
+export type LyricsManagerTab = "assign" | "files";
+
+/** What the lyrics manager opens on. */
+export type LyricsManagerRequest = {
+  tab: LyricsManagerTab;
+  /** The local folder whose lyrics files are shown first. */
+  folderId?: number;
+  /** Lyrics files of that folder to start with selected, by their path below it. */
+  paths?: string[];
+};
 
 /**
  * Lets a library manager choose, per language, the lyrics file every listener
  * uses for each local track. Personal player choices still override these
- * assignments.
+ * assignments. A manager of local files also edits the lyrics files Kikoto
+ * manages in a local folder: which stay, and which come in from the folder,
+ * the work's other folders, and remote editions.
  */
 export function LyricsManagerDialog({
   work,
   readOnly,
-  remoteSources = [],
   canDownload = false,
+  request,
   onClose,
   onSaved,
 }: {
   work: WorkDetail;
   readOnly: boolean;
-  /** Enabled compatible remote sources that may hold an edition of this work. */
-  remoteSources?: LibrarySource[];
-  /** Whether the viewer may download files into the library. */
+  /** Whether the viewer may add, move, and delete files of the library. */
   canDownload?: boolean;
+  request: LyricsManagerRequest;
   onClose: () => void;
   onSaved: () => Promise<void>;
 }) {
@@ -65,18 +73,19 @@ export function LyricsManagerDialog({
   const lyricsByID = useMemo(() => new Map(entries.lyrics.map((file) => [file.mediaItemId, file])), [entries.lyrics]);
   const [drafts, setDrafts] = useState(() => initialLyricsAssignmentDrafts(entries.audio));
   const [language, setLanguage] = useState<string>(allLyricsLanguages);
-  const [tab, setTab] = useState<LyricsManagerTab>("assign");
-  const remote = useRemoteLyricsFetch({
-    work,
-    audio: entries.audio,
-    sources: remoteSources,
-    canAssign: !readOnly,
-    onFetched: async () => {
-      await onSaved();
-      setTab("assign");
-    },
-  });
-  const remoteAvailable = canDownload && remote.available && entries.audio.length > 0;
+  const localFolders = useMemo(
+    () => (canDownload ? (work.localFolders ?? []).filter((folder) => folder.state === "active") : []),
+    [canDownload, work.localFolders],
+  );
+  const filesAvailable = localFolders.length > 0;
+  const [tab, setTab] = useState<LyricsManagerTab>(request.tab === "files" && filesAvailable ? "files" : "assign");
+  const [folderId, setFolderId] = useState(request.folderId ?? 0);
+  const folder = localFolders.find((candidate) => candidate.id === folderId) ?? localFolders[0];
+  const managedCount = useMemo(
+    () => (folder ? folderLyrics(work.mediaItems, folder.rootPath).managed.length : 0),
+    [folder, work.mediaItems],
+  );
+  const [filesBusy, setFilesBusy] = useState(false);
   // A download reloads the work. Keep the user's unsaved edits on the new entries.
   const previousAudio = useRef(entries.audio);
   useEffect(() => {
@@ -93,7 +102,7 @@ export function LyricsManagerDialog({
   const languageCounts = useMemo(() => lyricsLanguageTrackCounts(entries.audio, drafts), [entries.audio, drafts]);
   const groups = useMemo(() => groupByFolder(entries.audio), [entries.audio]);
   const editable = !readOnly && !saving && entries.lyrics.length > 0;
-  const busy = saving || remote.fetching;
+  const busy = saving || filesBusy;
 
   /** Replaces the selected language's assignments for the given tracks. */
   const assignMany = (assignments: Iterable<[number, number | null]>) =>
@@ -149,7 +158,12 @@ export function LyricsManagerDialog({
       onClose={onClose}
       size="full"
       dismissible={!busy}
-      className="max-h-[min(90vh,var(--dialog-max-height))] max-w-4xl"
+      marker="lyrics-manager"
+      className={cn(
+        filesAvailable
+          ? "h-[var(--dialog-max-height)] max-w-7xl md:h-[min(90dvh,var(--dialog-max-height))]"
+          : "max-h-[min(90vh,var(--dialog-max-height))] max-w-4xl",
+      )}
     >
       <DialogHeader
         title={t("lyricsManager.title")}
@@ -158,7 +172,7 @@ export function LyricsManagerDialog({
         onClose={busy ? undefined : onClose}
         closeLabel={t("content.close")}
       >
-        {remoteAvailable && (
+        {filesAvailable && (
           <div className={segmentedListClassName("mt-3")} role="tablist" aria-label={t("lyricsManager.title")}>
             <button
               type="button"
@@ -174,37 +188,33 @@ export function LyricsManagerDialog({
             <button
               type="button"
               role="tab"
-              aria-selected={tab === "remote"}
-              className={segmentedItemClassName(tab === "remote")}
+              aria-selected={tab === "files"}
+              className={segmentedItemClassName(tab === "files")}
               disabled={busy}
-              onClick={() => setTab("remote")}
+              onClick={() => setTab("files")}
             >
-              <CloudDownload className="h-4 w-4" />
-              {t("lyricsManager.tabRemote")}
+              <Files className="h-4 w-4" />
+              {t("lyricsManager.tabFiles")}
+              {managedCount > 0 && <span className="tabular-nums text-muted-foreground">{managedCount}</span>}
             </button>
           </div>
         )}
       </DialogHeader>
-      {tab === "remote" && remoteAvailable ? (
-        <>
-          <DialogBody>
-            <RemoteLyricsPanel state={remote} audio={entries.audio} />
-          </DialogBody>
-          <DialogFooter>
-            <span className="mr-auto text-xs text-muted-foreground" role="status">
-              {remote.listing.status === "ready"
-                ? t("lyricsManager.downloadSummary", {
-                    files: remote.request.files.length,
-                    tracks: remote.request.assignments.length,
-                  })
-                : ""}
-            </span>
-            <Button variant="ghost" onClick={onClose} disabled={busy}>
-              {t("lyricsManager.cancel")}
-            </Button>
-            <RemoteLyricsDownloadButton state={remote} />
-          </DialogFooter>
-        </>
+      {tab === "files" && folder ? (
+        <LyricsFilesWorkspace
+          // Each folder is its own edit.
+          key={folder.id}
+          workId={work.id}
+          items={work.mediaItems}
+          folder={folder}
+          folders={localFolders}
+          canAssign={!readOnly}
+          initialPaths={folder.id === request.folderId ? request.paths : undefined}
+          onFolderChange={setFolderId}
+          onBusyChange={setFilesBusy}
+          onApplied={onSaved}
+          onClose={onClose}
+        />
       ) : (
         <>
           {entries.audio.length > 0 && entries.lyrics.length > 0 && (
@@ -247,7 +257,7 @@ export function LyricsManagerDialog({
               <p className="text-sm text-muted-foreground">{t("lyricsManager.noAudio")}</p>
             ) : entries.lyrics.length === 0 ? (
               <p className="text-sm text-muted-foreground">
-                {remoteAvailable ? t("lyricsManager.noLyricsTryRemote") : t("lyricsManager.noLyrics")}
+                {filesAvailable ? t("lyricsManager.noLyricsTryFiles") : t("lyricsManager.noLyrics")}
               </p>
             ) : (
               groups.map(([folder, audio]) => (

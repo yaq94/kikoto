@@ -596,9 +596,22 @@ its text. A row relates two media items of the same work, so a rescan that
 keeps media ids keeps the assignment; deleting either item removes it. The
 audio item may belong to any edition of the requested work's family, because a
 work detail can show a sibling edition's local media. `origin` records how the
-row was made: `manual` from the lyrics manager, `remote_fetch` when a remote
-lyrics download assigned the file it published, or `library_import` when the
-file was copied from another local folder of the family.
+row was made: `manual` from the lyrics manager or for a lyrics file moved within
+the work folder, `remote_fetch` for a file a lyrics edit downloaded, or
+`library_import` for a file it copied from another local folder of the family.
+
+The lyrics Kikoto manages are the lyrics files inside a language's lyrics
+folder at the top of a work folder: `lyrics_ja`, `lyrics_en`,
+`lyrics_zh_hans`, `lyrics_zh_hant`, `lyrics_ko`, or `lyrics` for every
+language. The folder is their only marker; no table records it. A lyrics file
+a lyrics edit moves into such a folder takes a new media item, because a local
+item is identified by its path. The move points the `media_lyrics_assignment` and
+`user_media_lyrics_preference` rows of the old item at the new one, unless the
+old item still has an available file, and moves the assignments that use the
+file to the declared language. A track that already has another file in that
+language keeps it, and its assignment of the moved file in another language is
+removed. The assignments a lyrics edit is asked to add take the language of
+their file.
 
 A media read lists an audio item's assignments in the order that viewer's
 playback tries them: the viewer's metadata languages in priority order, where

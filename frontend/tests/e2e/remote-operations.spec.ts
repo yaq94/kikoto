@@ -611,6 +611,215 @@ test("@desktop Edit files lists the family's sources and applies the reviewed fo
   await expect(page.getByText("Files updated in workflow #41.", { exact: true })).toBeVisible();
 });
 
+test("@desktop Manage lyrics resolves a lyrics conflict in place of deleting the file first", async ({ page }) => {
+  const plans: Record<string, unknown>[] = [];
+  const applied: Record<string, unknown>[] = [];
+  const localFile = (id: number, kind: string, name: string): MediaItem => ({
+    id,
+    parentId: null,
+    kind,
+    title: name,
+    discNo: null,
+    trackNo: kind === "audio" ? id : null,
+    durationSeconds: kind === "audio" ? 10 : null,
+    sizeBytes: 12,
+    fingerprint: `test-${id}`,
+    progress: null,
+    locations: [
+      {
+        id,
+        fileSourceId: 1,
+        fileSourceCode: "local",
+        fileSourceName: "Local",
+        locationType: "local",
+        path: `${work.primaryCode}/${name}`,
+        streamUrl: kind === "audio" ? `/api/media/${id}/stream` : "",
+        downloadUrl: "",
+        remoteHash: "",
+        sizeBytes: 12,
+        durationSeconds: kind === "audio" ? 10 : null,
+        availability: "available",
+        lastCheckedAt: null,
+      },
+    ],
+  });
+  await mockApplication(
+    page,
+    undefined,
+    false,
+    1,
+    0,
+    [
+      localFile(1, "audio", "track.mp3"),
+      localFile(2, "text", "track.mp3.vtt"),
+      localFile(3, "text", "lyrics_ja/track.mp3.vtt"),
+    ],
+    undefined,
+    {
+      work: { ...work, sourcePresence: [localPresence] },
+      detailLocalFolders: [localRootFolder(104)],
+      authenticated: true,
+      permissions: rolePermissions.admin,
+    },
+  );
+  await page.route(`**/api/works/${work.id}/folder-edit/sources`, (route) =>
+    route.fulfill({
+      json: {
+        workId: work.id,
+        primaryCode: work.primaryCode,
+        warnings: [],
+        editions: [
+          {
+            workId: work.id,
+            primaryCode: work.primaryCode,
+            title: work.title,
+            metadataLanguage: "JPN",
+            editionLabel: "",
+            origin: true,
+            localRoots: [localRootFolder(104)],
+            sources: [],
+          },
+        ],
+      },
+    }),
+  );
+  await page.route(`**/api/works/${work.id}/lyrics-edit/plan`, async (route) => {
+    const request = route.request().postDataJSON() as { decisions: { resolution: string }[] };
+    plans.push(request);
+    const replace = request.decisions.some((decision) => decision.resolution === "replace");
+    const target = `${work.primaryCode}/lyrics_ja/track.mp3.vtt`;
+    await route.fulfill({
+      json: {
+        workId: work.id,
+        folderId: 104,
+        saveRoot: work.primaryCode,
+        removals: [],
+        summary: {
+          add: replace ? 1 : 0,
+          move: replace ? 1 : 0,
+          copy: 0,
+          download: 0,
+          skip: 0,
+          conflict: replace ? 0 : 1,
+          remove: 0,
+        },
+        items: [
+          {
+            itemKey: "folder:track.mp3.vtt",
+            path: "track.mp3.vtt",
+            kind: "text",
+            sizeBytes: 12,
+            sourceKind: "folder",
+            action: replace ? "move_local" : "conflict",
+            status: replace ? "replace_target" : "target_conflict",
+            sourcePath: "",
+            localSourcePath: `${work.primaryCode}/track.mp3.vtt`,
+            cachePath: "",
+            targetPath: target,
+            mediaItemId: 0,
+            localPaths: [],
+            targetExists: true,
+            targetConflict: !replace,
+            targetConflictReason: replace ? "" : "a different file with this name is already there",
+            targetSizeBytes: 12,
+            originalTargetPath: target,
+            resolution: replace ? "replace" : "auto",
+            remoteSourceId: 0,
+            remoteSourceCode: "",
+            remoteSourceName: "",
+            remotePath: "",
+            sourceOptions: [],
+            language: "ja-jp",
+          },
+        ],
+      },
+    });
+  });
+  await page.route(`**/api/works/${work.id}/lyrics-edit`, async (route) => {
+    applied.push(route.request().postDataJSON() as Record<string, unknown>);
+    await route.fulfill({
+      json: {
+        workId: work.id,
+        saveRoot: work.primaryCode,
+        moved: 1,
+        copied: 0,
+        downloaded: 0,
+        removed: 0,
+        skipped: 0,
+        assigned: 1,
+      },
+    });
+  });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  await page.getByText(work.title, { exact: true }).click();
+  await page
+    .getByRole("complementary", { name: "Source info", exact: true })
+    .getByRole("button", { name: "Manage files", exact: true })
+    .click();
+
+  // A lyrics file in a language's lyrics folder has no row of its own until it is asked for.
+  const files = page.getByRole("dialog", { name: "Manage files" });
+  const managedRow = files.getByRole("checkbox", { name: "Select lyrics_ja", exact: true });
+  await expect(managedRow).toHaveCount(0);
+  const note = files.getByRole("note");
+  await expect(note).toContainText("Lyrics managed by Kikoto");
+  await note.getByRole("checkbox", { name: "Show in the list" }).click();
+  await expect(managedRow).toBeVisible();
+  await note.getByRole("checkbox", { name: "Show in the list" }).click();
+  await expect(managedRow).toHaveCount(0);
+
+  // Managing a file as lyrics opens the lyrics files with that file selected.
+  await files.getByRole("checkbox", { name: "Select track.mp3.vtt", exact: true }).click();
+  await files.getByRole("button", { name: /Manage as lyrics/ }).click();
+  const lyrics = page.getByRole("dialog", { name: "Manage lyrics" });
+  await expect(lyrics.getByRole("tab", { name: /Lyrics files/ })).toHaveAttribute("aria-selected", "true");
+  await expect(lyrics.getByRole("button", { name: /Other lyrics in this folder/ })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  await expect(lyrics.getByRole("checkbox", { name: "Select track.mp3.vtt", exact: true })).toBeChecked();
+
+  // The language is the manager's statement, so nothing is previewed before it is chosen.
+  const apply = lyrics.getByRole("button", { name: "Apply changes" });
+  await expect(lyrics.getByText("Choose the language of the selected lyrics")).toBeVisible();
+  await expect(apply).toBeDisabled();
+  expect(plans).toHaveLength(0);
+  await lyrics.getByRole("combobox", { name: "Language of these lyrics" }).click();
+  await page.getByRole("option", { name: "Japanese" }).click();
+
+  // The file the managed lyrics already hold is a conflict to decide here, not a file to delete first.
+  await expect(lyrics.getByText("Conflicts to resolve: 1")).toBeVisible();
+  expect(plans[0]).toEqual({
+    folderId: 104,
+    additions: [{ kind: "folder", path: "track.mp3.vtt", language: "ja-jp" }],
+    removeLocationIds: [],
+    decisions: [],
+    assignments: [],
+  });
+  await expect(apply).toBeDisabled();
+  await lyrics
+    .getByRole("region", { name: "Managed lyrics" })
+    .getByRole("combobox")
+    .selectOption({ label: "Replace the file in the folder" });
+  await expect(lyrics.getByText("Ready: add 1, remove 0")).toBeVisible();
+  await apply.click();
+
+  await expect.poll(() => applied).toHaveLength(1);
+  expect(applied[0]).toEqual({
+    folderId: 104,
+    additions: [{ kind: "folder", path: "track.mp3.vtt", language: "ja-jp" }],
+    removeLocationIds: [],
+    decisions: [
+      { itemKey: "folder:track.mp3.vtt", sourceId: 0, resolution: "replace", targetPath: "lyrics_ja/track.mp3.vtt" },
+    ],
+    assignments: [{ audioMediaItemId: 1, itemKey: "folder:track.mp3.vtt" }],
+  });
+  await expect(
+    page.getByText("Lyrics updated: 1 added, 0 deleted. Tracks assigned: 1.", { exact: true }),
+  ).toBeVisible();
+});
+
 test("local Delete enables work forgetting only for a complete root and confirms its data boundary", async ({
   page,
 }) => {
