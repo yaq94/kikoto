@@ -425,15 +425,19 @@ test("local Delete selects by location, summarizes the selection, and requires t
   await page.getByRole("button", { name: /Source actions for/ }).click();
   await page.getByRole("menuitem", { name: "Manage files", exact: true }).click();
 
-  await expect(page.getByLabel(`Select work root ${work.primaryCode}`)).toBeVisible();
+  const workRoot = page.getByRole("checkbox", { name: `Select work root ${work.primaryCode}`, exact: true });
+  await expect(workRoot).toBeVisible();
   await expect(page.getByRole("button", { name: "Review file deletion" })).toBeDisabled();
+  // Selections by location, format, and identical content wait behind Quick select.
+  await expect(page.getByLabel("Include Cache", { exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "Quick select" }).click();
   await page.getByLabel("Include Cache", { exact: true }).click();
   await expect(page.getByRole("button", { name: "Cache copy of track.mp3", exact: true })).toHaveAttribute(
     "aria-pressed",
     "true",
   );
   await expect(page.getByText(/^1 selected \/ 3 deletable/)).toBeVisible();
-  await page.getByRole("checkbox", { name: "Select all", exact: true }).click();
+  await workRoot.click();
   await expect(page.getByText(/^3 selected \/ 3 deletable/)).toBeVisible();
 
   await page.getByRole("button", { name: "Review file deletion" }).click();
@@ -868,12 +872,12 @@ test("local Delete enables work forgetting only for a complete root and confirms
   await page.getByRole("button", { name: /Source actions for/ }).click();
   await page.getByRole("menuitem", { name: "Manage files", exact: true }).click();
 
-  // Forgetting a work deletes its complete folder, so it stays locked until everything is selected.
+  // Forgetting a work deletes its complete folder, so it is offered only once everything is selected.
   const forgetButton = page.getByRole("button", { name: "Review deletion and forget work" });
-  await expect(forgetButton).toBeDisabled();
+  await expect(forgetButton).toHaveCount(0);
   await page.getByRole("checkbox", { name: "Select track.mp3", exact: true }).click();
-  await expect(forgetButton).toBeDisabled();
-  await page.getByRole("checkbox", { name: "Select all", exact: true }).click();
+  await expect(forgetButton).toHaveCount(0);
+  await page.getByRole("checkbox", { name: `Select work root ${work.primaryCode}`, exact: true }).click();
   await expect(forgetButton).toBeEnabled();
   await forgetButton.click();
 

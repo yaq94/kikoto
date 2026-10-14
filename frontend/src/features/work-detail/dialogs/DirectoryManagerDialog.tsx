@@ -7,6 +7,8 @@ import {
   Folder,
   FolderCog,
   FolderPlus,
+  ListChecks,
+  Loader2,
   Search,
   ShieldAlert,
   Trash2,
@@ -62,6 +64,8 @@ import { api, type DuplicateFileGroup } from "@/lib/api";
 
 /** Marks of the listed local files that have an identical file, by location id. */
 const DuplicateMarksContext = createContext<ReadonlyMap<number, DuplicateFileMark>>(new Map());
+/** The listed files have copies in more than one location, so a row names a copy kept only in the cache. */
+const MixedLocationsContext = createContext(false);
 
 type DuplicateFileCheck =
   | { status: "idle" | "error" }
@@ -157,7 +161,7 @@ function canForgetSelection({
 export function DirectoryManagerDialog({
   root: givenRoot,
   title = i18n.t("libraryDetail.manageFiles"),
-  description = i18n.t("libraryDetail.reviewFileOperations"),
+  description,
   emptyLabel,
   onClose,
   deleting = false,
@@ -292,8 +296,10 @@ export function DirectoryManagerDialog({
     duplicateCheck.reset();
   };
   const canSwitchFolder = localFolders.length > 1 && Boolean(onSelectLocalFolder);
-  const hasShortcuts =
-    canSwitchFolder || locationGroups.length > 1 || formatGroups.length > 1 || showCachedFilter || canCheckDuplicates;
+  const hasQuickSelect = locationGroups.length > 1 || formatGroups.length > 1 || canCheckDuplicates;
+  const hasToolbar = canSwitchFolder || hasQuickSelect || showCachedFilter || Boolean(onEditFiles);
+  const [quickSelectOpen, setQuickSelectOpen] = useState(false);
+  const checkingDuplicates = duplicateCheck.check.status === "running";
 
   return (
     <>
@@ -306,42 +312,99 @@ export function DirectoryManagerDialog({
           closeLabel={i18n.t("content.close")}
         />
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-card">
-          {hasShortcuts && (
-            <div className="shrink-0 space-y-2 border-b px-4 py-3">
+          {hasToolbar && (
+            <div className="flex shrink-0 items-center gap-2 border-b px-4 py-2">
               {canSwitchFolder && (
-                <ShortcutRow label={i18n.t("libraryDetail.manageFolder")}>
-                  <FloatingSelect
-                    value={String(localRoot?.folderId ?? "")}
-                    options={localFolders.map((folder) => ({ value: String(folder.id), label: folder.rootPath }))}
-                    onValueChange={(value) => {
-                      // A selection belongs to the folder it was made in.
-                      setSelectedKeys(new Set());
-                      onSelectLocalFolder?.(Number(value));
-                    }}
-                    ariaLabel={i18n.t("libraryDetail.manageFolder")}
-                    disabled={deleting}
-                    className="h-8 min-w-0 flex-1 text-xs"
-                  />
-                </ShortcutRow>
+                <span className="hidden shrink-0 text-xs text-muted-foreground sm:inline">
+                  {i18n.t("libraryDetail.manageFolder")}
+                </span>
               )}
-              {locationGroups.length > 1 && (
-                <ShortcutRow label={i18n.t("libraryDetail.selectByLocation")}>
-                  {locationGroups.map((group) => (
-                    <SelectionChip
-                      key={group.key}
-                      group={group}
-                      label={group.key === "cache" ? i18n.t("libraryDetail.cache") : i18n.t("detailActions.local")}
-                      selectedKeys={selectedKeys}
-                      disabled={deleting}
-                      onToggle={toggleKeys}
+              {canSwitchFolder && (
+                <FloatingSelect
+                  value={String(localRoot?.folderId ?? "")}
+                  options={localFolders.map((folder) => ({ value: String(folder.id), label: folder.rootPath }))}
+                  onValueChange={(value) => {
+                    // A selection belongs to the folder it was made in.
+                    setSelectedKeys(new Set());
+                    onSelectLocalFolder?.(Number(value));
+                  }}
+                  ariaLabel={i18n.t("libraryDetail.manageFolder")}
+                  disabled={deleting}
+                  className="h-8 min-w-0 flex-1 text-xs sm:max-w-xs"
+                />
+              )}
+              <div className="ml-auto flex shrink-0 items-center gap-2">
+                {showCachedFilter && (
+                  <label className="inline-flex h-8 cursor-pointer items-center gap-2 rounded-md px-1 text-xs text-muted-foreground hover:text-foreground">
+                    <Checkbox
+                      className="h-4 w-4"
+                      checked={showOnlyDeletable}
+                      onCheckedChange={setShowOnlyDeletable}
+                      aria-label={i18n.t("libraryDetail.cachedOnly")}
                     />
-                  ))}
-                </ShortcutRow>
-              )}
-              {(formatGroups.length > 1 || showCachedFilter) && (
-                <ShortcutRow label={i18n.t("libraryDetail.selectByFormat")}>
-                  {formatGroups.length > 1 &&
-                    formatGroups.map((group) => (
+                    <span>{i18n.t("libraryDetail.cachedOnly")}</span>
+                  </label>
+                )}
+                {hasQuickSelect && (
+                  <Button
+                    variant="toolbar"
+                    size="sm"
+                    aria-expanded={quickSelectOpen}
+                    aria-controls="directory-manager-quick-select"
+                    onClick={() => setQuickSelectOpen((open) => !open)}
+                  >
+                    {checkingDuplicates ? (
+                      <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                    ) : (
+                      <ListChecks className="h-4 w-4" aria-hidden="true" />
+                    )}
+                    {i18n.t("libraryDetail.quickSelect")}
+                    <ChevronDown
+                      className={`h-3.5 w-3.5 transition-transform ${quickSelectOpen ? "rotate-180" : ""}`}
+                      aria-hidden="true"
+                    />
+                  </Button>
+                )}
+                {onEditFiles && (
+                  <Button
+                    variant="toolbar"
+                    size="sm"
+                    disabled={deleting}
+                    title={i18n.t("folderEdit.description")}
+                    onClick={onEditFiles}
+                  >
+                    <FolderPlus className="h-4 w-4" aria-hidden="true" />
+                    {i18n.t("folderEdit.editFiles")}
+                  </Button>
+                )}
+              </div>
+            </div>
+          )}
+          <div className="app-scroll min-h-0 flex-1 overflow-auto px-2 pb-2">
+            {hasQuickSelect && quickSelectOpen && (
+              <div
+                id="directory-manager-quick-select"
+                className="-mx-2 space-y-3 border-b bg-muted/30 px-4 py-3"
+                role="group"
+                aria-label={i18n.t("libraryDetail.quickSelect")}
+              >
+                {locationGroups.length > 1 && (
+                  <ShortcutRow label={i18n.t("libraryDetail.selectByLocation")}>
+                    {locationGroups.map((group) => (
+                      <SelectionChip
+                        key={group.key}
+                        group={group}
+                        label={group.key === "cache" ? i18n.t("libraryDetail.cache") : i18n.t("detailActions.local")}
+                        selectedKeys={selectedKeys}
+                        disabled={deleting}
+                        onToggle={toggleKeys}
+                      />
+                    ))}
+                  </ShortcutRow>
+                )}
+                {formatGroups.length > 1 && (
+                  <ShortcutRow label={i18n.t("libraryDetail.selectByFormat")}>
+                    {formatGroups.map((group) => (
                       <SelectionChip
                         key={group.key}
                         group={group}
@@ -351,47 +414,37 @@ export function DirectoryManagerDialog({
                         onToggle={toggleKeys}
                       />
                     ))}
-                  {showCachedFilter && (
-                    <label className="ml-auto inline-flex h-8 cursor-pointer items-center gap-2 rounded-md px-1 text-xs text-muted-foreground hover:text-foreground">
-                      <Checkbox
-                        className="h-4 w-4"
-                        checked={showOnlyDeletable}
-                        onCheckedChange={setShowOnlyDeletable}
-                        aria-label={i18n.t("libraryDetail.cachedOnly")}
-                      />
-                      <span>{i18n.t("libraryDetail.cachedOnly")}</span>
-                    </label>
-                  )}
-                </ShortcutRow>
-              )}
-              {canCheckDuplicates && (
-                <ShortcutRow label={i18n.t("libraryDetail.identicalFiles")}>
-                  <DuplicateFileControls
-                    check={duplicateCheck.check}
-                    duplicates={duplicates}
-                    selectedKeys={selectedKeys}
-                    disabled={deleting}
-                    onStart={() => void duplicateCheck.start()}
-                    onStop={duplicateCheck.reset}
-                    onToggle={toggleKeys}
-                  />
-                </ShortcutRow>
-              )}
-            </div>
-          )}
-          <div className="app-scroll min-h-0 flex-1 overflow-auto p-2">
+                  </ShortcutRow>
+                )}
+                {canCheckDuplicates && (
+                  <ShortcutRow label={i18n.t("libraryDetail.identicalFiles")}>
+                    <DuplicateFileControls
+                      check={duplicateCheck.check}
+                      duplicates={duplicates}
+                      selectedKeys={selectedKeys}
+                      disabled={deleting}
+                      onStart={() => void duplicateCheck.start()}
+                      onStop={duplicateCheck.reset}
+                      onToggle={toggleKeys}
+                    />
+                  </ShortcutRow>
+                )}
+              </div>
+            )}
             <DuplicateMarksContext.Provider value={duplicates?.marks ?? noDuplicateMarks}>
-              <DirectoryManagerTree
-                root={root}
-                emptyLabel={emptyLabel}
-                selectedKeys={selectedKeys}
-                options={options}
-                showOnlyDeletable={showOnlyDeletable}
-                rootTarget={rootTarget}
-                allKeys={allKeys}
-                disabled={deleting}
-                onToggle={toggleKeys}
-              />
+              <MixedLocationsContext.Provider value={locationGroups.length > 1}>
+                <DirectoryManagerTree
+                  root={root}
+                  emptyLabel={emptyLabel}
+                  selectedKeys={selectedKeys}
+                  options={options}
+                  showOnlyDeletable={showOnlyDeletable}
+                  rootTarget={rootTarget}
+                  allKeys={allKeys}
+                  disabled={deleting}
+                  onToggle={toggleKeys}
+                />
+              </MixedLocationsContext.Provider>
             </DuplicateMarksContext.Provider>
             {split.managed.length > 0 && (
               <ManagedLyricsNote
@@ -409,14 +462,10 @@ export function DirectoryManagerDialog({
         <DirectoryManagerFooter
           selectedTargets={selectedTargets}
           total={targets.length + (wholeFolderSelected ? managedTargets.length : 0)}
-          allKeys={allKeys}
-          selectedKeys={selectedKeys}
           forgetAvailable={forgetAvailable}
           canReviewForget={canReviewForget}
           deleting={deleting}
-          onToggleAll={toggleKeys}
           onStartConfirmation={startConfirmation}
-          onEditFiles={onEditFiles}
           lyricsCandidates={lyricsCandidates.length}
           onManageAsLyrics={
             onManageAsLyrics && allowLocalDelete && localRoot ? () => onManageAsLyrics(lyricsCandidates) : undefined
@@ -578,15 +627,11 @@ function ManagedLyricsNote({
 
 function ShortcutRow({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <div
-      className="-mx-4 flex items-center gap-2 overflow-x-auto overflow-y-hidden px-4 [scrollbar-width:none] sm:mx-0 sm:flex-wrap sm:overflow-visible sm:px-0 [&::-webkit-scrollbar]:hidden"
-      role="group"
-      aria-label={label}
-    >
+    <div className="flex flex-col gap-1.5 sm:flex-row sm:items-center sm:gap-2" role="group" aria-label={label}>
       <span className="shrink-0 text-2xs font-medium uppercase tracking-wide text-muted-foreground sm:w-24">
         {label}
       </span>
-      {children}
+      <div className="flex min-w-0 flex-wrap items-center gap-2">{children}</div>
     </div>
   );
 }
@@ -629,14 +674,11 @@ function SelectionChip({
   );
 }
 
+/** How much of a folder is selected; an untouched folder shows nothing. */
 function SelectionCount({ selected, total }: { selected: number; total: number }) {
-  if (total === 0) return null;
+  if (total === 0 || selected === 0) return null;
   return (
-    <span
-      className={`min-w-10 shrink-0 text-right text-xs tabular-nums ${
-        selected > 0 ? "font-medium text-primary" : "text-muted-foreground"
-      }`}
-    >
+    <span className="min-w-10 shrink-0 text-right text-xs font-medium tabular-nums text-primary">
       {selected}/{total}
     </span>
   );
@@ -683,31 +725,41 @@ function DirectoryManagerTree({
       onToggle={onToggle}
     />
   );
-  if (!rootTarget) return children;
+  // The list's head selects everything; with a work root, that includes the folder itself.
   const state = directoryManagerSelectionState(allKeys, selectedKeys);
+  const label = rootTarget
+    ? i18n.t("libraryDetail.selectWorkRoot", { path: rootTarget.path })
+    : i18n.t("libraryDetail.selectAll");
   return (
     <div>
-      <div
-        className={`flex min-h-10 items-center gap-2 rounded-md px-2 text-sm font-medium ${rowClassName(state.checked)}`}
-      >
-        <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-        <Checkbox
-          checked={state.checked}
-          indeterminate={state.indeterminate}
-          disabled={disabled}
-          onCheckedChange={() => onToggle(allKeys, !state.checked)}
-          aria-label={i18n.t("libraryDetail.selectWorkRoot", { path: rootTarget.path })}
-        />
-        <Folder className="h-4 w-4 shrink-0 text-primary" aria-hidden="true" />
-        <span className="min-w-0 flex-1 truncate" title={rootTarget.path}>
-          {rootTarget.path}
-        </span>
-        <span className="hidden shrink-0 text-xs font-normal text-muted-foreground sm:inline">
-          {formatFolderStats(treeStats(root), 0)}
-        </span>
-        <SelectionCount selected={state.selected} total={state.total} />
+      <div className="sticky top-0 z-10 -mx-2 mb-1 border-b bg-card px-2 py-1">
+        <label
+          className={`flex min-h-10 cursor-pointer items-center gap-2 rounded-md px-2 text-sm font-medium ${rowClassName(state.checked)}`}
+        >
+          <Checkbox
+            checked={state.checked}
+            indeterminate={state.indeterminate}
+            disabled={disabled || allKeys.length === 0}
+            onCheckedChange={() => onToggle(allKeys, !state.checked)}
+            aria-label={label}
+          />
+          {rootTarget ? (
+            <>
+              <Folder className="h-4 w-4 shrink-0 text-primary" aria-hidden="true" />
+              <span className="min-w-0 flex-1 truncate" title={rootTarget.path}>
+                {rootTarget.path}
+              </span>
+            </>
+          ) : (
+            <span className="min-w-0 flex-1 truncate">{i18n.t("libraryDetail.selectAll")}</span>
+          )}
+          <span className="hidden shrink-0 text-xs font-normal text-muted-foreground sm:inline">
+            {formatFolderStats(treeStats(root), 0)}
+          </span>
+          <SelectionCount selected={state.selected} total={state.total} />
+        </label>
       </div>
-      <div className="ml-4 border-l pl-1.5">{children}</div>
+      {children}
     </div>
   );
 }
@@ -857,6 +909,7 @@ function ManagedFileRow({
   const keys = targets.map(mediaDeleteTargetKey);
   const state = directoryManagerSelectionState(keys, selectedKeys);
   const duplicateMarks = useContext(DuplicateMarksContext);
+  const mixedLocations = useContext(MixedLocationsContext);
   const duplicate = file.localLocationId !== null ? duplicateMarks.get(file.localLocationId) : undefined;
   const fileMeta = [
     file.kind === "audio" || file.kind === "video" ? formatDuration(file.durationSeconds) : "",
@@ -897,28 +950,33 @@ function ManagedFileRow({
         )}
       </div>
       <div className="flex shrink-0 items-center gap-1">
-        {targets.map((target) => {
-          const key = mediaDeleteTargetKey(target);
-          const selected = selectedKeys.has(key);
-          const location = mediaDeleteTargetKindLabel(target);
-          return (
-            <button
-              key={key}
-              type="button"
-              aria-pressed={selected}
-              aria-label={i18n.t("libraryDetail.selectFileCopy", { location, name: file.title })}
-              disabled={disabled}
-              className={`inline-flex h-6 items-center rounded-full border px-2 text-2xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50 ${
-                selected
-                  ? "border-primary bg-primary text-primary-foreground"
-                  : "bg-background text-muted-foreground hover:border-primary/50 hover:text-foreground"
-              }`}
-              onClick={() => onToggle([key], !selected)}
-            >
-              {location}
-            </button>
-          );
-        })}
+        {targets.length === 1 && mixedLocations && targets[0].kind === "cache" && (
+          <span className="text-2xs text-muted-foreground">{mediaDeleteTargetKindLabel(targets[0])}</span>
+        )}
+        {/* A file with several copies chooses among them; the checkbox alone covers a single copy. */}
+        {targets.length > 1 &&
+          targets.map((target) => {
+            const key = mediaDeleteTargetKey(target);
+            const selected = selectedKeys.has(key);
+            const location = mediaDeleteTargetKindLabel(target);
+            return (
+              <button
+                key={key}
+                type="button"
+                aria-pressed={selected}
+                aria-label={i18n.t("libraryDetail.selectFileCopy", { location, name: file.title })}
+                disabled={disabled}
+                className={`inline-flex h-6 items-center rounded-full border px-2 text-2xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50 ${
+                  selected
+                    ? "border-primary bg-primary text-primary-foreground"
+                    : "bg-background text-muted-foreground hover:border-primary/50 hover:text-foreground"
+                }`}
+                onClick={() => onToggle([key], !selected)}
+              >
+                {location}
+              </button>
+            );
+          })}
         {targets.length === 0 && (
           <span className="text-2xs text-muted-foreground">{i18n.t("libraryDetail.noFileAction")}</span>
         )}
@@ -927,91 +985,56 @@ function ManagedFileRow({
   );
 }
 
+/** The selection's size and the actions that apply to it; actions it does not allow stay out of the way. */
 function DirectoryManagerFooter({
   selectedTargets,
   total,
-  allKeys,
-  selectedKeys,
   forgetAvailable,
   canReviewForget,
   deleting,
-  onToggleAll,
   onStartConfirmation,
-  onEditFiles,
   lyricsCandidates,
   onManageAsLyrics,
 }: {
   selectedTargets: MediaDeleteTarget[];
   total: number;
-  allKeys: string[];
-  selectedKeys: Set<string>;
   forgetAvailable: boolean;
   canReviewForget: boolean;
   deleting: boolean;
-  onToggleAll: (keys: string[], included: boolean) => void;
   onStartConfirmation: (mode: MediaCleanupMode) => void;
-  onEditFiles?: () => void;
   /** How many selected files can be managed as lyrics. */
   lyricsCandidates: number;
   onManageAsLyrics?: () => void;
 }) {
-  const all = directoryManagerSelectionState(allKeys, selectedKeys);
   const bytes = selectedBytes(selectedTargets);
   return (
     <div className="flex shrink-0 flex-wrap items-center justify-between gap-x-4 gap-y-3 border-t bg-card px-4 py-3">
-      <div className="flex min-w-0 items-center gap-3">
-        <label className="inline-flex cursor-pointer items-center gap-2 text-sm">
-          <Checkbox
-            checked={all.checked}
-            indeterminate={all.indeterminate}
-            disabled={deleting || total === 0}
-            onCheckedChange={() => onToggleAll(allKeys, !all.checked)}
-            aria-label={i18n.t("libraryDetail.selectAll")}
-          />
-          <span className="font-medium">{i18n.t("libraryDetail.selectAll")}</span>
-        </label>
-        <span className="min-w-0 text-xs tabular-nums text-muted-foreground" aria-live="polite">
-          {i18n.t("libraryDetail.selectedDeletableCount", { selected: selectedTargets.length, total })}
-          {bytes > 0 ? ` · ${formatBytes(bytes)}` : ""}
-        </span>
-      </div>
+      <span className="min-w-0 text-xs tabular-nums text-muted-foreground" aria-live="polite">
+        {i18n.t("libraryDetail.selectedDeletableCount", { selected: selectedTargets.length, total })}
+        {bytes > 0 ? ` · ${formatBytes(bytes)}` : ""}
+      </span>
       <div className="flex w-full flex-col-reverse gap-2 sm:w-auto sm:flex-row">
-        {onEditFiles && (
+        {onManageAsLyrics && lyricsCandidates > 0 && (
           <Button
             variant="outline"
             size="sm"
             disabled={deleting}
-            title={i18n.t("folderEdit.description")}
-            onClick={onEditFiles}
-          >
-            <FolderPlus className="h-4 w-4" />
-            {i18n.t("folderEdit.editFiles")}
-          </Button>
-        )}
-        {onManageAsLyrics && (
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={lyricsCandidates === 0 || deleting}
             title={i18n.t("lyricsManager.manageAsLyricsHint")}
             onClick={onManageAsLyrics}
           >
             <Captions className="h-4 w-4" />
             {i18n.t("lyricsManager.manageAsLyrics")}
-            {lyricsCandidates > 0 && <span className="tabular-nums text-muted-foreground">{lyricsCandidates}</span>}
+            <span className="tabular-nums text-muted-foreground">{lyricsCandidates}</span>
           </Button>
         )}
-        {forgetAvailable && (
+        {/* Forgetting a work removes its complete folder, so it is offered once everything is selected. */}
+        {forgetAvailable && canReviewForget && (
           <Button
             variant="ghost"
             size="sm"
             className="text-destructive hover:bg-destructive/10 hover:text-destructive"
-            disabled={!canReviewForget || deleting}
-            title={
-              canReviewForget
-                ? i18n.t("libraryDetail.deleteSelectedThenForget")
-                : i18n.t("libraryDetail.selectCompleteWorkRoot")
-            }
+            disabled={deleting}
+            title={i18n.t("libraryDetail.deleteSelectedThenForget")}
             onClick={() => onStartConfirmation("files_and_forget_work")}
           >
             <ShieldAlert className="h-4 w-4" />

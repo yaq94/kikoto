@@ -1760,6 +1760,7 @@ export const surfaceKorean = {
     sharedInFolder: "이 폴더에서 공유됨",
     workRoot: "작품 루트",
     includeExtension: "{{extension}} 포함",
+    quickSelect: "빠른 선택",
     selectByLocation: "위치별 선택",
     selectByFormat: "형식별 선택",
     selectFileCopy: "{{name}}의 {{location}} 사본",
@@ -1953,9 +1954,7 @@ export const surfaceKorean = {
     manageCache: "캐시 관리",
     manageFiles: "파일 관리",
     reviewCachedFiles: "이 추적된 소스의 캐시 파일을 검토합니다.",
-    reviewFileOperations: "디렉터리 트리와 동일한 폴더 구조에서 파일 작업을 검토합니다.",
     deleteSelectedThenForget: "선택한 파일을 삭제한 후 소스가 남아 있지 않으면 작품을 잊습니다.",
-    selectCompleteWorkRoot: "전체 로컬 작품 루트와 모든 삭제 가능한 파일을 선택하세요.",
     reviewDeletionForgetDescription:
       "두 번째 확인에서 파일을 먼저 삭제한 다음 모든 소스를 다시 확인하고 작품을 잊습니다.",
     reviewDeletionFilesOnlyDescription: "두 번째 확인에서는 파일만 삭제되며 재생 기록과 표시는 유지됩니다.",
