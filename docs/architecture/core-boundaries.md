@@ -6,8 +6,19 @@ A work exists once in the database. Local folders, remote sources, cache files,
 and tracked state describe availability for that work; they do not create new
 work identities.
 
-The primary identity key is currently a normalized DLsite-style `primary_code`,
-such as the synthetic example `RJ00000000`.
+A persisted `work.id` is the stable internal reference within its database.
+Numbered ingestion uses a normalized `primary_code`, such as the synthetic
+example `RJ00000000`, to find an existing work. Codes, aliases and declared
+language editions can resolve to a canonical work; an explicit numeric reference
+continues to select its exact edition. The
+[HTTP reference contract](backend.md#api-shape) applies this distinction to reads
+and personal-state updates.
+
+A source location, display title or signed media URL is not a permanent identity.
+The [accepted identity decision](../adr/0001-work-identity-and-personal-state.md)
+also permits numberless admission within an explicitly scoped source workflow.
+The current numbered ingestion and schema still require codes; that constraint
+must be extended at admission, never worked around with invented product codes.
 
 ## Metadata Sources
 

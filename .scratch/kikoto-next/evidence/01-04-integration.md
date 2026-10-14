@@ -34,7 +34,7 @@ F 使用本次专用前端 3119 与后端 17619，按两票顺序运行。评价
 - 04：编号作品的 AC-12、AC-13 与所属 AC-28 已复验。首次登记不下载媒体、跨源同用户回读、部分更新、清除及重启均有对应 H/R/F 证据。
 - 02 可复用 `internal/translation` 的 `Store`、`Config`、`Input`、`Result`、`Translate` 和 `TemplateVersion`，通过 `httpapi.newTranslationClient` 复用精确 origin 与 Other 代理路由。`Config` 含密钥，不可序列化到 API；当前单试译限制在 HTTP 入口，02 需统一自动翻译与试译的资源预算。
 - 04 可复用 `workUserStatePatch`、`patchWorkUserState`、`PersonalReview`、`PersonalReviewPatch` 和 `PersonalReviewEditor`。数字 workId 的精确版本语义及编号 canonical 语义保持。
-- 06 实施中，已确定复用既有 `work.id` 而不需要迁移；069 分配给 02 缓存。其余票不因本批通过而提前完成。
+- 后续协调见 [06 集成复验](06-integration.md)：06 已验收且无新增迁移；02 使用独立 CacheRoot，不占用业务 SQLite 迁移，069 预留给 07。其余票不因本批通过而提前完成。
 
 ## 限制与清理
 
