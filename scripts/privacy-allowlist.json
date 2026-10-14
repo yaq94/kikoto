@@ -17,6 +17,21 @@
       "reason": "Public upstream OpenList search source cited to distinguish search-index coverage from full directory traversal; this permits only the specification citation."
     },
     {
+      "url": "https://huggingface.co/IndexTeam/Index-Translate-35B-A3B-preview",
+      "files": [".scratch/kikoto-next/spec.md"],
+      "reason": "Official public model card for the translation model selected by the owner; this permits only the specification citation."
+    },
+    {
+      "url": "https://github.com/bilibili/Index-Translate/blob/main/inference/llm/call_api.py",
+      "files": [".scratch/kikoto-next/spec.md"],
+      "reason": "Official public client source used to verify the selected translation model request format; this permits only the specification citation."
+    },
+    {
+      "url": "https://arxiv.org/html/2609.40181",
+      "files": [".scratch/kikoto-next/spec.md"],
+      "reason": "Public technical report containing the selected model language list; this permits only the specification citation."
+    },
+    {
       "url": "https://tailwindcss.com/docs/compatibility",
       "files": ["docs/architecture/frontend.md"],
       "reason": "Official public Tailwind CSS browser compatibility documentation for the frontend build upgrade."
