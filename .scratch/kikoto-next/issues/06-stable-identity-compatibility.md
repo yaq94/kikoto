@@ -51,3 +51,7 @@ H 使用真实 HTTP 路由、会话与迁移 SQLite；R 实际关闭并重启同
 - 07 仍须扩展 `work.primary_code`、`logical_work.canonical_code` 与 `work_edition.primary_code` 的无码准入约束及来源定位映射，不能填造 RJ 编号。作品版本、来源索引条目和真实文件路径保持分离。
 - 仍为编号契约的调用方：前端 `app/workDetailNavigation.ts`/`lib/workCode.ts` 的编号导航、`RemoteOnlyWorkDetail` 的编号准入与登记、来源 availability 和远端 tracks 的 code 参数；07 按有限来源链路逐处接入，不全库替换。编号专用 `/resolve` 保留；无码已登记对象直接使用数字详情入口。
 - 个人导入导出的编号格式扩展归 16；共享关联与记录冲突归 13，06 不转移或合并个人记录。
+
+## Comments
+
+- 2026-10-15 集成核验：候选 `06781bba890caa38c2e7eeb3e79138dbca5871bf` 已从 `15ee7e2` 快进合入。逐项核对五条验收正文与实际差异，指定 H/R 和 04 回归 8 个顶层用例全部通过，退出 0；[集成证据](../evidence/06-integration.md)记录实际范围。04、06 前置均已完成，07 可启动；02 不占用业务 SQLite 迁移，069 预留给 07。

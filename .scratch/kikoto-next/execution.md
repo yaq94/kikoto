@@ -2,7 +2,7 @@
 
 **Status:** ready-for-agent
 **Implementation:** in-progress
-**阶段:** 01、04 已集成并复验；06 实施中，02 前置已解除。其余工单按依赖推进，实际迁移、部署与回滚验收待执行。
+**阶段:** 01、04、06 已集成并复验；02 实施中，07 前置已解除。其余工单按依赖推进，实际迁移、部署与回滚验收待执行。
 **依据:** [正式规格](spec.md) · [工单总览](ticket-proposal.md) · [领域词汇表](../../GLOSSARY.md) · [作品身份与个人记录 ADR](../../docs/adr/0001-work-identity-and-personal-state.md)
 
 ## 当前授权与完成条件
@@ -37,12 +37,12 @@
 | 工单 | 直接依赖 | Implementation | 当前说明 | 验证证据 |
 | --- | --- | --- | --- | --- |
 | [01 管理员翻译配置与 Index 试译](issues/01-translation-admin-config.md) | 无 | resolved | 已集成；配置、试译、权限及出站边界通过 | [01 证据](evidence/01-translation.md)、[集成复验](evidence/01-04-integration.md) |
-| [02 浏览内容翻译与有界缓存](issues/02-content-translation-cache.md) | 01 | pending | 前置验收完成，可启动；069 分配本票 | 待执行 |
+| [02 浏览内容翻译与有界缓存](issues/02-content-translation-cache.md) | 01 | in-progress | 独立工作区实施中；缓存使用独立 CacheRoot，不占用业务 SQLite 迁移 | 待完成本票验收 |
 | [03 简繁转换](issues/03-traditional-chinese-conversion.md) | 02 | pending | 等待前置验收 | 待执行 |
 | [04 编号作品个人评价](issues/04-numbered-work-personal-reviews.md) | 无 | resolved | 已集成；编号评价、隔离、必要登记与恢复通过 | [04 证据](evidence/04-personal-reviews.md)、[集成复验](evidence/01-04-integration.md) |
 | [05 多源目录与播放隔离](issues/05-multi-source-directory-playback.md) | 无 | pending | 可独立启动 | 待执行 |
-| [06 稳定内部引用与编号兼容](issues/06-stable-identity-compatibility.md) | 无 | in-progress | 已认领；复用现有 work.id，不需要新增迁移 | 待完成本票验收 |
-| [07 OpenList 有限无码链路](issues/07-openlist-first-playable-slice.md) | 04、06 | pending | 等待前置验收 | 待执行 |
+| [06 稳定内部引用与编号兼容](issues/06-stable-identity-compatibility.md) | 无 | resolved | 已集成；数字版本、编号/别名、旧库升级与个人记录保留通过，无新增迁移 | [06 证据](evidence/06-stable-references.md)、[集成复验](evidence/06-integration.md) |
+| [07 OpenList 有限无码链路](issues/07-openlist-first-playable-slice.md) | 04、06 | pending | 两项前置已验收，可启动；069 预留本票，接入范围见 06 工单 | 待执行 |
 | [08 完整来源索引与恢复](issues/08-recoverable-full-source-index.md) | 07 | pending | 等待前置验收 | 待执行 |
 | [09 每日更新与扫描复用](issues/09-daily-index-update.md) | 08 | pending | 等待前置验收 | 待执行 |
 | [10 来源生命周期与记录保留](issues/10-source-lifecycle-retention.md) | 08 | pending | 等待前置验收 | 待执行 |
@@ -56,7 +56,7 @@
 
 ## 迁移协调
 
-现有最高迁移为 068。01 复用 `app_setting`，04 复用既有 rating/note，均无新增迁移。06 已确认复用现有 `work.id`，不需要新字段、表或迁移；069 由主代理分配给接续的 02 翻译缓存。这是编号分配，不是 SQL 或迁移实现。后续新增编号由集成统一分配，实施前重新核实迁移目录，保持已发布迁移不可变，按仓库规则生成开发基线并验证旧库升级与重复启动。
+现有最高迁移为 068。01 复用 `app_setting`，04 复用既有 rating/note，06 复用现有 `work.id`，均无新增迁移。02 确认译文缓存使用独立 CacheRoot，不使用业务 SQLite 迁移；069 已释放并预留给接续的 07。这是编号分配，不是 SQL 或迁移实现。后续新增编号由集成统一分配，实施前重新核实迁移目录，保持已发布迁移不可变，按仓库规则生成开发基线并验证旧库升级与重复启动。
 
 ## 验证证据登记
 
@@ -75,6 +75,7 @@
 | 服务器准备观察 | 已记录资源，部署待执行 | 2 核、约 3.45 GiB 内存、23.54 GiB 可用磁盘；当前官方应用和 schema 68。部署前须重新检查并验证备份回退。 |
 | 各票 H、R、F、U、LIVE | 待逐票执行 | 各票所需真实 HTTP、迁移 SQLite、重启、非视觉功能与有限真实样例。 |
 | 01/04 集成复验 | 已通过 | [本批证据](evidence/01-04-integration.md)：组合 H/R 14 个顶层、F 5 项、U 21 项、全后端及前后端构建/静态/文档检查；01 LIVE 沿用未改变客户端的已取得证据。 |
+| 06 集成复验 | 已通过 | [本批证据](evidence/06-integration.md)：8 个 H/R 顶层用例及 04 回归通过，包含 067/068 同库重启与只读解析；没有新增迁移、依赖或前端行为。 |
 | 生产部署、实际迁移与上线验收 | 待执行 | 同一已验收产物、备份、迁移、重启与功能回读证据。 |
 | 备份恢复与回退 | 待执行 | 恢复演练、适用前提及必要回滚的执行结果。 |
 
