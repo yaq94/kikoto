@@ -19,6 +19,13 @@
   files of every edition and folder of the work by content, marks the files
   that have an identical copy, and can select the copies that also exist in
   another folder or are repeated in the listed one.
+- **Manage files** has **Edit files**, a three-column edit of one local
+  folder: the work's local folders and remote editions on the left, the files
+  of the chosen place in the middle, and the final folder on the right. It
+  copies files from the work's other local folders, downloads files from
+  remote editions, and removes the files cleared in the folder, as one
+  Activity workflow. **Fetch** on the detail page of a work that has a local
+  folder opens it.
 - A work whose files lie in several local folders shows each folder in its
   directory, lists one folder at a time in **Manage files**, and tells a
   library manager how to bring the copies into one. The same notice appears

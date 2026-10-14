@@ -474,6 +474,143 @@ test("@desktop wide work detail lists source actions inside Source info", async 
   await expect(page.getByRole("dialog", { name: "Manage files" })).toBeVisible();
 });
 
+test("@desktop Edit files lists the family's sources and applies the reviewed folder", async ({ page }) => {
+  const applied: Record<string, unknown>[] = [];
+  const localFile = (id: number, name: string): MediaItem => ({
+    id,
+    parentId: null,
+    kind: "audio",
+    title: name,
+    discNo: null,
+    trackNo: id,
+    durationSeconds: 10,
+    sizeBytes: 12,
+    fingerprint: `test-${id}`,
+    progress: null,
+    locations: [
+      {
+        id,
+        fileSourceId: 1,
+        fileSourceCode: "local",
+        fileSourceName: "Local",
+        locationType: "local",
+        path: `${work.primaryCode}/${name}`,
+        streamUrl: `/api/media/${id}/stream`,
+        downloadUrl: "",
+        remoteHash: "",
+        sizeBytes: 12,
+        durationSeconds: 10,
+        availability: "available",
+        lastCheckedAt: null,
+      },
+    ],
+  });
+  await mockApplication(
+    page,
+    undefined,
+    false,
+    1,
+    0,
+    [localFile(1, "track.mp3"), localFile(3, "extra.mp3")],
+    undefined,
+    {
+      work: { ...work, sourcePresence: [localPresence] },
+      detailLocalFolders: [localRootFolder(104)],
+      authenticated: true,
+      permissions: rolePermissions.admin,
+    },
+  );
+  await page.route(`**/api/works/${work.id}/folder-edit/sources`, (route) =>
+    route.fulfill({
+      json: {
+        workId: work.id,
+        primaryCode: work.primaryCode,
+        warnings: [],
+        editions: [
+          {
+            workId: work.id,
+            primaryCode: work.primaryCode,
+            title: work.title,
+            metadataLanguage: "JPN",
+            editionLabel: "",
+            translationKind: "origin",
+            classificationSource: "",
+            makerId: "",
+            originMakerId: "",
+            origin: true,
+            localRoots: [localRootFolder(104)],
+            sources: [
+              {
+                sourceId: 1,
+                sourceCode: "example_remote_a",
+                displayName: "Example Remote A",
+                status: "available",
+                remoteId: "",
+                primaryCode: work.primaryCode,
+                title: work.title,
+                coverUrl: "",
+                workId: work.id,
+                hasRemote: true,
+                hasTracked: false,
+                hasCache: false,
+                hasLocal: true,
+                error: "",
+                elapsedMs: 0,
+              },
+            ],
+          },
+        ],
+      },
+    }),
+  );
+  await page.route(`**/api/works/${work.id}/folder-edit`, async (route) => {
+    applied.push(route.request().postDataJSON() as Record<string, unknown>);
+    await route.fulfill({
+      status: 202,
+      json: { runId: 41, jobId: 42, workId: work.id, primaryCode: work.primaryCode, status: "queued" },
+    });
+  });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  await page.getByText(work.title, { exact: true }).click();
+  await page
+    .getByRole("complementary", { name: "Source info", exact: true })
+    .getByRole("button", { name: "Manage files", exact: true })
+    .click();
+  await page.getByRole("dialog", { name: "Manage files" }).getByRole("button", { name: "Edit files" }).click();
+
+  const editor = page.getByRole("dialog", { name: "Edit files" });
+  const sources = editor.getByRole("complementary", { name: "Sources", exact: true });
+  await expect(
+    sources.getByRole("group", { name: "Local" }).getByRole("button", { name: /This folder/ }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await expect(
+    sources.getByRole("group", { name: "Remote" }).getByRole("button", { name: /Example Remote A/ }),
+  ).toBeVisible();
+  const result = editor.getByRole("region", { name: "Final folder", exact: true });
+  await expect(result.getByText("Keep", { exact: true })).toHaveCount(2);
+  await expect(editor.getByRole("button", { name: "Apply changes" })).toBeDisabled();
+
+  // Clearing a file of the edited folder takes it out of the final folder.
+  await editor.getByRole("checkbox", { name: "Select extra.mp3", exact: true }).click();
+  await expect(result.getByText("Remove 1", { exact: true })).toBeVisible();
+  await editor.getByRole("button", { name: "Apply changes" }).click();
+  await page.getByRole("button", { name: "Continue" }).click();
+  await expect(page.getByRole("heading", { name: "Final confirmation" })).toBeVisible();
+  await page.getByRole("button", { name: "Delete files only" }).click();
+
+  await expect.poll(() => applied).toHaveLength(1);
+  expect(applied[0]).toEqual({
+    folderId: 104,
+    additions: [],
+    removeLocationIds: [3],
+    decisions: [],
+    requestId: expect.stringMatching(/^edit:/),
+  });
+  await expect(editor).toBeHidden();
+  await expect(page.getByText("Files updated in workflow #41.", { exact: true })).toBeVisible();
+});
+
 test("local Delete enables work forgetting only for a complete root and confirms its data boundary", async ({
   page,
 }) => {

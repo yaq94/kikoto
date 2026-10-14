@@ -6,6 +6,8 @@ import {
   type LibrarySource,
   type SourcePresenceItem,
   type WorkDetail,
+  type WorkFolderEditResult,
+  type WorkFolderLocation,
   type WorkMetadataSyncRunResult,
 } from "@/lib/api";
 import type { TreeNode } from "@/features/work-detail/media/mediaTreeModel";
@@ -14,6 +16,8 @@ import { FilePreviewDialog, type FilePreviewRequest } from "@/features/work-deta
 import { toastFromError, type useToast } from "@/components/ui/toast";
 import type { MediaCleanupMode, MediaDeleteTarget } from "@/features/work-detail/workflows/useMediaCleanupWorkflow";
 import { DirectoryManagerDialog } from "@/features/work-detail/dialogs/DirectoryManagerDialog";
+import { FolderEditDialog } from "@/features/work-detail/folder-edit/FolderEditDialog";
+import type { FolderEditInitialRemote } from "@/features/work-detail/folder-edit/useFolderEditWorkspace";
 import { LyricsManagerDialog } from "@/features/work-detail/lyrics/LyricsManagerDialog";
 import { WorkMetadataEditorModal, type MetadataEditorSection } from "@/features/work-detail/metadata";
 import { ReforkConfirmDialog } from "@/features/work-detail/dialogs/ReforkConfirmDialog";
@@ -61,6 +65,7 @@ export function PersistedDirectoryManagerOverlay({
   localRoot,
   localFolders = [],
   onSelectLocalFolder,
+  onEditFiles,
   onClose,
 }: {
   open: boolean;
@@ -76,6 +81,8 @@ export function PersistedDirectoryManagerOverlay({
   /** The work's local folders when it has several; file management then shows one at a time. */
   localFolders?: { id: number; rootPath: string }[];
   onSelectLocalFolder?: (folderId: number) => void;
+  /** Opens the three-column edit of the listed folder; absent when the folder cannot be edited. */
+  onEditFiles?: () => void;
   onClose: () => void;
 }) {
   const { demoMode, hasPermission } = useAuth();
@@ -110,7 +117,40 @@ export function PersistedDirectoryManagerOverlay({
       localRoot={localRoot}
       localFolders={localFolders}
       onSelectLocalFolder={onSelectLocalFolder}
+      onEditFiles={onEditFiles}
       showCachedFilter={Boolean(selectedTrackedPresence)}
+    />
+  );
+}
+
+export function PersistedFolderEditOverlay({
+  work,
+  folder,
+  initialRemote,
+  onBack,
+  onClose,
+  onApplied,
+}: {
+  work: WorkDetail | null;
+  /** The folder being edited; the overlay is closed while it is null. */
+  folder: WorkFolderLocation | null;
+  initialRemote: FolderEditInitialRemote | null;
+  onBack?: () => void;
+  onClose: () => void;
+  onApplied: (result: WorkFolderEditResult) => void;
+}) {
+  if (!work || !folder) return null;
+  return (
+    <FolderEditDialog
+      // A different folder is a different edit.
+      key={folder.id}
+      workId={work.id}
+      folder={folder}
+      currentItems={work.mediaItems}
+      initialRemote={initialRemote}
+      onBack={onBack}
+      onClose={onClose}
+      onApplied={onApplied}
     />
   );
 }

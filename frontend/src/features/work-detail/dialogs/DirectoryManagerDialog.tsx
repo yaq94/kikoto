@@ -1,5 +1,15 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { ChevronDown, ChevronRight, CopyCheck, Folder, FolderCog, Search, ShieldAlert, Trash2 } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronRight,
+  CopyCheck,
+  Folder,
+  FolderCog,
+  FolderPlus,
+  Search,
+  ShieldAlert,
+  Trash2,
+} from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -154,6 +164,7 @@ export function DirectoryManagerDialog({
   localRoot = null,
   localFolders = [],
   onSelectLocalFolder,
+  onEditFiles,
   showCachedFilter = false,
   workId = 0,
   canForgetWork = false,
@@ -172,6 +183,8 @@ export function DirectoryManagerDialog({
   /** The work's local folders when it has several; the dialog lists the one named by localRoot. */
   localFolders?: { id: number; rootPath: string }[];
   onSelectLocalFolder?: (folderId: number) => void;
+  /** Opens the edit that adds files from other editions and sources to the listed folder. */
+  onEditFiles?: () => void;
   showCachedFilter?: boolean;
   workId?: number;
   canForgetWork?: boolean;
@@ -342,6 +355,7 @@ export function DirectoryManagerDialog({
           deleting={deleting}
           onToggleAll={toggleKeys}
           onStartConfirmation={startConfirmation}
+          onEditFiles={onEditFiles}
         />
       </Dialog>
       {confirmation && (
@@ -793,6 +807,7 @@ function DirectoryManagerFooter({
   deleting,
   onToggleAll,
   onStartConfirmation,
+  onEditFiles,
 }: {
   selectedTargets: MediaDeleteTarget[];
   total: number;
@@ -803,6 +818,7 @@ function DirectoryManagerFooter({
   deleting: boolean;
   onToggleAll: (keys: string[], included: boolean) => void;
   onStartConfirmation: (mode: MediaCleanupMode) => void;
+  onEditFiles?: () => void;
 }) {
   const all = directoryManagerSelectionState(allKeys, selectedKeys);
   const bytes = selectedBytes(selectedTargets);
@@ -825,6 +841,18 @@ function DirectoryManagerFooter({
         </span>
       </div>
       <div className="flex w-full flex-col-reverse gap-2 sm:w-auto sm:flex-row">
+        {onEditFiles && (
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={deleting}
+            title={i18n.t("folderEdit.description")}
+            onClick={onEditFiles}
+          >
+            <FolderPlus className="h-4 w-4" />
+            {i18n.t("folderEdit.editFiles")}
+          </Button>
+        )}
         {forgetAvailable && (
           <Button
             variant="ghost"

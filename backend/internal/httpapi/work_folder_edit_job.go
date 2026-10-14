@@ -1,0 +1,516 @@
+package httpapi
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"os"
+	"path/filepath"
+	"strings"
+)
+
+type workFolderEditJobPayload struct {
+	ActorUserID     int64                `json:"actor_user_id,omitempty"`
+	WorkID          int64                `json:"work_id"`
+	WorkCode        string               `json:"work_code"`
+	FolderID        int64                `json:"folder_id"`
+	FileSourceID    int64                `json:"file_source_id"`
+	TargetRoot      string               `json:"target_root"`
+	TransactionPool string               `json:"transaction_pool,omitempty"`
+	Items           []workFolderEditItem `json:"items"`
+	Removals        []mediaCleanupTarget `json:"removals"`
+	RequestID       string               `json:"request_id"`
+}
+
+// workFolderEditCheckpoint records what already happened, so a resumed or
+// retried job neither repeats a download nor removes or publishes twice.
+type workFolderEditCheckpoint struct {
+	Staged    []string `json:"staged"`
+	Removed   []string `json:"removed"`
+	Published []string `json:"published"`
+	Deleted   int      `json:"deleted"`
+}
+
+// workFolderEditPermissions is what starting the edit requires, so a retry
+// never does more than its actor could start directly.
+func workFolderEditPermissions(payload workFolderEditJobPayload) []string {
+	for _, item := range payload.Items {
+		if item.SourceKind == "remote" && workFolderEditItemAdds(item) {
+			return []string{"downloads:manage", "remote:fetch"}
+		}
+	}
+	return []string{"downloads:manage"}
+}
+
+func workFolderEditItemAdds(item workFolderEditItem) bool {
+	return item.Action == "copy_local" || item.Action == "cache_download"
+}
+
+// workFolderEditProgressTotal counts one step to collect and one to publish
+// each added file, and one for each removed file.
+func workFolderEditProgressTotal(payload workFolderEditJobPayload) int {
+	total := len(payload.Removals)
+	for _, item := range payload.Items {
+		if workFolderEditItemAdds(item) {
+			total += 2
+		}
+	}
+	return total
+}
+
+type workFolderEditExecution struct {
+	server     *Server
+	job        workflowJobRecord
+	payload    workFolderEditJobPayload
+	checkpoint workFolderEditCheckpoint
+	nodes      map[string]int64
+	stagingAbs string
+	targetAbs  string
+	progress   int
+	total      int
+	// node is the step an error belongs to.
+	node string
+}
+
+func (s *Server) executeWorkFolderEditJob(ctx context.Context, job workflowJobRecord) error {
+	execution := &workFolderEditExecution{server: s, job: job, node: "stage"}
+	if err := decodeWorkflowJobPayload(job.PayloadJSON, &execution.payload); err != nil {
+		_ = s.failClaimedWorkflowJob(context.WithoutCancel(ctx), job, err.Error())
+		return err
+	}
+	if err := decodeWorkflowJobCheckpointDetail(job.CheckpointJSON, &execution.checkpoint); err != nil {
+		_ = s.failClaimedWorkflowJob(context.WithoutCancel(ctx), job, err.Error())
+		return err
+	}
+	execution.total = workFolderEditProgressTotal(execution.payload)
+	err := execution.run(ctx)
+	if err == nil {
+		slog.Info("work folder edit completed", "run_id", job.RunID, "job_id", job.ID, "work_code", execution.payload.WorkCode)
+		return nil
+	}
+	return execution.fail(ctx, err)
+}
+
+func (e *workFolderEditExecution) run(ctx context.Context) error {
+	s := e.server
+	nodes, err := workflowNodeIDsByNodeID(ctx, s.db, e.job.RunID)
+	if err != nil {
+		return err
+	}
+	e.nodes = nodes
+	if err := s.ensureFetchTargetWritable(ctx, e.payload.TargetRoot); err != nil {
+		return err
+	}
+	targetAbs, err := safeDataPath(s.cfg.DataRoot, e.payload.TargetRoot)
+	if err != nil {
+		return err
+	}
+	if info, err := os.Lstat(targetAbs); err != nil || !info.IsDir() || unsafeFetchStagingEntry(info) {
+		return errors.New("the edited folder is no longer available")
+	}
+	e.targetAbs = targetAbs
+	stagingAbs, err := safeDataPath(s.cfg.DataRoot, workFolderEditStagingRoot(e.payload.TransactionPool, e.job.RunID))
+	if err != nil {
+		return err
+	}
+	e.stagingAbs = stagingAbs
+	if err := e.stage(ctx); err != nil {
+		return err
+	}
+	e.node = "remove"
+	if err := e.remove(ctx); err != nil {
+		return err
+	}
+	e.node = "publish"
+	if err := e.publish(ctx); err != nil {
+		return err
+	}
+	e.node = "index"
+	if err := s.updateRemoteFetchPhaseNode(ctx, e.job.RunID, "index", "running", nil); err != nil {
+		return err
+	}
+	if err := s.indexLocalMediaForWork(ctx, e.payload.WorkID, e.payload.FileSourceID, e.payload.TargetRoot); err != nil {
+		return err
+	}
+	return e.finish(ctx)
+}
+
+func (e *workFolderEditExecution) stagedPath(index int) string {
+	return filepath.Join(e.stagingAbs, fmt.Sprintf("%06d", index))
+}
+
+func (e *workFolderEditExecution) saveCheckpoint(ctx context.Context, phase string) error {
+	return e.server.updateWorkflowJobCheckpoint(ctx, e.job.ID, phase, e.checkpoint, e.progress, e.total)
+}
+
+// stage collects every added file on the edited folder's storage pool and
+// checks its size, before anything in the folder changes.
+func (e *workFolderEditExecution) stage(ctx context.Context) error {
+	s := e.server
+	if err := s.updateRemoteFetchPhaseNode(ctx, e.job.RunID, "stage", "running", nil); err != nil {
+		return err
+	}
+	staged := stringSet(e.checkpoint.Staged)
+	family, err := s.lyricsAssignmentFamily(ctx, e.payload.WorkID)
+	if err != nil {
+		return err
+	}
+	downloads := workFolderEditBaseItems(e.payload.Items)
+	var byteProgress *remoteFetchByteProgress
+	if len(downloads) > 0 {
+		if byteProgress, err = newRemoteFetchByteProgress(ctx, s, e.job.ID, e.nodes["stage"], downloads); err != nil {
+			return err
+		}
+	}
+	localFolders := map[int64]workFolderEditFolder{}
+	remoteTrees := map[string]workFolderEditRemoteTree{}
+	downloadLimit := s.remoteMediaDownloadLimitBytes(ctx)
+	downloadIndex := 0
+	count := 0
+	for index, item := range e.payload.Items {
+		if !workFolderEditItemAdds(item) {
+			continue
+		}
+		if err := s.ensureWorkflowRunActive(ctx, e.job.RunID); err != nil {
+			return err
+		}
+		count++
+		stagedPath := e.stagedPath(index)
+		if staged[item.ItemKey] && existingFileMatches(stagedPath, item.SizeBytes) {
+			if item.Action == "cache_download" {
+				if err := byteProgress.skipDownload(downloadIndex, item.remoteWorkSavePlanItem); err != nil {
+					return err
+				}
+				downloadIndex++
+			}
+			e.progress = count
+			continue
+		}
+		if err := os.MkdirAll(e.stagingAbs, 0o755); err != nil {
+			return err
+		}
+		if err := os.Remove(stagedPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		if item.Action == "copy_local" {
+			folder, ok := localFolders[item.SourceFolderID]
+			if !ok {
+				if folder, err = s.workFolderEditFolder(ctx, family, item.SourceFolderID); err != nil {
+					return err
+				}
+				localFolders[item.SourceFolderID] = folder
+			}
+			size, err := localFolderFileSize(folder.Absolute, item.Path)
+			if err != nil {
+				return err
+			}
+			if item.SizeBytes != nil && size != *item.SizeBytes {
+				return fmt.Errorf("%s changed after the edit was planned", item.Path)
+			}
+			if err := copyFile(filepath.Join(folder.Absolute, filepath.FromSlash(item.Path)), stagedPath); err != nil {
+				return err
+			}
+		} else {
+			treeKey := fmt.Sprintf("%d:%s", item.RemoteSourceID, item.RemoteCode)
+			tree, ok := remoteTrees[treeKey]
+			if !ok {
+				if tree, err = s.workFolderEditRemoteTree(ctx, family, item.RemoteSourceID, item.RemoteCode); err != nil {
+					return err
+				}
+				remoteTrees[treeKey] = tree
+			}
+			file, ok := tree.files[cleanRemoteRelativePath(item.RemotePath)]
+			if !ok {
+				return fmt.Errorf("%s is no longer offered by the remote edition", item.Path)
+			}
+			if err := byteProgress.begin(downloadIndex, item.remoteWorkSavePlanItem); err != nil {
+				return err
+			}
+			currentIndex := downloadIndex
+			written, err := s.downloadToFile(ctx, tree.source, firstNonEmpty(file.DownloadURL, file.StreamURL), stagedPath, remoteDownloadOptions{
+				MaxBytes:      downloadLimit,
+				ExpectedBytes: item.SizeBytes,
+				OnProgress: func(written int64) {
+					byteProgress.report(currentIndex, item.remoteWorkSavePlanItem, written)
+				},
+			})
+			if err != nil {
+				byteProgress.abort(downloadIndex, item.remoteWorkSavePlanItem)
+				_ = os.Remove(stagedPath)
+				return err
+			}
+			downloadIndex++
+			if err := byteProgress.complete(downloadIndex, item.remoteWorkSavePlanItem, written); err != nil {
+				return err
+			}
+		}
+		info, err := os.Lstat(stagedPath)
+		if err != nil {
+			return err
+		}
+		if item.SizeBytes != nil && info.Size() != *item.SizeBytes {
+			_ = os.Remove(stagedPath)
+			return fmt.Errorf("collected size mismatch for %s: got %d, want %d", item.Path, info.Size(), *item.SizeBytes)
+		}
+		staged[item.ItemKey] = true
+		e.checkpoint.Staged = append(e.checkpoint.Staged, item.ItemKey)
+		e.progress = count
+		if err := e.saveCheckpoint(ctx, "stage"); err != nil {
+			return err
+		}
+	}
+	e.progress = count
+	return s.updateRemoteFetchPhaseNode(ctx, e.job.RunID, "stage", "succeeded", map[string]any{"collected": count})
+}
+
+// remove deletes the files taken out of the folder. It runs after every added
+// file is collected, so a failed download removes nothing.
+func (e *workFolderEditExecution) remove(ctx context.Context) error {
+	s := e.server
+	if err := s.updateRemoteFetchPhaseNode(ctx, e.job.RunID, "remove", "running", nil); err != nil {
+		return err
+	}
+	removed := stringSet(e.checkpoint.Removed)
+	base := e.progress
+	for index, target := range e.payload.Removals {
+		key := mediaCleanupTargetKey(target)
+		if removed[key] {
+			e.progress = base + index + 1
+			continue
+		}
+		if err := s.ensureWorkflowRunActive(ctx, e.job.RunID); err != nil {
+			return err
+		}
+		if target.Kind != "local" || normalizeFolderRootPath(target.Path) == normalizeFolderRootPath(e.payload.TargetRoot) ||
+			!mediaCleanupPathWithinRoot(e.payload.TargetRoot, target.Path) {
+			return fmt.Errorf("refusing to remove a file outside the edited folder")
+		}
+		// A removal that started is recorded even if the service stops next.
+		statusCtx := context.WithoutCancel(ctx)
+		deleted, err := s.clearLocalMediaLocation(statusCtx, target.LocationID, target.Path)
+		if err != nil {
+			return err
+		}
+		if deleted {
+			e.checkpoint.Deleted++
+		}
+		removed[key] = true
+		e.checkpoint.Removed = append(e.checkpoint.Removed, key)
+		e.progress = base + index + 1
+		if err := e.saveCheckpoint(statusCtx, "remove"); err != nil {
+			return err
+		}
+	}
+	e.progress = base + len(e.payload.Removals)
+	return s.updateRemoteFetchPhaseNode(ctx, e.job.RunID, "remove", "succeeded", map[string]any{
+		"locations": len(e.payload.Removals), "deleted": e.checkpoint.Deleted,
+	})
+}
+
+// publish moves each collected file into the folder. A move is a rename on
+// the folder's own filesystem, and it never lands on a file the plan did not
+// decide to replace.
+func (e *workFolderEditExecution) publish(ctx context.Context) error {
+	s := e.server
+	if err := s.updateRemoteFetchPhaseNode(ctx, e.job.RunID, "publish", "running", nil); err != nil {
+		return err
+	}
+	published := stringSet(e.checkpoint.Published)
+	base := e.progress
+	count := 0
+	for index, item := range e.payload.Items {
+		if !workFolderEditItemAdds(item) {
+			continue
+		}
+		count++
+		if published[item.ItemKey] {
+			e.progress = base + count
+			continue
+		}
+		if err := s.ensureWorkflowRunActive(ctx, e.job.RunID); err != nil {
+			return err
+		}
+		statusCtx := context.WithoutCancel(ctx)
+		if err := e.publishItem(index, item); err != nil {
+			return err
+		}
+		published[item.ItemKey] = true
+		e.checkpoint.Published = append(e.checkpoint.Published, item.ItemKey)
+		e.progress = base + count
+		if err := e.saveCheckpoint(statusCtx, "publish"); err != nil {
+			return err
+		}
+	}
+	e.progress = base + count
+	return s.updateRemoteFetchPhaseNode(ctx, e.job.RunID, "publish", "succeeded", map[string]any{
+		"published": count, "target_root": e.payload.TargetRoot,
+	})
+}
+
+func (e *workFolderEditExecution) publishItem(index int, item workFolderEditItem) error {
+	s := e.server
+	relative, err := fetchPathRelativeToRoot(e.payload.TargetRoot, item.TargetPath)
+	if err != nil {
+		return err
+	}
+	destination := filepath.Join(e.targetAbs, filepath.FromSlash(relative))
+	stagedPath := e.stagedPath(index)
+	if _, err := os.Lstat(stagedPath); errors.Is(err, os.ErrNotExist) {
+		// The move finished before its checkpoint was written.
+		if existingFileMatches(destination, item.SizeBytes) {
+			return nil
+		}
+		return fmt.Errorf("the collected copy of %s is missing; retry the edit", item.Path)
+	} else if err != nil {
+		return err
+	}
+	if err := mkdirPlainDirectories(e.targetAbs, filepath.Dir(destination)); err != nil {
+		return err
+	}
+	if _, err := os.Lstat(destination); err == nil {
+		if item.Resolution != "replace" && item.Status != "replace_target" {
+			return fmt.Errorf("%s appeared in the folder after the edit was planned", relative)
+		}
+		if _, _, err := removeDestructiveFile(s.cfg.DataRoot, item.TargetPath); err != nil {
+			return err
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return os.Rename(stagedPath, destination)
+}
+
+// mkdirPlainDirectories creates directory below base. Every component that
+// already exists must be a plain directory, so a link inside the folder cannot
+// redirect a published file outside it.
+func mkdirPlainDirectories(base string, directory string) error {
+	relative, err := filepath.Rel(base, directory)
+	if err != nil || relative == "." {
+		return err
+	}
+	current := base
+	for _, part := range strings.Split(relative, string(filepath.Separator)) {
+		current = filepath.Join(current, part)
+		info, err := os.Lstat(current)
+		if errors.Is(err, os.ErrNotExist) {
+			if err := os.Mkdir(current, 0o755); err != nil && !errors.Is(err, os.ErrExist) {
+				return err
+			}
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() || unsafeFetchStagingEntry(info) {
+			return fmt.Errorf("%s is not a plain folder", filepath.ToSlash(relative))
+		}
+	}
+	return nil
+}
+
+func (e *workFolderEditExecution) finish(ctx context.Context) error {
+	s := e.server
+	ctx = context.WithoutCancel(ctx)
+	summary := map[string]any{
+		"plan":      summarizeWorkFolderEditPayload(e.payload),
+		"added":     len(e.checkpoint.Published),
+		"removed":   len(e.checkpoint.Removed),
+		"deleted":   e.checkpoint.Deleted,
+		"work_id":   e.payload.WorkID,
+		"folder_id": e.payload.FolderID,
+	}
+	tx, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE workflow_node_run
+		SET status = 'succeeded', error_message = '', finished_at = COALESCE(finished_at, CURRENT_TIMESTAMP)
+		WHERE workflow_run_id = ? AND status IN ('queued', 'running')
+	`, e.job.RunID); err != nil {
+		return err
+	}
+	if err := finishWorkflowRunResultTx(ctx, tx, e.job.RunID, e.job.ID, "succeeded", "", e.total, e.total, mustJSON(summary)); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	e.removeStaging()
+	return nil
+}
+
+func summarizeWorkFolderEditPayload(payload workFolderEditJobPayload) workFolderEditSummary {
+	removals := make([]workFolderEditRemoval, len(payload.Removals))
+	return summarizeWorkFolderEdit(payload.Items, removals)
+}
+
+// removeStaging deletes the run's staging directory, which holds only what
+// this run collected.
+func (e *workFolderEditExecution) removeStaging() {
+	if e.stagingAbs == "" {
+		return
+	}
+	if err := os.RemoveAll(filepath.Dir(e.stagingAbs)); err != nil {
+		slog.Warn("remove work folder edit staging", "run_id", e.job.RunID, "error", err)
+	}
+}
+
+// fail records why the edit stopped. A service stop leaves the job for
+// startup recovery, and a failure that will be retried keeps what it already
+// collected.
+func (e *workFolderEditExecution) fail(ctx context.Context, runErr error) error {
+	s := e.server
+	if shutdownInterrupted(ctx) {
+		return runErr
+	}
+	statusCtx := context.WithoutCancel(ctx)
+	var runStatus string
+	if err := s.db.QueryRowContext(statusCtx, "SELECT status FROM workflow_run WHERE id = ?", e.job.RunID).Scan(&runStatus); err != nil {
+		return runErr
+	}
+	if runStatus != "queued" && runStatus != "running" {
+		// A cancelled run is settled by its cancellation, and a finished one
+		// keeps its result.
+		if runStatus == "cancelled" {
+			e.removeStaging()
+		}
+		return runErr
+	}
+	if willRetry := isRetryableWorkflowError(runErr) && e.job.RetryCount < e.job.MaxRetries; !willRetry {
+		e.removeStaging()
+	}
+	slog.Error("work folder edit failed", "run_id", e.job.RunID, "job_id", e.job.ID, "step", e.node, "error", runErr)
+	tx, err := beginTxWithDatabaseBusyRetry(statusCtx, s.db)
+	if err != nil {
+		return runErr
+	}
+	defer func() { _ = tx.Rollback() }()
+	message := runErr.Error()
+	if _, err := tx.ExecContext(statusCtx, `
+		UPDATE workflow_node_run
+		SET status = 'failed', error_message = ?, finished_at = CURRENT_TIMESTAMP
+		WHERE workflow_run_id = ? AND node_id = ?
+	`, message, e.job.RunID, e.node); err != nil {
+		return runErr
+	}
+	summary := mustJSON(map[string]any{
+		"plan": summarizeWorkFolderEditPayload(e.payload), "error": message,
+		"added": len(e.checkpoint.Published), "removed": len(e.checkpoint.Removed),
+	})
+	if err := finishWorkflowRunResultTx(statusCtx, tx, e.job.RunID, e.job.ID, "failed", message, e.progress, e.total, summary); err != nil {
+		return runErr
+	}
+	_ = tx.Commit()
+	return runErr
+}
+
+func stringSet(values []string) map[string]bool {
+	set := make(map[string]bool, len(values))
+	for _, value := range values {
+		set[value] = true
+	}
+	return set
+}
