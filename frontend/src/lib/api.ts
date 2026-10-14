@@ -10,6 +10,7 @@ import { settingsApi } from "@/lib/settingsApi";
 import { llmApi } from "@/lib/llmApi";
 import { asrApi } from "@/lib/asrApi";
 import { workFolderEditApi } from "@/lib/workFolderEditApi";
+import { lyricsEditApi } from "@/lib/lyricsEditApi";
 
 export type { CatalogSyncState } from "@/lib/catalogSyncState";
 export { API_BASE, ApiError, apiTransport, assetURL } from "@/lib/apiTransport";
@@ -26,6 +27,7 @@ export type * from "@/lib/settingsApi";
 export type * from "@/lib/llmApi";
 export type * from "@/lib/asrApi";
 export type * from "@/lib/workFolderEditApi";
+export type * from "@/lib/lyricsEditApi";
 
 /**
  * Every domain API behind one object. Each domain module owns its requests and
@@ -44,4 +46,5 @@ export const api = {
   ...llmApi,
   ...asrApi,
   ...workFolderEditApi,
+  ...lyricsEditApi,
 };

@@ -18,7 +18,8 @@ import type { MediaCleanupMode, MediaDeleteTarget } from "@/features/work-detail
 import { DirectoryManagerDialog } from "@/features/work-detail/dialogs/DirectoryManagerDialog";
 import { FolderEditDialog } from "@/features/work-detail/folder-edit/FolderEditDialog";
 import type { FolderEditInitialRemote } from "@/features/work-detail/folder-edit/useFolderEditWorkspace";
-import { LyricsManagerDialog } from "@/features/work-detail/lyrics/LyricsManagerDialog";
+import { LyricsManagerDialog, type LyricsManagerRequest } from "@/features/work-detail/lyrics/LyricsManagerDialog";
+import type { FolderLyricsFile } from "@/features/work-detail/lyrics/managedLyricsModel";
 import { WorkMetadataEditorModal, type MetadataEditorSection } from "@/features/work-detail/metadata";
 import { ReforkConfirmDialog } from "@/features/work-detail/dialogs/ReforkConfirmDialog";
 import { useAuth } from "@/auth/AuthProvider";
@@ -66,6 +67,8 @@ export function PersistedDirectoryManagerOverlay({
   localFolders = [],
   onSelectLocalFolder,
   onEditFiles,
+  onManageAsLyrics,
+  onManageLyrics,
   onClose,
 }: {
   open: boolean;
@@ -83,6 +86,10 @@ export function PersistedDirectoryManagerOverlay({
   onSelectLocalFolder?: (folderId: number) => void;
   /** Opens the three-column edit of the listed folder; absent when the folder cannot be edited. */
   onEditFiles?: () => void;
+  /** Opens the lyrics manager on the selected lyrics files of the listed folder, to manage them as lyrics. */
+  onManageAsLyrics?: (files: FolderLyricsFile[]) => void;
+  /** Opens the lyrics manager on its files, which takes over the lyrics Kikoto manages. */
+  onManageLyrics?: () => void;
   onClose: () => void;
 }) {
   const { demoMode, hasPermission } = useAuth();
@@ -118,6 +125,8 @@ export function PersistedDirectoryManagerOverlay({
       localFolders={localFolders}
       onSelectLocalFolder={onSelectLocalFolder}
       onEditFiles={onEditFiles}
+      onManageAsLyrics={localRoot ? onManageAsLyrics : undefined}
+      onManageLyrics={onManageLyrics}
       showCachedFilter={Boolean(selectedTrackedPresence)}
     />
   );
@@ -156,27 +165,26 @@ export function PersistedFolderEditOverlay({
 }
 
 export function PersistedLyricsManagerOverlay({
-  open,
+  request,
   work,
-  remoteSources,
   onClose,
   onSaved,
 }: {
-  open: boolean;
+  /** What the manager opens on; the overlay is closed while it is null. */
+  request: LyricsManagerRequest | null;
   work: WorkDetail | null;
-  remoteSources: RemoteSourceAvailability[];
   onClose: () => void;
   onSaved: () => Promise<void>;
 }) {
   const { demoMode, hasPermission } = useAuth();
-  if (!open || !work) return null;
+  if (!request || !work) return null;
   return (
     <LyricsManagerDialog
       work={work}
       readOnly={demoMode || !hasPermission("library:write")}
-      remoteSources={remoteSources.map((remote) => remote.source).filter((source) => source.enabled)}
       canDownload={!demoMode && hasPermission("downloads:manage")}
       canTranscribe={!demoMode && hasPermission("library:write") && hasPermission("workflows:run")}
+      request={request}
       onClose={onClose}
       onSaved={onSaved}
     />

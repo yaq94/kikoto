@@ -57,8 +57,25 @@ export type FolderEditTreeNode<T> = {
   files: T[];
 };
 
+/**
+ * What happens to one file of the result. A file added by a move inside the
+ * folder is `add_move`, and the place it leaves is `moved`.
+ */
 export type FolderEditResultState =
-  "keep" | "remove" | "replaced" | "same" | "add_local" | "add_remote" | "conflict" | "excluded";
+  "keep" | "remove" | "replaced" | "moved" | "same" | "add_local" | "add_remote" | "add_move" | "conflict" | "excluded";
+
+/** What a result row shows of the planned addition behind it. */
+export type FolderEditResultItem = Pick<
+  WorkFolderEditItem,
+  | "itemKey"
+  | "resolution"
+  | "targetConflict"
+  | "targetConflictReason"
+  | "sourceKind"
+  | "remoteSourceName"
+  | "localSourcePath"
+  | "remoteCode"
+>;
 
 /** One file of the folder as it will be after the edit, or one that leaves it. */
 export type FolderEditResultEntry = {
@@ -69,7 +86,7 @@ export type FolderEditResultEntry = {
   sizeBytes: number | null;
   state: FolderEditResultState;
   /** The planned addition behind an added, conflicting, or excluded entry. */
-  item: WorkFolderEditItem | null;
+  item: FolderEditResultItem | null;
 };
 
 function normalizePath(path: string) {

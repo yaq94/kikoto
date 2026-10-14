@@ -115,41 +115,58 @@ after DLsite reports it as not found:
 - Run output, Activity, and the API expose source codes, display names and
   fixed outcomes only. Detailed upstream errors stay in protected logs.
 
-### Remote lyrics download
+### Lyrics files
 
-`POST /api/works/{id}/lyrics-fetch` adds lyrics files of one family edition
-to the language's lyrics folder of an existing local work folder. The files
-come from an administrator-configured compatible source or from another local
-folder of the family. It requires `downloads:manage`, plus `library:write`
-when the request also assigns tracks.
+`POST /api/works/{id}/lyrics-edit/plan` previews and
+`POST /api/works/{id}/lyrics-edit` applies an edit of the lyrics Kikoto
+manages in one local work folder: lyrics files of that folder move into a
+language's lyrics folder, files of another local folder of the family are
+copied there, files a configured compatible source offers for a family
+edition are downloaded there, and managed lyrics are deleted. Both require
+`downloads:manage`; applying also requires `library:write` when the request
+assigns tracks. The preview never changes a file.
 
-- The remote code must be an edition of the requested work's family, and the
-  target must be an active local folder of that family on an online storage
-  pool. The edition's tree is read through the remote snapshot cache; it is
-  not stored as a work, presence, or media location.
-- A local source must be another active local folder of the same family. Each
-  requested path is resolved below that folder, and every path component must
-  be a regular directory or file, so a link inside the folder cannot read from
-  outside it. The source folder is not changed.
-- The request declares the language of the lyrics, one of the languages a
-  lyrics assignment accepts or none; an omitted language is the source
-  edition's declared language when lyrics can declare it. The language selects
-  the folder: `lyrics_ja`, `lyrics_en`, `lyrics_zh_hans`, `lyrics_zh_hant`,
-  `lyrics_ko`, or `lyrics` for every language. The name carries no work code,
-  so a scan never takes the folder for a work of its own.
-- Each requested path must be a `.lrc`, `.vtt`, `.srt`, `.ass`, or `.txt` file
-  in that tree. Its source-returned URL must be HTTP(S) without credentials and
+- The target must be an active local folder of the requested work on an
+  online storage pool. A local source must be another active local folder of
+  the same family, and a remote code must be an edition of the family. The
+  edition's tree is read through the remote snapshot cache; it is not stored
+  as a work, presence, or media location.
+- Every path is resolved below its folder or in the edition's tree, and every
+  path component of a local file must be a regular directory or file, so a
+  link inside a folder cannot read or move a file from outside it. A source
+  folder is not changed.
+- Each added file must be a `.lrc`, `.vtt`, `.srt`, `.ass`, or `.txt`
+  file and declares its language, one of the languages a lyrics assignment
+  accepts or the empty language for every language; a language is never
+  inferred. The language selects the folder: `lyrics_ja`, `lyrics_en`,
+  `lyrics_zh_hans`, `lyrics_zh_hant`, `lyrics_ko`, or `lyrics` for every
+  language. The name carries no work code, so a scan never takes the folder for
+  a work of its own. A file keeps its path below its source, without the
+  lyrics folder it may already be in.
+- A file to delete must be a lyrics file in a language's lyrics folder of the
+  target. Deletion runs the media cleanup checks, including the
+  symbolic-link review, when the edit is applied.
+- A remote file's source-returned URL must be HTTP(S) without credentials and
   pass the source's outbound policy before any request; redirects are validated
   at every hop by the shared source transport, and only configured origins keep
-  the private-address exception.
-- Downloads use the source's download lane with a 30-second bound per file,
-  2 MiB per file, 32 MiB and 200 files per request, and a 2-minute request
-  bound. Cancellation stops the request and removes the staging folder.
-- Files are staged in `.kikoto-staging` on the target's pool. Publication
-  never replaces anything: a file the lyrics folder already holds with the
-  same content is left alone, and a file that differs, a link, or a
-  non-directory on the path rejects the whole request before any file is
-  moved. A failed move removes only what the request added.
+  the private-address exception. Downloads use the source's download lane with
+  a 30-second bound per file and at most 200 downloads per request.
+- A request names at most 2,000 added and 2,000 deleted files. A copied or
+  downloaded file is at most 2 MiB, the files collected for one request at
+  most 128 MiB, and a request is bounded by 2 minutes. Copies and downloads
+  are staged in `.kikoto-staging` on the target's pool before the folder
+  changes; a moved file moves by renames on that filesystem.
+- A file already at a target is a conflict the request must decide: keep the
+  existing file, replace it, keep both under a free name, or rename the
+  incoming file inside its lyrics folder. A file with the same content is left
+  alone, and a target that the same request deletes is replaced. An apply
+  whose plan still has a conflict, or whose target changed after the plan,
+  changes nothing and answers `409`.
+- A failure while moving files puts the moved files that did not reach their
+  target back where they were. An edit that has started completes when the
+  client disconnects, bounded by the 2-minute request limit, and the work
+  folder is rescanned even when the edit stopped partway, so the folder and its
+  index agree. Directories the edit emptied are removed.
 - Errors expose fixed messages only. Upstream URLs, local paths, and detailed
   failures stay in protected logs.
 
@@ -178,8 +195,10 @@ transport and the `other` proxy route.
   and unknown or blocked works are refused. The policy, the service
   configuration, the requester's permissions and the audio file version are
   rechecked before every chunk.
-- Publication uses the remote lyrics download staging and never-replace rules
-  on the work folder's storage pool.
+- Publication stages the file in `.kikoto-staging` on the work folder's
+  storage pool and renames it into the language's lyrics folder through plain
+  directories. It never replaces a file: a different file under the track's
+  name moves the transcription to a numbered name.
 - Activity and API errors expose fixed failure codes only; upstream errors,
   endpoints and paths stay in protected logs.
 

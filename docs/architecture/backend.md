@@ -350,13 +350,18 @@ lanes. The first three serialize response bodies; playback permits four active
 streams. Each lane admits at most 32 waiting requests, and queued cancellation
 does not wait for the active response to finish.
 
-`POST /api/works/{id}/lyrics-fetch` adds lyrics files of a family edition to
-the language's lyrics folder of a local work folder. The files come from a
-configured source through that source's download lane, or from another local
-folder of the family, and are staged on the target work's storage pool before
-publication. Its permissions, destination checks, and file, byte, and time
-limits are in
-[Remote lyrics download](../development/security.md#remote-lyrics-download).
+`POST /api/works/{id}/lyrics-edit/plan` and `POST /api/works/{id}/lyrics-edit`
+preview and apply an edit of the lyrics Kikoto manages in one local work
+folder. An addition is a lyrics file of that folder, which moves, a file of
+another local folder of the family, which is copied, or a file a configured
+source offers for a family edition, which is downloaded through that source's
+download lane; each declares its language and lands in that language's lyrics
+folder. The plan items share the Fetch plan item's shape and conflict
+decisions. Copies and downloads are staged on the target work's storage pool,
+removals run through media cleanup, and the work folder is rescanned; the
+lyrics assignments and personal lyrics choices of a moved file follow it to the
+media item of its new path. Its permissions and limits are in
+[Lyrics files](../development/security.md#lyrics-files).
 
 `POST /api/works/{id}/local-files/duplicates` requires `downloads:manage` and
 reports the local files of the work's family that hold the same bytes, in any

@@ -234,7 +234,8 @@ func TestDemoRejectsLyricsMutationsBeforeTheHandler(t *testing.T) {
 	routes := server.Routes()
 	for _, testCase := range []struct{ method, path, body string }{
 		{http.MethodPut, "/api/works/1/lyrics-assignments", `{"assignments":[{"audioMediaItemId":1,"lyricsMediaItemId":2}]}`},
-		{http.MethodPost, "/api/works/1/lyrics-fetch", `{"sourceId":1,"remoteCode":"RJ00000001","folderId":1,"files":["a.vtt"]}`},
+		{http.MethodPost, "/api/works/1/lyrics-edit/plan", `{"folderId":1,"additions":[{"kind":"folder","path":"a.vtt","language":"ja-jp"}]}`},
+		{http.MethodPost, "/api/works/1/lyrics-edit", `{"folderId":1,"additions":[{"kind":"folder","path":"a.vtt","language":"ja-jp"}]}`},
 	} {
 		response := httptest.NewRecorder()
 		routes.ServeHTTP(response, httptest.NewRequest(testCase.method, testCase.path, strings.NewReader(testCase.body)))

@@ -11,8 +11,10 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"os"
 	"os/exec"
 	"path"
+	"path/filepath"
 	"strings"
 
 	"github.com/yexca/kikoto/backend/internal/asr"
@@ -437,36 +439,92 @@ func (s *Server) publishASRTranscription(ctx context.Context, userID, workID, au
 	if stem == "" || path.IsAbs(stem) || stem == ".." || strings.HasPrefix(stem, "../") {
 		return "", 0, lyricsFetchBadRequest("the audio track is outside its work folder")
 	}
-	stage := func(_ context.Context, _ string, destination string) (int64, error) {
-		return writeLyricsStagingFile(strings.NewReader(text), destination)
+	rootAbsolute, err := safeDataPath(s.cfg.DataRoot, target.RootPath)
+	if err != nil {
+		return "", 0, err
 	}
+	folderName := lyricsLanguageFolderName(language)
+	folderAbsolute := filepath.Join(rootAbsolute, folderName)
+	file, published, err := asrLyricsFileName(folderAbsolute, stem, text)
+	if err != nil {
+		return "", 0, err
+	}
+	if !published {
+		if err := s.stageASRLyrics(ctx, target.RootPath, rootAbsolute, filepath.Join(folderAbsolute, filepath.FromSlash(file)), text); err != nil {
+			return "", 0, err
+		}
+	}
+	if err := s.indexLocalMediaForWork(ctx, target.WorkID, target.FileSourceID, target.RootPath); err != nil {
+		return "", 0, err
+	}
+	lyricsPath := path.Join(target.RootPath, folderName, file)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return "", 0, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	lyricsID, indexed, err := lyricsEditLyricsItem(ctx, tx, target, lyricsPath)
+	if err != nil {
+		return "", 0, err
+	}
+	// A file the rescan did not index is published but cannot be assigned.
+	if indexed {
+		if err := upsertLyricsAssignment(ctx, tx, audioID, language, lyricsID, "transcription", userID); err != nil {
+			return "", 0, err
+		}
+	}
+	return lyricsPath, lyricsID, tx.Commit()
+}
+
+// asrLyricsFileName picks the name a transcription takes inside its lyrics
+// folder: the track's name, then numbered names while a different file holds
+// it. It reports whether that name already holds this exact text, as after an
+// interrupted acceptance.
+func asrLyricsFileName(folderAbsolute string, stem string, text string) (string, bool, error) {
 	for attempt := 1; attempt <= asrLyricsNameAttempts; attempt++ {
 		file := stem + ".vtt"
 		if attempt > 1 {
 			file = fmt.Sprintf("%s (%d).vtt", stem, attempt)
 		}
-		folder, _, err := s.stageAndPublishLyrics(ctx, target, lyricsLanguageFolderName(language), []string{file}, stage)
-		if errors.Is(err, lyricsFolderConflict) {
-			continue
+		destination := filepath.Join(folderAbsolute, filepath.FromSlash(file))
+		if _, err := os.Lstat(destination); errors.Is(err, os.ErrNotExist) {
+			return file, false, nil
+		} else if err != nil {
+			return "", false, err
 		}
-		if err != nil {
-			return "", 0, err
+		if _, regular := regularFileBelow(folderAbsolute, file); regular {
+			if existing, err := os.ReadFile(destination); err == nil && string(existing) == text {
+				return file, true, nil
+			}
 		}
-		if err := s.indexLocalMediaForWork(ctx, target.WorkID, target.FileSourceID, target.RootPath); err != nil {
-			return "", 0, err
-		}
-		if _, err := s.assignFetchedLyrics(ctx, userID, target.WorkID, folder, language, "transcription", map[int64]string{audioID: file}); err != nil {
-			return "", 0, err
-		}
-		lyricsPath := path.Join(folder, file)
-		var lyricsID int64
-		err = s.db.QueryRowContext(ctx, "SELECT media_item_id FROM media_file_location WHERE location_type='local' AND path=? ORDER BY id LIMIT 1", lyricsPath).Scan(&lyricsID)
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return "", 0, err
-		}
-		return lyricsPath, lyricsID, nil
 	}
-	return "", 0, lyricsFolderConflict
+	return "", false, lyricsFetchRequestError{status: http.StatusConflict, message: "the lyrics folder already holds different files under this track's names"}
+}
+
+// stageASRLyrics writes the text in staging on the work folder's storage pool
+// and renames it into place, so a lyrics file is never seen half written and
+// never replaces another file.
+func (s *Server) stageASRLyrics(ctx context.Context, rootPath string, rootAbsolute string, destination string, text string) error {
+	pool, err := s.fetchTransactionPool(ctx, rootPath)
+	if err != nil {
+		return err
+	}
+	stagingRoot, err := s.createLyricsStaging(path.Join(pool, ".kikoto-staging"))
+	if err != nil {
+		return err
+	}
+	defer func() { _ = os.RemoveAll(stagingRoot) }()
+	staged := filepath.Join(stagingRoot, "transcription.vtt")
+	if _, err := writeLyricsStagingFile(strings.NewReader(text), staged); err != nil {
+		return err
+	}
+	if err := mkdirPlainDirectories(rootAbsolute, filepath.Dir(destination)); err != nil {
+		return err
+	}
+	if _, err := os.Lstat(destination); !errors.Is(err, os.ErrNotExist) {
+		return lyricsFetchRequestError{status: http.StatusConflict, message: "the lyrics folder changed; accept the transcription again"}
+	}
+	return os.Rename(staged, destination)
 }
 
 func nullableInt64(value int64) any {

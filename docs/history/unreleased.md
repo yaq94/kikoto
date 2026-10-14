@@ -10,11 +10,19 @@
   strip switches between the lyrics for every language and Japanese,
   Simplified Chinese, Traditional Chinese, English, and Korean. Assignments
   saved by earlier versions apply to every language.
-- **Add lyrics** in **Manage lyrics** replaces **From remote**. It also copies
-  lyrics from another edition of the work that is in the library, asks which
-  language the lyrics are in, and saves them to a folder named after that
-  language, such as `lyrics_zh_hans`, inside the work folder. A file that is
-  already there is never replaced.
+- **Lyrics files** in **Manage lyrics** replaces **From remote**. Like **Edit
+  files**, it edits in three columns the lyrics Kikoto manages in a folder
+  named after their language, such as `lyrics_zh_hans`, inside the work
+  folder. It moves lyrics of the work folder there, copies them from the
+  work's other local folders and other editions in the library, downloads them
+  from remote editions, and deletes them. You choose the language; Kikoto does
+  not guess the language of the work's own files. A different file with the
+  same name is resolved in the preview by keeping, replacing, keeping both, or
+  renaming, without deleting it first. Added lyrics can be assigned to the
+  tracks they match.
+- **Manage files** has **Manage as lyrics**, which opens **Lyrics files** with
+  the selected lyrics files. It hides the lyrics in those folders unless **Show
+  in the list** is on.
 - **Transcribe** in **Manage lyrics** turns a local track's speech into timed
   lyrics with a configured speech recognition service. The transcription runs
   as an Activity workflow in parts of at most five minutes, cut in quiet

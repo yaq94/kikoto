@@ -189,8 +189,7 @@ A purchase bonus, such as an early purchase bonus (`【早期購入特典】`), 
 - Folds matched same-folder lyrics sidecars out of the default directory rows
   while keeping unmatched text visible. Audio rows expose lyrics choice,
   preview, and reveal actions, and a directory control can show all folded
-  lyrics. File management and Fetch selection continue to show the complete
-  unfiltered tree.
+  lyrics. File management and Fetch selection do not fold lyrics.
 - The local source's **Manage lyrics** option lists every local audio file
   with a lyrics choice. A user with library write access can assign any local
   lyrics file of the work, including translated lyrics whose names do not
@@ -207,21 +206,47 @@ A purchase bonus, such as an early purchase bonus (`【早期購入特典】`), 
   match. Playback uses the first of a listener's metadata languages that has
   lyrics, then the all-language lyrics, then any other language. You declare a
   file's language yourself; Kikoto does not guess it from the file.
-- **Manage lyrics** has an **Add lyrics** tab for users who can download
-  files. Its source is a configured compatible remote source or **Library
-  (another local edition)**, which copies from another edition of the work
-  that is in the library and leaves that edition's folder unchanged. Pick an
-  edition of the work's family (a translated edition is chosen first, since
-  DLsite usually ships lyrics with translations), list its lyrics files, choose
-  which to add and which track each one belongs to, and preview them with the
-  same timing check. **Language of these lyrics** starts as the edition's
-  language. The files are saved inside the work folder to a folder named after
-  that language: `lyrics_ja`, `lyrics_en`, `lyrics_zh_hans`, `lyrics_zh_hant`,
-  `lyrics_ko`, or `lyrics` for all languages. Kikoto never replaces a file: one
-  that is already there with the same content is left alone, and one that
-  differs stops the request before anything is added. It then rescans the work
-  and stores the chosen assignments in that language. A remote edition you
-  read from is not added to the library.
+- **Manage lyrics** has a **Lyrics files** tab for users who manage local files.
+  Kikoto manages the lyrics in a folder named after their language inside a work
+  folder: `lyrics_ja`, `lyrics_en`, `lyrics_zh_hans`, `lyrics_zh_hant`,
+  `lyrics_ko`, or `lyrics` for all languages. The tab edits them in three
+  columns, like **Edit files**: the places lyrics can come from on the left, the
+  lyrics files of the chosen place in the middle, and the managed lyrics as they
+  will be on the right. When the work has several local folders, the right
+  column chooses the one to edit.
+- The places are **Managed lyrics**, where clearing a file deletes it; **Other
+  lyrics in this folder**, whose selected files move into a lyrics folder; the
+  work's other local folders, including other editions in the library, whose
+  files are copied; and the editions that configured remote sources offer, whose
+  files are downloaded. Selected files go to the lyrics folder of the language
+  chosen under **Language of these lyrics** for their place. Another edition's
+  lyrics start in that edition's language; Kikoto does not guess the language of
+  the work's own files, so you choose it before anything is previewed. To change
+  the language of managed lyrics, turn on **Also list the managed lyrics, to
+  change their language** in **Other lyrics in this folder** and select them
+  there. A file keeps its path below its place, without the lyrics folder it may
+  already be in.
+- The right column previews the result. A file that is already there with the
+  same content is left alone. A different file with the same name is a conflict
+  you resolve in that column: keep the existing file, replace it, keep both, or
+  rename the incoming file; nothing has to be deleted first. **Apply changes**
+  asks for confirmation before it deletes files. With library write access,
+  **Assign added lyrics to matching tracks** assigns each added file in its
+  language to the track it matches by file name, then by track order; a track
+  that already has lyrics in that language keeps them. Assignments that already
+  use a moved file follow it to its language. A remote edition you read from is
+  not added to the library.
+- **Manage files** on a local work has **Manage as lyrics** for lyrics that are
+  elsewhere in the work folder. Select `.lrc`, `.vtt`, `.srt`, `.ass`, or `.txt`
+  files and choose it to open **Lyrics files** with those files selected under
+  **Other lyrics in this folder**.
+- **Manage files** hides the lyrics Kikoto manages by default when **Manage
+  lyrics** is available for the work. A **Lyrics managed by Kikoto** row
+  counts them and opens **Manage lyrics** on its **Lyrics files** tab. Its
+  **Show in the list** switch lists them with the other files, where they are
+  selected like any file. While they are hidden, selecting the whole work
+  folder for deletion includes them; any smaller selection leaves them in
+  place.
 - **Manage lyrics** has a **Transcribe** tab for users with library write and
   workflow permission when a [speech recognition
   service](settings.md#speech-recognition) is configured. See
