@@ -129,7 +129,9 @@ The Library is the main browsing surface for works.
   works per page. Wide screens show a compact top pagination with result
   context and page navigation. Phones show the result count and the current
   page as a caption above the works and change pages from the bottom
-  pagination.
+  pagination. The bottom pagination lists the first, last, current, and
+  neighboring pages; an ellipsis between them opens a field that goes to a
+  typed page number.
 - Keeps database cleanup out of Library. Metadata -> No available source
   provides paged search, source checks, and confirmed local-information
   deletion for logical families with no available source or media location.

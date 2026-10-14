@@ -164,6 +164,7 @@ export const collectionHans = {
   previousPage: "上一页",
   nextPage: "下一页",
   page: "第 {{page}} 页",
+  jumpToPage: "跳转到指定页",
   pageOf: "第 {{page}} / {{totalPages}} 页，共 {{totalItems}} {{itemLabel}}",
   rangeOf: "{{first}}-{{last}}，共 {{totalItems}} {{itemLabel}}",
   refreshing: "正在刷新 {{itemLabel}}",

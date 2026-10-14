@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import type { ApiErrorBody } from "./fixtures/api";
+import { worksPageFixture, type ApiErrorBody } from "./fixtures/api";
 import { work, type MockWork, mockApplication, mediaFixture } from "./fixtures/player-library";
 
 test("column preferences change the rendered collection and remain independent across viewport sizes", async ({
@@ -157,6 +157,42 @@ test("library keeps its page across a reload", async ({ page }) => {
   await expect(page.getByText(/^Page 2 of 2/).first()).toBeVisible();
   await expect(page.getByText("Mobile work 2", { exact: true })).toBeVisible();
   expect(requestedPages).toEqual(["2"]);
+});
+
+test("the pagination ellipsis jumps to a typed page", async ({ page }) => {
+  await mockApplication(page);
+  await page.route("**/api/works?**", (route) => {
+    const url = new URL(route.request().url());
+    if (url.searchParams.get("scope") !== "local") return route.fallback();
+    return route.fulfill({
+      json: worksPageFixture([work], { page: Number(url.searchParams.get("page") ?? 1), total: 480 }),
+    });
+  });
+  await page.goto("/");
+  const pages = page.getByRole("navigation", { name: "Pages", exact: true });
+  const jump = pages.getByRole("textbox", { name: "Go to page", exact: true });
+
+  await pages.getByRole("button", { name: "Go to page", exact: true }).click();
+  await expect(jump).toBeFocused();
+  await expect(jump).toHaveValue("1");
+  await jump.fill("12");
+  await jump.press("Enter");
+  await expect(pages.getByRole("button", { name: "Page 12", exact: true })).toHaveAttribute("aria-current", "page");
+  await expect(jump).toHaveCount(0);
+
+  // A page past the end lands on the last page.
+  await pages.getByRole("button", { name: "Go to page", exact: true }).first().click();
+  await jump.fill("999");
+  await jump.press("Enter");
+  await expect(pages.getByRole("button", { name: "Page 20", exact: true })).toHaveAttribute("aria-current", "page");
+
+  // Escape leaves the page as it is and returns focus to the ellipsis.
+  const ellipsis = pages.getByRole("button", { name: "Go to page", exact: true });
+  await ellipsis.click();
+  await jump.fill("3");
+  await jump.press("Escape");
+  await expect(ellipsis).toBeFocused();
+  await expect(pages.getByRole("button", { name: "Page 20", exact: true })).toHaveAttribute("aria-current", "page");
 });
 
 test("tag clicks send a structured Unicode tag search and retain the matching work", async ({ page }) => {
