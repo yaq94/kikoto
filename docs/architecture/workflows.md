@@ -38,6 +38,13 @@ Library and metadata:
   shared executor. [Translation task persistence](data-model.md#llm-translation)
   defines source/configuration invalidation, restart recovery and explicit
   resubmission of uncertain requests.
+- `asr_transcription`: transcribe one local audio track with a configured
+  speech recognition service for review, one chunk per request. Between
+  chunks the job defers itself for a few seconds whenever another job is
+  waiting, so a long track shares the single executor instead of holding it.
+  Retry continues after the last committed chunk. [Speech
+  transcription](data-model.md#speech-transcription) defines the task,
+  rechecks and publication.
 - `demo_library_scan`: the Demo library scan, which indexes only works
   eligible for public browsing.
 
@@ -425,8 +432,9 @@ the backend.
   a popular collection requires `tags:write` and its
   action's permission, cleanup and local deletion jobs require
   `downloads:manage`, a folder edit requires `downloads:manage` plus
-  `remote:fetch` when it downloads, metadata jobs require `metadata:sync`, and graph jobs
-  require their graph's permissions.
+  `remote:fetch` when it downloads, metadata jobs require `metadata:sync`, a
+  speech transcription requires `library:write`, and graph jobs require their
+  graph's permissions.
 - Local files: candidate decisions, local cleanup, and archived-root review
   for candidates that remove, archive, or mark unavailable local files
   (`local_fetch_merge_cleanup`, `local_duplicate_work_folder`,

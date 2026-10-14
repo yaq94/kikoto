@@ -45,8 +45,12 @@ type Options struct {
 	DialContext         DialContextFunc
 	ConnectTimeout      time.Duration
 	ResponseReadTimeout time.Duration
-	AllowPublicOrigins  bool
-	AllowedHostPatterns []string
+	// ResponseHeaderTimeout bounds the wait for response headers after the
+	// request is written. Zero uses the default; a service that answers only
+	// once its work is done needs a longer bound.
+	ResponseHeaderTimeout time.Duration
+	AllowPublicOrigins    bool
+	AllowedHostPatterns   []string
 	// Proxy routes every request through an operator-configured forward
 	// proxy parsed by ParseProxyURL. The proxy endpoint keeps the configured
 	// private-address exception; destination URLs and redirects are still
@@ -66,6 +70,7 @@ type Policy struct {
 	dialContext         DialContextFunc
 	connectTimeout      time.Duration
 	readTimeout         time.Duration
+	headerTimeout       time.Duration
 	proxy               *url.URL
 	proxyEndpoint       string
 }
@@ -160,6 +165,7 @@ func NewPolicy(destinations []Destination, options Options) (*Policy, error) {
 		dialContext:        options.DialContext,
 		connectTimeout:     options.ConnectTimeout,
 		readTimeout:        options.ResponseReadTimeout,
+		headerTimeout:      options.ResponseHeaderTimeout,
 	}
 	if policy.resolver == nil {
 		policy.resolver = net.DefaultResolver
@@ -169,6 +175,9 @@ func NewPolicy(destinations []Destination, options Options) (*Policy, error) {
 	}
 	if policy.readTimeout <= 0 {
 		policy.readTimeout = defaultResponseReadTimeout
+	}
+	if policy.headerTimeout <= 0 {
+		policy.headerTimeout = defaultResponseHeaderTimeout
 	}
 	if policy.dialContext == nil {
 		dialer := &net.Dialer{Timeout: policy.connectTimeout, KeepAlive: 30 * time.Second}
@@ -376,7 +385,7 @@ func (p *Policy) Transport() http.RoundTripper {
 		MaxConnsPerHost:        8,
 		IdleConnTimeout:        90 * time.Second,
 		TLSHandshakeTimeout:    10 * time.Second,
-		ResponseHeaderTimeout:  defaultResponseHeaderTimeout,
+		ResponseHeaderTimeout:  p.headerTimeout,
 		ExpectContinueTimeout:  time.Second,
 		MaxResponseHeaderBytes: maxResponseHeaderBytes,
 	}

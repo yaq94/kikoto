@@ -176,6 +176,7 @@ export function PersistedLyricsManagerOverlay({
       readOnly={demoMode || !hasPermission("library:write")}
       remoteSources={remoteSources.map((remote) => remote.source).filter((source) => source.enabled)}
       canDownload={!demoMode && hasPermission("downloads:manage")}
+      canTranscribe={!demoMode && hasPermission("library:write") && hasPermission("workflows:run")}
       onClose={onClose}
       onSaved={onSaved}
     />

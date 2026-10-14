@@ -8,6 +8,7 @@ import { remoteSourceApi } from "@/lib/remoteSourceApi";
 import { workflowApi } from "@/lib/workflowApi";
 import { settingsApi } from "@/lib/settingsApi";
 import { llmApi } from "@/lib/llmApi";
+import { asrApi } from "@/lib/asrApi";
 import { workFolderEditApi } from "@/lib/workFolderEditApi";
 
 export type { CatalogSyncState } from "@/lib/catalogSyncState";
@@ -23,6 +24,7 @@ export type * from "@/lib/remoteSourceApi";
 export type * from "@/lib/workflowApi";
 export type * from "@/lib/settingsApi";
 export type * from "@/lib/llmApi";
+export type * from "@/lib/asrApi";
 export type * from "@/lib/workFolderEditApi";
 
 /**
@@ -40,5 +42,6 @@ export const api = {
   ...workflowApi,
   ...settingsApi,
   ...llmApi,
+  ...asrApi,
   ...workFolderEditApi,
 };

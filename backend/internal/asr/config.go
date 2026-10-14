@@ -1,0 +1,168 @@
+// Package asr configures speech recognition services and speaks the
+// OpenAI-compatible transcription protocol that hosted and self-hosted
+// services share.
+package asr
+
+import (
+	"errors"
+	"net"
+	"net/url"
+	"strconv"
+	"strings"
+	"unicode"
+
+	"github.com/yexca/kikoto/backend/internal/outbound"
+)
+
+const SettingKey = "asr_providers"
+
+// MaxProviders bounds the stored service list.
+const MaxProviders = 16
+
+// Scope values place a local deployment on the server's own machine, whose
+// host the server derives, or on another machine the administrator names.
+const (
+	ScopeLocalMachine = "local_machine"
+	ScopeOtherMachine = "other_machine"
+)
+
+type Preset struct {
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	DefaultURL string `json:"defaultUrl"`
+	Boundary   string `json:"boundary"`
+	// Local presets choose between this server's machine and another one.
+	Local bool `json:"local"`
+}
+
+var Presets = []Preset{
+	{ID: "openai", Name: "OpenAI", DefaultURL: "https://api.openai.com", Boundary: "external"},
+	{ID: "local", Name: "Local deployment", Boundary: "private", Local: true},
+	{ID: "custom-openai", Name: "Custom OpenAI-compatible", Boundary: "external"},
+}
+
+// apiPrefix is the protocol path every preset shares.
+const apiPrefix = "/v1"
+
+type Model struct {
+	ID   string `json:"id"`
+	Name string `json:"name,omitempty"`
+}
+
+type Provider struct {
+	ID             string  `json:"id"`
+	Revision       int64   `json:"revision"`
+	PresetID       string  `json:"presetId"`
+	Name           string  `json:"name"`
+	BaseURL        string  `json:"baseUrl"`
+	APIKey         string  `json:"apiKey,omitempty"`
+	Boundary       string  `json:"boundary"`
+	AllowSensitive bool    `json:"allowSensitive"`
+	Scope          string  `json:"scope,omitempty"`
+	Port           int     `json:"port,omitempty"`
+	Enabled        bool    `json:"enabled"`
+	DefaultModel   string  `json:"defaultModel"`
+	Models         []Model `json:"models"`
+}
+
+func (p Provider) Preset() Preset {
+	for _, preset := range Presets {
+		if preset.ID == p.PresetID {
+			return preset
+		}
+	}
+	return Preset{}
+}
+
+// DerivesHost reports whether the server, not the administrator, chooses the
+// service host: a local deployment on this server's machine.
+func (p Provider) DerivesHost() bool {
+	return p.Preset().Local && p.Scope == ScopeLocalMachine
+}
+
+// Endpoint is the service origin. A same-machine deployment is reached through
+// the server's host gateway on the configured port, so a container never
+// mistakes its own loopback address for the host.
+func (p Provider) Endpoint(host string) string {
+	if p.DerivesHost() {
+		return (&url.URL{Scheme: "http", Host: net.JoinHostPort(host, strconv.Itoa(p.Port))}).String()
+	}
+	return p.BaseURL
+}
+
+// SameConnection reports whether two configurations reach the same service.
+// A key and discovered models belong to one connection only.
+func (p Provider) SameConnection(other Provider) bool {
+	return p.PresetID == other.PresetID && p.Scope == other.Scope && p.Port == other.Port && p.BaseURL == other.BaseURL
+}
+
+func Normalize(p Provider) (Provider, error) {
+	preset := p.Preset()
+	if preset.ID == "" {
+		return p, errors.New("invalid speech recognition preset")
+	}
+	p.Name = strings.TrimSpace(p.Name)
+	if p.Name == "" {
+		p.Name = preset.Name
+	}
+	if len(p.Name) > 128 {
+		return p, errors.New("speech recognition service name is too long")
+	}
+	if p.Boundary == "" {
+		p.Boundary = preset.Boundary
+	}
+	if p.Boundary != "external" && p.Boundary != "private" {
+		return p, errors.New("invalid speech recognition data boundary")
+	}
+	if p.Boundary != "private" {
+		p.AllowSensitive = false
+	}
+	if preset.Local {
+		if p.Scope == "" {
+			p.Scope = ScopeLocalMachine
+		}
+		if p.Scope != ScopeLocalMachine && p.Scope != ScopeOtherMachine {
+			return p, errors.New("invalid local deployment location")
+		}
+	} else {
+		p.Scope = ""
+	}
+	p.APIKey = strings.TrimSpace(p.APIKey)
+	if len(p.APIKey) > 4096 || strings.ContainsFunc(p.APIKey, unicode.IsControl) {
+		return p, errors.New("invalid API key")
+	}
+	p.DefaultModel = strings.TrimSpace(p.DefaultModel)
+	if len(p.DefaultModel) > 256 || strings.ContainsFunc(p.DefaultModel, unicode.IsControl) {
+		return p, errors.New("invalid model id")
+	}
+	if p.Models == nil {
+		p.Models = []Model{}
+	}
+	if p.DerivesHost() {
+		if p.Port < 1 || p.Port > 65535 {
+			return p, errors.New("enter the port of the local deployment")
+		}
+		// The host is derived; an address in the request body is never kept.
+		p.BaseURL = ""
+		return p, nil
+	}
+	p.Port = 0
+	base := strings.TrimSpace(p.BaseURL)
+	if base == "" {
+		base = preset.DefaultURL
+	}
+	if base == "" {
+		return p, errors.New("enter the service origin")
+	}
+	if !strings.Contains(base, "://") {
+		base = "https://" + base
+	}
+	parsed, err := outbound.ParseHTTPURL(base)
+	if err != nil || parsed.RawQuery != "" || parsed.ForceQuery || (parsed.Path != "" && parsed.Path != "/") {
+		return p, errors.New("enter an HTTP(S) origin without credentials, query or API path")
+	}
+	parsed.Path = ""
+	parsed.Host = strings.ToLower(parsed.Host)
+	p.BaseURL = parsed.String()
+	return p, nil
+}

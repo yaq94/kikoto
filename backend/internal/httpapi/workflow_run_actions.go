@@ -74,6 +74,11 @@ func (s *Server) cancelWorkflowRunTx(ctx context.Context, tx *sql.Tx, run workfl
 			return false, err
 		}
 	}
+	if run.WorkflowCode == asrWorkerType {
+		if _, err := tx.ExecContext(ctx, `UPDATE asr_transcription SET state='cancelled',failure_code=?,updated_at=CURRENT_TIMESTAMP WHERE workflow_run_id=? AND state IN ('pending','requesting','failed')`, asrFailureCancelled, runID); err != nil {
+			return false, err
+		}
+	}
 	summary := mergeJSONObjects(run.SummaryJSON, map[string]any{"cancelled": true, "cancel_reason": "manual"})
 	if _, err := tx.ExecContext(ctx, `
 		UPDATE workflow_node_run
@@ -191,6 +196,8 @@ func (s *Server) dispatchWorkflowRetry(ctx context.Context, actor currentUser, r
 	switch run.WorkflowCode {
 	case "llm_translation":
 		return s.retryLLMTranslationRun(ctx, actor, runID)
+	case asrWorkerType:
+		return s.retryASRTranscriptionRun(ctx, actor, runID)
 	case "local_library_scan":
 		if !userHasPermission(actor, "metadata:sync") {
 			return workflowRetryDispatchResult{}, errWorkflowRetryPermission
@@ -474,7 +481,7 @@ func (s *Server) retryFailedWorkflowJobFor(ctx context.Context, actor *currentUs
 			AND worker_type IN (
 				'remote_work_fetch', 'remote_media_cache', 'remote_popular_collection',
 				'media_cache_limit_cleanup', 'media_cache_cleanup', 'local_media_delete', 'local_location_cleanup',
-				'media_location_cleanup', 'work_folder_edit', 'metadata_family_sync', 'custom_workflow', 'metadata_genre_names', 'llm_translation'
+				'media_location_cleanup', 'work_folder_edit', 'metadata_family_sync', 'custom_workflow', 'metadata_genre_names', 'llm_translation', 'asr_transcription'
 			)
 		ORDER BY id DESC LIMIT 1
 	`, runID).Scan(
@@ -497,6 +504,8 @@ func workflowJobRetryPermissions(job workflowJobRecord) []string {
 	switch job.WorkerType {
 	case "llm_translation":
 		return []string{"metadata:sync", "library:write", "workflows:run"}
+	case asrWorkerType:
+		return []string{"library:write", "workflows:run"}
 	case "remote_work_fetch", "remote_media_cache":
 		if job.WorkerType == "remote_work_fetch" {
 			return []string{"remote:fetch", "metadata:sync"}

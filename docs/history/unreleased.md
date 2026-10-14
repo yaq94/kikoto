@@ -15,6 +15,12 @@
   language the lyrics are in, and saves them to a folder named after that
   language, such as `lyrics_zh_hans`, inside the work folder. A file that is
   already there is never replaced.
+- **Transcribe** in **Manage lyrics** turns a local track's speech into timed
+  lyrics with a configured speech recognition service. The transcription runs
+  as an Activity workflow in parts of at most five minutes, cut in quiet
+  moments, and gives the queue to other waiting work between parts. The result
+  waits for review; **Add to lyrics** saves it as a WebVTT file in the
+  language's lyrics folder and assigns it to the track.
 - **Manage files** has **Find identical files**, which compares the local
   files of every edition and folder of the work by content, marks the files
   that have an identical copy, and can select the copies that also exist in
@@ -75,6 +81,11 @@
   a dialog. A provider's switch turns it on or off from the list, and deleting
   one asks for confirmation. The content safety policy edits sensitive tags as
   removable chips and keyword rules as compact rows.
+- Settings -> Speech recognition configures OpenAI-compatible transcription
+  services: OpenAI, a local deployment, or a custom service. A local
+  deployment on the server's own machine is reached through the host gateway,
+  so only its port is entered. The LLM content safety policy also decides
+  which works' audio may be sent.
 - The ellipsis between the page numbers below a list opens a field that goes
   to a typed page number.
 

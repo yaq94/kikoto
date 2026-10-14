@@ -1,5 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Captions, CloudDownload, FileText, Folder, Languages, ListChecks, ListOrdered, RotateCcw } from "lucide-react";
+import {
+  AudioLines,
+  Captions,
+  CloudDownload,
+  FileText,
+  Folder,
+  Languages,
+  ListChecks,
+  ListOrdered,
+  RotateCcw,
+} from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { Badge } from "@/components/ui/badge";
@@ -28,13 +38,14 @@ import {
   RemoteLyricsPanel,
   useRemoteLyricsFetch,
 } from "@/features/work-detail/lyrics/RemoteLyricsPanel";
+import { TranscriptionPanel } from "@/features/work-detail/lyrics/TranscriptionPanel";
 import { formatTrackDuration } from "@/features/work-detail/media/mediaTreeModel";
 import { api, type LibrarySource, type WorkDetail } from "@/lib/api";
 import { allLyricsLanguages, lyricsLanguages } from "@/lib/lyricsLanguage";
 
 const automaticValue = "auto";
 
-type LyricsManagerTab = "assign" | "remote";
+type LyricsManagerTab = "assign" | "remote" | "transcribe";
 
 /**
  * Lets a library manager choose, per language, the lyrics file every listener
@@ -46,6 +57,7 @@ export function LyricsManagerDialog({
   readOnly,
   remoteSources = [],
   canDownload = false,
+  canTranscribe = false,
   onClose,
   onSaved,
 }: {
@@ -55,6 +67,8 @@ export function LyricsManagerDialog({
   remoteSources?: LibrarySource[];
   /** Whether the viewer may download files into the library. */
   canDownload?: boolean;
+  /** Whether the viewer may start speech transcriptions and review their results. */
+  canTranscribe?: boolean;
   onClose: () => void;
   onSaved: () => Promise<void>;
 }) {
@@ -77,6 +91,7 @@ export function LyricsManagerDialog({
     },
   });
   const remoteAvailable = canDownload && remote.available && entries.audio.length > 0;
+  const transcribeAvailable = canTranscribe && entries.audio.length > 0;
   // A download reloads the work. Keep the user's unsaved edits on the new entries.
   const previousAudio = useRef(entries.audio);
   useEffect(() => {
@@ -158,7 +173,7 @@ export function LyricsManagerDialog({
         onClose={busy ? undefined : onClose}
         closeLabel={t("content.close")}
       >
-        {remoteAvailable && (
+        {(remoteAvailable || transcribeAvailable) && (
           <div className={segmentedListClassName("mt-3")} role="tablist" aria-label={t("lyricsManager.title")}>
             <button
               type="button"
@@ -171,21 +186,47 @@ export function LyricsManagerDialog({
               <ListChecks className="h-4 w-4" />
               {t("lyricsManager.tabAssign")}
             </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={tab === "remote"}
-              className={segmentedItemClassName(tab === "remote")}
-              disabled={busy}
-              onClick={() => setTab("remote")}
-            >
-              <CloudDownload className="h-4 w-4" />
-              {t("lyricsManager.tabRemote")}
-            </button>
+            {remoteAvailable && (
+              <button
+                type="button"
+                role="tab"
+                aria-selected={tab === "remote"}
+                className={segmentedItemClassName(tab === "remote")}
+                disabled={busy}
+                onClick={() => setTab("remote")}
+              >
+                <CloudDownload className="h-4 w-4" />
+                {t("lyricsManager.tabRemote")}
+              </button>
+            )}
+            {transcribeAvailable && (
+              <button
+                type="button"
+                role="tab"
+                aria-selected={tab === "transcribe"}
+                className={segmentedItemClassName(tab === "transcribe")}
+                disabled={busy}
+                onClick={() => setTab("transcribe")}
+              >
+                <AudioLines className="h-4 w-4" />
+                {t("lyricsManager.tabTranscribe")}
+              </button>
+            )}
           </div>
         )}
       </DialogHeader>
-      {tab === "remote" && remoteAvailable ? (
+      {tab === "transcribe" && transcribeAvailable ? (
+        <>
+          <DialogBody>
+            <TranscriptionPanel work={work} audio={entries.audio} onPublished={onSaved} />
+          </DialogBody>
+          <DialogFooter>
+            <Button variant="ghost" onClick={onClose} disabled={busy}>
+              {t("content.close")}
+            </Button>
+          </DialogFooter>
+        </>
+      ) : tab === "remote" && remoteAvailable ? (
         <>
           <DialogBody>
             <RemoteLyricsPanel state={remote} audio={entries.audio} />

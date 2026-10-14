@@ -15,6 +15,7 @@ import (
 
 	"github.com/yexca/kikoto/backend/internal/accesspolicy"
 	"github.com/yexca/kikoto/backend/internal/account"
+	"github.com/yexca/kikoto/backend/internal/asr"
 	"github.com/yexca/kikoto/backend/internal/auththrottle"
 	"github.com/yexca/kikoto/backend/internal/buildinfo"
 	"github.com/yexca/kikoto/backend/internal/config"
@@ -35,6 +36,7 @@ type updateCheckCache struct {
 type Server struct {
 	llmStore                       *llm.Store
 	llmRequestSlots                chan struct{}
+	asrStore                       *asr.Store
 	db                             *sql.DB
 	statistics                     *storage.StatisticsMaintainer
 	accountStore                   *account.Store
@@ -112,6 +114,7 @@ func NewServer(db *sql.DB, cfg config.Config) *Server {
 	server := &Server{
 		llmStore:        llm.NewStore(db),
 		llmRequestSlots: make(chan struct{}, 2),
+		asrStore:        asr.NewStore(db),
 		statistics:      storage.NewStatisticsMaintainer(db),
 		db:              db, accountStore: account.NewStore(db), accessPolicy: accesspolicy.NewStore(db), libraryStore: library.NewStore(db), workflowStore: workflow.NewStore(db), cfg: cfg,
 		loginThrottle:                  auththrottle.New(),
@@ -246,6 +249,11 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/works/{id}/llm-reviews/{review}/restore", s.restoreLLMTranslation)
 	mux.HandleFunc("DELETE /api/works/{id}/llm-previews/{preview}", s.rejectLLMPreview)
 	mux.HandleFunc("DELETE /api/works/{id}/llm-translations/{language}/{field}", s.revokeLLMTranslation)
+	mux.HandleFunc("GET /api/works/{id}/asr-transcriptions", s.listASRTranscriptions)
+	mux.HandleFunc("POST /api/works/{id}/asr-transcriptions", s.createASRTranscription)
+	mux.HandleFunc("GET /api/asr/transcriptions/{transcription}/text", s.asrTranscriptionText)
+	mux.HandleFunc("POST /api/asr/transcriptions/{transcription}/accept", s.acceptASRTranscription)
+	mux.HandleFunc("DELETE /api/asr/transcriptions/{transcription}", s.rejectASRTranscription)
 	mux.HandleFunc("DELETE /api/works/{id}/manual-overrides/{field}", s.deleteWorkManualOverride)
 	mux.HandleFunc("GET /api/works/{id}/cover-candidates", s.listWorkCoverCandidates)
 	mux.HandleFunc("POST /api/works/{id}/cover-override", s.setWorkCoverOverride)
@@ -363,6 +371,12 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("PUT /api/llm/providers/{id}", s.saveLLMProvider)
 	mux.HandleFunc("DELETE /api/llm/providers/{id}", s.deleteLLMProvider)
 	handleSlowFirstResponse("POST /api/llm/providers/{id}/fetch-models", s.fetchLLMModels)
+	mux.HandleFunc("GET /api/asr/providers", s.listASRProviders)
+	mux.HandleFunc("POST /api/asr/providers", s.saveASRProvider)
+	mux.HandleFunc("PUT /api/asr/providers/{id}", s.saveASRProvider)
+	mux.HandleFunc("DELETE /api/asr/providers/{id}", s.deleteASRProvider)
+	handleSlowFirstResponse("POST /api/asr/providers/{id}/fetch-models", s.fetchASRModels)
+	mux.HandleFunc("GET /api/asr/services", s.listASRServices)
 	mux.HandleFunc("GET /api/library-sources", s.listLibrarySources)
 	mux.HandleFunc("GET /api/file-sources", s.listFileSources)
 	mux.HandleFunc("POST /api/file-sources", s.createFileSource)

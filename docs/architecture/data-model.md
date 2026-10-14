@@ -155,6 +155,14 @@ displayed names.
 
 `llm_translation_task` connects explicitly selected existing works to durable workflow jobs. Deduplication includes user, work, input hash, language, fields and configuration/policy revisions. Each outgoing chunk records requesting state before network access and retains its result before advancing. Restart resumes completed chunks and unsent work. Uncertain requests cannot retry automatically. Explicit acknowledgement can resubmit only to the original unchanged endpoint/model with unchanged policy, source and permissions; another charge may occur. Activity exposes fixed states and sanitized diagnostics, never credentials, origins, paths or full source text. Demo disables LLM configuration and translation.
 
+### Speech transcription
+
+The `asr_providers` setting stores administrator-configured speech recognition services that speak the OpenAI-compatible transcription protocol: OpenAI, a local deployment, or a custom service. A local deployment on the server's own machine stores only a port; its origin is the server's host gateway and a request-body address is discarded. Another machine and the custom service store an origin without a path. Each service declares an external or private boundary and an explicit `allowSensitive` capability; changing the preset, location, port or origin clears the key and model list. Keys stay server-side, and saves advance a revision.
+
+`asr_transcription` is the durable task, checkpoint and result of one transcription of one local audio track. It records the requester, the audio item and the local location read, the active work folder holding that file, the service, model and a digest of its configuration, the declared lyrics language (empty for every language), and the file version of the audio. One active task exists per audio item; a repeated request joins it. The job decodes the file with ffmpeg into 16 kHz mono PCM chunks of at most five minutes, cut at the quietest 300 ms of a chunk's last minute, and sends each as WAV with `response_format=verbose_json`. Before each chunk it rechecks the requester's permissions, the service digest, the [LLM content policy](#llm-translation) for the work, and the audio location and file version. The chunk's state is `requesting` while it is sent; its segments are clamped to the chunk, offset onto the track's timeline, and committed as cues with the next offset before the job continues or yields the executor. A task found `requesting` after a restart fails as `upstream_result_unknown`, so only an explicit retry resends that chunk.
+
+A finished task stores its WebVTT text, at most 2 MiB, as `ready`. Acceptance moves it to `publishing`, stages the file on the work folder's storage pool, adds it to the language's lyrics folder under the track's path inside the work folder (`<language folder>/<track path>.vtt`, then numbered names when a different file holds that name), indexes the work folder, and assigns the file to the track in the task's language with origin `transcription` before recording `accepted`. An interrupted publication stays `publishing` and completes on the next acceptance; a file already published with the same content counts as published. A rejected task drops its text. Demo disables speech recognition configuration and transcription.
+
 ### DLsite Genres
 
 DLsite genre ids are stable across request locales. `work_dlsite_genre`
@@ -606,8 +614,9 @@ keeps media ids keeps the assignment; deleting either item removes it. The
 audio item may belong to any edition of the requested work's family, because a
 work detail can show a sibling edition's local media. `origin` records how the
 row was made: `manual` from the lyrics manager, `remote_fetch` when a remote
-lyrics download assigned the file it published, or `library_import` when the
-file was copied from another local folder of the family.
+lyrics download assigned the file it published, `library_import` when the
+file was copied from another local folder of the family, or `transcription`
+when an accepted [speech transcription](#speech-transcription) published it.
 
 A media read lists an audio item's assignments in the order that viewer's
 playback tries them: the viewer's metadata languages in priority order, where

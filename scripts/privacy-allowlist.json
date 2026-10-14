@@ -181,8 +181,8 @@
     },
     {
       "url": "https://api.openai.com",
-      "files": ["backend/internal/llm/config.go"],
-      "reason": "Public OpenAI API origin built into the administrator LLM provider preset."
+      "files": ["backend/internal/llm/config.go", "backend/internal/asr/config.go"],
+      "reason": "Public OpenAI API origin built into the administrator LLM provider and speech recognition service presets."
     },
     {
       "url": "https://api.anthropic.com",

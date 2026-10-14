@@ -28,6 +28,14 @@ A synchronous preview lasts 15 minutes; a background preview lasts 24 hours. Rev
 
 **Queue background translation** accepts 1–100 explicitly named existing works; lyrics selects one work and one file. Equivalent submissions reuse a durable task. Activity exposes progress, cancellation, restart recovery and failures. Execution rechecks permissions, source input, policy and the selected endpoint. Completed chunks are retained. Definitive rejections and failures before sending support an explicit retry to the same configured endpoint. A request with an uncertain result stops without automatic resending; **Resend uncertain request** requires explicit acknowledgement that another charge may occur. A changed endpoint, model, policy or input prevents that resubmission. Results always wait for user review.
 
+## Transcribe
+
+**Manage lyrics → Transcribe** turns a local track's speech into timed lyrics with a configured [speech recognition service](settings.md#speech-recognition). Choose the track, the service and the spoken language, then **Transcribe**. The language is sent to the service as a hint, and the result is saved and assigned in that language; **Detect automatically** lets the service decide and saves the result as lyrics for every language. The content safety policy applies as for LLM translation: a sensitive work goes only to a private service allowed to receive it, and a work with an unknown rating or a blocking rule is refused. A track already being transcribed is not queued twice.
+
+Transcription is an Activity workflow. Kikoto decodes the track itself and sends it in parts of at most five minutes of 16 kHz mono audio, each cut at the quietest moment of its last minute so a cut falls between words. Each finished part is kept, and the workflow hands the queue to other waiting work between parts, so a long track does not hold up scans or Fetch. Before every part, Kikoto checks again that the service settings, the content policy, your permissions and the audio file are unchanged. A request interrupted by a restart, or a part the service rejects, stops the transcription; **Retry** in Activity continues after the last finished part and sends the interrupted part again. Cancelling the run stops it.
+
+The finished transcription waits in the tab's list. **Preview** shows its first lines with the same timing check as other lyrics. **Add to lyrics** saves it as a WebVTT file in the language's lyrics folder inside the track's work folder, under the track's own path, such as `lyrics_ja/mp3/Track 01.vtt`, and assigns it to the track. A different file already at that name is kept, and the transcription is saved beside it with a numbered name. **Discard** drops a transcription that is not wanted. If adding to the lyrics does not finish, the result is kept and **Add to lyrics** tries again.
+
 
 ## Editing metadata
 
@@ -214,6 +222,10 @@ A purchase bonus, such as an early purchase bonus (`【早期購入特典】`), 
   differs stops the request before anything is added. It then rescans the work
   and stores the chosen assignments in that language. A remote edition you
   read from is not added to the library.
+- **Manage lyrics** has a **Transcribe** tab for users with library write and
+  workflow permission when a [speech recognition
+  service](settings.md#speech-recognition) is configured. See
+  [Transcribe](#transcribe).
 - **Manage files** on a local work has **Find identical files**. It compares
   the local files of every edition and folder of the work by content, so a
   translated edition's renamed audio is recognized as the original's. A file

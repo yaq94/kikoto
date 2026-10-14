@@ -2,12 +2,12 @@ import { Globe, Laptop, Loader2, Plus, RefreshCw, Save } from "lucide-react";
 import { useId, useState, type FormEvent, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 
+import { SettingsField as Field, SettingsSwitchRow as SwitchRow } from "@/components/settings/SettingsFormControls";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogBody, DialogFooter, DialogHeader } from "@/components/ui/dialog";
 import { Input, otherCredentialFieldProps } from "@/components/ui/input";
 import { segmentedItemClassName, segmentedListClassName } from "@/components/ui/segmented";
-import { Switch } from "@/components/ui/switch";
 import type { LLMProvider, LLMProviderPreset } from "@/lib/api";
 import { cn } from "@/lib/tailwindClassNames";
 
@@ -356,58 +356,5 @@ export function LLMProviderDialog({
         </DialogFooter>
       </form>
     </Dialog>
-  );
-}
-
-/** A labelled control with its hint outside the label, so the label stays the control's exact name. */
-function Field({
-  label,
-  hint,
-  hintId,
-  hintClassName,
-  children,
-}: {
-  label: string;
-  hint?: string;
-  hintId?: string;
-  hintClassName?: string;
-  children: ReactNode;
-}) {
-  return (
-    <div className="grid min-w-0 gap-1.5">
-      <label className="grid min-w-0 gap-1.5 text-sm">
-        <span className="font-medium">{label}</span>
-        {children}
-      </label>
-      {hint && (
-        <p id={hintId} className={cn("text-xs leading-5 text-muted-foreground", hintClassName)}>
-          {hint}
-        </p>
-      )}
-    </div>
-  );
-}
-
-function SwitchRow({
-  title,
-  description,
-  checked,
-  disabled = false,
-  onCheckedChange,
-}: {
-  title: string;
-  description: string;
-  checked: boolean;
-  disabled?: boolean;
-  onCheckedChange: (checked: boolean) => void;
-}) {
-  return (
-    <div className="flex min-w-0 items-center justify-between gap-4">
-      <div className={cn("min-w-0", disabled && "opacity-60")}>
-        <span className="block text-sm font-medium">{title}</span>
-        <span className="mt-0.5 block text-xs leading-5 text-muted-foreground">{description}</span>
-      </div>
-      <Switch checked={checked} disabled={disabled} aria-label={title} onCheckedChange={onCheckedChange} />
-    </div>
   );
 }
