@@ -24,9 +24,9 @@ Metadata sources and file sources are separate.
 Core boundary:
 
 ```text
-work is the unified primary_code entity. Local folders, cache entries, remote
-sources, and source catalogs only describe presence, locations, or metadata
-snapshots for that work.
+A persisted work uses work.id as its internal reference. Product codes resolve
+numbered works; local folders, cache entries, remote sources, and source catalogs
+describe presence, locations, or metadata snapshots for that work.
 ```
 
 - Do not create a second work identity for a source-local id, translation,
@@ -37,9 +37,13 @@ snapshots for that work.
   discovered code as a `work`. Local, tracked, cached, or explicitly requested
   works are the automatic metadata roots. Stop and discuss before broadening a
   provider crawl.
-- DLsite-style `primary_code` is the identity key. Do not redesign around
-  source-local ids or a new identity system; stop and discuss before proposing
-  one.
+- Before changing work identity or source admission, read
+  [the accepted identity decision](docs/adr/0001-work-identity-and-personal-state.md)
+  and [the reference contract](docs/architecture/core-boundaries.md#unified-work-identity).
+  Preserve numeric edition references and compatible numbered lookups. Numberless
+  admission must follow the explicitly authorized source scope and must never
+  invent a product code. Source-local ids, paths and translated titles remain
+  separate from persisted work identity.
 
 Fetch publication directories such as `.kikoto-staging`, `.kikoto-backup`, and
 the reviewable `.kikoto-trash` must remain on the filesystem of the storage

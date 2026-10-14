@@ -51,8 +51,9 @@ func (s *Server) resolveWorkCodeIdentity(ctx context.Context, code string) (reso
 
 var errInvalidWorkReadID = errors.New("invalid work id or code")
 
-// Numeric GETs keep their exact edition semantics. Codes select the canonical
-// identity, allowing summary and directory reads to start in one network round.
+// Numeric references keep their exact edition semantics. Codes select the
+// canonical identity. Summary, directory and personal-state handlers share this
+// read-only resolution; resolving a reference never creates or merges works.
 func (s *Server) workReadID(r *http.Request) (int64, error) {
 	if id, err := parseInt64PathValue(r, "id"); err == nil {
 		return id, nil

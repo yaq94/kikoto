@@ -1,6 +1,10 @@
 # Data Model
 
-Kikoto uses SQLite and a unified work model.
+Kikoto uses SQLite and a unified work model. `work.id` is the persisted internal
+reference used by relationships and personal state. Numbered lookups retain
+`primary_code`, `logical_work`, `work_edition` and `work_code_alias`; the
+[identity boundary](core-boundaries.md#unified-work-identity) distinguishes code
+resolution from an explicit edition reference.
 
 ## Work Metadata
 

@@ -47,9 +47,9 @@ func (s *Server) updateWorkUserState(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	workID, err := parseInt64PathValue(r, "id")
+	workID, err := s.workReadID(r)
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid work id"})
+		writeWorkReadError(w, err)
 		return
 	}
 	var exists int

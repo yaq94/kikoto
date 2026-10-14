@@ -5,6 +5,7 @@
 **Blocked by:** None (can start immediately)
 
 **Status:** ready-for-agent
+**Implementation:** in-progress
 
 **依据:** [正式规格](../spec.md) · [工单总览](../ticket-proposal.md)
 
@@ -33,3 +34,17 @@ H 使用真实 HTTP 路由、会话与迁移 SQLite；R 实际关闭并重启同
 遵守工单总览的[共同完成要求](../ticket-proposal.md#共同完成要求)，复用既有测试入口；不新增测试技术栈或安装授权。
 
 本票验收证据须对应实际产物，相关文档同步并提交、推送 Git。工单发布不代表功能实施或生产授权。
+
+## 实施与证据
+
+- 复用 `work.id`；只扩展个人状态 PATCH 的引用解析，保持数字精确 edition、编号/alias/legacy origin 解析 canonical。没有新增表、字段或迁移，069 预留已交还集成协调。
+- H 红灯：`go test ./internal/httpapi -run '^TestWorkReferencePersonalStateUsesCodeCompatibility$' -count=1`，退出 1；有效数字写入后，编号 PATCH 返回 400 `invalid work id`。首次夹具误用非有效 listening status 已修正，不计作功能红灯。
+- H 绿灯及既有只读解析回归：`go test ./internal/httpapi -run '^(TestWorkReferencePersonalStateUsesCodeCompatibility|TestResolveIsReadOnlyForCanonicalAliasEditionAndLegacySnapshot)$' -count=1`，退出 0。验证编号与别名读写同一对象、数字 edition 保持独立、非法/不存在引用返回 400/404。
+- 旧库、关闭重开与 04 个人评价联测仍待执行，验收清单保持未勾选。
+
+## 07 接入契约
+
+- 已登记对象使用 `work.id`：详情 `GET /api/works/{id}`、目录 `GET /api/works/{id}/media`、个人状态 `PATCH /api/works/{id}/user-state`。编号与别名继续兼容；返回的数字 `id`/`workId` 可继续传给现有数字 API，不增加第二身份。
+- 07 仍须扩展 `work.primary_code`、`logical_work.canonical_code` 与 `work_edition.primary_code` 的无码准入约束及来源定位映射，不能填造 RJ 编号。作品版本、来源索引条目和真实文件路径保持分离。
+- 仍为编号契约的调用方：前端 `app/workDetailNavigation.ts`/`lib/workCode.ts` 的编号导航、`RemoteOnlyWorkDetail` 的编号准入与登记、来源 availability 和远端 tracks 的 code 参数；07 按有限来源链路逐处接入，不全库替换。编号专用 `/resolve` 保留；无码已登记对象直接使用数字详情入口。
+- 个人导入导出的编号格式扩展归 16；共享关联与记录冲突归 13，06 不转移或合并个人记录。

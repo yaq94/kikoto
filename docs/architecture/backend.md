@@ -128,6 +128,14 @@ id selects that exact edition. Both forms apply the same access, Demo
 visibility, and media-selection rules, so a direct link requests summary and
 directory in parallel without a preceding resolve.
 
+`PATCH /api/works/{id}/user-state` accepts the same numeric or code reference.
+It requires `favorites:write`, resolves without registering or merging a work,
+and updates only the authenticated user's state on the selected object. A code
+or alias updates the canonical object; a numeric edition id updates that exact
+edition. Invalid syntax returns 400 and a missing object returns 404. The
+`workId` in the response is the persisted internal reference for subsequent
+calls, independent of the code spelling, source or display language.
+
 Cold recommendation session preparation admits at most 32 active or queued
 requests, coalesces matching tasks, bounds CPU preparation concurrency, and
 serializes short publication writes. Waiting tasks borrow no database connection.
