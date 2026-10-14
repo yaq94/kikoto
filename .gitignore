@@ -37,3 +37,6 @@ frontend/playwright-report/
 .backend-preview*.cid
 .frontend-dev*.pid
 /.smoke/
+
+# Local implementation worktrees
+/.worktrees/

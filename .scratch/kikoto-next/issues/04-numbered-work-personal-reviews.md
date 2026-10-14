@@ -5,6 +5,9 @@
 **Blocked by:** None (can start immediately)
 
 **Status:** ready-for-agent
+**Implementation:** in-progress
+
+仅认领准备；功能验收尚未执行，当前阶段、授权与证据见[执行记录](../execution.md)。
 
 **依据:** [正式规格](../spec.md) · [工单总览](../ticket-proposal.md)
 
