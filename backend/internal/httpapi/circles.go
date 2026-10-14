@@ -37,7 +37,10 @@ type circleSummary struct {
 	SyncReason      string             `json:"syncReason"`
 	SourceSummaries []circleSourceStat `json:"sourceSummaries"`
 	LatestWork      *creatorLatestWork `json:"latestWork"`
+	Cover           *creatorCover      `json:"cover"`
 	lastAttemptAt   *string
+	// coverWork is the user's chosen cover work before its cover is resolved.
+	coverWork *creatorLatestWork
 }
 
 type circleSummaryPage struct {
@@ -346,12 +349,16 @@ type circleUserStatePatch struct {
 	Rating   *int    `json:"rating"`
 	Note     *string `json:"note"`
 	Favorite *bool   `json:"favorite"`
+	// CoverPrimaryCode names the work whose cover the circle shows; an empty
+	// code restores the latest work's cover.
+	CoverPrimaryCode *string `json:"coverPrimaryCode"`
 }
 
 type circleUserStateValues struct {
 	rating   any
 	note     string
 	favorite int
+	cover    string
 }
 
 func (s *Server) updateCircleUserState(w http.ResponseWriter, r *http.Request) {
@@ -373,6 +380,17 @@ func (s *Server) updateCircleUserState(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeCircleLookupError(w, err)
 		return
+	}
+	if payload.CoverPrimaryCode != nil && *payload.CoverPrimaryCode != "" {
+		usable, err := s.circleCoverWorkUsable(r.Context(), partyID, *payload.CoverPrimaryCode)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		if !usable {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": errCreatorCoverUnavailable.Error()})
+			return
+		}
 	}
 	current, err := s.loadCircleUserState(r.Context(), user.ID, partyID)
 	if err != nil {
@@ -400,6 +418,13 @@ func decodeCircleUserStatePatch(r *http.Request) (circleUserStatePatch, error) {
 	if payload.Rating != nil && (*payload.Rating < 0 || *payload.Rating > 5) {
 		return circleUserStatePatch{}, errors.New("rating must be between 0 and 5")
 	}
+	if payload.CoverPrimaryCode != nil {
+		code, err := normalizeCreatorCoverCode(*payload.CoverPrimaryCode)
+		if err != nil {
+			return circleUserStatePatch{}, err
+		}
+		payload.CoverPrimaryCode = &code
+	}
 	return payload, nil
 }
 
@@ -407,10 +432,10 @@ func (s *Server) loadCircleUserState(ctx context.Context, userID, partyID int64)
 	var rating sql.NullInt64
 	values := circleUserStateValues{}
 	err := s.db.QueryRowContext(ctx, `
-		SELECT rating, COALESCE(note, ''), COALESCE(favorite, 0)
+		SELECT rating, COALESCE(note, ''), COALESCE(favorite, 0), cover_primary_code
 		FROM user_party_state
 		WHERE user_id = ? AND party_id = ?
-	`, userID, partyID).Scan(&rating, &values.note, &values.favorite)
+	`, userID, partyID).Scan(&rating, &values.note, &values.favorite, &values.cover)
 	if errors.Is(err, sql.ErrNoRows) {
 		return values, nil
 	}
@@ -439,19 +464,23 @@ func mergeCircleUserState(current circleUserStateValues, patch circleUserStatePa
 			current.favorite = 1
 		}
 	}
+	if patch.CoverPrimaryCode != nil {
+		current.cover = *patch.CoverPrimaryCode
+	}
 	return current
 }
 
 func (s *Server) saveCircleUserState(ctx context.Context, userID, partyID int64, values circleUserStateValues) error {
 	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO user_party_state (user_id, party_id, rating, note, favorite, updated_at)
-		VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+		INSERT INTO user_party_state (user_id, party_id, rating, note, favorite, cover_primary_code, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
 		ON CONFLICT(user_id, party_id) DO UPDATE SET
 			rating = excluded.rating,
 			note = excluded.note,
 			favorite = excluded.favorite,
+			cover_primary_code = excluded.cover_primary_code,
 			updated_at = CURRENT_TIMESTAMP
-	`, userID, partyID, values.rating, values.note, values.favorite)
+	`, userID, partyID, values.rating, values.note, values.favorite, values.cover)
 	return err
 }
 

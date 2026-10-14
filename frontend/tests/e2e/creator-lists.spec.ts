@@ -717,7 +717,11 @@ test("voice detail keeps compact statistics and secondary panels closed on mobil
   // Secondary actions are workflow shortcuts; refresh options live in the workflow's run form.
   await moreActions.click();
   const moreMenu = page.getByRole("menu", { name: "More voice actor actions" });
-  await expect(moreMenu.getByRole("menuitem")).toHaveText(["Follow this voice actor…", "Manage aliases"]);
+  await expect(moreMenu.getByRole("menuitem")).toHaveText([
+    "Change cover…",
+    "Follow this voice actor…",
+    "Manage aliases",
+  ]);
   await page.keyboard.press("Escape");
   await expect(moreMenu).toHaveCount(0);
 
@@ -942,9 +946,72 @@ test("circle detail keeps availability and primary actions compact on mobile", a
   // The Follow shortcut opens the circle follow workflow with this circle prefilled.
   await actions.getByRole("button", { name: "More circle actions" }).click();
   const moreMenu = page.getByRole("menu", { name: "More circle actions" });
-  await expect(moreMenu.getByRole("menuitem")).toHaveText(["Follow this circle…"]);
+  await expect(moreMenu.getByRole("menuitem")).toHaveText(["Change cover…", "Follow this circle…"]);
   await moreMenu.getByRole("menuitem", { name: "Follow this circle…" }).click();
   await expect(page).toHaveURL(/\/workflows\?workflow=circle_follow&circleId=RG09999$/);
+});
+
+test("circle detail shows a chosen work's cover until the latest work is restored", async ({ page }) => {
+  const chosenCoverUrl = "/api/assets/covers/RJ00000003.png";
+  const coverRequests: string[] = [];
+  await mockCreatorDetails(page, {
+    circleWorks: [{ ...circleCatalogWorks[0], coverUrl: chosenCoverUrl }, circleCatalogWorks[1]],
+  });
+  await page.route("**/api/**", async (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname.startsWith("/api/assets/covers/")) {
+      await route.fulfill({
+        contentType: "image/png",
+        body: Buffer.from(
+          "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+          "base64",
+        ),
+      });
+      return;
+    }
+    if (url.pathname === "/api/circles/RG09999/user-state" && route.request().method() === "PATCH") {
+      const { coverPrimaryCode } = route.request().postDataJSON() as { coverPrimaryCode: string };
+      coverRequests.push(coverPrimaryCode);
+      await route.fulfill({
+        json: {
+          ...circle,
+          cover: coverPrimaryCode
+            ? { primaryCode: coverPrimaryCode, coverUrl: chosenCoverUrl, custom: true }
+            : { primaryCode: latestWork.primaryCode, coverUrl: latestWork.coverUrl, custom: false },
+        } satisfies CircleSummary,
+      });
+      return;
+    }
+    await route.fallback();
+  });
+  await page.goto("/circles/RG09999");
+
+  const summary = page.getByRole("region", { name: "Circle summary" });
+  const openCoverDialog = async () => {
+    await summary.getByRole("button", { name: "More circle actions" }).click();
+    await page.getByRole("menuitem", { name: "Change cover…" }).click();
+    return page.getByRole("dialog", { name: "Change cover" });
+  };
+
+  let dialog = await openCoverDialog();
+  const latestChoice = dialog.getByRole("button", { name: /^Latest work/ });
+  const workChoice = dialog.getByRole("button", { name: "Use the cover of RJ00000003 Example Circle Work" });
+  await expect(latestChoice).toHaveAttribute("aria-pressed", "true");
+  await expect(workChoice).toHaveAttribute("aria-pressed", "false");
+  await expect(
+    dialog.getByRole("button", { name: "Use the cover of RJ00000004 Example Catalog-only Work" }),
+  ).toBeDisabled();
+  await workChoice.click();
+  await expect(dialog).toHaveCount(0);
+  await expect(summary.locator('img[src*="RJ00000003.png"]').first()).toBeVisible();
+
+  dialog = await openCoverDialog();
+  await expect(workChoice).toHaveAttribute("aria-pressed", "true");
+  await expect(latestChoice).toHaveAttribute("aria-pressed", "false");
+  await latestChoice.click();
+  await expect(dialog).toHaveCount(0);
+  await expect(summary.locator('img[src*="RJ00000000.png"]').first()).toBeVisible();
+  expect(coverRequests).toEqual(["RJ00000003", ""]);
 });
 
 test("mobile circle detail keeps the work surface visible and moves secondary controls into sheets", async ({

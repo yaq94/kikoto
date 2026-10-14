@@ -14,10 +14,17 @@ Circles represent makers, circles, and related party catalog state.
   `Available`, `Local`, `Remote`, `Missing`, and `Attention`, and the
   pressed chip names the current view. On a phone the search field keeps its
   own row with page size beside it, and the chips scroll sideways below.
-- Shows each circle as a cover tile: the latest known DLsite work's locally
-  cached cover with a `No cover` fallback, the favorite control on the cover,
-  the name, the latest release date, and personal tags. Tiles fill the row on
-  wide layouts and form two columns on a phone.
+- Shows each circle as a cover tile: the circle's cover with a `No cover`
+  fallback, the favorite control on the cover, the name, the latest release
+  date, and personal tags. Tiles fill the row on wide layouts and form two
+  columns on a phone.
+- Uses the latest known DLsite work's locally cached cover as the circle's
+  cover. **Change cover…** in the detail **More** menu lists the circle's
+  works, with a search, and makes the chosen work's cover the circle's cover
+  on its tile and detail summary. **Latest work** in the same dialog restores
+  the cover that follows each new release. The choice belongs to the account
+  that made it, and a chosen work that leaves the circle's catalog gives way
+  to the latest work's cover.
 - Summarizes each circle tile with its sync state, one canonical
   `Available N/total` count, and an availability bar: a solid segment for
   works with a local copy, a lighter segment for works only a remote source
@@ -51,10 +58,11 @@ Circles represent makers, circles, and related party catalog state.
   lack metadata and fills just those. Each action queues a Follow a circle run
   without a filter or tag and returns at once; the button shows
   **Refreshing** until the run settles, and the run is visible in Activity.
-- The **More** menu opens **Follow this circle…**, the Follow a circle preset
-  with this circle filled in, for every other combination of catalog refresh,
-  filter, metadata, tag, and source check. To refresh metadata the circle's
-  works already have, run Metadata sync with the circle scope.
+- The **More** menu holds **Change cover…** and **Follow this circle…**, the
+  Follow a circle preset with this circle filled in, for every other
+  combination of catalog refresh, filter, metadata, tag, and source check. To
+  refresh metadata the circle's works already have, run Metadata sync with the
+  circle scope.
 - Shortens the common detail actions on mobile, keeps icon-only Favorite,
   More, and DLsite controls accessible by name, and places DLsite last.
 - Uses the Library-style works toolbar on wide layouts: the Works/Series switch

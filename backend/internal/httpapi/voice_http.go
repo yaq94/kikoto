@@ -42,7 +42,7 @@ func (s *Server) listVoices(w http.ResponseWriter, r *http.Request) {
 	page, start, end := creatorPageBounds(queryInt(r, "page", 1), pageSize, len(summaries))
 	pageItems := summaries[start:end]
 	for index := range pageItems {
-		s.presentVoiceLatestWorkCover(r.Context(), pageItems[index].LatestWork)
+		s.presentVoiceCover(r.Context(), &pageItems[index])
 	}
 	writeJSON(w, http.StatusOK, voiceSummaryPage{
 		Voices: pageItems, Page: page, PageSize: minInt(pageSize, 100), Total: len(summaries), TagOptions: tagOptions,

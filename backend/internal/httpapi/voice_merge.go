@@ -104,14 +104,15 @@ func mergeVoiceRelations(ctx context.Context, tx *sql.Tx, targetID, sourceID int
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO user_person_state (user_id, person_id, rating, note, favorite, last_viewed_at, created_at, updated_at)
-		SELECT user_id, ?, rating, note, favorite, last_viewed_at, created_at, CURRENT_TIMESTAMP
+		INSERT INTO user_person_state (user_id, person_id, rating, note, favorite, cover_primary_code, last_viewed_at, created_at, updated_at)
+		SELECT user_id, ?, rating, note, favorite, cover_primary_code, last_viewed_at, created_at, CURRENT_TIMESTAMP
 		FROM user_person_state
 		WHERE person_id = ?
 		ON CONFLICT(user_id, person_id) DO UPDATE SET
 			rating = COALESCE(user_person_state.rating, excluded.rating),
 			note = CASE WHEN user_person_state.note = '' THEN excluded.note ELSE user_person_state.note END,
 			favorite = CASE WHEN excluded.favorite = 1 THEN 1 ELSE user_person_state.favorite END,
+			cover_primary_code = CASE WHEN user_person_state.cover_primary_code = '' THEN excluded.cover_primary_code ELSE user_person_state.cover_primary_code END,
 			last_viewed_at = COALESCE(user_person_state.last_viewed_at, excluded.last_viewed_at),
 			updated_at = CURRENT_TIMESTAMP
 	`, targetID, sourceID); err != nil {

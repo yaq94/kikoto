@@ -81,7 +81,7 @@ func (s *Server) listMetadataCircles(w http.ResponseWriter, r *http.Request) {
 		writeError(w, closeErr)
 		return
 	}
-	latest, err := s.loadCircleLatestWorks(r.Context(), ids)
+	latest, _, err := s.loadCircleLatestWorks(r.Context(), ids, noCreatorCoverChoice)
 	if err != nil {
 		writeError(w, err)
 		return

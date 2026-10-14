@@ -164,6 +164,7 @@ const collectionKorean = {
   previousPage: "이전 페이지",
   nextPage: "다음 페이지",
   page: "{{page}}페이지",
+  jumpToPage: "페이지 지정 이동",
   pageOf: "{{totalPages}}페이지 중 {{page}}페이지, {{totalItems}}{{itemLabel}}",
   rangeOf: "{{first}}-{{last}} / {{totalItems}}{{itemLabel}}",
   refreshing: "{{itemLabel}} 새로 고침 중",

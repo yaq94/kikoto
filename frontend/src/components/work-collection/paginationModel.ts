@@ -17,3 +17,11 @@ export function paginationItems(page: number, totalPages: number): PaginationIte
   });
   return items;
 }
+
+/** The page a typed jump lands on, clamped to the existing pages, or null when the text names no page. */
+export function pageJumpTarget(value: string, totalPages: number): number | null {
+  const typed = value.trim();
+  if (!/^\d+$/.test(typed)) return null;
+  const lastPage = Math.max(1, Math.floor(totalPages));
+  return Math.min(lastPage, Math.max(1, Number(typed)));
+}

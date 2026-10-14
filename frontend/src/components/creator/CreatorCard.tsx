@@ -29,14 +29,15 @@ export type CreatorAvailability = {
 };
 
 /**
- * A circle or voice actor as a cover-led tile: the latest work's cover, the
- * name, personal tags, and how much of the catalog can be played.
+ * A circle or voice actor as a cover-led tile: the creator's cover, the name,
+ * personal tags, and how much of the catalog can be played.
  */
 export function CreatorCard({
   name,
   identityLabel,
   aliases,
   showAliases = true,
+  coverUrl,
   latestWork,
   favorite,
   userTags,
@@ -53,6 +54,8 @@ export function CreatorCard({
   identityLabel?: string;
   aliases: string[];
   showAliases?: boolean;
+  /** The chosen work's cover, or the latest work's. */
+  coverUrl: string;
   latestWork: CreatorLatestWork | null;
   favorite: boolean;
   userTags: UserTag[];
@@ -68,7 +71,7 @@ export function CreatorCard({
 }) {
   const { t } = useTranslation();
   const [imageFailed, setImageFailed] = useState(false);
-  useEffect(() => setImageFailed(false), [latestWork?.coverUrl]);
+  useEffect(() => setImageFailed(false), [coverUrl]);
   const visibleAliases = showAliases ? aliases.filter((alias) => alias && alias !== name) : [];
   const latestDate = latestWork?.releaseDate?.slice(0, 10) ?? "";
   const latestLabel = !latestWork
@@ -92,9 +95,9 @@ export function CreatorCard({
         aria-label={t("creator.open", { name })}
         title={t("creator.open", { name })}
       >
-        {latestWork?.coverUrl && !imageFailed ? (
+        {coverUrl && !imageFailed ? (
           <img
-            src={assetURL(latestWork.coverUrl)}
+            src={assetURL(coverUrl)}
             alt=""
             className="h-full w-full object-cover transition-transform duration-300 group-hover/creator:scale-[1.03] motion-reduce:transition-none"
             loading="lazy"
