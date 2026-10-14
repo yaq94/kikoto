@@ -7,6 +7,16 @@
       "reason": "Public OpenList site explicitly requested by the owner for integration planning; this entry only permits the requirements document to cite it."
     },
     {
+      "url": "https://github.com/OpenListTeam/OpenList/blob/main/server/handles/fsread.go",
+      "files": [".scratch/kikoto-next/spec.md"],
+      "reason": "Public upstream OpenList directory API source cited as evidence for the requested integration design; this permits only the specification citation."
+    },
+    {
+      "url": "https://github.com/OpenListTeam/OpenList/blob/main/internal/search/search.go",
+      "files": [".scratch/kikoto-next/spec.md"],
+      "reason": "Public upstream OpenList search source cited to distinguish search-index coverage from full directory traversal; this permits only the specification citation."
+    },
+    {
       "url": "https://tailwindcss.com/docs/compatibility",
       "files": ["docs/architecture/frontend.md"],
       "reason": "Official public Tailwind CSS browser compatibility documentation for the frontend build upgrade."
