@@ -172,6 +172,32 @@ export function RemoteSourceDialog({
 
         {showDetails && (
           <div className="space-y-4">
+            {!legacyNumber178 && (
+              <label className="grid gap-1.5 text-sm">
+                <span>{t("maintenance.library.sourceType")}</span>
+                <NativeSelect
+                  value={source.sourceType}
+                  disabled={readOnly}
+                  onChange={(event) => patch({ sourceType: event.target.value })}
+                >
+                  <option value="kikoeru_compatible">{t("openlist.kikoeruType")}</option>
+                  <option value="openlist">{t("openlist.openlistType")}</option>
+                </NativeSelect>
+              </label>
+            )}
+            {source.sourceType === "openlist" && (
+              <label className="grid gap-1.5 text-sm">
+                <span>{t("openlist.roots")}</span>
+                <Textarea
+                  value={(source.config.openListRoots ?? []).join("\n")}
+                  readOnly={readOnly}
+                  onChange={(event) =>
+                    patch({ config: { ...source.config, openListRoots: event.target.value.split("\n") } })
+                  }
+                />
+                <span className="text-xs text-muted-foreground">{t("openlist.rootsHint")}</span>
+              </label>
+            )}
             <label className="grid gap-1.5 text-sm" htmlFor="remote-source-name">
               <span className="font-medium">{t("maintenance.library.name")}</span>
               <Input

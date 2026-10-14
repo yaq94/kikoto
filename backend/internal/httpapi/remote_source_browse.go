@@ -40,6 +40,7 @@ const (
 )
 
 type remoteWorkSummary struct {
+	CatalogEntryID  int64             `json:"catalogEntryId,omitempty"`
 	RemoteID        string            `json:"remoteId"`
 	PrimaryCode     string            `json:"primaryCode"`
 	RemoteCode      string            `json:"remoteCode"`
@@ -89,6 +90,10 @@ func (s *Server) listRemoteSourceWorks(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeError(w, err)
+		return
+	}
+	if source.SourceType == sourceTypeOpenList {
+		s.listOpenListWorks(w, r, source)
 		return
 	}
 	if !isKikoeruSourceType(source.SourceType) {

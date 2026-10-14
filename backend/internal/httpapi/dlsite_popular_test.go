@@ -29,7 +29,7 @@ type fakeDLsiteFamilySyncer struct {
 }
 
 func (syncer fakeDLsiteFamilySyncer) SyncFamily(ctx context.Context, code string) (metasync.DLsiteFamilySyncResult, error) {
-	if _, err := syncer.db.ExecContext(ctx, "INSERT INTO work (primary_code, work_type, title) VALUES (?, 'audio', ?) ON CONFLICT(primary_code) DO NOTHING", code, code+" title"); err != nil {
+	if _, err := syncer.db.ExecContext(ctx, "INSERT INTO work (primary_code, work_type, title) VALUES (?, 'audio', ?) ON CONFLICT(primary_code) WHERE primary_code <> '' DO NOTHING", code, code+" title"); err != nil {
 		return metasync.DLsiteFamilySyncResult{}, err
 	}
 	return metasync.DLsiteFamilySyncResult{RequestedCode: code, CanonicalCode: code, Codes: []string{code}, SyncedCodes: []string{code}, Failures: []string{}}, nil

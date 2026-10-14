@@ -1,3 +1,4 @@
+import { OpenListScan } from "@/features/sources/OpenListScan";
 import type { TFunction } from "i18next";
 import { CloudOff, ExternalLink, GitFork, HardDriveDownload, RefreshCw } from "lucide-react";
 import { useEffect } from "react";
@@ -307,6 +308,7 @@ export function RemoteSourcePanel({
 
   return (
     <section className="space-y-3 pb-4 lg:pb-8">
+      {source.sourceType === "openlist" && <OpenListScan sourceId={source.id} onDone={onRetry} />}
       {!model.remoteError && !isInitialLoading && !mobileNavigationLayout && remoteTopPagination}
       {selectionMode && (
         <RemoteSourceSelectionBar

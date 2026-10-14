@@ -82,16 +82,16 @@ export function RemoteWorkCard({
       }
       onOpen={onOpen}
       onTagOpen={onTagOpen}
-      canOpen={Boolean(work.primaryCode)}
+      canOpen={Boolean(work.primaryCode || work.catalogEntryId)}
       footer={
         <WorkCardFooter
           className={layout === "row" ? "h-10 border-border/40" : undefined}
-          left={<WorkCardDLsiteAction href={dlsiteWorkURL(work.primaryCode)} />}
+          left={work.primaryCode ? <WorkCardDLsiteAction href={dlsiteWorkURL(work.primaryCode)} /> : null}
           right={
             <>
               <WorkCardActionButton
                 title={i18n.t("detailActions.fork")}
-                disabled={isBusy || !work.primaryCode}
+                disabled={isBusy || !work.primaryCode || Boolean(work.catalogEntryId)}
                 onClick={(event) => {
                   event.stopPropagation();
                   onFork();
@@ -101,7 +101,7 @@ export function RemoteWorkCard({
               </WorkCardActionButton>
               <WorkCardActionButton
                 title={i18n.t("detailActions.fetch")}
-                disabled={isBusy || !work.primaryCode}
+                disabled={isBusy || !work.primaryCode || Boolean(work.catalogEntryId)}
                 onClick={(event) => {
                   event.stopPropagation();
                   onSave();
@@ -112,13 +112,13 @@ export function RemoteWorkCard({
               <WorkCardListButton
                 workId={work.workId}
                 active={work.favorite}
-                disabled={isBusy || !work.primaryCode}
+                disabled={isBusy || !work.primaryCode || Boolean(work.catalogEntryId)}
                 ensureWorkId={onEnsureWork}
                 onSaved={(favorite, workId) => onListSaved(workId, favorite)}
               />
               <WorkCardQuickMarkButton
                 value={work.listeningStatus}
-                disabled={isBusy || !work.primaryCode}
+                disabled={isBusy || !work.primaryCode || Boolean(work.catalogEntryId)}
                 canOpen={canMark}
                 onChange={onMark}
               />
@@ -138,7 +138,7 @@ function remoteWorkCardView(
 ): WorkCardViewModel {
   const sourceLabel = source.displayName || source.code || i18n.t("workCard.remoteSource");
   return {
-    code: work.primaryCode || work.remoteId,
+    code: work.primaryCode || (work.catalogEntryId ? i18n.t("openlist.numberless") : work.remoteId),
     title: work.title,
     circle: work.circle || sourceLabel || i18n.t("workCard.unknownCircle"),
     ageRating: work.ageRating,

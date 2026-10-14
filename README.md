@@ -147,7 +147,9 @@ apps connect to your own Kikoto server; see
 
 Metadata sources and file sources are kept separate. Metadata describes a
 work; file sources only say where its audio can be found. Both attach to the
-same work, identified by its product code.
+same work, identified internally by a stable work id. Product codes resolve
+numbered works; explicitly configured OpenList audio directories also support
+works without a product code. See [OpenList setup](docs/development/openlist.md).
 
 ```mermaid
 flowchart LR
@@ -161,7 +163,7 @@ flowchart LR
     RS["Remote sources<br/>Kikoeru-compatible"]
   end
 
-  MD -- describes --> W(("One work<br/>per product code"))
+  MD -- describes --> W(("One work<br/>stable internal id"))
   LF -- Local --> W
   CA -- Cached --> W
   RS -- "Tracked / Remote" --> W

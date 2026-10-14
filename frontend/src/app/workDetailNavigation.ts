@@ -13,6 +13,7 @@ export type WorkDetailSourceIntent = {
 };
 
 export type WorkDetailIntent =
+  | { kind: "catalog"; catalogEntryId: number }
   | {
       kind: "known";
       canonicalCode: string;
@@ -33,6 +34,8 @@ export type WorkDetailNavigationOptions = {
 };
 
 export function workDetailRoute(intent: WorkDetailIntent) {
+  if (intent.kind === "catalog")
+    return validSourceID(intent.catalogEntryId) ? `/catalog/${intent.catalogEntryId}` : null;
   if (intent.kind === "remote-only") {
     const remoteCode = intent.remoteCode.trim();
     if (!remoteCode || !validSourceID(intent.sourceId)) return null;
@@ -42,6 +45,7 @@ export function workDetailRoute(intent: WorkDetailIntent) {
 
   const canonicalCode = intent.canonicalCode.trim();
   if (!canonicalCode) return null;
+  if (/^[1-9][0-9]*$/.test(canonicalCode)) return `/work/${canonicalCode}`;
   const params = new URLSearchParams();
   if (intent.source) {
     const remoteCode = intent.source.remoteCode.trim();
@@ -80,6 +84,8 @@ export function openWorkDetail(intent: WorkDetailIntent, options: WorkDetailNavi
  * chunk loads.
  */
 export function workDetailCodeFromLocation(path: string, search: string) {
+  const internal = path.match(/^\/(catalog|work)\/([1-9][0-9]*)\/?$/);
+  if (internal) return internal[1] === "catalog" ? `catalog:${internal[2]}` : internal[2];
   const standardMatch = path.match(WORK_CODE_PATH_PATTERN);
   if (standardMatch) return standardMatch[1].toUpperCase();
   const sourceID = Number(new URLSearchParams(search).get("source"));

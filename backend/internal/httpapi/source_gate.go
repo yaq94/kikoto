@@ -61,13 +61,15 @@ const (
 	sourceRequestCrawl
 	sourceRequestDownload
 	sourceRequestPlayback
+	sourceRequestOpenList
 )
 
 type sourceGateTransport struct {
-	server *Server
-	base   http.RoundTripper
-	policy *outbound.Policy
-	class  sourceRequestClass
+	server          *Server
+	base            http.RoundTripper
+	policy          *outbound.Policy
+	class           sourceRequestClass
+	minimumInterval time.Duration
 }
 
 type sourceGateBody struct {
@@ -118,6 +120,8 @@ func (g *sourceRequestGate) lane(key string, class sourceRequestClass) *sourceRe
 		laneKey += ":crawl"
 	case sourceRequestDownload:
 		laneKey += ":download"
+	case sourceRequestOpenList:
+		laneKey += ":openlist"
 	case sourceRequestPlayback:
 		laneKey += ":playback"
 	default:
@@ -181,7 +185,7 @@ func (t *sourceGateTransport) RoundTrip(request *http.Request) (*http.Response, 
 	if err != nil {
 		return nil, err
 	}
-	delay := time.Duration(0)
+	delay := t.minimumInterval
 	if t.class == sourceRequestCrawl || t.class == sourceRequestDownload {
 		delay = t.server.remoteRequestDelayDuration(request.Context())
 	}
@@ -267,6 +271,12 @@ func (s *Server) sourceClient(source remoteSourceForUse, timeout time.Duration, 
 		return &http.Client{Transport: sourcePolicyErrorTransport{err: err}, Timeout: timeout}
 	}
 	transport := &sourceGateTransport{server: s, base: base, policy: policy, class: class}
+	if class == sourceRequestOpenList {
+		transport.minimumInterval = time.Second
+		if n := source.Config.OpenListIntervalMS; n != nil && *n >= 100 && *n <= 60000 {
+			transport.minimumInterval = time.Duration(*n) * time.Millisecond
+		}
+	}
 	return policy.Client(transport, timeout)
 }
 
