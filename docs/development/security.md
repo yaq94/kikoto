@@ -170,6 +170,38 @@ assigns tracks. The preview never changes a file.
 - Errors expose fixed messages only. Upstream URLs, local paths, and detailed
   failures stay in protected logs.
 
+### Speech transcription
+
+Speech recognition requests go only to the administrator-configured service
+origin, with its private-address exception, through the shared outbound
+transport and the `other` proxy route.
+
+- A same-machine local deployment derives its host from the server's host
+  gateway and stores only a port; an address in the request body is
+  discarded. Other origins must be HTTP(S) without credentials, a path, or a
+  query.
+- Every redirect is refused, and the key is sent only as a bearer token to the
+  configured origin.
+- Model discovery has a 20-second bound. A chunk request has a 30-minute
+  bound, which also bounds the wait for response headers, because a service
+  answers only once the chunk is transcribed. Responses are buffered to at
+  most 4 MiB; a declared or streamed larger body is refused.
+- Uploads are bounded by construction: at most five minutes of 16 kHz mono
+  16-bit PCM per request, decoded by ffmpeg from a local, available audio
+  location with a 2-minute bound and a byte limit on its output. Tracks longer
+  than 12 hours are refused.
+- Audio is sent only for a work the LLM content policy allows for that
+  service: sensitive works require a private service with `allowSensitive`,
+  and unknown or blocked works are refused. The policy, the service
+  configuration, the requester's permissions and the audio file version are
+  rechecked before every chunk.
+- Publication stages the file in `.kikoto-staging` on the work folder's
+  storage pool and renames it into the language's lyrics folder through plain
+  directories. It never replaces a file: a different file under the track's
+  name moves the transcription to a numbered name.
+- Activity and API errors expose fixed failure codes only; upstream errors,
+  endpoints and paths stay in protected logs.
+
 ### Folder edit
 
 `POST /api/works/{id}/folder-edit/plan` and `POST /api/works/{id}/folder-edit`

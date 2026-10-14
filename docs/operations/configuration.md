@@ -67,6 +67,11 @@ Administrators manage the instance from the administration tabs in Settings:
   Ollama instance accepts an administrator-entered origin.
   [Settings → LLM](../user/en/settings.md#llm) defines credential clearing,
   model discovery, declared content boundaries and structured safety rules.
+- **Speech recognition**: OpenAI-compatible transcription services. A local
+  deployment on the server's machine is reached through the server's host
+  gateway on its configured port; another machine or a custom service takes
+  an origin. See [Settings → Speech
+  recognition](../user/en/settings.md#speech-recognition).
 - **Cleanup**: cache cleanup and database backups.
 - **Users**: accounts and production instance access.
 

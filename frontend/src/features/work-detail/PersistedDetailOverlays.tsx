@@ -183,6 +183,7 @@ export function PersistedLyricsManagerOverlay({
       work={work}
       readOnly={demoMode || !hasPermission("library:write")}
       canDownload={!demoMode && hasPermission("downloads:manage")}
+      canTranscribe={!demoMode && hasPermission("library:write") && hasPermission("workflows:run")}
       request={request}
       onClose={onClose}
       onSaved={onSaved}

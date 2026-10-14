@@ -188,6 +188,12 @@ The tab lists the configured providers. **Add provider** opens a dialog to choos
 
 Select the declared data boundary and explicitly allow sensitive content for a private endpoint. Unknown and blocked content are refused. Sensitive tags use the shared tag selector and stable IDs; keywords use field checkboxes and sensitive or blocked actions. Blocking rules apply to every rating; the all-ages option controls additional sensitive keyword checks. Invalid or excessive rules reject the whole save. This policy does not guarantee provider compliance or account safety. Remote lyrics translation is off by default. LLM is unavailable in Demo. See [translation, review and background workflows](work-detail.md#llm-translation).
 
+### Speech recognition
+
+The tab lists the speech recognition services that can transcribe local tracks into timed lyrics. **Add service** chooses OpenAI, a **Local deployment**, or a **Custom OpenAI-compatible** service; every one is reached through the OpenAI-compatible transcription endpoint, and Kikoto adds its path automatically. A local deployment on **This server's machine** is reached through the server's host gateway, the same address the Local machine proxy uses, so only its port is entered and a container never mistakes its own loopback address for the host. **Another machine** and the custom service take an origin; OpenAI uses its own origin when the field is blank. The API key is optional for a service that needs none. Changing the location, port or origin clears the stored key and discovered models.
+
+The model must return segment timestamps, such as `whisper-1` on OpenAI; enter a model ID or choose one from **Fetch models**, which saves the connection first. A service is offered for transcription while its switch is on and it has a model. The data boundary and **Allow sensitive content** work as for LLM providers, and the [content safety policy](#llm) decides whose audio may be sent: sensitive works go only to a private service allowed to receive them, and unknown and blocked works go nowhere. Speech recognition is unavailable in Demo. See [Transcribe](work-detail.md#transcribe) for starting and reviewing transcriptions.
+
 
 ### Cleanup
 

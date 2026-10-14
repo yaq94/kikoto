@@ -9,6 +9,7 @@ import { SettingsNumberInput, SettingsRow, SettingsSection } from "@/components/
 import { IconRail, type IconRailItem } from "@/components/ui/icon-rail";
 import { useRailOrientation } from "@/components/ui/rail-labels";
 import {
+  AudioLines,
   Download,
   Eraser,
   FastForward,
@@ -57,11 +58,21 @@ const emptyPasswordDraft: PasswordChangeDraft = {
 };
 
 type SettingsTab =
-  "account" | "playback" | "recommendation" | "tags" | "library" | "cache" | "proxy" | "llm" | "cleanup" | "users";
+  | "account"
+  | "playback"
+  | "recommendation"
+  | "tags"
+  | "library"
+  | "cache"
+  | "proxy"
+  | "llm"
+  | "asr"
+  | "cleanup"
+  | "users";
 type SettingsSectionTarget = "data" | "time-zone";
 type SettingsLocation = { tab: SettingsTab; section?: SettingsSectionTarget };
 
-const adminSettingsTabs: SettingsTab[] = ["library", "cache", "proxy", "llm", "cleanup", "users"];
+const adminSettingsTabs: SettingsTab[] = ["library", "cache", "proxy", "llm", "asr", "cleanup", "users"];
 // Personal tags need library access; the other personal tabs do not.
 const libraryReaderTabs: SettingsTab[] = ["tags"];
 const allSettingsTabs: SettingsTab[] = ["account", "playback", "recommendation", "tags", ...adminSettingsTabs];
@@ -85,6 +96,7 @@ const settingsTabs: Array<{ id: SettingsTab; labelKey: string; icon: LucideIcon 
   { id: "cache", labelKey: "maintenance.tabs.cache", icon: Download },
   { id: "proxy", labelKey: "maintenance.tabs.proxy", icon: Network },
   { id: "llm", labelKey: "maintenance.tabs.llm", icon: Bot },
+  { id: "asr", labelKey: "maintenance.tabs.asr", icon: AudioLines },
   { id: "cleanup", labelKey: "cleanup.tab", icon: Eraser },
   { id: "users", labelKey: "maintenance.tabs.users", icon: Shield },
 ];
@@ -588,7 +600,7 @@ export function SettingsPage({
                 isSuperAdmin={user.role === "super_admin"}
                 canManageAccessPolicy={canManageAccessPolicy}
                 readOnly={readOnly}
-                activeTab={activeTab as "library" | "cache" | "proxy" | "users"}
+                activeTab={activeTab as "library" | "cache" | "proxy" | "llm" | "asr" | "users"}
                 onAccessPolicyUpdated={onAccessPolicyUpdated}
               />
             </div>
