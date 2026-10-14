@@ -214,6 +214,7 @@ func (s *Server) executeClaimedWorkflowJob(ctx context.Context, job workflowJobR
 		"local_media_delete":          s.executeLocalMediaDeleteJob,
 		"local_location_cleanup":      s.executeLocalLocationCleanupJob,
 		"media_location_cleanup":      s.executeMediaLocationCleanupJob,
+		workFolderEditWorkerType:      s.executeWorkFolderEditJob,
 		"cache_orphan_cleanup":        s.executeCacheOrphanCleanupJob,
 		"unlinked_work_source_check":  s.executeUnlinkedWorkSourceCheckJob,
 		"custom_workflow":             s.executeWorkflowGraphJob,

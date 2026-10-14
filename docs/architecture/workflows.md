@@ -70,6 +70,12 @@ Media, cleanup, and database:
 - `media_location_cleanup`: delete selected cache or local files and mark their
   locations unavailable. `media_cleanup_forget_work` also removes the then
   unlinked work family and its personal state.
+- `work_folder_edit`: add files from the family's other local folders and
+  remote editions to one local folder of a work, and remove the files taken
+  out of it. It collects and size-checks every added file in `.kikoto-staging`
+  on the folder's pool, removes the files taken out, moves each collected file
+  into the folder, and indexes the folder. A retried or resumed run continues
+  from its checkpoint.
 - `local_media_delete`: delete one local media file and mark only that location
   unavailable. `local_symlink_review` notifies users when such a request
   targets a symlink.
@@ -418,7 +424,8 @@ the backend.
   `remote:fetch` and `metadata:sync`, media cache jobs require `remote:fetch`,
   a popular collection requires `tags:write` and its
   action's permission, cleanup and local deletion jobs require
-  `downloads:manage`, metadata jobs require `metadata:sync`, and graph jobs
+  `downloads:manage`, a folder edit requires `downloads:manage` plus
+  `remote:fetch` when it downloads, metadata jobs require `metadata:sync`, and graph jobs
   require their graph's permissions.
 - Local files: candidate decisions, local cleanup, and archived-root review
   for candidates that remove, archive, or mark unavailable local files

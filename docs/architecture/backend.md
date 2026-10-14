@@ -365,6 +365,19 @@ much is pending, and repeating the request continues from the stored hashes. A
 link, an unreadable file, and a file that changes while it is read are left
 out. The request never changes a library file.
 
+`GET /api/works/{id}/folder-edit/sources`,
+`POST /api/works/{id}/folder-edit/plan`, and `POST /api/works/{id}/folder-edit`
+edit one active local folder of a work. Sources lists the family's editions
+with their local folders and stored source availability. A plan names the
+files to add, from another active local folder of the family or from a remote
+edition of the family, and the folder's local file locations to remove. It
+resolves each addition's target as a Fetch plan does, with the same decisions,
+and never changes a file. Apply rejects a plan that has conflicts or changes
+nothing, and queues one `work_folder_edit` run; a folder has one active run,
+and a repeated request id returns the run it queued. Its permissions,
+destination checks, and limits are in
+[Folder edit](../development/security.md#folder-edit).
+
 Remote queries requiring local filtering retain only upstream pages for up to
 30 seconds, with at most 32 pages and 16 MiB of serialized data per server.
 Pages larger than 2 MiB bypass the cache. Keys distinguish the viewer, complete

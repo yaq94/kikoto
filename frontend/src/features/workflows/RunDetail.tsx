@@ -201,6 +201,7 @@ function RunActions({ run, onRunAction }: { run: WorkflowRun; onRunAction: () =>
       "media_cache_cleanup",
       "media_location_cleanup",
       "media_cleanup_forget_work",
+      "work_folder_edit",
       "local_media_delete",
       "local_location_cleanup",
       "remote_popular_collection",

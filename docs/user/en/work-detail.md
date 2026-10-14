@@ -224,6 +224,21 @@ A purchase bonus, such as an early purchase bonus (`【早期購入特典】`), 
   only resemble each other, such as the same track encoded again, are not
   identical and are not marked. Nothing is deleted until you review the
   deletion.
+- **Manage files** on a local work has **Edit files** for users who manage
+  local files. It edits the listed folder in three columns. **Sources** lists
+  **This folder**, every other local folder of the work's editions, and every
+  edition a configured remote source offers. **Select** shows the files of the
+  chosen place: clearing a file of this folder removes it, and selecting a
+  file anywhere else adds it. **Final folder** shows the folder as it will be
+  and marks each file as kept, removed, copied, downloaded, replaced, or
+  already there. Files from another local folder are copied, and that folder
+  is left unchanged. Files from a remote edition are downloaded, which also
+  needs permission to fetch, and the edition is not added to the library. A
+  file that would land on a different file of the same name is a conflict:
+  keep the file in the folder, replace it, keep both, or rename the incoming
+  file. **Apply changes** asks for both deletion confirmations when files are
+  removed, then runs as one Activity workflow that collects every added file
+  before it removes or adds anything. The directory reloads when it finishes.
 - A work whose code a scan finds in several local folders keeps all of them.
   The directory then shows one folder per copy, **Manage files** lists one
   folder at a time with a **Folder** choice, and the work can be forgotten
@@ -270,6 +285,9 @@ A purchase bonus, such as an early purchase bonus (`【早期購入特典】`), 
   an existing queued or running Fetch for the same canonical work.
 - Opens Login before any Fetch preparation request when the current visitor is
   anonymous.
+- **Fetch** on a remote source of a work that has a local folder opens
+  **Edit files** on that source's edition, for users who may manage local
+  files and fetch. Otherwise it opens the Fetch dialog.
 - Open source-specific Track, Fork, Fetch, Origin, cache, refresh, and file
   maintenance commands from the selected source's Hero Source menu.
 - Track the selected remote source, persist its browsable tree, and open the

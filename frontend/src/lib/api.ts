@@ -8,6 +8,7 @@ import { remoteSourceApi } from "@/lib/remoteSourceApi";
 import { workflowApi } from "@/lib/workflowApi";
 import { settingsApi } from "@/lib/settingsApi";
 import { llmApi } from "@/lib/llmApi";
+import { workFolderEditApi } from "@/lib/workFolderEditApi";
 
 export type { CatalogSyncState } from "@/lib/catalogSyncState";
 export { API_BASE, ApiError, apiTransport, assetURL } from "@/lib/apiTransport";
@@ -22,6 +23,7 @@ export type * from "@/lib/remoteSourceApi";
 export type * from "@/lib/workflowApi";
 export type * from "@/lib/settingsApi";
 export type * from "@/lib/llmApi";
+export type * from "@/lib/workFolderEditApi";
 
 /**
  * Every domain API behind one object. Each domain module owns its requests and
@@ -38,4 +40,5 @@ export const api = {
   ...workflowApi,
   ...settingsApi,
   ...llmApi,
+  ...workFolderEditApi,
 };

@@ -1,0 +1,386 @@
+import type {
+  MediaItem,
+  RemoteFetchFileDecision,
+  RemoteTrack,
+  WorkFolderEditAddition,
+  WorkFolderEditItem,
+  WorkFolderEditPlan,
+  WorkFolderEditRequest,
+  WorkFolderEditSources,
+} from "../../../lib/api";
+import { buildRemoteTree, flattenTreeFiles } from "../media/mediaTreeModel";
+
+/** The resource that is the edited folder itself. */
+export const CURRENT_FOLDER_RESOURCE = "current";
+
+export type FolderEditTarget = {
+  workId: number;
+  folderId: number;
+  rootPath: string;
+};
+
+/**
+ * A place files can come from. The edited folder is the `current` resource:
+ * its selected files stay, and the files cleared there are removed.
+ */
+export type FolderEditResource = {
+  id: string;
+  kind: "current" | "local" | "remote";
+  editionCode: string;
+  language: string;
+  origin: boolean;
+  /** Local resources: the folder and the edition work that owns it. */
+  folderId: number;
+  workId: number;
+  rootPath: string;
+  /** Remote resources: the configured source that offers the edition. */
+  sourceId: number;
+  sourceName: string;
+};
+
+export type FolderEditFile = {
+  /** The path inside the resource, which is also where the file lands in the edited folder. */
+  path: string;
+  name: string;
+  kind: string;
+  sizeBytes: number | null;
+  /** The local file location, for files of the edited folder. */
+  locationId: number | null;
+};
+
+export type FolderEditSelection = Readonly<Record<string, ReadonlySet<string>>>;
+
+export type FolderEditTreeNode<T> = {
+  name: string;
+  path: string;
+  children: Map<string, FolderEditTreeNode<T>>;
+  files: T[];
+};
+
+export type FolderEditResultState =
+  "keep" | "remove" | "replaced" | "same" | "add_local" | "add_remote" | "conflict" | "excluded";
+
+/** One file of the folder as it will be after the edit, or one that leaves it. */
+export type FolderEditResultEntry = {
+  key: string;
+  path: string;
+  name: string;
+  kind: string;
+  sizeBytes: number | null;
+  state: FolderEditResultState;
+  /** The planned addition behind an added, conflicting, or excluded entry. */
+  item: WorkFolderEditItem | null;
+};
+
+function normalizePath(path: string) {
+  return path.replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
+}
+
+function localResourceId(folderId: number) {
+  return `local:${folderId}`;
+}
+
+function remoteResourceId(sourceId: number, editionCode: string) {
+  return `remote:${sourceId}:${editionCode.toUpperCase()}`;
+}
+
+/**
+ * Lists the edited folder first, then every other active local folder of the
+ * family, then every edition a configured source reports as available.
+ */
+export function folderEditResources(sources: WorkFolderEditSources, target: FolderEditTarget): FolderEditResource[] {
+  const base = { folderId: 0, workId: 0, rootPath: "", sourceId: 0, sourceName: "" };
+  const targetEdition = sources.editions.find((edition) => edition.workId === target.workId);
+  const resources: FolderEditResource[] = [
+    {
+      ...base,
+      id: CURRENT_FOLDER_RESOURCE,
+      kind: "current",
+      editionCode: targetEdition?.primaryCode ?? sources.primaryCode,
+      language: targetEdition?.metadataLanguage || targetEdition?.editionLabel || "",
+      origin: targetEdition?.origin ?? false,
+      folderId: target.folderId,
+      workId: target.workId,
+      rootPath: normalizePath(target.rootPath),
+    },
+  ];
+  for (const edition of sources.editions) {
+    for (const root of edition.localRoots ?? []) {
+      if (root.state !== "active" || root.id === target.folderId) continue;
+      resources.push({
+        ...base,
+        id: localResourceId(root.id),
+        kind: "local",
+        editionCode: edition.primaryCode,
+        language: edition.metadataLanguage || edition.editionLabel,
+        origin: edition.origin,
+        folderId: root.id,
+        workId: edition.workId,
+        rootPath: normalizePath(root.rootPath),
+      });
+    }
+  }
+  for (const edition of sources.editions) {
+    for (const source of edition.sources ?? []) {
+      if (source.status !== "available") continue;
+      resources.push({
+        ...base,
+        id: remoteResourceId(source.sourceId, edition.primaryCode),
+        kind: "remote",
+        editionCode: edition.primaryCode,
+        language: edition.metadataLanguage || edition.editionLabel,
+        origin: edition.origin,
+        sourceId: source.sourceId,
+        sourceName: source.displayName,
+      });
+    }
+  }
+  return resources;
+}
+
+/** The resource a Fetch from a remote source opens on, when the source offers it. */
+export function folderEditRemoteResource(resources: FolderEditResource[], sourceId: number, editionCode: string) {
+  const exact = resources.find((resource) => resource.id === remoteResourceId(sourceId, editionCode));
+  return exact ?? resources.find((resource) => resource.kind === "remote" && resource.sourceId === sourceId) ?? null;
+}
+
+/** The available local files of a work that lie inside one of its folders. */
+export function localFolderFiles(items: MediaItem[], rootPath: string): FolderEditFile[] {
+  const prefix = `${normalizePath(rootPath)}/`;
+  const files: FolderEditFile[] = [];
+  const seen = new Set<string>();
+  for (const item of items) {
+    for (const location of item.locations) {
+      if (location.locationType !== "local" || location.availability !== "available") continue;
+      const full = normalizePath(location.path);
+      if (!full.startsWith(prefix)) continue;
+      const path = full.slice(prefix.length);
+      if (!path || seen.has(path)) continue;
+      seen.add(path);
+      files.push({
+        path,
+        name: path.split("/").pop() ?? path,
+        kind: item.kind,
+        sizeBytes: location.sizeBytes,
+        locationId: location.id,
+      });
+    }
+  }
+  return files;
+}
+
+/** The downloadable files of a remote edition, by their path in its tree. */
+export function remoteEditionFiles(tracks: RemoteTrack[]): FolderEditFile[] {
+  const seen = new Set<string>();
+  const files: FolderEditFile[] = [];
+  for (const file of flattenTreeFiles(buildRemoteTree(tracks))) {
+    if (!(file.downloadUrl || file.streamUrl) || seen.has(file.sourcePath)) continue;
+    seen.add(file.sourcePath);
+    files.push({
+      path: file.sourcePath,
+      name: file.title,
+      kind: file.kind,
+      sizeBytes: file.sizeBytes,
+      locationId: null,
+    });
+  }
+  return files;
+}
+
+export function buildFolderEditTree<T extends { path: string }>(files: readonly T[]): FolderEditTreeNode<T> {
+  const root: FolderEditTreeNode<T> = { name: "", path: "", children: new Map(), files: [] };
+  for (const file of files) {
+    const parts = normalizePath(file.path).split("/").filter(Boolean);
+    let cursor = root;
+    for (const folder of parts.slice(0, -1)) {
+      let child = cursor.children.get(folder);
+      if (!child) {
+        child = {
+          name: folder,
+          path: cursor.path ? `${cursor.path}/${folder}` : folder,
+          children: new Map(),
+          files: [],
+        };
+        cursor.children.set(folder, child);
+      }
+      cursor = child;
+    }
+    cursor.files.push(file);
+  }
+  return root;
+}
+
+export function folderEditTreeFiles<T>(node: FolderEditTreeNode<T>): T[] {
+  return [...node.files, ...Array.from(node.children.values()).flatMap(folderEditTreeFiles)];
+}
+
+export function withFolderEditPaths(selected: ReadonlySet<string>, paths: readonly string[], included: boolean) {
+  const next = new Set(selected);
+  for (const path of paths) {
+    if (included) next.add(path);
+    else next.delete(path);
+  }
+  return next;
+}
+
+export function folderEditSelectedBytes(files: readonly FolderEditFile[], selected: ReadonlySet<string>) {
+  return files.reduce((sum, file) => (selected.has(file.path) ? sum + (file.sizeBytes ?? 0) : sum), 0);
+}
+
+/** The extensions present among files, most common first. */
+export function folderEditExtensions(files: readonly FolderEditFile[]) {
+  const counts = new Map<string, string[]>();
+  for (const file of files) {
+    const dot = file.name.lastIndexOf(".");
+    if (dot <= 0 || dot === file.name.length - 1) continue;
+    const extension = file.name.slice(dot + 1).toLowerCase();
+    counts.set(extension, [...(counts.get(extension) ?? []), file.path]);
+  }
+  return Array.from(counts, ([extension, paths]) => ({ extension, paths })).sort(
+    (left, right) => right.paths.length - left.paths.length || left.extension.localeCompare(right.extension),
+  );
+}
+
+/** How many files of a resource the edit changes: removed for the edited folder, added for any other. */
+export function folderEditResourceChanges(
+  resource: FolderEditResource,
+  files: readonly FolderEditFile[] | undefined,
+  selected: ReadonlySet<string> | undefined,
+) {
+  if (!files) return 0;
+  const count = files.filter((file) => selected?.has(file.path)).length;
+  return resource.kind === "current" ? files.length - count : count;
+}
+
+/**
+ * Turns the selection into the edit: every selected file of another resource
+ * is added, and every cleared file of the edited folder is removed.
+ */
+export function folderEditRequest({
+  target,
+  resources,
+  files,
+  selection,
+  decisions,
+}: {
+  target: FolderEditTarget;
+  resources: readonly FolderEditResource[];
+  files: Readonly<Record<string, readonly FolderEditFile[] | undefined>>;
+  selection: FolderEditSelection;
+  decisions: Readonly<Record<string, RemoteFetchFileDecision>>;
+}): WorkFolderEditRequest {
+  const additions: WorkFolderEditAddition[] = [];
+  const removeLocationIds: number[] = [];
+  for (const resource of resources) {
+    const selected = selection[resource.id];
+    for (const file of files[resource.id] ?? []) {
+      const included = selected?.has(file.path) ?? false;
+      if (resource.kind === "current") {
+        if (!included && file.locationId !== null) removeLocationIds.push(file.locationId);
+      } else if (included && resource.kind === "local") {
+        additions.push({ kind: "local", folderId: resource.folderId, path: file.path });
+      } else if (included) {
+        additions.push({
+          kind: "remote",
+          sourceId: resource.sourceId,
+          remoteCode: resource.editionCode,
+          path: file.path,
+        });
+      }
+    }
+  }
+  const itemKeys = new Set(additions.map(folderEditItemKey));
+  return {
+    folderId: target.folderId,
+    additions,
+    removeLocationIds,
+    decisions: Object.values(decisions)
+      .filter((decision) => itemKeys.has(decision.itemKey))
+      .sort((left, right) => left.itemKey.localeCompare(right.itemKey)),
+  };
+}
+
+/** The key the server gives the plan item of an addition. */
+export function folderEditItemKey(addition: WorkFolderEditAddition) {
+  return addition.kind === "local"
+    ? `local:${addition.folderId}:${addition.path}`
+    : `remote:${addition.sourceId}:${addition.remoteCode.toUpperCase()}:${addition.path}`;
+}
+
+function resultStateForItem(item: WorkFolderEditItem): FolderEditResultState {
+  if (item.targetConflict || item.action === "conflict") return "conflict";
+  if (item.action === "exclude") return "excluded";
+  if (item.action === "copy_local") return "add_local";
+  if (item.action === "cache_download") return "add_remote";
+  return "same";
+}
+
+/**
+ * The folder after the edit: the files it keeps, the files it loses, and the
+ * planned additions. An addition that is already in the folder marks the file
+ * there instead of appearing twice, and one that takes a kept file's place
+ * marks that file as replaced.
+ */
+export function folderEditResult(
+  currentFiles: readonly FolderEditFile[],
+  currentSelection: ReadonlySet<string>,
+  plan: WorkFolderEditPlan | null,
+): FolderEditResultEntry[] {
+  const entries = new Map<string, FolderEditResultEntry>();
+  for (const file of currentFiles) {
+    entries.set(file.path.toLowerCase(), {
+      key: `current:${file.path}`,
+      path: file.path,
+      name: file.name,
+      kind: file.kind,
+      sizeBytes: file.sizeBytes,
+      state: currentSelection.has(file.path) ? "keep" : "remove",
+      item: null,
+    });
+  }
+  const added: FolderEditResultEntry[] = [];
+  const prefix = plan ? `${normalizePath(plan.saveRoot)}/` : "";
+  for (const item of plan?.items ?? []) {
+    const target = normalizePath(item.targetPath);
+    const path = target.startsWith(prefix) ? target.slice(prefix.length) : target;
+    const state = resultStateForItem(item);
+    const existing = entries.get(path.toLowerCase());
+    if (state === "same" && existing) {
+      if (existing.state === "keep") existing.state = "same";
+      continue;
+    }
+    if ((state === "add_local" || state === "add_remote") && existing?.state === "keep") existing.state = "replaced";
+    added.push({
+      key: item.itemKey,
+      path,
+      name: path.split("/").pop() ?? path,
+      kind: item.kind,
+      sizeBytes: item.sizeBytes,
+      state,
+      item,
+    });
+  }
+  return [...entries.values(), ...added];
+}
+
+export type FolderEditReadiness = "idle" | "refreshing" | "blocked" | "ready";
+
+/**
+ * Whether the edit can be applied. An edit that only removes files needs no
+ * server preview; one that adds files waits for a current preview without
+ * conflicts.
+ */
+export function folderEditReadiness({
+  request,
+  plan,
+  planCurrent,
+}: {
+  request: WorkFolderEditRequest;
+  plan: WorkFolderEditPlan | null;
+  planCurrent: boolean;
+}): FolderEditReadiness {
+  if (request.additions.length === 0) return request.removeLocationIds.length > 0 ? "ready" : "idle";
+  if (!plan || !planCurrent) return "refreshing";
+  if (plan.summary.conflict > 0) return "blocked";
+  return plan.summary.add > 0 || request.removeLocationIds.length > 0 ? "ready" : "idle";
+}

@@ -60,6 +60,8 @@ import {
   usePlaybackSourceSelection,
 } from "@/features/work-detail/media/usePlaybackAutoRouting";
 import { useRemoteFetchWorkspace } from "@/features/work-detail/workflows/useRemoteFetchWorkspace";
+import { useFolderEditWorkflow } from "@/features/work-detail/folder-edit/useFolderEditWorkflow";
+import type { FolderEditInitialRemote } from "@/features/work-detail/folder-edit/useFolderEditWorkspace";
 import { invalidateCachedWorkMedia, setCachedWorkMedia } from "@/features/work-detail/media/workMediaCache";
 import { PageHeaderBackAction } from "@/app/pageHeader";
 import { Card, CardContent } from "@/components/ui/card";
@@ -87,6 +89,7 @@ import {
 import { PersistedDirectoryPanel } from "@/features/work-detail/PersistedDirectoryPanel";
 import {
   PersistedDirectoryManagerOverlay,
+  PersistedFolderEditOverlay,
   PersistedFilePreviewOverlay,
   PersistedLyricsManagerOverlay,
   PersistedMetadataEditorOverlay,
@@ -203,6 +206,11 @@ export function PersistedWorkDetailController({
   } = sourceContext;
   const [isManageOpen, setIsManageOpen] = useState(false);
   const [manageFolderID, setManageFolderID] = useState(0);
+  const [folderEdit, setFolderEdit] = useState<{
+    folderId: number;
+    initialRemote: FolderEditInitialRemote | null;
+    fromManage: boolean;
+  } | null>(null);
   const [isLyricsManagerOpen, setIsLyricsManagerOpen] = useState(false);
   const [metadataEditorSection, setMetadataEditorSection] = useState<MetadataEditorSection | null>(null);
   const [preview, setPreview] = useState<FilePreviewRequest | null>(null);
@@ -343,8 +351,34 @@ export function PersistedWorkDetailController({
   const canManageLocalCopies =
     !auth.demoMode && auth.hasPermission("downloads:manage") && selectedSource?.kind === "local";
   const fetchWorkspace = useRemoteFetchWorkspace({ onWorksChanged });
+  // A work that already has a local folder takes remote files through the
+  // folder edit, next to its other local and remote editions.
+  const editableFolders = useMemo(
+    () =>
+      (localDirectoryWork?.localFolders ?? []).filter(
+        (folder) =>
+          folder.workId === localDirectoryWork?.id && folder.state === "active" && folder.rootPath.trim() !== "",
+      ),
+    [localDirectoryWork],
+  );
+  const canEditFolders = !auth.demoMode && auth.hasPermission("downloads:manage");
+  const fetchEditFolder =
+    canEditFolders && auth.hasPermission("remote:fetch")
+      ? (editableFolders.find((folder) => folder.primary) ?? editableFolders[0] ?? null)
+      : null;
+  const editedFolder = folderEdit
+    ? (editableFolders.find((folder) => folder.id === folderEdit.folderId) ?? null)
+    : null;
   const openFetchWorkspace = () => {
     if (!fetchRemote) return;
+    if (fetchEditFolder) {
+      setFolderEdit({
+        folderId: fetchEditFolder.id,
+        initialRemote: { sourceId: fetchRemote.source.id, remoteCode: fetchRemoteCode },
+        fromManage: false,
+      });
+      return;
+    }
     void fetchWorkspace.open({
       sourceId: fetchRemote.source.id,
       remoteCode: fetchRemoteCode,
@@ -365,6 +399,18 @@ export function PersistedWorkDetailController({
       }
       // Reload the detail and its media cache before the library refresh can
       // reopen the work from media cached before the deletion.
+      if (activeEdition) {
+        editions.replaceActiveEdition(await api.getWork(activeEdition.id));
+      } else if (work) {
+        await onWorkReload(work.id, true);
+      }
+      await onWorksChanged();
+    },
+  });
+  const folderEditWorkflow = useFolderEditWorkflow({
+    onCompleted: async () => {
+      const edited = localDirectoryWork ?? work;
+      if (edited) invalidateCachedWorkMedia(edited.id, principalID);
       if (activeEdition) {
         editions.replaceActiveEdition(await api.getWork(activeEdition.id));
       } else if (work) {
@@ -818,7 +864,33 @@ export function PersistedWorkDetailController({
         localRoot={localRoot}
         localFolders={localFolders.length > 1 ? localFolders : []}
         onSelectLocalFolder={setManageFolderID}
+        onEditFiles={
+          canEditFolders && manageFolder && selectedSource?.kind === "local" && !selectedTrackedPresence
+            ? () => {
+                setIsManageOpen(false);
+                setFolderEdit({ folderId: manageFolder.id, initialRemote: null, fromManage: true });
+              }
+            : undefined
+        }
         onClose={() => setIsManageOpen(false)}
+      />
+      <PersistedFolderEditOverlay
+        work={localDirectoryWork}
+        folder={editedFolder}
+        initialRemote={folderEdit?.initialRemote ?? null}
+        onBack={
+          folderEdit?.fromManage
+            ? () => {
+                setFolderEdit(null);
+                setIsManageOpen(true);
+              }
+            : undefined
+        }
+        onClose={() => setFolderEdit(null)}
+        onApplied={(result) => {
+          setFolderEdit(null);
+          folderEditWorkflow.accepted(result);
+        }}
       />
       <PersistedLyricsManagerOverlay
         open={isLyricsManagerOpen}

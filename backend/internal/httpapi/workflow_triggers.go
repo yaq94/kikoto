@@ -176,6 +176,7 @@ var systemWorkflowSpecs = []systemWorkflowSpec{
 			{"id": "forget", "type": "forget_unlinked_work", "displayName": "Forget unlinked work"},
 		},
 	},
+	workFolderEditDefinition(),
 	{
 		Code:        "remote_work_fetch",
 		Name:        "Fetch remote work",

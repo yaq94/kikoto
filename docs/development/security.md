@@ -153,6 +153,45 @@ when the request also assigns tracks.
 - Errors expose fixed messages only. Upstream URLs, local paths, and detailed
   failures stay in protected logs.
 
+### Folder edit
+
+`POST /api/works/{id}/folder-edit/plan` and `POST /api/works/{id}/folder-edit`
+change one active local folder of a work. Both require `downloads:manage`,
+plus `remote:fetch` when the request names a remote file.
+
+- The target must be an active local folder of the requested work on an online
+  storage pool. A local source must be another active local folder of the same
+  family. Each requested path is resolved below it, and every path component
+  must be a regular directory or file, so a link inside the folder cannot read
+  from outside it. The source folder is not changed.
+- A remote code must be an edition of the requested work's family, and its
+  source an enabled compatible source. The edition's tree is read through the
+  remote snapshot cache; it is not stored as a work, presence, or media
+  location. Each requested path must be a file of that tree.
+- A removed file must be a local location of the requested work inside the
+  target folder. Applying the edit runs the destructive-path checks of media
+  cleanup, including the symbolic-link review.
+- Target paths stay inside the target folder. A target that exists is kept
+  when it has the same size and is otherwise a conflict, which apply rejects
+  until a decision resolves it. Two additions never share a target, compared
+  without letter case or Unicode composition.
+- The job resolves each download address again from the source's tree when it
+  runs; the plan response and the stored job carry none. The address must be
+  HTTP(S) without credentials and pass the source's outbound policy before any
+  request; redirects are validated at every hop by the shared source
+  transport, and only configured origins keep the private-address exception.
+- Downloads stream through the source's download lane into the run's
+  `.kikoto-staging` directory on the target's pool, bounded by the remote
+  download limit and the size the listing declares. One request adds at most
+  5000 files. A file whose size differs from its listing fails the run before
+  anything in the folder changes.
+- Publication renames each collected file into the folder through plain
+  directories, and lands on an existing file only when the plan decided to
+  replace it. A cancelled or failed run removes its staging directory; a
+  failure that is retried automatically keeps what it collected.
+- Responses expose request errors only. Upstream URLs and detailed failures
+  stay in protected logs and Activity.
+
 ### Remote text preview
 
 `GET /api/media/{id}/text` reads a text file from where the location's bytes
