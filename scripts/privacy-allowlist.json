@@ -2,6 +2,11 @@
   "version": 1,
   "endpoints": [
     {
+      "url": "https://www.asmrgay.com/",
+      "files": [".scratch/kikoto-next/spec.md"],
+      "reason": "Public OpenList site explicitly requested by the owner for integration planning; this entry only permits the requirements document to cite it."
+    },
+    {
       "url": "https://tailwindcss.com/docs/compatibility",
       "files": ["docs/architecture/frontend.md"],
       "reason": "Official public Tailwind CSS browser compatibility documentation for the frontend build upgrade."
