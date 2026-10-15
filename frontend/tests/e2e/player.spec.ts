@@ -1,4 +1,4 @@
-import { expect, test, type Route } from "@playwright/test";
+import { expect, test, type Locator, type Page, type Route } from "@playwright/test";
 import type { PlaybackReport } from "../../src/lib/playbackReportApi";
 import { playbackReportResultFixture } from "./fixtures/playback-reports";
 import {
@@ -16,6 +16,47 @@ import {
   seedPlaybackSourcePreferences,
 } from "./fixtures/player-library";
 import { runtimeSettingsFixture } from "./fixtures/api";
+
+async function doubleTapCover(page: Page, cover: Locator) {
+  // Complete locator auto-waiting before the timed gesture, not between its taps.
+  await expect(cover).toBeVisible();
+  await expect(cover).toBeEnabled();
+  await cover.scrollIntoViewIfNeeded();
+  const box = await cover.boundingBox();
+  expect(box).not.toBeNull();
+  const taps = await cover.evaluateHandle((element) => {
+    const observed: { at: number; x: number; y: number; pointerType: string; trusted: boolean }[] = [];
+    element.addEventListener("click", (event) => {
+      const pointer = event as PointerEvent;
+      observed.push({
+        at: performance.now(),
+        x: pointer.clientX,
+        y: pointer.clientY,
+        pointerType: pointer.pointerType,
+        trusted: event.isTrusted,
+      });
+    });
+    return observed;
+  });
+  try {
+    const x = box!.x + box!.width / 2;
+    const y = box!.y + box!.height / 2;
+    await page.touchscreen.tap(x, y);
+    await page.touchscreen.tap(x, y);
+    const observed = await taps.jsonValue();
+    await test.info().attach("cover-touch-events", { body: JSON.stringify(observed), contentType: "application/json" });
+    expect(observed).toHaveLength(2);
+    expect(observed.map(({ pointerType, trusted }) => ({ pointerType, trusted }))).toEqual([
+      { pointerType: "touch", trusted: true },
+      { pointerType: "touch", trusted: true },
+    ]);
+    // A slow runner must not silently turn this into two unrelated single taps.
+    expect(observed[1].at - observed[0].at).toBeLessThanOrEqual(360);
+    expect(Math.hypot(observed[1].x - observed[0].x, observed[1].y - observed[0].y)).toBeLessThanOrEqual(28);
+  } finally {
+    await taps.dispose();
+  }
+}
 
 function serveSeekableAudio(route: Route, media: Buffer, headers: Record<string, string> = {}) {
   const range = /^bytes=(\d+)-(\d*)$/.exec(route.request().headers().range ?? "");
@@ -100,11 +141,24 @@ test("full player collapses from the upper content area and double-tapping its c
   fullPlayer = page.locator("section.fixed.inset-0");
   await expect(fullPlayer).toBeVisible();
   const cover = fullPlayer.getByRole("button", { name: "Open work detail" });
-  await cover.tap();
-  await page.waitForTimeout(100);
-  await cover.tap();
+  const historyBefore = await page.evaluate(() => window.history.length);
+  await doubleTapCover(page, cover);
+  await expect.poll(() => page.evaluate(() => window.history.length)).toBe(historyBefore + 1);
   await expect(page).toHaveURL(/\/RJ00000000$/);
   await expect(fullPlayer).toBeHidden();
+});
+
+test("a single touch on the full player cover keeps the player open without navigating", async ({ page }) => {
+  await mockApplication(page);
+  await seedPlayer(page);
+  await page.goto("/");
+  await page.getByText("Test track", { exact: true }).click();
+  const fullPlayer = page.locator('[data-player-surface="full"]');
+  const historyBefore = await page.evaluate(() => window.history.length);
+  await fullPlayer.getByRole("button", { name: "Open work detail" }).tap();
+  await expect(page).toHaveURL((url) => url.pathname === "/");
+  await expect(fullPlayer).toBeVisible();
+  expect(await page.evaluate(() => window.history.length)).toBe(historyBefore);
 });
 
 test("double-tapping the cover opens the work in the destination its playback started from", async ({ page }) => {
@@ -115,10 +169,9 @@ test("double-tapping the cover opens the work in the destination its playback st
   await page.getByText("Test track", { exact: true }).click();
   const fullPlayer = page.locator("section.fixed.inset-0");
   const cover = fullPlayer.getByRole("button", { name: "Open work detail" });
-  await cover.tap();
-  await page.waitForTimeout(100);
-  await cover.tap();
-
+  const historyBefore = await page.evaluate(() => window.history.length);
+  await doubleTapCover(page, cover);
+  await expect.poll(() => page.evaluate(() => window.history.length)).toBe(historyBefore + 1);
   await expect(page).toHaveURL(/\/RJ00000000$/);
   await expect(page.getByTestId("directory-file-row").first()).toBeVisible();
   const tabs = page.locator("footer");
