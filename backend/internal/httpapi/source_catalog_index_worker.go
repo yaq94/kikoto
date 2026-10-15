@@ -159,6 +159,11 @@ func (s *Server) settleCatalogBatch(ctx context.Context, job workflowJobRecord, 
 	if err = verifyCatalogLease(ctx, tx, job); err != nil {
 		return err
 	}
+	if status == "succeeded" {
+		if err = setCatalogNextUpdateTx(ctx, tx, sourceID, s.catalogTime()); err != nil {
+			return err
+		}
+	}
 	if _, err = tx.ExecContext(ctx, `UPDATE source_catalog_scan SET pause_reason=?,updated_at=CURRENT_TIMESTAMP WHERE file_source_id=?`, reason, sourceID); err != nil {
 		return err
 	}

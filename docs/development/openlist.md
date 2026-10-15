@@ -51,6 +51,21 @@ the panel unmounts; newly published cards refresh the source results.
 Scan options are saved with the source's checkpoint and reused by an empty
 start request. An active run keeps its options until it is stopped and resumed.
 
+A full scan's first complete success enables daily updates for that source.
+The next due time is persisted in `app_setting` and is checked by the existing
+workflow coordinator on startup and while the application runs. A stopped
+application catches up with one update when it starts; elapsed days do not queue
+multiple crawls. Finite scans, failed scans and unconfirmed empty coverage do not
+enable the schedule. Disabled sources are skipped.
+
+Daily dispatch uses the same transaction as manual dispatch: queued/running
+scans are joined, and cancelled, failed, paused or partial scans resume their
+existing generation. The due time advances with dispatch, so repeated coordinator
+checks do not continually retry a paused source. A complete success schedules
+the next update for 24 hours later. Daily work uses the saved limits, existing
+source request policy and low-space pause, and only complete coverage reports
+success. Manual starts still require `sources:write`.
+
 | Option | Default | Accepted range |
 | --- | --- | --- |
 | `concurrency` | 1 | 1–4 metadata requests within the single workflow executor |

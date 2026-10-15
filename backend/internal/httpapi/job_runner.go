@@ -98,6 +98,9 @@ func (s *Server) runWorkflowCoordinator(ctx context.Context) {
 		if err := s.dispatchDueScheduledWorkflowTrigger(ctx); err != nil && !errors.Is(err, context.Canceled) {
 			slog.Error("dispatch scheduled custom workflow", "error", err)
 		}
+		if err := s.dispatchDueCatalogUpdates(ctx); err != nil && !errors.Is(err, context.Canceled) {
+			slog.Error("dispatch daily source catalog update", "error", err)
+		}
 		s.settleOrphanedWorkflowJobs(ctx)
 		if _, err := s.backfillSnapshotCardSummaries(ctx, snapshotCardSummaryBackfillBatch); err != nil && !errors.Is(err, context.Canceled) {
 			slog.Error("backfill snapshot card summaries", "error", err)

@@ -107,6 +107,7 @@ type Server struct {
 	translationCacheOnce           sync.Once
 	translationCache               *translation.Cache
 	catalogDiskSpace               func(string) (diskSpaceSnapshot, error)
+	catalogNow                     func() time.Time
 }
 
 type localMediaIndexCall struct {

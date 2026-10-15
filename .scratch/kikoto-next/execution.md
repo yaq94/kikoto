@@ -2,7 +2,7 @@
 
 **Status:** ready-for-agent
 **Implementation:** in-progress
-**阶段:** 01–06 已集成并 resolved；07、08 和 OpenList 单来源代理兼容修复已集成并取得本地证据，07/08 仍 verified-local，真实媒体 LIVE 和真实索引覆盖待补。11 已集成 071 迁移及本地 H/R/F，保持 verified-local；09 已独立验证，等待串行集成；10/12 可继续本地开发。完整发布前置保持有效。
+**阶段:** 01–06 已集成并 resolved；07、08 和 OpenList 单来源代理兼容修复已集成并取得本地证据，07/08 仍 verified-local，真实媒体 LIVE 和真实索引覆盖待补。11 已集成 071 迁移及本地 H/R/F，保持 verified-local；09 每日更新已集成并 verified-local；10/12 继续在独立分支本地开发。完整发布前置保持有效。
 **依据:** [正式规格](spec.md) · [工单总览](ticket-proposal.md) · [领域词汇表](../../GLOSSARY.md) · [作品身份与个人记录 ADR](../../docs/adr/0001-work-identity-and-personal-state.md)
 
 ## 当前授权与完成条件
@@ -44,8 +44,8 @@
 | [06 稳定内部引用与编号兼容](issues/06-stable-identity-compatibility.md) | 无 | resolved | 已集成；数字版本、编号/别名、旧库升级与个人记录保留通过，无新增迁移 | [06 证据](evidence/06-stable-references.md)、[集成复验](evidence/06-integration.md) |
 | [07 OpenList 有限无码链路](issues/07-openlist-first-playable-slice.md) | 04、06 | verified-local | 本地链路、069 升级与 catalog 翻译通过；正式测试代理下 fs/get 返回挑战页，真实媒体 LIVE 未通过 | [07 证据](evidence/07-openlist.md)、[集成复验](evidence/02-07-integration.md) |
 | [08 完整来源索引与恢复](issues/08-recoverable-full-source-index.md) | 07 | verified-local | 已集成；完整合成树、070 升级/恢复、资源限制、清理与管理进度 H/R/F 通过；真实来源覆盖待补 | [08 证据](evidence/08-source-index.md)、[集成复验](evidence/08-integration.md) |
-| [09 每日更新与扫描复用](issues/09-daily-index-update.md) | 08 | in-progress | 已认领，基于 08 集成接口在独立 worktree 实施；发布前置保留 | 待执行 |
-| [10 来源生命周期与记录保留](issues/10-source-lifecycle-retention.md) | 08 | pending | 已授权在 09 完成后串行本地实施；发布前置保留 | 待执行 |
+| [09 每日更新与扫描复用](issues/09-daily-index-update.md) | 08 | verified-local | 每日调度、同源复用、真实重启及资源 H/R 已集成；发布前置保留 | [09 证据](evidence/09-daily-index.md)、[集成复验](evidence/09-integration.md) |
+| [10 来源生命周期与记录保留](issues/10-source-lifecycle-retention.md) | 08 | in-progress | 基于 09/11/071 集成底座在独立 worktree 实施；迁移号按需要协调 | 待执行 |
 | [11 系列卡片与单集归组](issues/11-series-and-episode-grouping.md) | 07 | verified-local | 已集成 071、系列/单集发现与手工归组；完整发布前置保留 | [11 证据](evidence/11-series.md)、[集成复验](evidence/11-integration.md) |
 | [12 系列与单集个人评价](issues/12-series-episode-personal-reviews.md) | 11 | in-progress | 基于 11 的独立分支实施，暂无新迁移；发布前置保留 | 待执行 |
 | [13 共享关联与本人冲突确认](issues/13-shared-link-conflict-review.md) | 12 | pending | 等待前置验收 | 待执行 |

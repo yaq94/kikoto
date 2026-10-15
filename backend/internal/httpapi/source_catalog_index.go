@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strconv"
 
 	"github.com/yexca/kikoto/backend/internal/openlist"
 	"github.com/yexca/kikoto/backend/internal/workflow"
@@ -142,14 +143,29 @@ func (s *Server) enqueueSourceCatalogIndex(ctx context.Context, sourceID int64, 
 		return catalogIndexQueued{}, err
 	}
 	defer func() { _ = tx.Rollback() }()
+	result, err := s.enqueueSourceCatalogIndexTx(ctx, tx, sourceID, options, "manual")
+	if err != nil {
+		return result, err
+	}
+	return result, tx.Commit()
+}
+
+func (s *Server) enqueueSourceCatalogIndexTx(ctx context.Context, tx *sql.Tx, sourceID int64, options catalogIndexOptions, trigger string) (catalogIndexQueued, error) {
 	var runID int64
 	var status string
-	err = tx.QueryRowContext(ctx, `SELECT scan.workflow_run_id,run.status FROM source_catalog_scan scan JOIN workflow_run run ON run.id=scan.workflow_run_id WHERE scan.file_source_id=?`, sourceID).Scan(&runID, &status)
+	err := tx.QueryRowContext(ctx, `SELECT scan.workflow_run_id,run.status FROM source_catalog_scan scan JOIN workflow_run run ON run.id=scan.workflow_run_id WHERE scan.file_source_id=?`, sourceID).Scan(&runID, &status)
 	if err == nil && (status == "queued" || status == "running") {
-		return catalogIndexQueued{runID, true}, tx.Commit()
+		return catalogIndexQueued{runID, true}, nil
 	}
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return catalogIndexQueued{}, err
+	}
+	if runID == 0 {
+		// Source ids may be reused after deletion. A replacement source must
+		// earn its own first complete scan before inheriting a daily schedule.
+		if _, err = tx.ExecContext(ctx, `DELETE FROM app_setting WHERE key=?`, catalogDailySettingPrefix+strconv.FormatInt(sourceID, 10)); err != nil {
+			return catalogIndexQueued{}, err
+		}
 	}
 	if runID > 0 && status != "succeeded" {
 		// Resume only unresolved directories. Already published identities and
@@ -167,14 +183,14 @@ func (s *Server) enqueueSourceCatalogIndex(ctx context.Context, sourceID int64, 
 		if err = resumeCatalogWorkflowTx(ctx, tx, runID); err != nil {
 			return catalogIndexQueued{}, err
 		}
-		return catalogIndexQueued{runID, true}, tx.Commit()
+		return catalogIndexQueued{runID, true}, nil
 	}
 	definitionID, err := workflow.EnsureDefinition(ctx, tx, sourceCatalogIndexWorkerType, "Index source catalog", "Read anonymous audio directories in recoverable batches.", map[string]any{"nodes": []map[string]string{{"id": "scan", "type": "source_catalog_index", "displayName": "Index source catalog"}}})
 	if err != nil {
 		return catalogIndexQueued{}, err
 	}
 	input := map[string]any{"sourceId": sourceID, "requested_by_user_id": optionalUserID(ctx)}
-	runID, err = workflow.InsertRun(ctx, tx, definitionID, sourceCatalogIndexWorkerType, "Index source catalog", "queued", "manual", "manual", input, map[string]any{})
+	runID, err = workflow.InsertRun(ctx, tx, definitionID, sourceCatalogIndexWorkerType, "Index source catalog", "queued", trigger, trigger, input, map[string]any{})
 	if err != nil {
 		return catalogIndexQueued{}, err
 	}
@@ -193,7 +209,7 @@ func (s *Server) enqueueSourceCatalogIndex(ctx context.Context, sourceID int64, 
 	if err = enqueueCatalogDirectoryTx(ctx, tx, sourceID, runID, "/", "/", ""); err != nil {
 		return catalogIndexQueued{}, err
 	}
-	return catalogIndexQueued{runID, false}, tx.Commit()
+	return catalogIndexQueued{runID, false}, nil
 }
 
 func resumeCatalogWorkflowTx(ctx context.Context, tx *sql.Tx, runID int64) error {
