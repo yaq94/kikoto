@@ -63,3 +63,13 @@
 - 原 4 项 × 2，2 workers、retries 0：8 passed / 14.2 s，退出 0。
 - `make -o frontend-install frontend-format frontend-lint sensitive-check`：格式、lint、E2E 类型及隐私检查均通过，退出 0。
 - 此项为主集成在发现四项失败后明确授权的同 fixture 契约收尾，与原三项问题分开提交。
+
+## 合并复验
+
+本票分支合入集成 `5341b8d623d6c0363f65765f128c8c14b246b645` 后，验证产物为 `3ad187aeca508e9e8969152d1db0a815c078072c`。
+
+- 三个完整测试文件 `work-detail.spec player.spec favorites-state.spec --workers=2 --retries=0`：69 passed / 1.5 min，退出 0。
+- `make -o frontend-install frontend-format frontend-lint frontend-build sensitive-check`：全部通过，退出 0；`-o` 仅复用本工作树已单独安装的依赖，避免测试服务运行期间重新 npm ci。
+- 产品源码和 FullPlayer 没有本票修改。前端项目没有真实组件测试环境，本票通过实际浏览器交互及现有导航／队列纯规则单测验证，不以伪组件测试替代。
+- 所有临时事件诊断和 CPU slowdown 已从测试文件移除；最终保留的 JSON 输入事件附件用于验证真实触摸，不是视觉验收。
+- 完整 Full/Gate、发布审查和部署仍归主集成流程，尚未由本票执行或宣称通过。Vite 的 native-config 兼容性及大 bundle 提示为构建警告，构建退出 0。
