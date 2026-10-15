@@ -130,6 +130,15 @@ func run() error {
 			return err
 		}
 	}
+	if os.Getenv("OPENLIST_MATCHING_FIXTURE") == "1" {
+		_, err = db.Exec(`INSERT INTO work(id,primary_code,title,release_date) VALUES(901,'','Example Matching Work','2020-01-02'),(902,'','Example Matching Work','2020-01-02'),(903,'','Example Uncertain Work',NULL),(904,'','Example Uncertain Work',NULL);
+		INSERT INTO person(id,display_name) VALUES(901,'Example Matching Voice');
+		INSERT INTO work_credit(work_id,person_id,role) VALUES(901,901,'voice_actor'),(902,901,'voice_actor');
+		INSERT INTO source_catalog_entry(id,file_source_id,root_path,title,work_id) VALUES(901,1,'/Matching A','Example Matching Work',901),(902,1,'/Matching B','Example Matching Work',902),(903,1,'/Uncertain A','Example Uncertain Work',903),(904,1,'/Uncertain B','Example Uncertain Work',904);`)
+		if err != nil {
+			return err
+		}
+	}
 	if _, err = translation.NewStore(db).Update(context.Background(), translation.Patch{BaseURL: &upstream.URL}); err != nil {
 		return err
 	}

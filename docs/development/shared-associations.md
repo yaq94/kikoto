@@ -1,6 +1,8 @@
 # Shared associations
 
 Shared associations identify the same work, episode or series across sources.
+High-confidence candidate selection and its budgets are described in
+[Work matching](work-matching.md).
 `shared_identity_member` maps retained `work_id` references to one
 `identity_work_id`; `shared_work_identity` includes unassociated works with equal
 ids. Edition families, source catalog ids, series memberships, media locations,

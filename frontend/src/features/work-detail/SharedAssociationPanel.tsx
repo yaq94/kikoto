@@ -7,6 +7,7 @@ import { api, type AssociationSubject, type SharedAssociation } from "@/lib/api"
 import { openWorkDetail } from "@/app/workDetailNavigation";
 import { WORK_CODE_PATH_PATTERN } from "@/lib/workCode";
 import { SharedSplitPanel } from "./SharedSplitPanel";
+import { WorkMatchingPanel } from "./WorkMatchingPanel";
 
 export function SharedAssociationPanel({
   subject,
@@ -87,6 +88,11 @@ export function SharedAssociationPanel({
     <section aria-label={t("sharedAssociation.title")} className="space-y-3 rounded-xl border bg-card p-4">
       <h2 className="font-semibold">{t("sharedAssociation.title")}</h2>
       <p className="text-sm text-muted-foreground">{t("sharedAssociation.hint")}</p>
+      <WorkMatchingPanel
+        subject={subject}
+        onCandidate={(candidate) => void run(() => api.previewSharedAssociation(subject, candidate))}
+        onOperation={(operationId) => void run(() => api.getSharedAssociation(operationId))}
+      />
       {auth.user && (
         <div className="space-y-2">
           <label htmlFor={`${id}-target`}>{t("sharedAssociation.target")}</label>
