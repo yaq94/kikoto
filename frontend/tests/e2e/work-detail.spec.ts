@@ -228,16 +228,35 @@ test("a lone local source is named in the directory header until the viewer alwa
 
 test("work detail reserves a structured directory skeleton until media is ready", async ({ page }) => {
   const mediaItems = [mediaFixture(1, "track.mp3", "RJ00000000/track.mp3", "audio")];
-  await mockApplication(page, undefined, false, 1, 800, mediaItems, undefined, { authenticated: true });
-  await page.goto("/");
-  await page.getByText("Tagged mobile work", { exact: true }).click();
+  let releaseMediaRequest = () => {};
+  const mediaRequestGate = new Promise<void>((resolve) => {
+    releaseMediaRequest = resolve;
+  });
+  let markMediaRequestStarted = () => {};
+  const mediaRequestStarted = new Promise<void>((resolve) => {
+    markMediaRequestStarted = resolve;
+  });
+  await mockApplication(page, undefined, false, 1, 0, mediaItems, undefined, {
+    authenticated: true,
+    onMediaRequest: async () => {
+      markMediaRequestStarted();
+      await mediaRequestGate;
+    },
+  });
 
   const skeleton = page.getByTestId("directory-skeleton");
-  await expect(skeleton).toBeVisible();
-  const skeletonBox = await skeleton.boundingBox();
-  expect(skeletonBox).not.toBeNull();
-  expect(skeletonBox!.height).toBeGreaterThanOrEqual(352);
-  await expect(page.getByText("Loading directory...", { exact: true })).toHaveCount(0);
+  try {
+    await page.goto("/");
+    await page.getByText("Tagged mobile work", { exact: true }).click();
+    await mediaRequestStarted;
+    await expect(skeleton).toBeVisible();
+    const skeletonBox = await skeleton.boundingBox();
+    expect(skeletonBox).not.toBeNull();
+    expect(skeletonBox!.height).toBeGreaterThanOrEqual(352);
+    await expect(page.getByText("Loading directory...", { exact: true })).toHaveCount(0);
+  } finally {
+    releaseMediaRequest();
+  }
 
   await expect(page.getByText("track.mp3", { exact: true })).toBeVisible();
   await expect(skeleton).toBeHidden();
