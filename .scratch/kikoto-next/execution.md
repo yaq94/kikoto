@@ -2,7 +2,7 @@
 
 **Status:** ready-for-agent
 **Implementation:** in-progress
-**阶段:** 01–06 已集成并 resolved；07、08 和 OpenList 单来源代理兼容修复已集成并取得本地证据，07/08 仍 verified-local，真实媒体 LIVE 和真实索引覆盖待补。11 已集成 071 迁移及本地 H/R/F，保持 verified-local；09 每日更新已集成并 verified-local；10/12 继续在独立分支本地开发。完整发布前置保持有效。
+**阶段:** 01–06 已集成并 resolved；07、08 和 OpenList 单来源代理兼容修复已集成并取得本地证据，07/08 仍 verified-local，真实媒体 LIVE 和真实索引覆盖待补。11 已集成 071 迁移及本地 H/R/F，保持 verified-local；09 每日更新已集成并 verified-local；12 系列/单集个人评价已集成并 verified-local；10 在独立分支本地开发。完整发布前置保持有效。
 **依据:** [正式规格](spec.md) · [工单总览](ticket-proposal.md) · [领域词汇表](../../GLOSSARY.md) · [作品身份与个人记录 ADR](../../docs/adr/0001-work-identity-and-personal-state.md)
 
 ## 当前授权与完成条件
@@ -47,7 +47,7 @@
 | [09 每日更新与扫描复用](issues/09-daily-index-update.md) | 08 | verified-local | 每日调度、同源复用、真实重启及资源 H/R 已集成；发布前置保留 | [09 证据](evidence/09-daily-index.md)、[集成复验](evidence/09-integration.md) |
 | [10 来源生命周期与记录保留](issues/10-source-lifecycle-retention.md) | 08 | in-progress | 基于 09/11/071 集成底座在独立 worktree 实施；迁移号按需要协调 | 待执行 |
 | [11 系列卡片与单集归组](issues/11-series-and-episode-grouping.md) | 07 | verified-local | 已集成 071、系列/单集发现与手工归组；完整发布前置保留 | [11 证据](evidence/11-series.md)、[集成复验](evidence/11-integration.md) |
-| [12 系列与单集个人评价](issues/12-series-episode-personal-reviews.md) | 11 | in-progress | 基于 11 的独立分支实施，暂无新迁移；发布前置保留 | 待执行 |
+| [12 系列与单集个人评价](issues/12-series-episode-personal-reviews.md) | 11 | verified-local | 已集成；系列与单集独立评价、跨源关系、隔离和重启 H/R/F 通过；无新迁移 | [12 证据](evidence/12-series-reviews.md)、[集成复验](evidence/12-integration.md) |
 | [13 共享关联与本人冲突确认](issues/13-shared-link-conflict-review.md) | 12 | pending | 等待前置验收 | 待执行 |
 | [14 高置信唯一候选关联](issues/14-high-confidence-work-matching.md) | 13 | pending | 等待前置验收 | 待执行 |
 | [15 拆分与本人记录归属](issues/15-split-personal-record-allocation.md) | 13 | pending | 等待前置验收 | 待执行 |
@@ -79,7 +79,7 @@ catalog 翻译已在集成产物上取得 H/R/F 证据；其剩余缺口是实�
 现有最高迁移为 071：11 的 `071_catalog_series.sql` 与 `compat/071_dev.sql` 已集成。
 完整链、新装、070 旧库升级、重复及并发启动、开发基线一致性均通过集成复验；
 001–070 与发布 `baseline/068_v0.8.3.sql` 保持不变。09 复用 070 与 app_setting，没有新迁移。
-12 预计复用 071；10 若确需新迁移须先协调编号。
+12 复用 071，无新迁移。072 已明确分配给 10 的来源生命周期，073 分配给 13；尚未写入集成分支的迁移不计作已验证。
 
 ## 验证证据登记
 
