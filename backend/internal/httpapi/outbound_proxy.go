@@ -265,7 +265,7 @@ func writeProxyConfig(ctx context.Context, tx *sql.Tx, config proxyconfig.Config
 }
 
 func remoteSourceIDs(ctx context.Context, tx *sql.Tx) (map[int64]bool, error) {
-	rows, err := tx.QueryContext(ctx, "SELECT id FROM file_source WHERE source_type IN (?, ?)", sourceTypeKikoeruCompatible, sourceTypeKikoeruCompatible178)
+	rows, err := tx.QueryContext(ctx, "SELECT id FROM file_source WHERE source_type IN (?, ?, ?)", sourceTypeKikoeruCompatible, sourceTypeKikoeruCompatible178, sourceTypeOpenList)
 	if err != nil {
 		return nil, err
 	}

@@ -468,7 +468,9 @@ export function MaintenancePage({
           <div className="space-y-6">
             <ProxySettingsSection
               proxy={settings.proxy}
-              remoteSources={remoteSources}
+              remoteSources={settings.fileSources.filter(
+                (source) => REMOTE_SOURCE_TYPES.has(source.sourceType) || source.sourceType === "openlist",
+              )}
               readOnly={readOnly}
               onSaved={setSettings}
             />
