@@ -5,6 +5,8 @@
  */
 export const surfaceEnglish = {
   catalogSeries: {
+    seriesReview: "Series review",
+    episodeReview: "Episode review: {{title}}",
     series: "Series",
     episodes: "Episodes",
     openEpisode: "Open episode",

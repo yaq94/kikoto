@@ -2,6 +2,8 @@ import { surfaceEnglish } from "./en";
 
 export const surfaceHans = {
   catalogSeries: {
+    seriesReview: "系列评价",
+    episodeReview: "单集评价：{{title}}",
     series: "音声系列",
     episodes: "单集",
     openEpisode: "打开单集",

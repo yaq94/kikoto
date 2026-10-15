@@ -9,9 +9,11 @@ export function PersonalReviewEditor({
   value,
   needsRegistration = false,
   onSave,
+  title,
 }: {
   value: PersonalReview;
   needsRegistration?: boolean;
+  title?: string;
   onSave: (patch: PersonalReviewPatch) => Promise<PersonalReview>;
 }) {
   const { t } = useTranslation();
@@ -53,9 +55,9 @@ export function PersonalReviewEditor({
     }
   };
   return (
-    <section aria-label={t("personal.review.title")} className="space-y-3 rounded-xl border bg-card p-4">
+    <section aria-label={title ?? t("personal.review.title")} className="space-y-3 rounded-xl border bg-card p-4">
       <h2 id={`${id}-title`} className="font-semibold">
-        {t("personal.review.title")}
+        {title ?? t("personal.review.title")}
       </h2>
       <p className="text-sm text-muted-foreground">{t("personal.review.privateHint")}</p>
       {needsRegistration && <p className="text-sm text-muted-foreground">{t("personal.review.registrationHint")}</p>}

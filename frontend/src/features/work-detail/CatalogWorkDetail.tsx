@@ -125,6 +125,8 @@ export function CatalogWorkDetail({ id, onBack }: { id: number; onBack: () => vo
             }
           />
           <PersonalReviewEditor
+            key={`${id}:${auth.user?.id}`}
+            title={entry.seriesId ? t("catalogSeries.episodeReview", { title: entry.title }) : undefined}
             value={entry}
             needsRegistration={entry.workId === null}
             onSave={async (patch) => {
