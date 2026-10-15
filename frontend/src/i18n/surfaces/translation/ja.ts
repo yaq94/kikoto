@@ -42,6 +42,7 @@ export const translationAdmin = {
   result: "翻訳結果",
   resultMetadata: "{{model}} · {{milliseconds}} ミリ秒",
   errors: {
+    translation_conversion_failed: "繁体字への変換に失敗しました。原文を確認して再試行できます。",
     translation_invalid_config: "URL、モデル、キー、タイムアウト（1–60 秒）を確認してください。",
     translation_invalid_input: "短い文章（最大 8 KiB）と対応する翻訳先言語を指定してください。",
     translation_not_configured: "先に翻訳サービスを設定してください。",

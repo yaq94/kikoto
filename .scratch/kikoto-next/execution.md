@@ -38,7 +38,7 @@
 | --- | --- | --- | --- | --- |
 | [01 管理员翻译配置与 Index 试译](issues/01-translation-admin-config.md) | 无 | resolved | 已集成；配置、试译、权限及出站边界通过 | [01 证据](evidence/01-translation.md)、[集成复验](evidence/01-04-integration.md) |
 | [02 浏览内容翻译与有界缓存](issues/02-content-translation-cache.md) | 01 | resolved | 已集成；含 catalog 标题与真实路径目录翻译；缓存使用独立 CacheRoot | [02 证据](evidence/02-content-translation.md)、[集成复验](evidence/02-07-integration.md) |
-| [03 简繁转换](issues/03-traditional-chinese-conversion.md) | 02 | pending | 前置已验收，可启动 | 待执行 |
+| [03 简繁转换](issues/03-traditional-chinese-conversion.md) | 02 | resolved | 独立分支 H/F/LIVE 与资源观察通过，待集成代理合入复验 | [03 证据](evidence/03-traditional-conversion.md) |
 | [04 编号作品个人评价](issues/04-numbered-work-personal-reviews.md) | 无 | resolved | 已集成；编号评价、隔离、必要登记与恢复通过 | [04 证据](evidence/04-personal-reviews.md)、[集成复验](evidence/01-04-integration.md) |
 | [05 多源目录与播放隔离](issues/05-multi-source-directory-playback.md) | 无 | in-progress | 独立工作区实施中 | 待完成本票验收 |
 | [06 稳定内部引用与编号兼容](issues/06-stable-identity-compatibility.md) | 无 | resolved | 已集成；数字版本、编号/别名、旧库升级与个人记录保留通过，无新增迁移 | [06 证据](evidence/06-stable-references.md)、[集成复验](evidence/06-integration.md) |

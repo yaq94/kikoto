@@ -42,6 +42,7 @@ export const translationAdmin = {
   result: "Translation result",
   resultMetadata: "{{model}} · {{milliseconds}} ms",
   errors: {
+    translation_conversion_failed: "Traditional Chinese conversion failed. The original text is available; try again.",
     translation_invalid_config: "Check the URL, model, key and timeout (1–60 seconds).",
     translation_invalid_input: "Enter a short text (up to 8 KiB) and a supported target language.",
     translation_not_configured: "Configure a translation service first.",
