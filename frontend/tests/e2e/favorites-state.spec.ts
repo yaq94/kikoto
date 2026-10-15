@@ -41,6 +41,7 @@ const baseWork = workFixture({
 async function mockFavorites(
   page: Page,
   options: {
+    lists?: FavoriteList[];
     delayedList?: { id: number; started: () => void; gate: Promise<void> };
     onFavoriteWorksRequest?: (availability: string) => void;
     interactiveQuickMark?: boolean;
@@ -50,7 +51,7 @@ async function mockFavorites(
 ) {
   let savedTags: UserTag[] = baseWork.userTags;
   let quickMark: ListeningStatus = baseWork.listeningStatus;
-  let favoriteLists: FavoriteList[] = [
+  let favoriteLists: FavoriteList[] = options.lists ?? [
     favoriteListFixture(),
     favoriteListFixture({ id: 2, name: "Study", sortOrder: 0, kind: "user" }),
   ];
@@ -227,7 +228,7 @@ async function mockFavorites(
   });
 }
 
-test("@desktop favorites puts shelves in a collapsible rail beside search and work controls", async ({ page }) => {
+test("@desktop favorites lays out a sticky shelf rail beside search and work controls", async ({ page }) => {
   await mockFavorites(page);
   await page.setViewportSize({ width: 1600, height: 900 });
   await page.goto("/favorites");
@@ -257,6 +258,19 @@ test("@desktop favorites puts shelves in a collapsible rail beside search and wo
   expect(searchBox!.x).toBeGreaterThan(headingBox!.x + headingBox!.width);
   expect(statusTabsBox!.y).toBeLessThan(headingBox!.y + 2 * headingBox!.height);
 
+  // The rail stays at its sticky offset when the page reaches its end.
+  await page.evaluate(() => window.scrollTo(0, 600));
+  const stickyTop = (await shelves.boundingBox())!.y;
+  await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+  await expect.poll(async () => (await shelves.boundingBox())!.y).toBe(stickyTop);
+  await page.evaluate(() => window.scrollTo(0, 0));
+});
+
+test("@desktop favorites filters resources and toggles work selection", async ({ page }) => {
+  await mockFavorites(page);
+  await page.setViewportSize({ width: 1600, height: 900 });
+  await page.goto("/favorites");
+  const resource = page.getByRole("button", { name: "Resource: All" });
   await resource.click();
   await expect(page.getByRole("menuitemradio")).toHaveText(["All", "Available", "Local", "Remote", "Missing"]);
   await page.getByRole("menuitemradio", { name: "Remote" }).click();
@@ -268,22 +282,29 @@ test("@desktop favorites puts shelves in a collapsible rail beside search and wo
     "true",
   );
   await page.getByRole("button", { name: "Exit selection", exact: true }).click();
+});
 
+test("@desktop favorite shelf names stay accessible and their visibility survives reload", async ({ page }) => {
+  await mockFavorites(page);
+  await page.setViewportSize({ width: 1600, height: 900 });
+  await page.goto("/favorites");
+  const shelves = page.getByRole("navigation", { name: "Favorite shelves" });
   // Hidden names keep each shelf's accessible name, and the choice survives a reload.
   await page.getByRole("button", { name: "Hide tab names" }).click();
   await expect(shelves.getByRole("button", { name: /^Study/ })).toBeVisible();
   await page.reload();
   await page.getByRole("button", { name: "Show tab names" }).click();
   await expect(page.getByRole("button", { name: "Hide tab names" })).toBeVisible();
+});
 
-  // The rail stays at its sticky offset when the page reaches its end.
-  await page.evaluate(() => window.scrollTo(0, 600));
-  const stickyTop = (await shelves.boundingBox())!.y;
-  await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
-  await expect.poll(async () => (await shelves.boundingBox())!.y).toBe(stickyTop);
-  await page.evaluate(() => window.scrollTo(0, 0));
-
-  await shelves.getByRole("button", { name: "Edit lists", exact: true }).click();
+test("@desktop favorite list edits save the name, description and icon", async ({ page }) => {
+  await mockFavorites(page);
+  await page.setViewportSize({ width: 1600, height: 900 });
+  await page.goto("/favorites");
+  await page
+    .getByRole("navigation", { name: "Favorite shelves" })
+    .getByRole("button", { name: "Edit lists", exact: true })
+    .click();
   const listManager = page.getByRole("dialog", { name: "Edit lists" });
   await expect(listManager).toBeVisible();
   await expect(listManager.getByRole("button", { name: "Rename: Study" })).toBeVisible();
@@ -309,7 +330,18 @@ test("@desktop favorites puts shelves in a collapsible rail beside search and wo
     listManager.getByRole("form", { name: "Rename list: Focus" }).getByRole("radio", { name: "Moon" }),
   ).toHaveAttribute("aria-checked", "true");
   await listManager.getByRole("button", { name: "Cancel", exact: true }).click();
+});
 
+test("@desktop favorite list creation stays inside the list manager", async ({ page }) => {
+  await mockFavorites(page);
+  await page.setViewportSize({ width: 1600, height: 900 });
+  await page.goto("/favorites");
+  await page
+    .getByRole("navigation", { name: "Favorite shelves" })
+    .getByRole("button", { name: "Edit lists", exact: true })
+    .click();
+  const listManager = page.getByRole("dialog", { name: "Edit lists" });
+  await expect(listManager).toBeVisible();
   await listManager.getByRole("button", { name: "Add list", exact: true }).click();
   const addForm = listManager.getByRole("form", { name: "Add list" });
   await expect(addForm).toBeVisible();
@@ -319,7 +351,20 @@ test("@desktop favorites puts shelves in a collapsible rail beside search and wo
   await addForm.getByLabel("Description").fill("Example description");
   await addForm.getByRole("button", { name: "Add list", exact: true }).click();
   await expect(listManager.getByRole("button", { name: "Rename: Example List" })).toBeVisible();
+});
 
+test("@desktop cancelling favorite list deletion restores focus and keeps the list", async ({ page }) => {
+  await mockFavorites(page, {
+    lists: [favoriteListFixture(), favoriteListFixture({ id: 3, name: "Example List", kind: "user" })],
+  });
+  await page.setViewportSize({ width: 1600, height: 900 });
+  await page.goto("/favorites");
+  await page
+    .getByRole("navigation", { name: "Favorite shelves" })
+    .getByRole("button", { name: "Edit lists", exact: true })
+    .click();
+  const listManager = page.getByRole("dialog", { name: "Edit lists" });
+  await expect(listManager).toBeVisible();
   const deleteListButton = listManager.getByRole("button", { name: "Delete: Example List" });
   await deleteListButton.click();
   const deleteConfirmation = page.getByRole("alertdialog", { name: "Delete list?" });
@@ -329,8 +374,22 @@ test("@desktop favorites puts shelves in a collapsible rail beside search and wo
   await deleteConfirmation.getByRole("button", { name: "Cancel", exact: true }).click();
   await expect(deleteConfirmation).toHaveCount(0);
   await expect(deleteListButton).toBeFocused();
+  await expect(listManager.getByRole("button", { name: "Rename: Example List" })).toBeVisible();
+});
 
-  await deleteListButton.click();
+test("@desktop confirming favorite list deletion keeps its manager open", async ({ page }) => {
+  await mockFavorites(page, {
+    lists: [favoriteListFixture(), favoriteListFixture({ id: 3, name: "Example List", kind: "user" })],
+  });
+  await page.setViewportSize({ width: 1600, height: 900 });
+  await page.goto("/favorites");
+  await page
+    .getByRole("navigation", { name: "Favorite shelves" })
+    .getByRole("button", { name: "Edit lists", exact: true })
+    .click();
+  const listManager = page.getByRole("dialog", { name: "Edit lists" });
+  await expect(listManager).toBeVisible();
+  await listManager.getByRole("button", { name: "Delete: Example List" }).click();
   await page
     .getByRole("alertdialog", { name: "Delete list?" })
     .getByRole("button", { name: "Delete", exact: true })
@@ -338,7 +397,19 @@ test("@desktop favorites puts shelves in a collapsible rail beside search and wo
   await expect(page.getByRole("alertdialog", { name: "Delete list?" })).toHaveCount(0);
   await expect(listManager.getByRole("button", { name: "Rename: Example List" })).toHaveCount(0);
   await expect(listManager).toBeVisible();
+});
 
+test("@desktop favorites switches to followed circles after closing the list editor", async ({ page }) => {
+  await mockFavorites(page);
+  await page.setViewportSize({ width: 1600, height: 900 });
+  await page.goto("/favorites");
+  await page
+    .getByRole("navigation", { name: "Favorite shelves" })
+    .getByRole("button", { name: "Edit lists", exact: true })
+    .click();
+  const listManager = page.getByRole("dialog", { name: "Edit lists" });
+  await expect(listManager).toBeVisible();
+  const shelves = page.getByRole("navigation", { name: "Favorite shelves" });
   await page.getByRole("button", { name: "Close favorite list editor" }).click();
   await shelves.getByRole("button", { name: /^Circles/ }).click();
   await expect(page.getByPlaceholder("Search circles")).toBeVisible();

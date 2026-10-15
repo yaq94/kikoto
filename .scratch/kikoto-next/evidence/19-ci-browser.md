@@ -25,3 +25,16 @@
 - 改动的两份测试文件 Prettier 使用仓库的 `--end-of-line auto` 通过；默认 LF 检查在 Windows CRLF 文件上曾报告格式警告，未修改行尾规范。
 
 定向通过不代表完整 Full/Gate；最后由集成流程对最终 SHA 验收。
+
+## 2. 收藏独立行为
+
+原 trace 中，首次加载与布局断言耗时约 6.5 s，筛选和选择约 3.8 s，折叠／刷新恢复至 16.3 s；编辑列表至 22.8 s、新建至 26.2 s、取消删除及焦点恢复至 28.1 s、确认删除触及 30 s 边界，Circles 点击随后被已耗尽的测试预算终止。没有一个单独交互停滞 30 s 的证据。
+
+实现：原综合测试拆成布局与 sticky rail、资源筛选与选择、标签名刷新持久化、重命名、新建、取消删除、确认删除、关闭编辑器后导航共 8 项。每项独立 mock、页面和 viewport；删除从明确初始列表开始。原尺寸、菜单内容、PATCH 正文、图标持久化、单层对话框、新建位置、取消删除焦点、删除后状态及 Circles 导航断言全部保留。
+
+验证：
+
+- 整个 `favorites-state`：15 passed / 29.9 s，退出 0。
+- 拆分的 8 个 desktop 用例，2 workers、repeat-each 3、retries 0：24 passed / 42.7 s，退出 0；单项 2.1–4.2 s。
+- `make -o frontend-install frontend-lint sensitive-check`：lint、E2E 类型与隐私扫描通过，退出 0；目标文件按仓库行尾规则格式化。
+- 一次前序批次因本地 Vite 服务意外中断全部在 `page.goto` 报连接拒绝；FastCtx 记录 interrupted、无退出记录。重启该工作树自身服务后重新执行，未把此环境失败计为产品红例。
