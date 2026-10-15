@@ -762,8 +762,11 @@ across restarts until finished. A configured mode switch or
 Fetch pool switch requires a preview and confirmation. Kikoto blocks ordinary
 requests during the durable copy, checksum verification, database path update,
 source cleanup, and local scan. Administrators see progress and can retry a
-failed move; other users see maintenance. A pool that still holds unrelated
-works cannot be removed.
+failed move; other users see maintenance. The migration detail reports
+`completed` only after the local scan succeeds, the final database update
+succeeds, and ordinary requests can leave maintenance. A failed final update
+keeps maintenance active and retains the scan checkpoint for retry or restart
+recovery. A pool that still holds unrelated works cannot be removed.
 The plan includes indexed local roots and unindexed work folders visible at
 the current scan depth. A folder below that depth remains outside the scan's
 scope until the administrator increases the depth and scans it.
