@@ -103,6 +103,9 @@ func (s *Server) deleteUnlinkedWorks(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if _, ok = s.requirePermission(w, r, "library:write"); !ok {
+		return
+	}
 	request, ok := decodeUnlinkedWorkMaintenanceRequest(w, r)
 	if !ok {
 		return
@@ -161,7 +164,7 @@ func (s *Server) enqueueUnlinkedWorkSourceCheck(ctx context.Context, actorUserID
 		return unlinkedWorkSourceCheckResult{}, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	families, skipped, err := eligibleUnlinkedWorkFamilies(ctx, tx, workIDs)
+	families, skipped, err := eligibleUnlinkedWorkFamilies(ctx, tx, workIDs, false)
 	if err != nil {
 		return unlinkedWorkSourceCheckResult{}, err
 	}
@@ -351,7 +354,7 @@ func (s *Server) deleteUnlinkedWorkFamilies(ctx context.Context, actorUserID int
 // logical work families. The caller owns the transaction so a media cleanup
 // workflow can commit file-state updates and the work purge atomically.
 func (s *Server) deleteUnlinkedWorkFamiliesTx(ctx context.Context, tx *sql.Tx, workIDs []int64) (unlinkedWorkDeleteResult, error) {
-	families, skipped, err := eligibleUnlinkedWorkFamilies(ctx, tx, workIDs)
+	families, skipped, err := eligibleUnlinkedWorkFamilies(ctx, tx, workIDs, true)
 	if err != nil {
 		return unlinkedWorkDeleteResult{}, err
 	}
@@ -401,7 +404,7 @@ func insertUnlinkedWorkDeleteAudit(ctx context.Context, tx *sql.Tx, actorUserID 
 	return nil
 }
 
-func eligibleUnlinkedWorkFamilies(ctx context.Context, queryer unlinkedWorkQueryer, workIDs []int64) ([]unlinkedWorkFamily, []unlinkedWorkMaintenanceSkip, error) {
+func eligibleUnlinkedWorkFamilies(ctx context.Context, queryer unlinkedWorkQueryer, workIDs []int64, forDeletion bool) ([]unlinkedWorkFamily, []unlinkedWorkMaintenanceSkip, error) {
 	families := []unlinkedWorkFamily{}
 	skipped := []unlinkedWorkMaintenanceSkip{}
 	seenFamilies := map[string]bool{}
@@ -422,6 +425,16 @@ func eligibleUnlinkedWorkFamilies(ctx context.Context, queryer unlinkedWorkQuery
 			continue
 		}
 		seenFamilies[key] = true
+		if forDeletion {
+			retained, err := workFamilyHasPersonalReferences(ctx, queryer, family.WorkIDs)
+			if err != nil {
+				return nil, nil, err
+			}
+			if retained {
+				skipped = append(skipped, unlinkedWorkMaintenanceSkip{WorkID: workID, Code: family.CanonicalCode, Reason: "personal_records"})
+				continue
+			}
+		}
 		unlinked, err := isUnlinkedWorkFamily(ctx, queryer, family.WorkIDs)
 		if err != nil {
 			return nil, nil, err

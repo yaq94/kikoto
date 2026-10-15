@@ -2,6 +2,8 @@ import { getJSON, patchJSONBody, postJSONBody } from "@/lib/apiTransport";
 import type { RemoteTrack } from "@/lib/remoteSourceApi";
 import type { PersonalReview, PersonalReviewPatch } from "@/lib/workApi";
 
+export type CatalogStatus =
+  "available" | "unavailable" | "maintenance" | "restricted" | "unconfirmed_empty" | "missing" | "disabled";
 export type CatalogEntry = PersonalReview & {
   catalogEntryId: number;
   sourceId: number;
@@ -10,6 +12,8 @@ export type CatalogEntry = PersonalReview & {
   title: string;
   workId: number | null;
   seriesId?: number | null;
+  status?: CatalogStatus;
+  relocationCandidates?: Array<{ catalogEntryId: number; title: string; reason: string }>;
 };
 export type CatalogSeriesEpisode = Omit<CatalogEntry, keyof PersonalReview> & { position: number };
 export type CatalogSeries = PersonalReview & {
@@ -28,7 +32,7 @@ export type CatalogGroupingPreview = {
 export type CatalogTrack = RemoteTrack & { path: string; children: CatalogTrack[] };
 export type CatalogDirectory = Omit<CatalogEntry, keyof PersonalReview> & {
   directoryType: "catalog";
-  status: "available" | "disabled";
+  status: CatalogStatus;
   checkedAt: string;
 };
 export type CatalogPlaybackTarget = {

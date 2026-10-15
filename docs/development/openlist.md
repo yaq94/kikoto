@@ -159,6 +159,43 @@ entry's real relative file paths and media kinds. Paths locate observations;
 renaming a root does not transfer an old identity or review by title matching.
 Temporary URLs are never persisted as identities.
 
+### Source lifecycle
+
+Catalog details and work directory tabs report `available`, `unavailable`,
+`maintenance`, `restricted`, `unconfirmed_empty`, `missing`, or `disabled`.
+Failed requests and unconfirmed empty directories keep the saved tree and
+personal records. Explicit directory refresh records its failure status and a
+successful refresh restores availability. A full scan confirms missing entries
+only after all its directory ranges are complete; cancelled or partial scans
+cannot declare a missing work. Availability belongs to each source separately.
+
+Each complete scan records a bounded fingerprint of the audio file paths, sizes
+and explicit SHA-256 hashes provided by the source. A moved root retains its
+catalog id, work and playback identities only when the complete content evidence
+uniquely matches one missing entry and one newly discovered, unregistered entry
+without series membership or a conflicting product code. Size, title, translation
+and signed URL alone cannot transfer identity. Other matches appear as at most
+eight `relocationCandidates` on the retained detail; opening a candidate does
+not move any records. Shared association follows its own confirmation workflow.
+
+Removing a configured source retains catalog metadata, directory snapshots and
+registered works without deleting stored media files. Reviewed works remain
+discoverable in the regular Library for their users. Saved catalog links and personal reviews remain readable, and
+editing an existing review does not require a usable upstream. Playback and
+network refresh still require an enabled OpenList source. The default directory
+for a numberless work prefers an available catalog entry; explicitly selecting
+another tab does not alter playback. The UI names unavailable states and keeps
+candidate links separate from the saved review.
+
+Manual no-source cleanup requires `sources:write` and `library:write`. Any
+account-owned reference, including reviews, favorites, tags, progress, lyrics
+preferences and listening records, defers deletion of the shared work family
+with reason `personal_records`. Unreferenced unavailable families can be deleted.
+Media cleanup can remove its selected files while retaining a referenced family;
+the workflow reports partial completion rather than claiming that work was
+forgotten. Lifecycle reconciliation processes at most 100 entries per transaction
+and persists its stage and cursor for restart recovery.
+
 `PATCH /api/source-catalog/{id}/user-state` uses the existing personal review
 payload and response. It requires `favorites:write` and, only if the work is
 absent, `remote:track`. Registration and the personal update commit together,
@@ -183,9 +220,11 @@ by the shared policy; errors expose fixed messages. Range requests are passed
 through, streamed bytes and request lifetime are bounded, and every new playback
 request resolves a fresh URL. A failed expired URL is refreshed at most once.
 
-The reusable server read boundary is `loadSourceCatalogEntry(ctx, entryID)`;
+The outbound read boundary is `loadSourceCatalogEntry(ctx, entryID)`;
 it checks the enabled source type before returning stored original text and
-source identity. `loadSourceCatalogFiles(ctx, entryID)` returns immutable real
+source identity. `loadRetainedSourceCatalogEntry(ctx, entryID)` resolves retained
+catalog links for metadata and private review reads even after source removal.
+`loadSourceCatalogFiles(ctx, entryID)` returns immutable real
 relative paths separately from display names. Callers first load the entry to
 enforce its source visibility before loading files. Content translation validates
 `catalogEntryId` plus field/path against these reads without registering a work.

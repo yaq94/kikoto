@@ -511,7 +511,7 @@ func TestMediaCleanupFilesOnlyPreservesWorkState(t *testing.T) {
 	}
 }
 
-func TestMediaCleanupForgetWorkDeletesLogicalFamilyAndUserState(t *testing.T) {
+func TestMediaCleanupForgetWorkRetainsReferencedLogicalFamilyAndUserState(t *testing.T) {
 	dataRoot := t.TempDir()
 	rootPath := filepath.Join(dataRoot, "RJ00000011")
 	mediaPath := filepath.Join(rootPath, "track.mp3")
@@ -568,7 +568,7 @@ func TestMediaCleanupForgetWorkDeletesLogicalFamilyAndUserState(t *testing.T) {
 	if _, err := os.Stat(rootPath); !os.IsNotExist(err) {
 		t.Fatalf("work root still exists or stat failed unexpectedly: %v", err)
 	}
-	for _, query := range []string{
+	for i, query := range []string{
 		"SELECT COUNT(*) FROM work WHERE id IN (302, 303)",
 		"SELECT COUNT(*) FROM logical_work WHERE id = 32",
 		"SELECT COUNT(*) FROM work_edition WHERE logical_work_id = 32",
@@ -579,7 +579,7 @@ func TestMediaCleanupForgetWorkDeletesLogicalFamilyAndUserState(t *testing.T) {
 		"SELECT COUNT(*) FROM user_work_playback_cursor WHERE work_id = 302",
 		"SELECT COUNT(*) FROM favorite_list_item WHERE list_id = 302 AND work_id = 303",
 	} {
-		assertMediaCleanupCount(t, db, query, 0)
+		assertMediaCleanupCount(t, db, query, []int{2, 1, 2, 2, 2, 2, 1, 1, 1}[i])
 	}
 	assertMediaCleanupCount(t, db, "SELECT COUNT(*) FROM favorite_list WHERE id = 302", 1)
 	assertMediaCleanupCount(t, db, "SELECT COUNT(*) FROM audit_log WHERE action = 'media_cleanup.forget_work' AND actor_user_id = 1", 1)
@@ -590,14 +590,14 @@ func TestMediaCleanupForgetWorkDeletesLogicalFamilyAndUserState(t *testing.T) {
 	if err := db.QueryRow("SELECT status FROM workflow_node_run WHERE workflow_run_id = ? AND node_id = 'forget'", queued.RunID).Scan(&forgetStatus); err != nil {
 		t.Fatal(err)
 	}
-	if runStatus != "succeeded" || forgetStatus != "succeeded" {
+	if runStatus != "partial" || forgetStatus != "partial" {
 		t.Fatalf("statuses = run %q forget %q", runStatus, forgetStatus)
 	}
 	var summaryValue map[string]any
 	if err := json.Unmarshal([]byte(summary), &summaryValue); err != nil {
 		t.Fatal(err)
 	}
-	if summaryValue["work_forgotten"] != true || summaryValue["forgotten_work_count"] != float64(2) {
+	if summaryValue["work_forgotten"] != false || summaryValue["forgotten_work_count"] != float64(0) || !strings.Contains(summary, "personal_records") {
 		t.Fatalf("summary = %s", summary)
 	}
 }

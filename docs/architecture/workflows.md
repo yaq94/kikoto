@@ -63,7 +63,9 @@ Media, cleanup, and database:
   grace period and prune empty directories.
 - `media_location_cleanup`: delete selected cache or local files and mark their
   locations unavailable. `media_cleanup_forget_work` also removes the then
-  unlinked work family and its personal state.
+  unlinked work family when no account-owned record refers to it. Personal
+  references retain the family and report partial completion with
+  `personal_records`; requested media cleanup still runs.
 - `local_media_delete`: delete one local media file and mark only that location
   unavailable. `local_symlink_review` notifies users when such a request
   targets a symlink.

@@ -23,6 +23,7 @@ type catalogEntry struct {
 	Title       string `json:"title"`
 	RootPath    string `json:"-"`
 	WorkID      *int64 `json:"workId"`
+	Status      string `json:"status"`
 }
 type SourceCatalogFile struct {
 	Path  string `json:"path"`
@@ -159,7 +160,7 @@ func persistOpenListSnapshotTx(ctx context.Context, tx *sql.Tx, sourceID int64, 
 	}
 	var id int64
 	err := tx.QueryRowContext(ctx, `INSERT INTO source_catalog_entry(file_source_id,root_path,primary_code,title)
-		VALUES(?,?,?,?) ON CONFLICT(file_source_id,root_path) DO UPDATE SET title=excluded.title,updated_at=CURRENT_TIMESTAMP
+			VALUES(?,?,?,?) ON CONFLICT(file_source_id,root_path) DO UPDATE SET title=excluded.title,availability_status='available',status_checked_at=CURRENT_TIMESTAMP,content_fingerprint='',layout_fingerprint='',updated_at=CURRENT_TIMESTAMP
 		RETURNING id`, sourceID, root, code, path.Base(root)).Scan(&id)
 	if err != nil {
 		return 0, err
@@ -175,32 +176,21 @@ func persistOpenListSnapshotTx(ctx context.Context, tx *sql.Tx, sourceID int64, 
 	if err = attachCatalogSeriesTx(ctx, tx, id); err != nil {
 		return 0, err
 	}
+	if err = setCatalogEntryStatusTx(ctx, tx, id, "available"); err != nil {
+		return 0, err
+	}
+	if _, err = tx.ExecContext(ctx, `DELETE FROM source_catalog_relocation_candidate WHERE catalog_entry_id=?`, id); err != nil {
+		return 0, err
+	}
 	return id, nil
 }
 
 // loadSourceCatalogEntry is the shared original-text and source-read boundary.
 // It does not register a work, resolve a media URL, or return private user state.
 func (s *Server) loadSourceCatalogEntry(ctx context.Context, id int64) (catalogEntry, remoteSourceForUse, error) {
-	var entry catalogEntry
-	if s.cfg.IsDemo() {
-		return entry, remoteSourceForUse{}, errRemoteWorkNotFound
-	}
-	err := s.db.QueryRowContext(ctx, `SELECT id,file_source_id,primary_code,title,root_path,work_id FROM source_catalog_entry WHERE id=? AND file_source_id IS NOT NULL`, id).
-		Scan(&entry.ID, &entry.SourceID, &entry.PrimaryCode, &entry.Title, &entry.RootPath, &entry.WorkID)
-	if err != nil {
-		return entry, remoteSourceForUse{}, err
-	}
-	source, err := s.loadRemoteSourceForUse(ctx, entry.SourceID)
+	entry, source, err := s.loadRetainedSourceCatalogEntry(ctx, id)
 	if err == nil && (!source.Enabled || source.SourceType != sourceTypeOpenList) {
 		err = errRemoteSourceNotUsable
-	}
-	if err == nil && entry.WorkID == nil && entry.PrimaryCode != "" {
-		identity, resolveErr := s.resolveWorkCodeIdentity(ctx, entry.PrimaryCode)
-		if resolveErr == nil {
-			entry.WorkID = &identity.WorkID
-		} else if !errors.Is(resolveErr, sql.ErrNoRows) {
-			return entry, source, resolveErr
-		}
 	}
 	return entry, source, err
 }
@@ -228,7 +218,7 @@ func (s *Server) getSourceCatalogEntry(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, 400, "invalid_request", "invalid catalog id", false)
 		return
 	}
-	entry, source, err := s.loadSourceCatalogEntry(r.Context(), id)
+	entry, source, err := s.loadRetainedSourceCatalogEntry(r.Context(), id)
 	if err != nil {
 		writeUpstreamError(w, err)
 		return
@@ -251,7 +241,12 @@ func (s *Server) getSourceCatalogEntry(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	writeJSON(w, 200, map[string]any{"seriesId": seriesID, "catalogEntryId": entry.ID, "sourceId": entry.SourceID, "sourceName": source.DisplayName, "title": entry.Title, "primaryCode": entry.PrimaryCode, "workId": entry.WorkID, "personalRating": personalRating, "personalNote": note})
+	candidates, err := s.catalogRelocationCandidates(r.Context(), entry.ID)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, 200, map[string]any{"seriesId": seriesID, "catalogEntryId": entry.ID, "sourceId": entry.SourceID, "sourceName": source.DisplayName, "title": entry.Title, "primaryCode": entry.PrimaryCode, "workId": entry.WorkID, "personalRating": personalRating, "personalNote": note, "status": entry.Status, "relocationCandidates": candidates})
 }
 
 func (s *Server) getSourceCatalogTracks(w http.ResponseWriter, r *http.Request) {
@@ -260,10 +255,12 @@ func (s *Server) getSourceCatalogTracks(w http.ResponseWriter, r *http.Request) 
 		writeAPIError(w, 400, "invalid_request", "invalid catalog id", false)
 		return
 	}
-	if _, _, err = s.loadSourceCatalogEntry(r.Context(), id); err != nil {
+	entry, _, err := s.loadRetainedSourceCatalogEntry(r.Context(), id)
+	if err != nil {
 		writeUpstreamError(w, err)
 		return
 	}
+	id = entry.ID
 	files, err := s.loadSourceCatalogFiles(r.Context(), id)
 	if err != nil {
 		writeError(w, err)
@@ -314,7 +311,7 @@ func (s *Server) listOpenListWorks(w http.ResponseWriter, r *http.Request, sourc
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
 	from := `FROM (
 		SELECT e.id,0 AS series_id,e.primary_code,e.title,e.work_id,e.updated_at FROM source_catalog_entry e
-		WHERE e.file_source_id=? AND NOT EXISTS(SELECT 1 FROM catalog_series_member m WHERE m.catalog_entry_id=e.id)
+		WHERE e.file_source_id=? AND e.relocated_to_id IS NULL AND NOT EXISTS(SELECT 1 FROM catalog_series_member m WHERE m.catalog_entry_id=e.id)
 		AND (?='' OR instr(lower(e.title),lower(?))>0 OR instr(lower(e.primary_code),lower(?))>0)
 		UNION ALL
 		SELECT 0,s.id,'',s.title,s.work_id,s.created_at FROM catalog_series s

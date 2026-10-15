@@ -11,6 +11,7 @@ import { DirectoryLoadErrorPanel, SourceDirectoryPanel } from "./directory/Sourc
 import { DirectorySkeleton } from "./WorkDetailLayout";
 import { formatTreeStats, treeStats } from "./media/mediaTreeModel";
 import type { SourceTabInfo } from "./source/sourceContextModel";
+import { CatalogAvailabilityNotice } from "./CatalogAvailabilityNotice";
 
 export function CatalogSourceDirectory({
   entry,
@@ -31,6 +32,8 @@ export function CatalogSourceDirectory({
   const [error, setError] = useState("");
   const [attempt, setAttempt] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
+  const [status, setStatus] = useState(entry.status);
+  useEffect(() => setStatus(entry.status), [entry.status, entry.catalogEntryId]);
   const request = useRef<AbortController | null>(null);
   useEffect(() => {
     const controller = new AbortController();
@@ -61,6 +64,12 @@ export function CatalogSourceDirectory({
     } catch (error) {
       if (!signal?.aborted) setError(error instanceof Error ? error.message : t("errors.unavailable"));
     } finally {
+      try {
+        const detail = await api.getCatalogEntry(entry.catalogEntryId, signal);
+        if (!signal?.aborted) setStatus(detail.status ?? entry.status);
+      } catch {
+        // Keep the last known status when even the saved detail is unavailable.
+      }
       if (!signal?.aborted) setRefreshing(false);
     }
   };
@@ -75,6 +84,7 @@ export function CatalogSourceDirectory({
   };
   return (
     <ContentResourceScope resource={{ catalogEntryId: entry.catalogEntryId }}>
+      <CatalogAvailabilityNotice entry={{ ...entry, status }} />
       <SourceDirectoryPanel
         title={t("libraryDetail.directory")}
         description={entry.sourceName}
