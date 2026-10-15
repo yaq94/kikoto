@@ -15,7 +15,7 @@ import (
 // and the migrated SQLite database. Only the external model is replaced.
 func translationHTTPFixture(t *testing.T) (*Server, *httptest.Server, *http.Cookie, *http.Cookie) {
 	t.Helper()
-	s := NewServer(openMigratedTestDB(t), config.Config{Mode: config.ModeProduction, RootUsername: "root"})
+	s := NewServer(openMigratedTestDB(t), config.Config{Mode: config.ModeProduction, RootUsername: "root", CacheRoot: t.TempDir()})
 	createTestAdministrator(t, s, "root", "root-password")
 	createAccountManagedTestUser(t, s, "listener", "listener-password")
 	host := httptest.NewServer(s.Routes())

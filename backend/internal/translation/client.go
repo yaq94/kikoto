@@ -25,6 +25,7 @@ type Input struct {
 }
 
 type Result struct {
+	CacheStatus     string `json:"cacheStatus,omitempty"`
 	Text            string `json:"text"`
 	Model           string `json:"model"`
 	TemplateVersion string `json:"templateVersion"`

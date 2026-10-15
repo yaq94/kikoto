@@ -4,6 +4,20 @@
  * persisted user data never become translated at the domain boundary.
  */
 export const surfaceEnglish = {
+  openlist: {
+    kikoeruType: "Kikoeru",
+    openlistType: "OpenList",
+    detail: "Source catalog work",
+    numberless: "No product code",
+    scan: "Scan configured directories",
+    scanStatus: "Catalog scan",
+    running: "Scanning configured directories…",
+    complete: "Configured directories scanned.",
+    partial: "Some directories could not be scanned.",
+    failed: "Scan stopped or failed. Retry when ready.",
+    roots: "Work directories",
+    rootsHint: "One absolute work directory per line, up to 8. Tracks and format folders stay inside their work.",
+  },
   workTitles: {
     manual: "Manual title for this language",
     manualAll: "Manual title (all languages)",

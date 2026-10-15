@@ -1,6 +1,7 @@
 import { AudioLines, Headphones, MicVocal, Star } from "lucide-react";
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
+import { ContentTranslationScope, TranslatedText } from "@/components/content-translation/ContentTranslation";
 
 import { Card, CardContent } from "@/components/ui/card";
 import { useLocale } from "@/i18n/LocaleProvider";
@@ -54,84 +55,89 @@ export function CompactWorkCardShell({
     <CompactCover work={work} layout={layout} selection={selection} onRecommendationOpen={onRecommendationOpen} />
   );
   return (
-    <Card
-      className="group h-full overflow-hidden transition-[border-color,transform] duration-150 hover:border-primary/40 focus-within:border-primary/40 active:scale-[var(--press-scale)] motion-reduce:transition-none motion-reduce:active:scale-100"
-      data-testid="work-card"
-      data-card-layout={layout}
-    >
-      <CardContent className="flex h-full flex-col rounded-[inherit] p-0">
-        <div
-          className={cn(
-            "flex flex-1 flex-col rounded-t-[inherit] text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
-            interactive ? "cursor-pointer" : "cursor-default",
-          )}
-          role={interactive ? "button" : undefined}
-          tabIndex={interactive ? 0 : undefined}
-          onClick={interactive ? onOpen : undefined}
-          onKeyDown={
-            interactive
-              ? (event) => {
-                  if (event.target !== event.currentTarget) return;
-                  if (event.key === "Enter" || event.key === " ") {
-                    event.preventDefault();
-                    onOpen?.();
+    <ContentTranslationScope resource={work.translationResource ?? { code: work.code }}>
+      <Card
+        className="group h-full overflow-hidden transition-[border-color,transform] duration-150 hover:border-primary/40 focus-within:border-primary/40 active:scale-[var(--press-scale)] motion-reduce:transition-none motion-reduce:active:scale-100"
+        data-testid="work-card"
+        data-card-layout={layout}
+      >
+        <CardContent className="flex h-full flex-col rounded-[inherit] p-0">
+          <div
+            className={cn(
+              "flex flex-1 flex-col rounded-t-[inherit] text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+              interactive ? "cursor-pointer" : "cursor-default",
+            )}
+            role={interactive ? "button" : undefined}
+            tabIndex={interactive ? 0 : undefined}
+            onClick={interactive ? onOpen : undefined}
+            onKeyDown={
+              interactive
+                ? (event) => {
+                    if (event.target !== event.currentTarget) return;
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      onOpen?.();
+                    }
                   }
-                }
-              : undefined
-          }
-        >
-          {layout === "row" ? (
-            <>
-              <div className="flex gap-3 p-2.5 pb-2">
-                <div className="w-[7.5rem] shrink-0">{cover}</div>
-                <div className="flex min-w-0 flex-1 flex-col gap-1">
+                : undefined
+            }
+          >
+            {layout === "row" ? (
+              <>
+                <div className="flex gap-3 p-2.5 pb-2">
+                  <div className="w-[7.5rem] shrink-0">{cover}</div>
+                  <div className="flex min-w-0 flex-1 flex-col gap-1">
+                    <CodeLine work={work} />
+                    <h3 className="line-clamp-2 text-[0.9375rem] font-semibold leading-5" title={work.title}>
+                      <TranslatedText text={work.title} field="title" />
+                    </h3>
+                    <CreditLine work={work} onCircleOpen={circleOpen} onVoiceOpen={voiceOpen} />
+                    <MetricLine work={work} className="mt-auto pt-0.5" />
+                  </div>
+                </div>
+                {hasTags && (
+                  <div className="px-2.5 pb-2">
+                    <WorkCardTags
+                      dlsiteTags={work.dlsiteTags}
+                      userTags={work.userTags ?? []}
+                      emptyLabel={t("workCard.noDlsiteTags")}
+                      singleRow
+                      onTagOpen={onTagOpen}
+                    />
+                  </div>
+                )}
+                <ProgressLine work={work} />
+              </>
+            ) : layout === "tile" ? (
+              <>
+                <div className="p-1.5 pb-0">{cover}</div>
+                <div className="flex flex-1 flex-col gap-1 px-2.5 pb-2.5 pt-2">
                   <CodeLine work={work} />
-                  <h3 className="line-clamp-2 text-[0.9375rem] font-semibold leading-5" title={work.title}>
-                    {work.title}
+                  <h3 className="line-clamp-2 min-h-10 text-sm font-semibold leading-5" title={work.title}>
+                    <TranslatedText text={work.title} field="title" />
                   </h3>
-                  <CreditLine work={work} onCircleOpen={circleOpen} onVoiceOpen={voiceOpen} />
-                  <MetricLine work={work} className="mt-auto pt-0.5" />
+                  <CreditLine work={work} onCircleOpen={circleOpen} />
+                  <MetricLine work={work} hidePrice className="mt-auto pt-0.5" />
                 </div>
-              </div>
-              {hasTags && (
-                <div className="px-2.5 pb-2">
-                  <WorkCardTags
-                    dlsiteTags={work.dlsiteTags}
-                    userTags={work.userTags ?? []}
-                    emptyLabel={t("workCard.noDlsiteTags")}
-                    singleRow
-                    onTagOpen={onTagOpen}
-                  />
+              </>
+            ) : (
+              <>
+                <div className="p-1.5 pb-0">{cover}</div>
+                <div className="px-2 pb-2 pt-1.5">
+                  <h3
+                    className="line-clamp-2 min-h-9 text-[0.8125rem] font-medium leading-[1.125rem]"
+                    title={work.title}
+                  >
+                    <TranslatedText text={work.title} field="title" />
+                  </h3>
                 </div>
-              )}
-              <ProgressLine work={work} />
-            </>
-          ) : layout === "tile" ? (
-            <>
-              <div className="p-1.5 pb-0">{cover}</div>
-              <div className="flex flex-1 flex-col gap-1 px-2.5 pb-2.5 pt-2">
-                <CodeLine work={work} />
-                <h3 className="line-clamp-2 min-h-10 text-sm font-semibold leading-5" title={work.title}>
-                  {work.title}
-                </h3>
-                <CreditLine work={work} onCircleOpen={circleOpen} />
-                <MetricLine work={work} hidePrice className="mt-auto pt-0.5" />
-              </div>
-            </>
-          ) : (
-            <>
-              <div className="p-1.5 pb-0">{cover}</div>
-              <div className="px-2 pb-2 pt-1.5">
-                <h3 className="line-clamp-2 min-h-9 text-[0.8125rem] font-medium leading-[1.125rem]" title={work.title}>
-                  {work.title}
-                </h3>
-              </div>
-            </>
-          )}
-        </div>
-        {layout !== "cover" && footer}
-      </CardContent>
-    </Card>
+              </>
+            )}
+          </div>
+          {layout !== "cover" && footer}
+        </CardContent>
+      </Card>
+    </ContentTranslationScope>
   );
 }
 

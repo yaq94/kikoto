@@ -48,7 +48,9 @@ func (s *Server) testTranslation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer client.CloseIdleConnections()
-	result, err := translation.Translate(ctx, client, cfg, input)
+	result, err := s.contentTranslationQueue(cfg).Do(ctx, "trial", time.Duration(cfg.TimeoutSeconds)*time.Second, true, func(ctx context.Context) (translation.Result, error) {
+		return translation.Translate(ctx, client, cfg, input)
+	})
 	if err != nil {
 		writeTranslationTrialError(w, err)
 		return
@@ -61,6 +63,9 @@ func writeTranslationTrialError(w http.ResponseWriter, err error) {
 	status := http.StatusUnprocessableEntity
 	if public.Code == "translation_invalid_input" {
 		status = http.StatusBadRequest
+	}
+	if public.Code == "translation_busy" || public.Code == "translation_queue_full" {
+		status = http.StatusTooManyRequests
 	}
 	writeAPIError(w, status, public.Code, public.Message, false)
 }

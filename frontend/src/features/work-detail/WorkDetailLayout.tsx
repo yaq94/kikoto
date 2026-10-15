@@ -1,4 +1,6 @@
 import { WorkDescription } from "./metadata/WorkDescription";
+import { ContentTranslationScope, TranslatedText } from "@/components/content-translation/ContentTranslation";
+import type { ContentTranslationResource } from "@/lib/contentTranslationApi";
 import {
   api,
   assetURL,
@@ -63,6 +65,7 @@ import type { SourceActionLayout } from "@/features/work-detail/WorkDetailAction
 import { DetailPurchaseBonusLine } from "@/features/work-detail/DetailPurchaseBonusLine";
 
 export type UnifiedWorkDetailPresentation = {
+  translationResource?: ContentTranslationResource;
   coverUrl: string;
   fallbackCode: string;
   code: string;
@@ -134,30 +137,32 @@ export function UnifiedWorkDetailPage({
   });
 
   return (
-    <div className="space-y-5">
-      {compact ? (
-        <MobileWorkDetailLayout
-          {...presentation}
-          activeTab={mobileTab}
-          onActiveTabChange={onMobileTabChange}
-          actions={
-            <>
-              {actions}
-              {renderSourceActions?.("menu")}
-            </>
-          }
-          directory={directory}
-        />
-      ) : (
-        <DesktopWorkDetailLayout
-          {...presentation}
-          actions={actions}
-          renderSourceActions={renderSourceActions}
-          directory={directory}
-        />
-      )}
-      {children}
-    </div>
+    <ContentTranslationScope resource={presentation.translationResource ?? { code: presentation.code }}>
+      <div className="space-y-5">
+        {compact ? (
+          <MobileWorkDetailLayout
+            {...presentation}
+            activeTab={mobileTab}
+            onActiveTabChange={onMobileTabChange}
+            actions={
+              <>
+                {actions}
+                {renderSourceActions?.("menu")}
+              </>
+            }
+            directory={directory}
+          />
+        ) : (
+          <DesktopWorkDetailLayout
+            {...presentation}
+            actions={actions}
+            renderSourceActions={renderSourceActions}
+            directory={directory}
+          />
+        )}
+        {children}
+      </div>
+    </ContentTranslationScope>
   );
 }
 
@@ -331,7 +336,9 @@ function DetailTagLine({ tags, personalTags }: Pick<UnifiedWorkDetailPresentatio
                 title={tag}
                 onClick={() => openDetailTagSearch("tag", tag)}
               >
-                <span className="truncate">{tag}</span>
+                <span className="truncate">
+                  <TranslatedText text={tag} field="tag" controls={false} />
+                </span>
               </button>
             </li>
           ))}
@@ -845,7 +852,9 @@ function DetailTitleBlock({
           </div>
           {versionMenu}
         </div>
-        <h2 className="min-w-0 text-2xl font-semibold leading-tight xl:text-3xl">{title}</h2>
+        <h2 className="min-w-0 text-2xl font-semibold leading-tight xl:text-3xl">
+          <TranslatedText text={title} field="title" />
+        </h2>
         {loading && <div className="h-2 w-40 animate-pulse rounded bg-muted" />}
       </div>
       <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">

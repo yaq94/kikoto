@@ -29,6 +29,7 @@ import {
 } from "lucide-react";
 
 import { AuthProvider, useAuth } from "@/auth/AuthProvider";
+import { ContentLanguageProvider } from "@/components/content-translation/ContentTranslation";
 import {
   INSIGHTS_PATH,
   canAccessPage,
@@ -149,11 +150,13 @@ export function App() {
   return (
     <MobileRuntimeProvider>
       <AuthProvider>
-        <PageHeaderProvider>
-          <LibraryMigrationGate>
-            <AuthenticatedApp />
-          </LibraryMigrationGate>
-        </PageHeaderProvider>
+        <ContentLanguageProvider>
+          <PageHeaderProvider>
+            <LibraryMigrationGate>
+              <AuthenticatedApp />
+            </LibraryMigrationGate>
+          </PageHeaderProvider>
+        </ContentLanguageProvider>
       </AuthProvider>
     </MobileRuntimeProvider>
   );

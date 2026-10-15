@@ -32,6 +32,14 @@ func (s *Server) streamMedia(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if target.LocationType == "catalog_stream" {
+		if target.Availability != "available" {
+			writeAPIError(w, 404, "not_found", "catalog media not available", false)
+			return
+		}
+		s.streamCatalogLocation(w, r, target)
+		return
+	}
 	if target.LocationType == "remote_stream" {
 		remoteURL := firstNonEmpty(target.StreamURL, target.DownloadURL)
 		if (target.Availability != "available" && target.Availability != "remote") ||

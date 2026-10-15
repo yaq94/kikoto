@@ -111,7 +111,7 @@ APK 和 IPA 会附在每个 [GitHub Release](https://github.com/yexca/kikoto/rel
 
 ## 工作原理
 
-元数据来源和文件来源是分开的。元数据描述一部作品；文件来源只说明它的音频可以在哪里找到。两者都附着在同一部作品上，该作品由其商品编号标识。
+元数据来源和文件来源是分开的。元数据描述一部作品；文件来源只说明它的音频可以在哪里找到。两者都附着在同一部作品上，以稳定内部 ID 标识。商品编号用于查找有编号作品；明确配置的 OpenList 音声目录也支持无发行编号作品。参见 [OpenList 配置](../development/openlist.md)。
 
 ```mermaid
 flowchart LR
@@ -125,7 +125,7 @@ flowchart LR
     RS["远程来源<br/>兼容 Kikoeru"]
   end
 
-  MD -- 描述 --> W(("一部作品<br/>对应一个商品编号"))
+  MD -- 描述 --> W(("一部作品<br/>稳定内部 ID"))
   LF -- 本地 --> W
   CA -- 已缓存 --> W
   RS -- "已跟踪 / 远程" --> W

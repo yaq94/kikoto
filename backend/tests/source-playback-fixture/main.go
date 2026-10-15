@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -67,6 +68,8 @@ func run() error {
 	requests := []string{}
 	failed := true
 	revised := false
+	catalogFailed := false
+	catalogRevised := false
 	blockTracks := false
 	tracksGate := make(chan struct{})
 	var releaseTracks sync.Once
@@ -115,14 +118,56 @@ func run() error {
 		}
 	}))
 	defer upstream.Close()
+	var catalog *httptest.Server
+	catalog = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		requests = append(requests, "catalog"+r.URL.Path)
+		fail, changed := catalogFailed, catalogRevised
+		mu.Unlock()
+		switch r.URL.Path {
+		case "/api/fs/list":
+			if fail {
+				http.Error(w, "synthetic catalog failure", 500)
+				return
+			}
+			name := "catalog-a.wav"
+			if changed {
+				name = "catalog-updated.wav"
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": 200, "data": map[string]any{"total": 1, "content": []map[string]any{{"name": name, "type": 3, "size": len(wav)}}}})
+		case "/api/fs/get":
+			var input struct {
+				Path string `json:"path"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&input)
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": 200, "data": map[string]any{"name": path.Base(input.Path), "raw_url": catalog.URL + "/audio"}})
+		case "/audio":
+			w.Header().Set("Content-Type", "audio/wav")
+			http.ServeContent(w, r, "catalog.wav", time.Unix(0, 0), bytes.NewReader(wav))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer catalog.Close()
 	if _, err := db.Exec(`
 		INSERT INTO app_setting (key,value_json) VALUES ('library_mode','"standard"');
-		INSERT INTO work (id,primary_code,title) VALUES (1,'RJ00000000','Example Work'), (2,'RJ00000001','Example Unknown Work');
+			INSERT INTO work (id,primary_code,title) VALUES (1,'RJ00000000','Example Work'), (2,'RJ00000001','Example Unknown Work'),(3,'','Example Numberless');
 		INSERT INTO file_source (id,code,display_name,source_type) VALUES
 		(1,'example_local','Local','local'),
 		(2,'example_remote_a','Example Remote A','kikoeru_compatible'),
 		(3,'example_remote_b','Example Remote B','kikoeru_compatible'),
-		(4,'example_remote_c','Example Remote C','kikoeru_compatible');
+			(4,'example_remote_c','Example Remote C','kikoeru_compatible'),
+			(5,'example_catalog_a','Example Catalog A','openlist'),
+			(6,'example_catalog_b','Example Catalog B','openlist');
+			INSERT INTO source_catalog_entry(id,file_source_id,root_path,primary_code,title,work_id) VALUES
+			(1,5,'/Example/RJ00000000','RJ00000000','Example Catalog Numbered',NULL),
+			(2,5,'/Example/Numberless','','Example Catalog Numberless',3),
+			(3,6,'/Example/Numberless','','Example Catalog Alternate',3);
+			INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes) VALUES
+			(1,'catalog-a.wav','catalog-a.wav','audio',2880044),
+			(2,'catalog-a.wav','catalog-a.wav','audio',2880044),
+			(2,'catalog-b.wav','catalog-b.wav','audio',2880044),
+			(3,'alternate.wav','alternate.wav','audio',2880044);
 		INSERT INTO work_source_presence (work_id,file_source_id,presence_type,availability,last_checked_at) VALUES
 		(1,1,'local','available',CURRENT_TIMESTAMP),
 		(1,2,'source','available',CURRENT_TIMESTAMP),
@@ -142,6 +187,11 @@ func run() error {
 			return err
 		}
 	}
+	for _, id := range []int{5, 6} {
+		if _, err := db.Exec(`INSERT INTO file_source_endpoint(file_source_id,base_url,api_url) VALUES(?,?,?)`, id, catalog.URL, catalog.URL); err != nil {
+			return err
+		}
+	}
 	origin := os.Getenv("PLAYWRIGHT_BASE_URL")
 	if origin == "" {
 		origin = "http://127.0.0.1:3115"
@@ -156,6 +206,18 @@ func run() error {
 		mu.Lock()
 		defer mu.Unlock()
 		_ = json.NewEncoder(w).Encode(requests)
+	})
+	mux.HandleFunc("POST /__fixture/catalog-revise", func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		catalogRevised = true
+		mu.Unlock()
+		w.WriteHeader(204)
+	})
+	mux.HandleFunc("POST /__fixture/catalog-fail", func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		catalogFailed = true
+		mu.Unlock()
+		w.WriteHeader(204)
 	})
 	mux.HandleFunc("POST /__fixture/recover", func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()

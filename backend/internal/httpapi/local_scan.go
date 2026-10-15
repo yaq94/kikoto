@@ -197,7 +197,7 @@ func upsertDetectedWork(ctx context.Context, tx *sql.Tx, folder localfs.WorkFold
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO work (primary_code, work_type, title, description)
 		VALUES (?, 'audio', ?, ?)
-		ON CONFLICT(primary_code) DO UPDATE SET
+		ON CONFLICT(primary_code) WHERE primary_code <> '' DO UPDATE SET
 			description = excluded.description,
 			updated_at = CURRENT_TIMESTAMP
 		WHERE (work.description = '' OR work.description LIKE 'Detected from local folder %')

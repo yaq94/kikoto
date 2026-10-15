@@ -44,3 +44,8 @@ The browser keeps loaded directories while checks run or fail, and merges
 partial responses by source id. A source tab selects a directory only; it does
 not replace the global player queue or seek. The normal file action starts at
 zero, while Resume uses the persisted cursor's exact media item and location.
+
+Catalog directories join the same work's tabs through the read-only
+`directoryType: "catalog"` projection and their `catalogEntryId`. They keep the
+catalog snapshot and exact source path, separate from numbered source probes.
+See [catalog directory, refresh and playback contracts](../development/openlist.md).

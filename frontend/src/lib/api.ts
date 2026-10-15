@@ -7,6 +7,8 @@ import { creatorApi } from "@/lib/creatorApi";
 import { remoteSourceApi } from "@/lib/remoteSourceApi";
 import { workflowApi } from "@/lib/workflowApi";
 import { settingsApi } from "@/lib/settingsApi";
+import { sourceCatalogApi } from "@/lib/sourceCatalogApi";
+export type * from "@/lib/sourceCatalogApi";
 
 export type { CatalogSyncState } from "@/lib/catalogSyncState";
 export { API_BASE, ApiError, apiTransport, assetURL } from "@/lib/apiTransport";
@@ -35,4 +37,5 @@ export const api = {
   ...remoteSourceApi,
   ...workflowApi,
   ...settingsApi,
+  ...sourceCatalogApi,
 };

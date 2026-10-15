@@ -1195,7 +1195,10 @@ export function RemoteOnlyWorkDetailController({
 
   return (
     <UnifiedWorkDetailPage
-      presentation={presentation}
+      presentation={{
+        ...presentation,
+        translationResource: { sourceId: source.id, code: detail ? remoteDetailActionCode(detail) : code },
+      }}
       compact={isCompactDetailLayout}
       mobileTab={mobileDetailTab}
       onMobileTabChange={setMobileDetailTab}

@@ -11,7 +11,11 @@ import {
 import { workDetailCodeFromLocation } from "@/app/workDetailNavigation";
 import { useAuth } from "@/auth/AuthProvider";
 import { toastFromError, useToast } from "@/components/ui/toast";
-import { PersistedWorkDetailController, RemoteOnlyWorkDetailController } from "@/features/work-detail/lazyWorkDetail";
+import {
+  CatalogWorkDetail,
+  PersistedWorkDetailController,
+  RemoteOnlyWorkDetailController,
+} from "@/features/work-detail/lazyWorkDetail";
 import { api, type LibrarySource, type ListeningStatus } from "@/lib/api";
 import { NAVIGATION_EVENT, navigateToHistoryReturn } from "@/lib/browserHistory";
 import {
@@ -84,6 +88,7 @@ export function WorkDetailPage({
   }, [active]);
 
   const code = active ? route.code : null;
+  const catalogID = code?.startsWith("catalog:") ? Number(code.slice(8)) : null;
   const remoteOnly = code !== null && isRemoteOnlyWorkLocation(route.search);
   const remoteTarget = useMemo(
     () => (remoteOnly ? remoteTargetFromLocation(route.path, route.search, sources) : null),
@@ -95,13 +100,20 @@ export function WorkDetailPage({
   );
   const detail = useLibraryWorkDetail({
     principalID,
-    selectedCode: remoteOnly ? null : code,
+    selectedCode: remoteOnly || catalogID ? null : code,
     onCodeResolved: resolveCode,
   });
 
   if (code === null) return null;
 
   const back = () => navigateToHistoryReturn({ fallbackLocation });
+  if (catalogID) {
+    return (
+      <Suspense fallback={<WorkDetailLoading />}>
+        <CatalogWorkDetail id={catalogID} onBack={back} />
+      </Suspense>
+    );
+  }
   const openLibrary = () => {
     window.history.pushState({}, "", "/");
     window.dispatchEvent(new Event(NAVIGATION_EVENT));

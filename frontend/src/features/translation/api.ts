@@ -7,10 +7,24 @@ export type TranslationSettings = {
   apiKeyMask: string;
   timeoutSeconds: number;
   disableThinking: boolean;
+  concurrency: number;
+  queueLimit: number;
+  cacheBytes: number;
+  minFreeBytes: number;
 };
 
 export type TranslationSettingsPatch = Partial<
-  Pick<TranslationSettings, "baseUrl" | "model" | "timeoutSeconds" | "disableThinking">
+  Pick<
+    TranslationSettings,
+    | "baseUrl"
+    | "model"
+    | "timeoutSeconds"
+    | "disableThinking"
+    | "concurrency"
+    | "queueLimit"
+    | "cacheBytes"
+    | "minFreeBytes"
+  >
 > & { apiKey?: string };
 export type TranslationResult = { text: string; model: string; templateVersion: string; elapsedMs: number };
 export type TranslationTarget = "en" | "zh-Hans" | "ja" | "ko";

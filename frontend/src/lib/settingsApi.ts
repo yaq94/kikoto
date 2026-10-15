@@ -132,6 +132,8 @@ export type FileSource = {
   enabled: boolean;
   config: {
     saveRootTemplate?: string;
+    openListRoots?: string[];
+    openListIntervalMs?: number;
     scanDepth?: number;
     /** Language a remote source is asked in last, after the viewer's metadata languages. */
     requestLanguage?: string;

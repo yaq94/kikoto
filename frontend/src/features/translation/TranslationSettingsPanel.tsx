@@ -68,6 +68,10 @@ export function TranslationSettingsPanel({ readOnly = false }: { readOnly?: bool
           model: settings.model,
           timeoutSeconds: settings.timeoutSeconds,
           disableThinking: settings.disableThinking,
+          concurrency: settings.concurrency,
+          queueLimit: settings.queueLimit,
+          cacheBytes: settings.cacheBytes,
+          minFreeBytes: settings.minFreeBytes,
           ...(clearKey ? { apiKey: "" } : apiKey !== "" ? { apiKey } : {}),
         },
         signal,
@@ -210,6 +214,28 @@ export function TranslationSettingsPanel({ readOnly = false }: { readOnly?: bool
               />
             </SettingsRow>
           )}
+          {(
+            [
+              ["concurrency", 1, 8],
+              ["queueLimit", 0, 256],
+              ["cacheBytes", 4096, 4294967296],
+              ["minFreeBytes", 0, 1099511627776],
+            ] as const
+          ).map(([key, min, max]) => (
+            <SettingsRow key={key} title={t(`translationAdmin.content.${key}`)} htmlFor={`translation-${key}`}>
+              <Input
+                id={`translation-${key}`}
+                aria-label={t(`translationAdmin.content.${key}`)}
+                type="number"
+                min={min}
+                max={max}
+                required
+                value={settings[key]}
+                onChange={(event) => change({ [key]: Number(event.target.value) })}
+                disabled={disabled}
+              />
+            </SettingsRow>
+          ))}
           <SettingsRow title={t("translationAdmin.timeout")} htmlFor="translation-timeout">
             <Input
               id="translation-timeout"

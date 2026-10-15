@@ -1,4 +1,16 @@
 export const translationAdmin = {
+  content: {
+    pending: "翻訳中…",
+    failed: "翻訳できません。原文を表示しています。",
+    retry: "翻訳を再試行",
+    original: "原文を表示",
+    translated: "訳文を表示",
+    paused: "空き容量が不足し、キャッシュを一時停止しています。",
+    concurrency: "同時翻訳数",
+    queueLimit: "翻訳待機数の上限",
+    cacheBytes: "翻訳キャッシュ上限（バイト）",
+    minFreeBytes: "最小ディスク空き容量（バイト）",
+  },
   title: "翻訳",
   description: "共通の翻訳サービスを設定します。UI 言語はアカウントごとの設定です。",
   loading: "翻訳設定を読み込み中…",

@@ -57,7 +57,7 @@ func insertRemoteWorkIfMissing(ctx context.Context, tx *sql.Tx, code, title stri
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO work (primary_code, work_type, title, description, release_date, age_rating, duration_seconds)
 		VALUES (?, 'audio', ?, '', ?, ?, ?)
-		ON CONFLICT(primary_code) DO NOTHING
+		ON CONFLICT(primary_code) WHERE primary_code <> '' DO NOTHING
 	`, code, title, normalizeDate(remoteWork.Release), remoteWork.AgeCategoryString, duration); err != nil {
 		return 0, err
 	}

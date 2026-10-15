@@ -27,6 +27,8 @@ func (s *Server) updateTranslationSettings(w http.ResponseWriter, r *http.Reques
 	if _, ok := s.requirePermission(w, r, "sources:write"); !ok {
 		return
 	}
+	s.translationConfigMu.Lock()
+	defer s.translationConfigMu.Unlock()
 	var patch translation.Patch
 	if err := decodeTranslationBody(w, r, &patch); err != nil {
 		writeTranslationSettingsError(w, translation.ErrInvalidConfig)
@@ -37,6 +39,13 @@ func (s *Server) updateTranslationSettings(w http.ResponseWriter, r *http.Reques
 		writeTranslationSettingsError(w, err)
 		return
 	}
+	cfg, err := translation.NewStore(s.db).Load(r.Context())
+	if err != nil {
+		writeTranslationSettingsError(w, err)
+		return
+	}
+	s.contentTranslationQueue(cfg).Configure(cfg.Limits)
+	s.contentTranslationCache().Stats(cfg)
 	writeJSON(w, http.StatusOK, settings)
 }
 

@@ -8,6 +8,7 @@ import {
   type RemoteWorkDetail,
   type SourceAvailabilityResponse,
   type WorkDetail,
+  type CatalogDirectory,
 } from "@/lib/api";
 import {
   buildSourceTabs,
@@ -32,6 +33,7 @@ export function useWorkSourceContext({
   initialTrackedSourceID,
   initialRemoteCode,
   canCheckSources,
+  catalogDirectories,
 }: {
   code: string;
   work: WorkDetail | null;
@@ -40,6 +42,7 @@ export function useWorkSourceContext({
   initialTrackedSourceID: number | null;
   initialRemoteCode: string;
   canCheckSources: boolean;
+  catalogDirectories: CatalogDirectory[];
 }) {
   const [remoteSources, setRemoteSources] = useState<RemoteSourceAvailability[]>(() =>
     seedRemoteSources(sources, code),
@@ -51,6 +54,7 @@ export function useWorkSourceContext({
   const [remoteLoadVersion, setRemoteLoadVersion] = useState(0);
   const remoteRequestSequence = useRef(0);
   const availabilityRequest = useRef<AbortController | null>(null);
+  const initialCatalogWork = useRef<number | null>(null);
   const trackedPresenceOptions = useMemo(
     () => buildTrackedPresenceOptions(work?.mediaItems ?? [], remoteSources, work?.sourcePresence ?? []),
     [remoteSources, work?.mediaItems, work?.sourcePresence],
@@ -64,8 +68,23 @@ export function useWorkSourceContext({
     [initialTrackedSourceID, selectedTrackedPresenceKey, trackedPresenceOptions],
   );
   const sourceTabs = useMemo(
-    () => buildSourceTabs(work?.mediaItems ?? [], remoteSources, work?.sourcePresence ?? [], selectedTrackedOption),
-    [remoteSources, selectedTrackedOption, work?.mediaItems, work?.sourcePresence],
+    () => [
+      ...buildSourceTabs(work?.mediaItems ?? [], remoteSources, work?.sourcePresence ?? [], selectedTrackedOption),
+      ...catalogDirectories.map((entry) => ({
+        key: `catalog:${entry.catalogEntryId}`,
+        label:
+          catalogDirectories.filter((item) => item.sourceId === entry.sourceId).length > 1
+            ? `${entry.sourceName} · ${entry.title}`
+            : entry.sourceName,
+        sourceName: entry.sourceName,
+        kind: "catalog" as const,
+        fileSourceId: null,
+        status: entry.status === "disabled" ? ("unavailable" as const) : ("available" as const),
+        statusLabel: entry.status === "disabled" ? "Disabled" : "Available",
+        autoVisible: entry.status !== "disabled",
+      })),
+    ],
+    [remoteSources, selectedTrackedOption, work?.mediaItems, work?.sourcePresence, catalogDirectories],
   );
   const selectedSource =
     sourceTabs.find((source) => source.key === activeSourceKey) ??
@@ -269,10 +288,11 @@ export function useWorkSourceContext({
   }, [activeSourceKey, sourceCheckedAt, sourceTabs, work]);
 
   const availabilityCode = work?.primaryCode ?? "";
+  const supportsLookup = !work || Boolean(work.primaryCode);
   // Before the work loads, remote tabs are seeded with the requested code.
   const seedCode = work?.primaryCode ?? code;
   useEffect(() => {
-    setRemoteSources(seedRemoteSources(sources, seedCode));
+    setRemoteSources(supportsLookup ? seedRemoteSources(sources, seedCode) : []);
     setSourceCheckedAt("");
     setIsCheckingSources(false);
     if (!availabilityCode || sources.length === 0) return;
@@ -318,7 +338,23 @@ export function useWorkSourceContext({
       availabilityRequest.current?.abort();
       availabilityRequest.current = null;
     };
-  }, [applyAvailability, availabilityCode, canCheckSources, seedCode, sources]);
+  }, [applyAvailability, availabilityCode, canCheckSources, seedCode, sources, supportsLookup]);
+
+  useEffect(() => {
+    if (
+      work &&
+      !work.primaryCode &&
+      activeSourceKey === "local" &&
+      catalogDirectories[0] &&
+      initialCatalogWork.current !== work.id &&
+      !work.mediaItems.some((item) =>
+        item.locations.some((location) => location.locationType === "local" && location.availability === "available"),
+      )
+    ) {
+      initialCatalogWork.current = work.id;
+      setActiveSourceKey(`catalog:${catalogDirectories[0].catalogEntryId}`);
+    }
+  }, [work, activeSourceKey, catalogDirectories]);
 
   // The load below marks the selected source as loading, so it reads the
   // selection without subscribing to it: re-running on that update would abort

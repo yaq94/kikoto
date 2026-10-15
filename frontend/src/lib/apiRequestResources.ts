@@ -22,7 +22,11 @@ export function apiMutationResources(path: string): {
   ) {
     return { forget: ["work-state"], interrupt: [] };
   }
-  if (pathname === "/api/recommendation-events" || /^\/api\/remote-sources\/\d+\/recommendations$/.test(pathname))
+  if (
+    pathname === "/api/content-translations" ||
+    pathname === "/api/recommendation-events" ||
+    /^\/api\/remote-sources\/\d+\/recommendations$/.test(pathname)
+  )
     return { forget: [], interrupt: [] };
 
   const work = /^\/api\/works\/(\d+)(?:\/|$)/.exec(pathname);

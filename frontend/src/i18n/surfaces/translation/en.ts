@@ -1,4 +1,16 @@
 export const translationAdmin = {
+  content: {
+    pending: "Translating…",
+    failed: "Translation failed; original retained.",
+    retry: "Retry translation",
+    original: "Show original",
+    translated: "Show translation",
+    paused: "Cache paused: low disk space.",
+    concurrency: "Concurrent translations",
+    queueLimit: "Waiting translations",
+    cacheBytes: "Translation cache limit (bytes)",
+    minFreeBytes: "Minimum free disk space (bytes)",
+  },
   title: "Translation",
   description: "Configure the shared translation service. Interface language is a separate account preference.",
   loading: "Loading translation settings…",

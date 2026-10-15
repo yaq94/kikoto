@@ -1,6 +1,20 @@
 import { surfaceEnglish } from "./en";
 
 export const surfaceKorean = {
+  openlist: {
+    kikoeruType: "Kikoeru",
+    openlistType: "OpenList",
+    detail: "소스 카탈로그 작품",
+    numberless: "발매 번호 없음",
+    scan: "설정한 폴더 스캔",
+    scanStatus: "카탈로그 스캔",
+    running: "설정한 폴더를 스캔하는 중…",
+    complete: "설정한 폴더를 스캔했습니다.",
+    partial: "일부 폴더를 스캔하지 못했습니다.",
+    failed: "스캔이 중지되었거나 실패했습니다. 다시 시도할 수 있습니다.",
+    roots: "작품 폴더",
+    rootsHint: "한 줄에 작품 절대 경로 하나씩, 최대 8개. 트랙과 형식별 폴더는 해당 작품 안에 유지됩니다.",
+  },
   workTitles: {
     manual: "이 언어의 수동 제목",
     manualAll: "모든 언어의 수동 제목",

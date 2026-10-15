@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { TranslatedText } from "@/components/content-translation/ContentTranslation";
 import { ChevronRight, CornerLeftUp, Folder, MoreHorizontal } from "lucide-react";
 
 import { AnchoredPopover } from "@/components/ui/anchored-popover";
@@ -73,7 +74,14 @@ export function DirectoryBreadcrumb({ path, onChange }: { path: string[]; onChan
                     onClick={() => onChange(path.slice(0, index + 1))}
                   >
                     <Folder className="h-4 w-4 shrink-0 text-primary" />
-                    <span className="min-w-0 flex-1 truncate">{part}</span>
+                    <span className="min-w-0 flex-1 truncate">
+                      <TranslatedText
+                        text={part}
+                        field="directory"
+                        path={path.slice(0, index + 1).join("/")}
+                        controls={false}
+                      />
+                    </span>
                   </button>
                 ))}
               </div>
@@ -87,7 +95,7 @@ export function DirectoryBreadcrumb({ path, onChange }: { path: string[]; onChan
             title={current}
             aria-current="page"
           >
-            {current}
+            <TranslatedText text={current} field="directory" path={path.join("/")} controls={false} />
           </span>
         )}
       </div>
@@ -110,7 +118,12 @@ export function DirectoryBreadcrumb({ path, onChange }: { path: string[]; onChan
                   title={part}
                   aria-current="page"
                 >
-                  {part}
+                  <TranslatedText
+                    text={part}
+                    field="directory"
+                    path={path.slice(0, index + 1).join("/")}
+                    controls={false}
+                  />
                 </span>
               ) : (
                 <button
@@ -118,7 +131,12 @@ export function DirectoryBreadcrumb({ path, onChange }: { path: string[]; onChan
                   title={part}
                   onClick={() => onChange(path.slice(0, index + 1))}
                 >
-                  {part}
+                  <TranslatedText
+                    text={part}
+                    field="directory"
+                    path={path.slice(0, index + 1).join("/")}
+                    controls={false}
+                  />
                 </button>
               )}
             </span>

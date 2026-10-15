@@ -19,8 +19,10 @@ personal Settings tabs as shortcuts, the UI language, Settings and Users, and
 sign-in or sign-out; on phones it also holds the native connection actions. A
 signed-in user also chooses the personal preferred metadata language there:
 **Origin** is shown when the user has no preference and choosing it clears the
-stored preference, and a saved change refreshes the routed page through the
-user preference event. Demo keeps the choice in browser storage scoped to the
+stored preference. A saved content-language change refreshes visible translated
+text without remounting the routed page or changing directory/player state;
+other account preference changes retain their own refresh event. See
+[Translation service](../development/translation.md#public-content). Demo keeps the choice in browser storage scoped to the
 server and Demo user, and the API client sends it with authenticated requests
 (see [Metadata Language](data-model.md#metadata-language)). The
 notification panel (`app/header/NotificationCenter`) splits personal workflow
@@ -505,8 +507,12 @@ volatile queue with a diagnostic and a normal network loss window of up to
   controls or fetch a replacement collection. Returning reveals the loaded
   cards and restores the originating history entry's filters and page before
   list effects may write or fetch.
-- A work detail entry belongs to the page it was opened from. The work URL
-  stays the canonical `/<primary_code>`; the history entry records its owner
+- A work detail entry belongs to the page it was opened from. Numbered works
+  use `/<primary_code>`, registered numberless works use `/work/{workId}`, and
+  source catalog entries use `/catalog/{catalogEntryId}`. The catalog detail
+  reuses the directory explorer, global player and personal review editor;
+  [catalog paths and display names](../development/openlist.md) remain separate.
+  The history entry records its owner
   when it is created (`historyStateForNavigation` in `app/appRoutes`), a work
   opened from another work inherits that work's owner, and a direct link
   belongs to Library. The owner decides which navigation item is current, which

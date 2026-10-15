@@ -2,7 +2,7 @@
 
 **Status:** ready-for-agent
 **Implementation:** in-progress
-**阶段:** 01、04、06 已集成并复验；02 实施中，07 前置已解除。其余工单按依赖推进，实际迁移、部署与回滚验收待执行。
+**阶段:** 01、02、04、06 已集成并复验；05 实施中，07 本地接口与迁移已集成。07 真实媒体 LIVE 未通过，08/11 可按下述开发先决条件启动本地工作；发布验收仍受完整前置约束。
 **依据:** [正式规格](spec.md) · [工单总览](ticket-proposal.md) · [领域词汇表](../../GLOSSARY.md) · [作品身份与个人记录 ADR](../../docs/adr/0001-work-identity-and-personal-state.md)
 
 ## 当前授权与完成条件
@@ -18,7 +18,7 @@
 | verified-local | 当前产物已取得所列本地证据，仍有本票其他验收、真实样例或部署证据待补。 |
 | resolved | 本票全部主责与共同验收均有对应当前产物的完整证据；17 还须完成部署验收。 |
 
-每票自行完成入口、持久化、权限、页面操作与必要恢复验证，再解除依赖。文档、基础设施准备、单元测试、健康检查或代理报告都不能代替完整验收；由集成负责核对实际差异、产物版本和证据。
+每票自行完成入口、持久化、权限、页面操作与必要恢复验证。发布依赖只在完整验收后解除；已批准的开发先决条件见下文。文档、基础设施准备、单元测试、健康检查或代理报告都不能代替完整验收；由集成负责核对实际差异、产物版本和证据。
 
 ## 集成基线与工作区
 
@@ -37,16 +37,16 @@
 | 工单 | 直接依赖 | Implementation | 当前说明 | 验证证据 |
 | --- | --- | --- | --- | --- |
 | [01 管理员翻译配置与 Index 试译](issues/01-translation-admin-config.md) | 无 | resolved | 已集成；配置、试译、权限及出站边界通过 | [01 证据](evidence/01-translation.md)、[集成复验](evidence/01-04-integration.md) |
-| [02 浏览内容翻译与有界缓存](issues/02-content-translation-cache.md) | 01 | in-progress | 独立工作区实施中；缓存使用独立 CacheRoot，不占用业务 SQLite 迁移 | 待完成本票验收 |
-| [03 简繁转换](issues/03-traditional-chinese-conversion.md) | 02 | pending | 等待前置验收 | 待执行 |
+| [02 浏览内容翻译与有界缓存](issues/02-content-translation-cache.md) | 01 | resolved | 已集成；含 catalog 标题与真实路径目录翻译；缓存使用独立 CacheRoot | [02 证据](evidence/02-content-translation.md)、[集成复验](evidence/02-07-integration.md) |
+| [03 简繁转换](issues/03-traditional-chinese-conversion.md) | 02 | pending | 前置已验收，可启动 | 待执行 |
 | [04 编号作品个人评价](issues/04-numbered-work-personal-reviews.md) | 无 | resolved | 已集成；编号评价、隔离、必要登记与恢复通过 | [04 证据](evidence/04-personal-reviews.md)、[集成复验](evidence/01-04-integration.md) |
-| [05 多源目录与播放隔离](issues/05-multi-source-directory-playback.md) | 无 | pending | 可独立启动 | 待执行 |
+| [05 多源目录与播放隔离](issues/05-multi-source-directory-playback.md) | 无 | resolved | 独立分支完成；吸收 02／07 后编号／无码多源、刷新恢复、精确文件播放身份与游标 H/F 通过；待主流程集成 | [05 证据](evidence/05-source-playback.md) |
 | [06 稳定内部引用与编号兼容](issues/06-stable-identity-compatibility.md) | 无 | resolved | 已集成；数字版本、编号/别名、旧库升级与个人记录保留通过，无新增迁移 | [06 证据](evidence/06-stable-references.md)、[集成复验](evidence/06-integration.md) |
-| [07 OpenList 有限无码链路](issues/07-openlist-first-playable-slice.md) | 04、06 | pending | 两项前置已验收，可启动；069 预留本票，接入范围见 06 工单 | 待执行 |
-| [08 完整来源索引与恢复](issues/08-recoverable-full-source-index.md) | 07 | pending | 等待前置验收 | 待执行 |
+| [07 OpenList 有限无码链路](issues/07-openlist-first-playable-slice.md) | 04、06 | verified-local | 本地链路、069 升级与 catalog 翻译通过；真实媒体 LIVE 待诊断 | [07 证据](evidence/07-openlist.md)、[集成复验](evidence/02-07-integration.md) |
+| [08 完整来源索引与恢复](issues/08-recoverable-full-source-index.md) | 07 | pending | 本地开发先决条件已满足；发布仍等待 07 LIVE 及本票全部验收 | 待执行 |
 | [09 每日更新与扫描复用](issues/09-daily-index-update.md) | 08 | pending | 等待前置验收 | 待执行 |
 | [10 来源生命周期与记录保留](issues/10-source-lifecycle-retention.md) | 08 | pending | 等待前置验收 | 待执行 |
-| [11 系列卡片与单集归组](issues/11-series-and-episode-grouping.md) | 07 | pending | 等待前置验收 | 待执行 |
+| [11 系列卡片与单集归组](issues/11-series-and-episode-grouping.md) | 07 | pending | 本地开发先决条件已满足；发布仍等待 07 LIVE 及本票全部验收 | 待执行 |
 | [12 系列与单集个人评价](issues/12-series-episode-personal-reviews.md) | 11 | pending | 等待前置验收 | 待执行 |
 | [13 共享关联与本人冲突确认](issues/13-shared-link-conflict-review.md) | 12 | pending | 等待前置验收 | 待执行 |
 | [14 高置信唯一候选关联](issues/14-high-confidence-work-matching.md) | 13 | pending | 等待前置验收 | 待执行 |
@@ -54,9 +54,29 @@
 | [16 个人数据导入导出](issues/16-personal-data-transfer-compatibility.md) | 12 | pending | 等待前置验收 | 待执行 |
 | [17 组合验收与部署回退](issues/17-integrated-acceptance-release-plan.md) | 03、05、09、10、14、15、16 | pending | 完整 AC 验证及部署验收待执行 | 待执行 |
 
+## 开发依赖与发布依赖
+
+用户允许合理调整开发依赖并要求持续实施。07 的代码接口、权限、069 迁移和
+catalog 翻译已在集成产物上取得 H/R/F 证据；其剩余缺口是实际来源的程序访问及
+媒体 LIVE。08/11 可先使用这些本地接口开发和执行受控测试，不必等待外部诊断结束。
+这项例外仅解除本地开发先决条件，不把 07 标为 resolved，也不解除 07、08、11、17
+的完整验收与发布门槛。所有原 AC、真实媒体、完整索引和部署要求保留。
+
+实际外部故障按三个层级记录：既有程序匿名 fs/list 返回 HTTP 403/Cloudflare 1010；
+本次 IAB 匿名首页、子目录及音轨页可访问，站点播放器显示时间推进；本次按已观察
+文件定位执行现成 LIVE 入口，在程序 fs/get 元数据阶段失败，未开始两个 Range。
+该测试隐藏上游细节，本次 get 失败不能直接归为 1010。网页正常不等于 Kikoto
+服务器 API 或媒体链路通过，也不能把裸客户端失败概括为整个匿名网页不可用。
+列表重试已停止；正常客户端兼容性由主流程继续有界诊断，不改写为范围外。
+完整记录见[本批集成证据](evidence/02-07-integration.md)。
+
 ## 迁移协调
 
-现有最高迁移为 068。01 复用 `app_setting`，04 复用既有 rating/note，06 复用现有 `work.id`，均无新增迁移。02 确认译文缓存使用独立 CacheRoot，不使用业务 SQLite 迁移；069 已释放并预留给接续的 07。这是编号分配，不是 SQL 或迁移实现。后续新增编号由集成统一分配，实施前重新核实迁移目录，保持已发布迁移不可变，按仓库规则生成开发基线并验证旧库升级与重复启动。
+现有最高迁移为 069，由 07 落实 `069_openlist_catalog.sql` 与 `compat/069_dev.sql`。
+非空编号唯一约束、旧 ID、外键及个人记录升级已复验；已发布 001–068 与
+`baseline/068_v0.8.3.sql` 保持不变。01、02、04、06 无新增业务迁移，译文缓存使用
+独立 CacheRoot。下一编号暂为 070，由主流程统一分配；实施前重新核实目录，
+生成开发基线并验证旧库升级与重复启动。
 
 ## 验证证据登记
 
@@ -76,6 +96,7 @@
 | 各票 H、R、F、U、LIVE | 待逐票执行 | 各票所需真实 HTTP、迁移 SQLite、重启、非视觉功能与有限真实样例。 |
 | 01/04 集成复验 | 已通过 | [本批证据](evidence/01-04-integration.md)：组合 H/R 14 个顶层、F 5 项、U 21 项、全后端及前后端构建/静态/文档检查；01 LIVE 沿用未改变客户端的已取得证据。 |
 | 06 集成复验 | 已通过 | [本批证据](evidence/06-integration.md)：8 个 H/R 顶层用例及 04 回归通过，包含 067/068 同库重启与只读解析；没有新增迁移、依赖或前端行为。 |
+| 02/07 本地集成复验 | 已通过 | [本批证据](evidence/02-07-integration.md)：catalog 翻译红绿，组合 H/R/race、069 升级、存储、前后端检查及少量非视觉 F；07 LIVE 仍未通过。 |
 | 生产部署、实际迁移与上线验收 | 待执行 | 同一已验收产物、备份、迁移、重启与功能回读证据。 |
 | 备份恢复与回退 | 待执行 | 恢复演练、适用前提及必要回滚的执行结果。 |
 

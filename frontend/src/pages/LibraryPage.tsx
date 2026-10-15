@@ -589,7 +589,7 @@ export function LibraryPage({ active = true }: { active?: boolean }) {
     openWorkDetail(
       {
         kind: "known",
-        canonicalCode: work.primaryCode,
+        canonicalCode: work.primaryCode || String(work.id),
         view: sourceIntent === "tracked" ? "tracked" : "local",
       },
       {
@@ -601,6 +601,16 @@ export function LibraryPage({ active = true }: { active?: boolean }) {
   };
 
   const openRemotePreview = (source: LibrarySource, work: RemoteWork) => {
+    if (work.catalogEntryId) {
+      openWorkDetail(
+        { kind: "catalog", catalogEntryId: work.catalogEntryId },
+        {
+          returnTo: libraryLocation(pathForActiveLibrary(activeTab, localScope), activeBrowseState),
+          returnLabel: t("nav.library"),
+        },
+      );
+      return;
+    }
     const code = remoteWorkActionCode(work);
     if (!code) return;
     const browseState = { ...activeBrowseState, scrollY: window.scrollY };

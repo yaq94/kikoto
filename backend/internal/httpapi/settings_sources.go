@@ -45,7 +45,7 @@ func (s *Server) SeedRemoteSourcesFromConfig(ctx context.Context) error {
 	if err := s.db.QueryRowContext(ctx, `
 		SELECT COUNT(*)
 		FROM file_source
-		WHERE source_type IN ('kikoeru_compatible', 'kikoeru_compatible_number178')
+		WHERE source_type IN ('kikoeru_compatible', 'kikoeru_compatible_number178', 'openlist')
 	`).Scan(&existing); err != nil {
 		return err
 	}
@@ -174,7 +174,9 @@ type fileSourceConfig struct {
 	RequestLanguage  string `json:"requestLanguage,omitempty"`
 	// Capabilities declares what a remote source offers beyond its files. A
 	// nil list keeps the source type's default; an empty list declares none.
-	Capabilities *[]string `json:"capabilities,omitempty"`
+	Capabilities       *[]string `json:"capabilities,omitempty"`
+	OpenListRoots      []string  `json:"openListRoots,omitempty"`
+	OpenListIntervalMS *int      `json:"openListIntervalMs,omitempty"`
 }
 
 type fileSourceEndpoint struct {
@@ -202,7 +204,7 @@ func (s *Server) listLibrarySources(w http.ResponseWriter, r *http.Request) {
 	rows, err := s.db.QueryContext(r.Context(), `
 		SELECT id, code, display_name, source_type, enabled, config_json
 		FROM file_source
-		WHERE source_type IN ('kikoeru_compatible', 'kikoeru_compatible_number178')
+		WHERE source_type IN ('kikoeru_compatible', 'kikoeru_compatible_number178', 'openlist')
 		ORDER BY priority ASC, id ASC
 	`)
 	if err != nil {
@@ -733,8 +735,16 @@ func validateFileSourcePayload(payload *fileSourcePayload, allowLocal, allowLega
 	if payload.SourceType == sourceTypeKikoeruCompatible178 && !allowLegacy {
 		return errors.New("legacy number178 sources are disabled")
 	}
-	if !isKikoeruSourceType(payload.SourceType) && !(allowLocal && payload.SourceType == sourceTypeLocalFolder) {
+	if !isKikoeruSourceType(payload.SourceType) && payload.SourceType != sourceTypeOpenList && (!allowLocal || payload.SourceType != sourceTypeLocalFolder) {
 		return errors.New("unsupported sourceType")
+	}
+	if payload.SourceType == sourceTypeOpenList {
+		if err := validateOpenListConfig(payload.Config); err != nil {
+			return err
+		}
+		if err := validateRemoteFileSourceEndpoint(&payload.Endpoint); err != nil {
+			return err
+		}
 	}
 	if isKikoeruSourceType(payload.SourceType) {
 		if strings.TrimSpace(payload.Config.RequestLanguage) == "" {

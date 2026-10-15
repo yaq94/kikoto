@@ -1,4 +1,16 @@
 export const translationAdmin = {
+  content: {
+    pending: "正在翻译…",
+    failed: "翻译失败，已保留原文。",
+    retry: "重试翻译",
+    original: "查看原文",
+    translated: "查看译文",
+    paused: "磁盘空间不足，缓存已暂停。",
+    concurrency: "翻译并发数",
+    queueLimit: "排队翻译上限",
+    cacheBytes: "译文缓存上限（字节）",
+    minFreeBytes: "最低磁盘可用空间（字节）",
+  },
   title: "翻译",
   description: "配置共用翻译服务。界面语言由各账户单独设置。",
   loading: "正在读取翻译设置…",

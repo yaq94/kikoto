@@ -9,7 +9,7 @@ export type SourceTabInfo = {
   label: string;
   sourceName?: string;
   fileSourceId: number | null;
-  kind?: "local" | "remote" | "tracked" | "no_source";
+  kind?: "local" | "remote" | "tracked" | "no_source" | "catalog";
   presence?: NonNullable<WorkDetail["sourcePresence"]>[number];
   status: "available" | "degraded" | "unavailable";
   statusLabel: string;

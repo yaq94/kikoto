@@ -39,7 +39,7 @@ export function remoteSourceBrowseModel({
 }: RemoteSourceBrowseInput): RemoteSourceBrowseModel {
   const { page, pageSize } = viewState;
   const visibleWorks = result?.works ?? emptyRemoteWorks;
-  const selectableWorks = visibleWorks.filter((work) => work.primaryCode);
+  const selectableWorks = visibleWorks.filter((work) => work.primaryCode && !work.catalogEntryId);
   const totalItems = result?.total ?? 0;
   const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
   const currentPage = Math.min(page, totalPages);

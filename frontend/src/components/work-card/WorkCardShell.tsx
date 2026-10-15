@@ -25,6 +25,8 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNo
 import { useTranslation } from "react-i18next";
 
 import { useAuth } from "@/auth/AuthProvider";
+import { ContentTranslationScope, TranslatedText } from "@/components/content-translation/ContentTranslation";
+import type { ContentTranslationResource } from "@/lib/contentTranslationApi";
 import { FavoriteListIconGlyph } from "@/components/favorite-list/FavoriteListIconGlyph";
 import { FavoriteListQuickCreate } from "@/components/favorite-list/FavoriteListQuickCreate";
 import { AnchoredPopover } from "@/components/ui/anchored-popover";
@@ -59,6 +61,7 @@ export type WorkCardBadge = {
 };
 
 export type WorkCardViewModel = {
+  translationResource?: ContentTranslationResource;
   code: string;
   title: string;
   circle: string;
@@ -215,40 +218,42 @@ export function WorkCardShell({
   );
 
   return (
-    <Card
-      className="group @container/work-card h-full transition-[border-color,box-shadow,transform] duration-200 hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-md focus-within:border-primary/40 motion-reduce:transition-none motion-reduce:hover:translate-y-0"
-      data-testid="work-card"
-    >
-      <CardContent className="flex h-full flex-col rounded-[inherit] p-0">
-        {onOpen ? (
-          <div
-            className={cn(
-              "flex flex-1 flex-col rounded-t-[inherit] text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
-              canOpen ? "cursor-pointer" : "cursor-default",
-            )}
-            role={canOpen ? "button" : undefined}
-            tabIndex={canOpen ? 0 : undefined}
-            onClick={canOpen ? onOpen : undefined}
-            onKeyDown={
-              canOpen
-                ? (event) => {
-                    if (event.target !== event.currentTarget) return;
-                    if (event.key === "Enter" || event.key === " ") {
-                      event.preventDefault();
-                      onOpen();
+    <ContentTranslationScope resource={work.translationResource ?? { code: work.code }}>
+      <Card
+        className="group @container/work-card h-full transition-[border-color,box-shadow,transform] duration-200 hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-md focus-within:border-primary/40 motion-reduce:transition-none motion-reduce:hover:translate-y-0"
+        data-testid="work-card"
+      >
+        <CardContent className="flex h-full flex-col rounded-[inherit] p-0">
+          {onOpen ? (
+            <div
+              className={cn(
+                "flex flex-1 flex-col rounded-t-[inherit] text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+                canOpen ? "cursor-pointer" : "cursor-default",
+              )}
+              role={canOpen ? "button" : undefined}
+              tabIndex={canOpen ? 0 : undefined}
+              onClick={canOpen ? onOpen : undefined}
+              onKeyDown={
+                canOpen
+                  ? (event) => {
+                      if (event.target !== event.currentTarget) return;
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        onOpen();
+                      }
                     }
-                  }
-                : undefined
-            }
-          >
-            {content}
-          </div>
-        ) : (
-          <div className="flex flex-1 flex-col text-left">{content}</div>
-        )}
-        {footer}
-      </CardContent>
-    </Card>
+                  : undefined
+              }
+            >
+              {content}
+            </div>
+          ) : (
+            <div className="flex flex-1 flex-col text-left">{content}</div>
+          )}
+          {footer}
+        </CardContent>
+      </Card>
+    </ContentTranslationScope>
   );
 }
 
@@ -549,7 +554,7 @@ function WorkCardBody({
           className="line-clamp-2 min-h-10 text-[0.9375rem] font-semibold leading-5 @max-[12.5rem]/work-card:min-h-9 @max-[12.5rem]/work-card:text-sm @max-[12.5rem]/work-card:leading-[1.125rem]"
           title={work.title}
         >
-          {work.title}
+          <TranslatedText text={work.title} field="title" />
         </h3>
         <div
           className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-left text-[0.8125rem] text-muted-foreground @max-[12.5rem]/work-card:text-xs"
@@ -867,7 +872,7 @@ function CardBadge({
       )}
       title={badge.title}
     >
-      {badge.label}
+      {personal ? badge.label : <TranslatedText text={badge.label} field="tag" controls={false} />}
     </span>
   );
   return clickable ? (
