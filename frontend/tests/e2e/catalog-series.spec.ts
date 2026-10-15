@@ -36,6 +36,27 @@ test("series card opens ordered independent episode directories and preserves pl
   await expect(episodes).toHaveCount(2);
   await expect(episodes.nth(0)).toContainText("Episode 1");
   await expect(episodes.nth(1)).toContainText("Episode 2");
+  expect(
+    (
+      await page.request.patch(process.env.OPENLIST_API_URL + "/api/auth/me/preferences", {
+        data: { metadataLanguages: ["en-us"] },
+      })
+    ).ok(),
+  ).toBe(true);
+  await page.reload();
+  await expect(
+    page.getByRole("region", { name: "Series", exact: true }).getByRole("heading", { level: 1 }),
+  ).toContainText("Translated: Example series");
+  await expect(episodes.nth(0)).toContainText("Translated: Episode 1");
+  await expect(episodes.nth(1)).toContainText("Translated: Episode 2");
+  expect(
+    (
+      await page.request.patch(process.env.OPENLIST_API_URL + "/api/auth/me/preferences", {
+        data: { metadataLanguages: null },
+      })
+    ).ok(),
+  ).toBe(true);
+  await page.reload();
   await episodes.nth(0).getByRole("button", { name: "Open episode", exact: true }).click();
   await expect(page).toHaveURL(/\/catalog\/\d+$/);
   const firstId = page.url().split("/").pop();
@@ -43,13 +64,14 @@ test("series card opens ordered independent episode directories and preserves pl
   await page.getByRole("button", { name: /^01 opening\.wav/ }).click();
   const audio = page.locator("audio").first();
   await expect.poll(() => audio.evaluate((node: HTMLAudioElement) => node.currentTime)).toBeGreaterThan(0.5);
+  await page.getByRole("button", { name: "Collapse player", exact: true }).click();
   const src = await audio.evaluate((node: HTMLAudioElement) => node.currentSrc);
   expect(src).toContain(`/api/source-catalog/${firstId}/media`);
   const time = await audio.evaluate((node: HTMLAudioElement) => node.currentTime);
   await page.getByRole("button", { name: "Open series", exact: true }).click();
   await expect(page).toHaveURL(seriesUrl);
   await episodes.nth(1).getByRole("button", { name: "Open episode", exact: true }).click();
-  await expect(page.getByRole("heading", { level: 1 })).toHaveText("Episode 2");
+  await expect(page.getByRole("heading", { level: 1, name: "Episode 2", exact: true })).toHaveText("Episode 2");
   await expect.poll(() => audio.evaluate((node: HTMLAudioElement) => node.currentSrc)).toBe(src);
   await expect.poll(() => audio.evaluate((node: HTMLAudioElement) => node.currentTime)).toBeGreaterThan(time);
   await page.getByRole("navigation", { name: "Folders", exact: true }).getByRole("button", { name: /WAV/ }).click();
@@ -79,7 +101,9 @@ test("manual series preview survives reload and confirms shared grouping without
   await expect(editor.getByRole("list", { name: "Preview grouping", exact: true })).toContainText("Similar B");
   await editor.getByRole("button", { name: "Confirm grouping", exact: true }).click();
   await expect(page).toHaveURL(/\/catalog-series\/\d+$/);
-  await expect(page.getByRole("heading", { level: 1 })).toHaveText("Manually confirmed series");
+  await expect(page.getByRole("heading", { level: 1, name: "Manually confirmed series", exact: true })).toHaveText(
+    "Manually confirmed series",
+  );
   const seriesId = page.url().split("/").pop();
   const shared = await (await page.request.get(`${backend}/api/catalog-series/${seriesId}`)).json();
   expect(shared.episodes).toHaveLength(2);

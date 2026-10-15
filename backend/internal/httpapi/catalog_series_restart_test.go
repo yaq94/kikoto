@@ -28,7 +28,7 @@ func TestCatalogSeriesUpgradePreviewRestartAndStaleConfirmation(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".sql") || entry.Name()[:3] > "069" {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".sql") || entry.Name()[:3] > "070" {
 			continue
 		}
 		data, err := fs.ReadFile(migrations.Files, entry.Name())

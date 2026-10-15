@@ -8,6 +8,7 @@ import (
 	"math/rand"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -52,6 +53,7 @@ func (e sourceBackoffError) Error() string {
 type sourceOriginState struct {
 	mu           sync.Mutex
 	blockedUntil time.Time
+	catalogNext  time.Time
 }
 
 type sourceRequestClass uint8
@@ -62,6 +64,7 @@ const (
 	sourceRequestDownload
 	sourceRequestPlayback
 	sourceRequestOpenList
+	sourceRequestCatalogIndex
 )
 
 type sourceGateTransport struct {
@@ -70,6 +73,7 @@ type sourceGateTransport struct {
 	policy          *outbound.Policy
 	class           sourceRequestClass
 	minimumInterval time.Duration
+	concurrency     int
 }
 
 type sourceGateBody struct {
@@ -113,8 +117,9 @@ func newSourceRequestGate() *sourceRequestGate {
 	}
 }
 
-func (g *sourceRequestGate) lane(key string, class sourceRequestClass) *sourceRequestLane {
+func (g *sourceRequestGate) lane(key string, class sourceRequestClass, limits ...int) *sourceRequestLane {
 	laneKey := key
+	concurrency := 1
 	switch class {
 	case sourceRequestCrawl:
 		laneKey += ":crawl"
@@ -122,6 +127,11 @@ func (g *sourceRequestGate) lane(key string, class sourceRequestClass) *sourceRe
 		laneKey += ":download"
 	case sourceRequestOpenList:
 		laneKey += ":openlist"
+	case sourceRequestCatalogIndex:
+		if len(limits) > 0 {
+			concurrency = min(4, max(1, limits[0]))
+		}
+		laneKey += ":catalog:" + strconv.Itoa(concurrency)
 	case sourceRequestPlayback:
 		laneKey += ":playback"
 	default:
@@ -132,7 +142,6 @@ func (g *sourceRequestGate) lane(key string, class sourceRequestClass) *sourceRe
 	if lane := g.lanes[laneKey]; lane != nil {
 		return lane
 	}
-	concurrency := 1
 	if class == sourceRequestPlayback {
 		concurrency = 4
 	}
@@ -179,7 +188,7 @@ func (t *sourceGateTransport) RoundTrip(request *http.Request) (*http.Response, 
 		return nil, err
 	}
 	originKey := canonicalSourceOrigin(request.URL)
-	lane := t.server.sourceGate.lane(originKey, t.class)
+	lane := t.server.sourceGate.lane(originKey, t.class, t.concurrency)
 	origin := t.server.sourceGate.origin(originKey)
 	release, err := lane.acquire(request.Context())
 	if err != nil {
@@ -194,11 +203,25 @@ func (t *sourceGateTransport) RoundTrip(request *http.Request) (*http.Response, 
 		release()
 		return nil, sourceBackoffError{Until: waitUntil}
 	}
-	lane.mu.Lock()
-	if next := lane.lastStarted.Add(delay); next.After(waitUntil) {
-		waitUntil = next
+	if t.class == sourceRequestCatalogIndex {
+		// Reserve distinct starts while holding one origin lock, so parallel
+		// metadata requests share one rate rather than bursting after a sleep.
+		origin.mu.Lock()
+		if origin.catalogNext.After(waitUntil) {
+			waitUntil = origin.catalogNext
+		}
+		if time.Now().After(waitUntil) {
+			waitUntil = time.Now()
+		}
+		origin.catalogNext = waitUntil.Add(delay)
+		origin.mu.Unlock()
+	} else {
+		lane.mu.Lock()
+		if next := lane.lastStarted.Add(delay); next.After(waitUntil) {
+			waitUntil = next
+		}
+		lane.mu.Unlock()
 	}
-	lane.mu.Unlock()
 	if wait := time.Until(waitUntil); wait > 0 {
 		if err := sleepContext(request.Context(), wait); err != nil {
 			release()

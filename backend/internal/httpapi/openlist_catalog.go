@@ -36,8 +36,8 @@ func (s *Server) openListClient(source remoteSourceForUse) *openlist.Client {
 }
 
 func validateOpenListConfig(config fileSourceConfig) error {
-	if len(config.OpenListRoots) == 0 || len(config.OpenListRoots) > 8 {
-		return errors.New("openListRoots must contain 1 to 8 explicit work directories")
+	if len(config.OpenListRoots) > 8 {
+		return errors.New("openListRoots must contain at most 8 explicit work directories")
 	}
 	for i, root := range config.OpenListRoots {
 		if !openlist.ValidRoot(root) {
@@ -76,6 +76,10 @@ func (s *Server) scanOpenListCatalog(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := validateOpenListConfig(source.Config); err != nil {
 		writeAPIError(w, 400, "invalid_request", err.Error(), false)
+		return
+	}
+	if len(source.Config.OpenListRoots) == 0 {
+		writeAPIError(w, 400, "invalid_request", "select work directories for a finite scan, or start the full index", false)
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)

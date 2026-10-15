@@ -53,6 +53,8 @@ func run() error {
 	upstream = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var input struct {
 			Path     string `json:"path"`
+			Page     int    `json:"page"`
+			PerPage  int    `json:"per_page"`
 			Messages []struct {
 				Content string `json:"content"`
 			} `json:"messages"`
@@ -73,6 +75,8 @@ func run() error {
 		case "/api/fs/list":
 			var content []map[string]any
 			switch input.Path {
+			case "/":
+				content = []map[string]any{{"name": "Example Work", "is_dir": true}, {"name": "RJ00000001", "is_dir": true}, {"name": "Archive", "is_dir": true}, {"name": "Translation Example", "is_dir": true}}
 			case "/Example Work":
 				content = []map[string]any{{"name": "MP3", "is_dir": true}}
 			case "/Example Work/MP3":
@@ -99,7 +103,12 @@ func run() error {
 				http.NotFound(w, r)
 				return
 			}
-			_ = json.NewEncoder(w).Encode(map[string]any{"code": 200, "data": map[string]any{"content": content, "total": len(content)}})
+			total := len(content)
+			if input.Page > 0 && input.PerPage > 0 {
+				start := min(total, (input.Page-1)*input.PerPage)
+				content = content[start:min(total, start+input.PerPage)]
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": 200, "data": map[string]any{"content": content, "total": total}})
 		case "/api/fs/get":
 			_ = json.NewEncoder(w).Encode(map[string]any{"code": 200, "data": map[string]any{"name": filepath.Base(input.Path), "raw_url": upstream.URL + "/audio", "size": len(data)}})
 		case "/audio":
@@ -132,8 +141,12 @@ func run() error {
 	if address == "" {
 		address = "127.0.0.1:17617"
 	}
-	app := httpapi.NewServer(db, config.Config{Mode: config.ModeProduction, RootUsername: "synthetic-user", DataRoot: filepath.Join(root, "data"), CacheRoot: filepath.Join(root, "cache"), AllowedOrigins: []string{origin}})
+	app := httpapi.NewServer(db, config.Config{Mode: config.ModeProduction, RootUsername: "synthetic-user", DatabasePath: filepath.Join(root, "fixture.db"), DataRoot: filepath.Join(root, "data"), CacheRoot: filepath.Join(root, "cache"), AllowedOrigins: []string{origin}})
 	defer func() { _ = app.Shutdown(context.Background()) }()
+	workerCtx, stopWorker := context.WithCancel(context.Background())
+	workerDone := make(chan struct{})
+	go func() { defer close(workerDone); app.StartJobRunner(workerCtx) }()
+	defer func() { stopWorker(); <-workerDone }()
 	stop := make(chan struct{})
 	var once sync.Once
 	mux := http.NewServeMux()

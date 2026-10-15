@@ -2,7 +2,7 @@
 
 **Status:** ready-for-agent
 **Implementation:** in-progress
-**阶段:** 01、02、03、04、05、06 已集成，03/05 组合验收见本批证据；07 本地接口与迁移已集成，真实媒体 LIVE 未通过。08 独立工作区实施中；08/11 可按下述开发先决条件开展本地工作，发布验收仍受完整前置约束。
+**阶段:** 01–06 已集成并 resolved；07、08 已集成并 verified-local，真实媒体 LIVE 和真实索引覆盖仍待补。11 只有未集成的预备实现，缺少 071 迁移及 H/F 验收；08/11 的本地开发授权与完整发布前置保持有效。
 **依据:** [正式规格](spec.md) · [工单总览](ticket-proposal.md) · [领域词汇表](../../GLOSSARY.md) · [作品身份与个人记录 ADR](../../docs/adr/0001-work-identity-and-personal-state.md)
 
 ## 当前授权与完成条件
@@ -43,10 +43,10 @@
 | [05 多源目录与播放隔离](issues/05-multi-source-directory-playback.md) | 无 | resolved | 已集成；编号/无码逐源刷新、目录故障恢复、内容语言隔离与精确文件播放/游标 H/F 复验通过 | [05 证据](evidence/05-source-playback.md)、[集成复验](evidence/03-05-integration.md) |
 | [06 稳定内部引用与编号兼容](issues/06-stable-identity-compatibility.md) | 无 | resolved | 已集成；数字版本、编号/别名、旧库升级与个人记录保留通过，无新增迁移 | [06 证据](evidence/06-stable-references.md)、[集成复验](evidence/06-integration.md) |
 | [07 OpenList 有限无码链路](issues/07-openlist-first-playable-slice.md) | 04、06 | verified-local | 本地链路、069 升级与 catalog 翻译通过；正式测试代理下 fs/get 返回挑战页，真实媒体 LIVE 未通过 | [07 证据](evidence/07-openlist.md)、[集成复验](evidence/02-07-integration.md) |
-| [08 完整来源索引与恢复](issues/08-recoverable-full-source-index.md) | 07 | in-progress | 独立工作区实施中；发布仍等待 07 LIVE 及本票全部验收 | 待完成本票验收 |
+| [08 完整来源索引与恢复](issues/08-recoverable-full-source-index.md) | 07 | verified-local | 已集成；完整合成树、070 升级/恢复、资源限制、清理与管理进度 H/R/F 通过；真实来源覆盖待补 | [08 证据](evidence/08-source-index.md)、[集成复验](evidence/08-integration.md) |
 | [09 每日更新与扫描复用](issues/09-daily-index-update.md) | 08 | pending | 等待前置验收 | 待执行 |
 | [10 来源生命周期与记录保留](issues/10-source-lifecycle-retention.md) | 08 | pending | 等待前置验收 | 待执行 |
-| [11 系列卡片与单集归组](issues/11-series-and-episode-grouping.md) | 07 | in-progress | 独立工作区实现系列与预览；071 等待 070 正式集成后组合验证 | [预备证据与后续接入](evidence/11-preparation.md)；H/R/F 未完成 |
+| [11 系列卡片与单集归组](issues/11-series-and-episode-grouping.md) | 07 | in-progress | 独立预备提交尚未集成，仍缺 071 及 H/F；已可依赖 08 的根选择入口继续本地开发，发布仍等待全部验收 | 预备实现不计作验收证据 |
 | [12 系列与单集个人评价](issues/12-series-episode-personal-reviews.md) | 11 | pending | 等待前置验收 | 待执行 |
 | [13 共享关联与本人冲突确认](issues/13-shared-link-conflict-review.md) | 12 | pending | 等待前置验收 | 待执行 |
 | [14 高置信唯一候选关联](issues/14-high-confidence-work-matching.md) | 13 | pending | 等待前置验收 | 待执行 |
@@ -75,11 +75,12 @@ catalog 翻译已在集成产物上取得 H/R/F 证据；其剩余缺口是实�
 
 ## 迁移协调
 
-现有最高迁移为 069，由 07 落实 `069_openlist_catalog.sql` 与 `compat/069_dev.sql`。
-非空编号唯一约束、旧 ID、外键及个人记录升级已复验；已发布 001–068 与
-`baseline/068_v0.8.3.sql` 保持不变。01、02、03、04、05、06 无新增业务迁移，译文缓存使用
-独立 CacheRoot。070 已由主流程保留给独立实施中的 08，本集成不包含它的未完成
-改动。实施前重新核实目录，生成开发基线并验证旧库升级与重复启动。
+现有最高迁移为 070：08 的 `070_source_catalog_scan.sql` 与 `compat/070_dev.sql`
+已集成。完整链、新装、既有库升级、重复及并发启动、开发基线一致性均通过复验；
+001–069 与发布 `baseline/068_v0.8.3.sql` 保持不变。01–06 无新增业务迁移，译文缓存使用
+独立 CacheRoot。071 保留给 11，预备提交尚未包含该迁移，未进入集成分支。
+11 可复用 `source_catalog_roots.go:catalogAdmissionRoot`；实施前仍须重新核实目录、
+生成对应开发基线并验证旧库升级与重复启动。
 
 ## 验证证据登记
 
@@ -101,6 +102,7 @@ catalog 翻译已在集成产物上取得 H/R/F 证据；其剩余缺口是实�
 | 06 集成复验 | 已通过 | [本批证据](evidence/06-integration.md)：8 个 H/R 顶层用例及 04 回归通过，包含 067/068 同库重启与只读解析；没有新增迁移、依赖或前端行为。 |
 | 02/07 本地集成复验 | 已通过 | [本批证据](evidence/02-07-integration.md)：catalog 翻译红绿，组合 H/R/race、069 升级、存储、前后端检查及少量非视觉 F；07 LIVE 仍未通过。 |
 | 03/05 集成复验 | 已通过 | [本批证据](evidence/03-05-integration.md)：39 个 H/R 顶层及 2 个 U/race、867 项前端 U、全后端/静态/构建/文档及少量非视觉 F；不新增迁移，不重复实际 Index 调用，07 LIVE 缺口保留。 |
+| 08 本地集成复验 | 已通过 | [本批证据](evidence/08-integration.md)：40 个 H/R、66 个存储、3 个 race 顶层与 3 个非视觉 F，前后端静态/类型/构建/文档检查通过；070 为最高迁移，07/08 仍 verified-local。 |
 | 生产部署、实际迁移与上线验收 | 待执行 | 同一已验收产物、备份、迁移、重启与功能回读证据。 |
 | 备份恢复与回退 | 待执行 | 恢复演练、适用前提及必要回滚的执行结果。 |
 
