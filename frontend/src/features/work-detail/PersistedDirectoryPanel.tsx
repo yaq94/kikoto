@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 
 import {
   type RemoteSourceAvailability,
-  remoteSourceCanBrowse,
+  remoteSourceCanLoad,
   type SourceTabInfo,
   type TrackedPresenceOption,
 } from "@/features/work-detail/source/sourceContextModel";
@@ -96,7 +96,7 @@ function persistedDirectorySourceState(props: PersistedDirectoryPanelProps) {
       />
     );
   }
-  if (props.selectedRemoteSource && !remoteSourceCanBrowse(props.selectedRemoteSource.summary)) {
+  if (props.selectedRemoteSource && !remoteSourceCanLoad(props.selectedRemoteSource.summary)) {
     return <RemoteSourceStatePanel remote={props.selectedRemoteSource} />;
   }
   if (props.selectedSource?.kind === "tracked" && !props.selectedTrackedForked) {
@@ -116,6 +116,11 @@ function persistedDirectorySourceState(props: PersistedDirectoryPanelProps) {
 }
 
 function persistedDirectoryEmptyState(props: PersistedDirectoryPanelProps) {
+  if (
+    props.selectedRemoteDetail &&
+    (props.selectedRemoteSource?.treeLoaded || props.selectedRemoteDetail.tracks.length > 0)
+  )
+    return null;
   if (props.showDirectorySkeleton) return <DirectorySkeleton />;
   if (props.directoryMediaError) {
     return <DirectoryLoadErrorPanel message={props.directoryMediaError} onRetry={props.onRetry} />;
@@ -124,6 +129,7 @@ function persistedDirectoryEmptyState(props: PersistedDirectoryPanelProps) {
 }
 
 function persistedDirectoryLoadingMessage(props: PersistedDirectoryPanelProps) {
+  if (props.selectedRemoteDetail) return props.directoryMediaError || props.selectedRemoteSource?.summary.error || "";
   if (!props.selectedRemoteSource || props.selectedRemoteDetail || props.selectedRemoteSource.loading) return "";
   return props.selectedRemoteSource.error || i18n.t("libraryDetail.remoteDirectoryNotLoaded");
 }

@@ -106,10 +106,9 @@ A purchase bonus, such as an early purchase bonus (`【早期購入特典】`), 
 - Coalesces concurrent indexing of the same media-bearing work and reduces the
   first-index database statements per file. Slow collection and write phases
   are logged separately for diagnosis.
-- Loads source availability through a backend aggregate check.
-- Opens remote source trees lazily after availability is known. An explicit
-  persisted remote-source route can load its identified source before an
-  aggregate Check and marks a successful load available in the current detail.
+- Catalog entries linked to a saved work appear as source tabs, including works without product codes. Opening a tab reads its saved directory; an administrator's **Check sources** refreshes only that directory. A failed refresh keeps the saved files. The catalog page and work page share the saved position of the exact same file. Browsing and changing content language do not register works or start playback.
+- Shows recorded numbered-source results immediately. For a saved work, viewers with remote tracking permission check unknown sources and observations at least 24 hours old in the background, one source at a time. **Check sources** refreshes source status and available directories. A failed source retains loaded files and the work details; other sources remain usable.
+- Opens an enabled remote directory when its tab is selected, including an unknown source for a read-only viewer. Interrupted directory reads can be retried. Source tabs and refresh only change browsing: the current track, queue and playback position keep running. Clicking another track starts at zero; **Resume** restores the saved track and position, including its source and edition, without treating different recordings as interchangeable.
 - Wraps complete folder and file names in variable-height directory rows,
   including long names without spaces, without horizontal page overflow.
 - Keeps the directory breadcrumb on one line. Mobile collapses intermediate

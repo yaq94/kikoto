@@ -107,10 +107,10 @@ export function WorkDetailPage({
   if (code === null) return null;
 
   const back = () => navigateToHistoryReturn({ fallbackLocation });
-  if (catalogID || (!detail.work?.primaryCode && detail.work?.catalogEntryId)) {
+  if (catalogID) {
     return (
       <Suspense fallback={<WorkDetailLoading />}>
-        <CatalogWorkDetail id={catalogID ?? detail.work!.catalogEntryId!} onBack={back} />
+        <CatalogWorkDetail id={catalogID} onBack={back} />
       </Suspense>
     );
   }

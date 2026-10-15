@@ -789,7 +789,13 @@ idempotent request scope; Fetch has no automation triggers.
 
 ## Source Availability
 
-Source availability is checked by the backend instead of frontend fan-out.
+Source availability checks run through the backend's configured-source transport.
+Work detail reads recorded results first, then requests unknown or 24-hour-old
+observations sequentially for viewers with `remote:track`. Each result updates
+only its own source. Read-only viewers can request an enabled directory without
+persisting a source check. The HTTP fields and refresh contract are described in
+[Source Presence](source-presence.md#availability-api).
+
 Source-change checks first probe source health, then check candidate works only
 against reachable sources. The local library scan does not check remote source
 availability.

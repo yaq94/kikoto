@@ -341,6 +341,7 @@ const oldWorkflowRunCondition = `
 	AND NOT EXISTS (SELECT 1 FROM workflow_candidate AS candidate WHERE candidate.workflow_run_id = run.id)
 	AND NOT EXISTS (SELECT 1 FROM metadata_sync_attempt_run AS attempt WHERE attempt.workflow_run_id = run.id)
 	AND NOT EXISTS (SELECT 1 FROM work_folder_location AS folder WHERE folder.cleanup_run_id = run.id)
+	AND NOT EXISTS (SELECT 1 FROM source_catalog_scan AS scan WHERE scan.workflow_run_id = run.id)
 `
 
 const staleRecommendationGenerationCondition = `

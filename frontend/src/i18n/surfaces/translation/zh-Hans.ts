@@ -41,6 +41,7 @@ export const translationAdmin = {
   result: "翻译结果",
   resultMetadata: "{{model}} · {{milliseconds}} 毫秒",
   errors: {
+    translation_conversion_failed: "繁体转换失败，仍可阅读原文并重试。",
     translation_invalid_config: "请检查地址、模型、密钥和超时（1–60 秒）。",
     translation_invalid_input: "请输入短文本（最多 8 KiB），并选择支持的目标语言。",
     translation_not_configured: "请先配置翻译服务。",

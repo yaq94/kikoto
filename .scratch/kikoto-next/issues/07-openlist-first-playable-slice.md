@@ -40,8 +40,10 @@ H 使用真实 HTTP 路由、会话与迁移 SQLite；R 实际关闭并重启同
 ## Comments
 
 本地 H/R/F、069 升级及 catalog 翻译已集成复验，见[原票证据](../evidence/07-openlist.md)
-与[集成证据](../evidence/02-07-integration.md)。既有程序 fs/list 返回 403/1010；
-本次 IAB 匿名页面正常，单次真实 LIVE 则在程序 fs/get 元数据阶段失败，未开始
-Range，且没有取得足以确认这次 HTTP 分类的细节。真实来源兼容性仍待诊断。
+与[集成证据](../evidence/02-07-integration.md)。IAB 匿名页面正常；后续同文件
+fs/get 诊断在 `08b1469` 上确认直连无应用代理时连接重置、未收到 HTTP；隔离库经
+正式 Settings 配置已有代理后返回 HTTP 403 HTML、`cf-mitigated: challenge`。
+这次没有 1010 证据，没有 raw_url 或 Range 读取；生产 fs/get 未重测。环境代理
+不自动进入应用代理路由，详细脱敏摘要与仓库外诊断指针见[07 证据](../evidence/07-openlist.md#live-缺口与可复验入口)。
 本票保持 verified-local，LIVE 未勾选，不代表生产部署验收。08/11 仅可按
 [开发先决条件](../execution.md#开发依赖与发布依赖)开始本地开发；完整发布依赖保留。

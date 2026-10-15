@@ -139,7 +139,7 @@ export function buildTree(items: MediaItem[], fileSourceId: number | null, workC
       localPath: localLocation?.path ?? "",
       localAvailable: Boolean(localLocation),
       progress: item.progress,
-      playbackKey: playbackKeyForLocation(location.id),
+      playbackKey: location.locationType === "catalog_stream" ? item.fingerprint : playbackKeyForLocation(location.id),
       locations: item.locations
         .filter(
           (candidate) => locationPlaybackURL(candidate) && ["available", "remote"].includes(candidate.availability),

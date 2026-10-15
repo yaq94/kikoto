@@ -40,5 +40,39 @@
 
 前端 153 文件/867 测试、格式、类型、lint、构建、i18n、122 份文档链接与 5 语言
 文档检查通过（退出 0）；后端首次 lint 0 issues、退出 0。没有修改依赖锁文件。
-完整后端检查与最新 integration 合入后的复验继续进行。
+已合入已验证 integration `dd38bf1e70ca09fcd796621e9dc5f4a741f1b5ae`，保留03/05实现。
 真实程序入口已遇到访问限制，本票不重复探测或绕过；真实范围/时间/失败报告须在可访问的实际运行中补齐。
+
+## 合并产物验证
+
+| 入口 / 命令 | 结果与边界 |
+| --- | --- |
+| `make backend-test` | 首次全包运行中 httpapi（109秒）及其他非storage包通过；storage的当前版本/链清单仍预期69，聚合退出2。 |
+| `go test ./internal/storage -count=1` | 同步预期为70及完整链后整包通过，退出0；包含新装、旧库迁移、baseline/增量结构与种子数据一致性、并发启动和未来版本拒绝。 |
+| `go test ./internal/httpapi -run '^Test(SourceCatalogIndex\|DatabaseCleanup)' -count=1` | 13个索引顶层及既有清理回归通过，退出0；所有索引观察、权限与恢复仍用真实迁移SQLite。 |
+| `go test -race ./internal/httpapi -run '^TestSourceCatalogIndex(ConfiguredConcurrency\|ConcurrentStarts\|Cancel)' -count=1` | 并发、重复提交和取消竞态检查通过，退出0。 |
+| `make backend-format backend-vet backend-build backend-lint GOLANGCI_LINT_BASE=dd38bf1e70ca09fcd796621e9dc5f4a741f1b5ae` | 退出0，lint 0 issues。一次未带既定网络代理的lint下载失败不计通过；按既有代理重跑成功。 |
+| `make -o frontend-install frontend-lint frontend-build frontend-format frontend-docs` | 合入03/05后退出0；复用已通过严格脚本安装的同一锁文件，避免Windows运行中的Vite依赖占用。 |
+| `make -o frontend-install frontend-e2e E2E_ARGS='tests/e2e/source-catalog-index.spec.ts --project=desktop-chromium --workers=1'` | 新合并前后端的1条真实API F通过（9.7秒），退出0；无PNG、WEBM、trace ZIP产物。 |
+
+后端最终修改涉及清理保留条件和索引staging回收，已在对应HTTP回归及静态检查中验证；没有无理由重复其他已通过包。
+
+## 检查点与存储保留
+
+真实清理HTTP回归先因当前扫描引用的workflow被删除而返回外键错误；加入当前scan引用保护后通过。
+一源仅有一个 `source_catalog_scan`，只钉住它的当前/最近轮workflow。下一完整轮替换引用后，旧轮按原有历史规则清理，不永久保留全部扫描历史。
+
+完整成功轮分批回收旧generation目录与旧revision观察；每个事务最多100个staging对象。201个音轨的合成旧轮被新轮替换时，公开staging计数每批减少不超过100，最终仅保留当前目录2条/观察2条；旧卡片、文件与本人评价保留。partial、失败与受限范围不触发旧观察回收。
+
+没有新增070以外的迁移。已有001–069和发布baseline保持不变。根选择入口为
+`source_catalog_roots.go:catalogAdmissionRoot`，保留已读路径、父root与音频/格式/其他子目录摘要，系列规则由11负责。
+
+## AC与后续验收
+
+- AC-08：完整合成集合、无码搜索/目录及不登记work；真实站点集合尚未核实。
+- AC-21：页面/子目录游标持久、真实关闭重开、取消/失败/重试、重复触发以及历史清理保护。
+- AC-25：配置1/2并发、共享速率、响应/页数/批次上限、低空间暂停、已有卡片和个人记录保留；播放负载组合由17主责。
+- AC-27：配置权限、非法配置/JSON、重定向拒绝、响应上限、取消；沿用完整来源出站边界。
+- AC-28：指定 Chromium 纯功能，关闭截图、trace、video，不宣称视觉或全格式真实媒体兼容。
+
+工单保持 verified-local。真实全量运行报告、07 LIVE和生产部署均没有据此关闭。

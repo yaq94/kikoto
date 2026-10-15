@@ -9,7 +9,7 @@ export type SourceTabInfo = {
   label: string;
   sourceName?: string;
   fileSourceId: number | null;
-  kind?: "local" | "remote" | "tracked" | "no_source";
+  kind?: "local" | "remote" | "tracked" | "no_source" | "catalog";
   presence?: NonNullable<WorkDetail["sourcePresence"]>[number];
   status: "available" | "degraded" | "unavailable";
   statusLabel: string;
@@ -37,6 +37,7 @@ export type RemoteSourceAvailability = {
   loading?: boolean;
   error?: string;
   treeLoading?: boolean;
+  treeLoaded?: boolean;
   treeError?: string;
 };
 
@@ -234,6 +235,23 @@ export function trackedPresenceKey(presence: NonNullable<WorkDetail["sourcePrese
 
 export function remoteSourceCanBrowse(summary: SourceAvailabilitySource) {
   return summary.status === "available";
+}
+
+/** Reading an enabled directory does not require permission to persist a source check. */
+export function remoteSourceCanLoad(summary: SourceAvailabilitySource) {
+  return summary.status === "available" || summary.status === "unknown" || summary.status === "error";
+}
+
+/** File-directory support is a source-type contract, independent of metadata capability. */
+export function sourceProvidesDirectory(source: LibrarySource) {
+  return source.sourceType === "kikoeru_compatible" || source.sourceType === "kikoeru_compatible_number178";
+}
+
+/** A missing timestamp is stale; a different source's recent check cannot renew it. */
+export function sourceAvailabilityNeedsCheck(summary: SourceAvailabilitySource, now = Date.now()) {
+  if (summary.status === "disabled" || summary.status === "unavailable") return false;
+  const checked = Date.parse(summary.checkedAt ?? "");
+  return summary.status === "unknown" || !Number.isFinite(checked) || now - checked >= 24 * 60 * 60 * 1000;
 }
 
 export function remoteSourceTabKey(sourceID: number): `remote-source:${number}` {

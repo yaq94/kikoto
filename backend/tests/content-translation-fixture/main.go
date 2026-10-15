@@ -90,7 +90,11 @@ func run() error {
 		if strings.Contains(parts[0], "英语") {
 			prefix = "EN: "
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": map[string]string{"content": prefix + parts[1]}, "finish_reason": "stop"}}})
+		content := prefix + parts[1]
+		if prefix == "ZH: " && strings.Contains(parts[1], "Example conversion") {
+			content = strings.NewReplacer("Example conversion title", "听见森林里的音乐", "Example conversion description", "风吹过树叶 <script>音乐</script>", "Example conversion tag", "自然音乐", "Example conversion track", "听见风声").Replace(parts[1])
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": map[string]string{"content": content}, "finish_reason": "stop"}}})
 	}))
 	defer upstream.Close()
 	if _, err := db.Exec(`INSERT INTO app_setting (key,value_json) VALUES ('library_mode','"standard"');
@@ -115,6 +119,16 @@ func run() error {
 		if _, err := db.Exec(`INSERT INTO work_source_presence(work_id,file_source_id,presence_type,availability) VALUES(?,1,'local','available')`, id); err != nil {
 			return err
 		}
+	}
+	if _, err := db.Exec(`INSERT INTO work(id,primary_code,title,description) VALUES(27,'RJ00000026','Example conversion title 示例声优 示例社团','Example conversion description');
+	 INSERT INTO person(id,display_name) VALUES(2,'示例声优');
+	 INSERT INTO work_credit(work_id,person_id,role) VALUES(27,2,'voice_actor');
+	 INSERT INTO party(id,display_name) VALUES(2,'示例社团');
+	 INSERT INTO work_party(work_id,party_id) VALUES(27,2);
+	 INSERT INTO work_source_presence(work_id,file_source_id,presence_type,availability) VALUES(27,1,'local','available');
+	 INSERT INTO media_item(id,work_id,kind,title) VALUES(2,27,'audio','Example conversion track.wav');
+	 INSERT INTO media_file_location(id,media_item_id,file_source_id,location_type,path,availability) VALUES(2,2,1,'local','RJ00000026/Example folder/Example conversion track.wav','available');`); err != nil {
+		return err
 	}
 	base := upstream.URL
 	minimum := int64(0)

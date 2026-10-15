@@ -85,8 +85,8 @@ audit entry.
 Two of those tasks also run automatically: expired sessions and old workflow
 runs. The workflow coordinator runs them two minutes after startup and then
 every 24 hours, with the same retention rules as the manual task. An old run is
-kept while a Fetch record, review candidate, metadata issue, or cleanup
-provenance still refers to it, and the latest run of each workflow is always
+kept while a Fetch record, review candidate, metadata issue, source catalog
+checkpoint, or cleanup provenance still refers to it, and the latest run of each workflow is always
 kept. Automatic cleanup writes its results to the server log instead of the
 audit log. Sessions are also rejected and removed when an expired one is
 presented.

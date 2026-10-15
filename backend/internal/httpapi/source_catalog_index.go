@@ -57,25 +57,27 @@ type catalogPartitionProgress struct {
 	Empty       int    `json:"unconfirmedEmpty"`
 }
 type catalogIndexProgress struct {
-	RunID          int64                      `json:"runId"`
-	Status         string                     `json:"status"`
-	PauseReason    string                     `json:"pauseReason"`
-	Options        catalogIndexOptions        `json:"options"`
-	Requests       int                        `json:"requests"`
-	Directories    int                        `json:"directories"`
-	Completed      int                        `json:"completedDirectories"`
-	Pending        int                        `json:"pendingDirectories"`
-	Failed         int                        `json:"failedDirectories"`
-	Restricted     int                        `json:"restrictedDirectories"`
-	Empty          int                        `json:"unconfirmedEmptyDirectories"`
-	Observed       int                        `json:"observedEntries"`
-	Indexed        int                        `json:"indexedEntries"`
-	StartedAt      string                     `json:"startedAt"`
-	UpdatedAt      string                     `json:"updatedAt"`
-	Partitions     []catalogPartitionProgress `json:"partitions"`
-	PartitionTotal int                        `json:"partitionTotal"`
-	Details        []catalogDirectoryProgress `json:"details"`
-	DetailsTotal   int                        `json:"detailsTotal"`
+	RunID               int64                      `json:"runId"`
+	Status              string                     `json:"status"`
+	PauseReason         string                     `json:"pauseReason"`
+	Options             catalogIndexOptions        `json:"options"`
+	Requests            int                        `json:"requests"`
+	Directories         int                        `json:"directories"`
+	Completed           int                        `json:"completedDirectories"`
+	Pending             int                        `json:"pendingDirectories"`
+	Failed              int                        `json:"failedDirectories"`
+	Restricted          int                        `json:"restrictedDirectories"`
+	Empty               int                        `json:"unconfirmedEmptyDirectories"`
+	Observed            int                        `json:"observedEntries"`
+	Indexed             int                        `json:"indexedEntries"`
+	StagingDirectories  int                        `json:"stagingDirectories"`
+	StagingObservations int                        `json:"stagingObservations"`
+	StartedAt           string                     `json:"startedAt"`
+	UpdatedAt           string                     `json:"updatedAt"`
+	Partitions          []catalogPartitionProgress `json:"partitions"`
+	PartitionTotal      int                        `json:"partitionTotal"`
+	Details             []catalogDirectoryProgress `json:"details"`
+	DetailsTotal        int                        `json:"detailsTotal"`
 }
 
 func (s *Server) catalogIndexSource(ctx context.Context, id int64) (remoteSourceForUse, error) {

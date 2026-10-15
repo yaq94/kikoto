@@ -2,7 +2,7 @@
 
 **Status:** ready-for-agent
 **设计状态:** 已确认（Q31）；用户故事、验收要求与测试边界作为实施合同。
-**Implementation:** in-progress；01、02、04、06 已集成并完成所属验收，07 已完成本地集成验收但真实媒体 LIVE 未通过，其余功能与部署验收按执行记录推进。
+**Implementation:** in-progress；01、02、03、04、05、06 已集成并完成所属验收，07 已完成本地集成验收但真实媒体 LIVE 未通过，08 实施中；其余功能与部署验收按执行记录推进。
 **执行授权:** 用户已授权本规格全部功能实现、必要依赖安装、测试、数据库迁移、部署与回滚；进度及证据见[执行记录](execution.md)。
 **领域依据:** [GLOSSARY](../../GLOSSARY.md) · [作品身份与个人记录 ADR](../../docs/adr/0001-work-identity-and-personal-state.md)
 
@@ -239,7 +239,7 @@
 ## Further Notes（补充说明）
 
 - 本规格继承已经确认的 Q1–Q31 决定与“少量浏览器纯功能测试、无真实浏览器视觉验证”边界；当前阶段按已授权的全范围实现、测试、迁移、部署与回滚推进。
-- 源站在部署网络中的匿名目录、搜索和单个文件信息样例请求已成功；这是元数据可访问证据，不是实际播放、稳定改名识别或全站完整覆盖的证明。
+- 真实来源的访问证据按时间与路径分别记录：IAB 匿名网页可播放；程序 fs/get 在当前本机诊断中仍失败，正式应用代理下返回挑战页，尚无 Kikoto 真实媒体 Range 证明。部署网络的历史元数据样例不证明当前可用性，生产 fs/get 本轮未重测；详见 [07 证据](evidence/07-openlist.md#live-缺口与可复验入口)。
 - Index 官方资料中的权重仓库为 IndexTeam/Index-Translate-35B-A3B-preview，公共客户端示例的 model 为 Index-Translate-35B-A3B；实际服务调用名由管理员配置。中文简体、英语、日语和韩语有官方条目，繁体路线按已确认转换方案验收。
-- 尚待实施验证：实际模型接口及扩展参数、翻译与繁体转换质量、媒体 Range/定位读取与解码、目录分页和改名恢复、真实索引覆盖、数据库升级、用户记录一致性和负载下资源校准。
+- 各项验收状态以[执行记录](execution.md)及对应票据为准。后续仍需完成真实媒体 Range/定位读取与解码、完整目录分页和改名恢复、实际索引覆盖、后续身份与共享操作迁移、记录一致性、组合负载资源校准及部署验收。
 - 参考：[OpenList 目录接口](https://github.com/OpenListTeam/OpenList/blob/main/server/handles/fsread.go)、[OpenList 搜索实现](https://github.com/OpenListTeam/OpenList/blob/main/internal/search/search.go)、[Index 模型卡](https://huggingface.co/IndexTeam/Index-Translate-35B-A3B-preview)、[Index 调用客户端](https://github.com/bilibili/Index-Translate/blob/main/inference/llm/call_api.py)、[Index 语言清单](https://arxiv.org/html/2609.40181)。

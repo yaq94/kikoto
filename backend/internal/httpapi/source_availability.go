@@ -26,6 +26,7 @@ type sourceAvailabilitySummary struct {
 	SourceCode  string `json:"sourceCode"`
 	DisplayName string `json:"displayName"`
 	Status      string `json:"status"`
+	CheckedAt   string `json:"checkedAt"`
 	RemoteID    string `json:"remoteId"`
 	PrimaryCode string `json:"primaryCode"`
 	Title       string `json:"title"`
@@ -96,6 +97,13 @@ func (s *Server) checkWorkSourceAvailabilityNow(w http.ResponseWriter, r *http.R
 		writeError(w, err)
 		return
 	}
+	if payload.Force {
+		for _, source := range response.Sources {
+			if source.Status == "available" {
+				s.invalidateRemoteWorkCache(source.SourceID)
+			}
+		}
+	}
 	writeJSON(w, http.StatusOK, s.presentSourceAvailability(r.Context(), response))
 }
 
@@ -122,6 +130,7 @@ func (s *Server) checkWorkSourceAvailabilityForSourcesWithHealth(ctx context.Con
 		if err != nil {
 			return sourceAvailabilityResponse{}, err
 		}
+		result.CheckedAt = time.Now().UTC().Format(time.RFC3339)
 		results = append(results, result)
 	}
 	if err := s.recordSourceAvailabilityObservation(ctx, code, results); err != nil {
@@ -287,20 +296,26 @@ func (s *Server) latestSourceAvailabilityCheckedAt(ctx context.Context, code str
 }
 
 func (s *Server) attachCachedSourcePresence(ctx context.Context, result *sourceAvailabilitySummary, sourceID int64, workCode string) error {
-	var availability, remoteID, rawJSON sql.NullString
+	var availability, remoteID, rawJSON, checkedAt sql.NullString
 	err := s.db.QueryRowContext(ctx, `
-		SELECT presence.availability, presence.remote_id, presence.raw_json
+		SELECT presence.availability, presence.remote_id, presence.raw_json, presence.last_checked_at
 		FROM work_source_presence AS presence
 		INNER JOIN work ON work.id = presence.work_id
 		WHERE work.primary_code = ?
 			AND presence.file_source_id = ?
 			AND presence.presence_type = ?
-	`, workCode, sourceID, sourcePresenceTypeRemoteSource).Scan(&availability, &remoteID, &rawJSON)
+	`, workCode, sourceID, sourcePresenceTypeRemoteSource).Scan(&availability, &remoteID, &rawJSON, &checkedAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil
 		}
 		return err
+	}
+	for _, layout := range []string{time.RFC3339, "2006-01-02 15:04:05"} {
+		if timestamp, err := time.Parse(layout, checkedAt.String); err == nil {
+			result.CheckedAt = timestamp.UTC().Format(time.RFC3339)
+			break
+		}
 	}
 	switch availability.String {
 	case "available":
