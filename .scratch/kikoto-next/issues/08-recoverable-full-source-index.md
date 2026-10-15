@@ -8,6 +8,8 @@
 **发布依赖:** 07 全部验收（含真实媒体 LIVE）和本票完整清单仍须通过；本地开发不关闭外部缺口，也不删减真实索引覆盖要求。
 
 **Status:** ready-for-agent
+**Implementation:** in-progress
+**Evidence:** [08 本地索引证据](../evidence/08-source-index.md)
 
 **依据:** [正式规格](../spec.md) · [工单总览](../ticket-proposal.md)
 

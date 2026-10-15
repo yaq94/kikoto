@@ -43,7 +43,7 @@
 | [05 多源目录与播放隔离](issues/05-multi-source-directory-playback.md) | 无 | in-progress | 独立工作区实施中 | 待完成本票验收 |
 | [06 稳定内部引用与编号兼容](issues/06-stable-identity-compatibility.md) | 无 | resolved | 已集成；数字版本、编号/别名、旧库升级与个人记录保留通过，无新增迁移 | [06 证据](evidence/06-stable-references.md)、[集成复验](evidence/06-integration.md) |
 | [07 OpenList 有限无码链路](issues/07-openlist-first-playable-slice.md) | 04、06 | verified-local | 本地链路、069 升级与 catalog 翻译通过；真实媒体 LIVE 待诊断 | [07 证据](evidence/07-openlist.md)、[集成复验](evidence/02-07-integration.md) |
-| [08 完整来源索引与恢复](issues/08-recoverable-full-source-index.md) | 07 | pending | 本地开发先决条件已满足；发布仍等待 07 LIVE 及本票全部验收 | 待执行 |
+| [08 完整来源索引与恢复](issues/08-recoverable-full-source-index.md) | 07 | in-progress | 独立工作区已实现持久分页/批次/恢复；进度交互与完整验收继续 | [08 证据](evidence/08-source-index.md) |
 | [09 每日更新与扫描复用](issues/09-daily-index-update.md) | 08 | pending | 等待前置验收 | 待执行 |
 | [10 来源生命周期与记录保留](issues/10-source-lifecycle-retention.md) | 08 | pending | 等待前置验收 | 待执行 |
 | [11 系列卡片与单集归组](issues/11-series-and-episode-grouping.md) | 07 | pending | 本地开发先决条件已满足；发布仍等待 07 LIVE 及本票全部验收 | 待执行 |

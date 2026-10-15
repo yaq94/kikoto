@@ -202,6 +202,27 @@ func (s *Server) dispatchWorkflowRetry(ctx context.Context, actor currentUser, r
 		}
 		newRunID, err := s.retrySourcePresenceCheck(ctx, runID)
 		return workflowRetryDispatchResult{NewRunID: newRunID}, err
+	case sourceCatalogIndexWorkerType:
+		if !userHasPermission(actor, "sources:write") {
+			return workflowRetryDispatchResult{}, errWorkflowRetryPermission
+		}
+		var input catalogIndexInput
+		var inputJSON string
+		if err := s.db.QueryRowContext(ctx, "SELECT input_json FROM workflow_run WHERE id=?", runID).Scan(&inputJSON); err != nil {
+			return workflowRetryDispatchResult{}, err
+		}
+		if err := json.Unmarshal([]byte(inputJSON), &input); err != nil {
+			return workflowRetryDispatchResult{}, err
+		}
+		if _, err := s.catalogIndexSource(ctx, input.SourceID); err != nil {
+			return workflowRetryDispatchResult{}, err
+		}
+		p, err := s.sourceCatalogProgress(ctx, input.SourceID, 1)
+		if err != nil {
+			return workflowRetryDispatchResult{}, err
+		}
+		result, err := s.enqueueSourceCatalogIndex(ctx, input.SourceID, p.Options)
+		return workflowRetryDispatchResult{NewRunID: result.RunID, ResumedExistingRun: result.RunID == runID}, err
 	case "metadata_sync":
 		if !userHasPermission(actor, "metadata:sync") {
 			return workflowRetryDispatchResult{}, errWorkflowRetryPermission

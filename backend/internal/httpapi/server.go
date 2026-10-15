@@ -106,6 +106,7 @@ type Server struct {
 	translationConfigMu            sync.Mutex
 	translationCacheOnce           sync.Once
 	translationCache               *translation.Cache
+	catalogDiskSpace               func(string) (diskSpaceSnapshot, error)
 }
 
 type localMediaIndexCall struct {
@@ -352,6 +353,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/file-sources", s.createFileSource)
 	mux.HandleFunc("POST /api/file-sources/detect", s.detectFileSource)
 	handleSlowFirstResponse("POST /api/remote-sources/{id}/catalog/scan", s.scanOpenListCatalog)
+	mux.HandleFunc("POST /api/remote-sources/{id}/catalog/index", s.startSourceCatalogIndex)
+	mux.HandleFunc("GET /api/remote-sources/{id}/catalog/index", s.getSourceCatalogIndex)
 	mux.HandleFunc("GET /api/source-catalog/{id}", s.getSourceCatalogEntry)
 	mux.HandleFunc("GET /api/source-catalog/{id}/tracks", s.getSourceCatalogTracks)
 	handleSlowFirstResponse("GET /api/source-catalog/{id}/media", s.streamSourceCatalogMedia)

@@ -24,8 +24,9 @@ var (
 )
 
 type Client struct {
-	endpoint string
-	http     *http.Client
+	endpoint         string
+	http             *http.Client
+	maxResponseBytes int64
 }
 type Object struct {
 	Name     string `json:"name"`
@@ -46,7 +47,38 @@ func NewClient(endpoint string, client *http.Client) *Client {
 	copyClient := *client
 	// Metadata POST bodies contain source paths; do not forward them elsewhere.
 	copyClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	return &Client{endpoint: strings.TrimRight(endpoint, "/"), http: &copyClient}
+	return &Client{endpoint: strings.TrimRight(endpoint, "/"), http: &copyClient, maxResponseBytes: MaxResponseBytes}
+}
+
+// WithResponseLimit sets a smaller or larger operator-selected metadata bound.
+// Callers validate the setting before constructing a client.
+func (c *Client) WithResponseLimit(n int64) *Client { c.maxResponseBytes = n; return c }
+
+type Page struct {
+	Content []Object `json:"content"`
+	Total   int      `json:"total"`
+}
+
+// ListPage reads exactly one anonymous page, leaving traversal/checkpoints to
+// the caller. A missing total or invalid name cannot prove directory coverage.
+func (c *Client) ListPage(ctx context.Context, root string, page, pageSize int) (Page, error) {
+	data := Page{Total: -1}
+	if (root != "/" && !ValidRoot(root)) || page < 1 || pageSize < 1 || pageSize > 500 {
+		return data, ErrInvalid
+	}
+	err := c.request(ctx, "list", map[string]any{"path": root, "page": page, "per_page": pageSize, "password": "", "refresh": false}, &data)
+	if err != nil {
+		return data, err
+	}
+	if data.Total < 0 || len(data.Content) > pageSize {
+		return data, ErrInvalid
+	}
+	for _, obj := range data.Content {
+		if obj.Name == "" || obj.Name == "." || obj.Name == ".." || len(obj.Name) > 1024 || strings.ContainsAny(obj.Name, "/\\\x00\r\n") || obj.Size < 0 {
+			return data, ErrInvalid
+		}
+	}
+	return data, nil
 }
 
 func ValidRoot(root string) bool {
@@ -80,14 +112,14 @@ func (c *Client) request(ctx context.Context, operation string, input, output an
 	if resp.StatusCode != http.StatusOK {
 		return ErrUnavailable
 	}
-	if resp.ContentLength > MaxResponseBytes {
+	if resp.ContentLength > c.maxResponseBytes {
 		return ErrLimit
 	}
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, MaxResponseBytes+1))
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, c.maxResponseBytes+1))
 	if err != nil {
 		return err
 	}
-	if len(raw) > MaxResponseBytes {
+	if int64(len(raw)) > c.maxResponseBytes {
 		return ErrLimit
 	}
 	var envelope struct {
