@@ -8,17 +8,95 @@ directories, 8 levels, 2,000 entries, and 100 pages per root. Only a completely
 read root containing audio becomes a catalog entry. Archives and subtitles
 alone are excluded. Password-protected directories are never unlocked.
 
-In Settings, add a remote source, select OpenList, enter its site base URL and
-one absolute work-directory path per line, then save. Open that source in
-Library and choose **Scan configured directories**. Search uses the stored
-titles and product codes. Open a card to browse format folders and play a track;
-saving its personal review registers only the necessary work information.
-Directories must be chosen explicitly; the site root is not a valid work root.
+In Settings, add a remote source, select OpenList, and enter its site base URL.
+Finite work-directory paths are optional. Open the source in Library and choose
+**Index all anonymous audio** for the full source, or **Scan configured
+directories** for selected work roots. Search uses stored titles and product
+codes. Open a card to browse format folders and play a track; saving its personal
+review registers only the necessary work information. The site root is not a
+finite work root.
 
 `POST /api/remote-sources/{id}/catalog/scan` requires `sources:write` and scans
 only the configured roots. It returns per-root outcomes; partial, inaccessible,
 cancelled, and over-limit observations are not complete coverage. This finite
 entry point does not perform a whole-site crawl or schedule daily updates.
+
+## Recoverable full index
+
+`POST /api/remote-sources/{id}/catalog/index` requires `sources:write` and
+queues a `source_catalog_index` workflow. It traverses anonymous directories
+from `/`, regardless of the finite work-root selection. A repeated start joins
+the active run. Starting a cancelled, failed, paused or partial scan resumes
+its saved directory/page cursors; starting a complete scan begins a new
+observation generation. Completed directories survive retries. Changing page
+size restarts only incomplete page sequences.
+
+`GET /api/remote-sources/{id}/catalog/index?page=1` requires the same permission.
+It returns run id, timestamps, attempted pages, observed entries, indexed entries,
+completed/pending/failed/restricted/unconfirmed-empty directory counts and
+paginated partition and unresolved-directory details (50 per list). It never
+reports a whole-source percentage with an unknown denominator. An empty answer
+remains unconfirmed; permission failures and unfinished ranges prevent complete
+coverage. The existing workflow cancel and retry endpoints stop or resume the
+same scan without discarding its published catalog or private reviews.
+
+The Library source panel shows index status, counts, timestamps, partition
+coverage and unresolved directories. **Index limits** configures the next start
+or resume; active settings are read-only. **Cancel**, **Resume index** and
+**Refresh progress** operate on persisted state. Reloading the page returns to
+the same run. Polling is limited to active scans and requests are cancelled when
+the panel unmounts; newly published cards refresh the source results.
+
+Scan options are saved with the source's checkpoint and reused by an empty
+start request. An active run keeps its options until it is stopped and resumed.
+
+| Option | Default | Accepted range |
+| --- | --- | --- |
+| `concurrency` | 1 | 1–4 metadata requests within the single workflow executor |
+| `intervalMs` | 1000 | 100–60000 between metadata starts, shared per origin |
+| `maxResponseBytes` | 2097152 | 1024–8388608 |
+| `pageSize` | 100 | 1–500 |
+| `pagesPerBatch` | 8 | 1–32 page or publication steps |
+| `maxPagesPerDirectory` | 10000 | 1–100000; reaching the bound leaves an explicit retryable range |
+| `minFreeBytes` | 2147483648 | 0–1099511627776 |
+
+The worker releases its executor after each batch. Each page commits validated
+names and its next cursor together. Child discovery and catalog publication
+write at most 100 objects per transaction. Low or unknown free space on the
+database volume pauses new observations and publication while stored cards
+remain readable. The disk check reserves additional response/WAL headroom;
+the database volume must also be monitored by the operator.
+
+Numbered directories own their descendants. A directory with audio, or with
+only recognized format subdirectories, owns its track/format tree; other
+directories remain traversal containers. Series and episode relationships are
+separate from this admission rule. No title matching merges catalog identities.
+Only roots with observed playable audio become searchable cards. Source-returned
+URLs are discarded; neither discovery nor publication registers works or
+downloads media. Missing observations do not delete cards or private records.
+
+Directory pages with changing totals restart their bounded sequence up to two
+times, then remain failed. Repeated pages cannot count as progress. A manual
+retry resets failed/restricted/empty observations while retaining completed
+ones. The `source_catalog_scan`, `source_catalog_directory` and
+`source_catalog_observation` tables retain the current source generation and
+stable staging keys rather than copying the whole tree on each batch.
+
+There is one scan reference per source, so workflow retention pins only that
+source's current/recent run. A new complete-index generation replaces the
+reference and releases the old run for normal history retention. After complete
+successful coverage, obsolete observation revisions and previous-generation
+directories are reclaimed in batches of at most 100 staging objects. Partial,
+failed and restricted coverage cannot retire these observations. Published
+catalog entries, file snapshots and personal records are outside this cleanup.
+Progress exposes `stagingDirectories` and `stagingObservations` for the retained
+metadata footprint; the database reuses freed pages under its normal storage policy.
+
+Full indexing uses the existing outbound source policy and a dedicated paced
+metadata lane. Metadata redirects are refused, response size and 30-second
+request deadlines apply, and cancellation releases every in-flight request.
+Routine tests use synthetic complete trees; a real index run must separately
+record its actual ranges, timestamps and unresolved directories.
 
 `GET /api/remote-sources/{id}/works` uses the existing paged source card and
 search response. OpenList cards add `catalogEntryId` and may have an empty

@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { useAuth } from "@/auth/AuthProvider";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
+import { FullSourceIndex } from "./FullSourceIndex";
 
 export function OpenListScan({ sourceId, onDone }: { sourceId: number; onDone: () => void }) {
   const { t } = useTranslation();
@@ -40,6 +41,7 @@ export function OpenListScan({ sourceId, onDone }: { sourceId: number; onDone: (
           {t(`openlist.${status}`)}
         </p>
       )}
+      <FullSourceIndex key={sourceId} sourceId={sourceId} onDone={onDone} />
     </div>
   );
 }

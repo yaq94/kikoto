@@ -192,7 +192,15 @@ export function RemoteSourceDialog({
                   value={(source.config.openListRoots ?? []).join("\n")}
                   readOnly={readOnly}
                   onChange={(event) =>
-                    patch({ config: { ...source.config, openListRoots: event.target.value.split("\n") } })
+                    patch({
+                      config: {
+                        ...source.config,
+                        openListRoots: event.target.value
+                          .split("\n")
+                          .map((line) => line.trim())
+                          .filter(Boolean),
+                      },
+                    })
                   }
                 />
                 <span className="text-xs text-muted-foreground">{t("openlist.rootsHint")}</span>
