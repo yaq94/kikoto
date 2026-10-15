@@ -185,3 +185,6 @@ For local functional checks, `go run ./tests/openlist-fixture` accepts
 through `make frontend-e2e`. The fixture replaces only the external source/model;
 the two tests use real API sessions, catalog reads, translations and reviews.
 `POST /__fixture/stop` shuts down the fixture and its disposable database.
+The same fixture supports `openlist-proxy.spec.ts` for the administrator's
+source-specific proxy selection. See [single-file verification](openlist-live.md)
+for the explicit LIVE proxy contract, sanitized diagnostics and offline tests.

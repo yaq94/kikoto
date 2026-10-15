@@ -35,6 +35,10 @@
 `make backend-lint` 首次因模块查询直连超时退出 2；使用已有进程级代理后重跑，
 0 issues、退出 0；未改全局工具配置或安装另一份 lint。
 
+报告前合入 `dc790b790f8757b3e60cec6dec4c2d8ada8a96c0`，保留代理与来源行为；
+组合命令 `go test -mod=readonly ./internal/httpapi -run '^Test(CatalogSeries|SourceCatalogIndex|OpenList|ContentTranslationCatalog)' -count=1`
+退出 0。未变化的前端和迁移产物沿用上述本次验证。
+
 ## 接口与交界
 
 当前契约见 [Catalog series](../../../docs/development/catalog-series.md)。系列持久引用为
