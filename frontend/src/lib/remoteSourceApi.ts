@@ -24,6 +24,7 @@ export type RemoteWorksResponse = {
 };
 
 export type RemoteWork = {
+  seriesId?: number;
   catalogEntryId?: number;
   remoteId: string;
   primaryCode: string;

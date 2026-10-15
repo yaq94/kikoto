@@ -1,6 +1,23 @@
 import { surfaceEnglish } from "./en";
 
 export const surfaceHans = {
+  catalogSeries: {
+    series: "音声系列",
+    episodes: "单集",
+    openEpisode: "打开单集",
+    openSeries: "打开系列",
+    group: "归入系列",
+    title: "系列标题",
+    search: "搜索当前来源",
+    preview: "预览归组",
+    confirm: "确认归组",
+    revise: "调整选择",
+    hint: "成员保留各自的身份、格式、播放和个人评价。共享系列按选择的次序排列。",
+    selected: "已选择 {{count}} 项",
+    previous: "上一页",
+    next: "下一页",
+    stale: "预览暂不可用，请刷新选择后重试。",
+  },
   openlist: {
     kikoeruType: "Kikoeru",
     openlistType: "OpenList",

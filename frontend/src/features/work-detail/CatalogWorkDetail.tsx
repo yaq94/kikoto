@@ -13,6 +13,7 @@ import { PersonalReviewEditor } from "./PersonalReviewEditor";
 import { buildCatalogTree } from "./catalogTreeModel";
 import { catalogPlaybackQueue, catalogResumeQueue } from "./catalogPlayback";
 import { useWorkPlaybackCursor } from "./media/useWorkPlaybackCursor";
+import { CatalogGroupingEditor } from "./CatalogGroupingEditor";
 
 export function CatalogWorkDetail({ id, onBack }: { id: number; onBack: () => void }) {
   const { t } = useTranslation();
@@ -97,6 +98,23 @@ export function CatalogWorkDetail({ id, onBack }: { id: number; onBack: () => vo
               </Button>
             )}
           </header>
+          {entry.seriesId ? (
+            <Button
+              variant="outline"
+              onClick={() =>
+                openWorkDetail(
+                  { kind: "catalog-series", seriesId: entry.seriesId! },
+                  { returnTo: `/catalog/${id}`, returnLabel: entry.title },
+                )
+              }
+            >
+              {t("catalogSeries.openSeries")}
+            </Button>
+          ) : (
+            auth.hasPermission("library:write") && (
+              <CatalogGroupingEditor key={`${id}:${auth.user?.id}`} entry={entry} />
+            )
+          )}
           <DirectoryExplorer
             root={tree}
             directoryRoutingRules={[]}

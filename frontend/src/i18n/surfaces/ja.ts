@@ -1,6 +1,23 @@
 import { surfaceEnglish } from "./en";
 
 export const surfaceJapanese = {
+  catalogSeries: {
+    series: "シリーズ",
+    episodes: "各エピソード",
+    openEpisode: "エピソードを開く",
+    openSeries: "シリーズを開く",
+    group: "シリーズにまとめる",
+    title: "シリーズ名",
+    search: "このソースを検索",
+    preview: "グループ化を確認",
+    confirm: "グループ化を確定",
+    revise: "選択を変更",
+    hint: "各作品の識別子、形式、再生情報と個人評価を保持します。選択順で共有シリーズに追加します。",
+    selected: "{{count}} 件選択",
+    previous: "前のページ",
+    next: "次のページ",
+    stale: "プレビューを使用できません。選択を更新して再試行してください。",
+  },
   openlist: {
     kikoeruType: "Kikoeru",
     openlistType: "OpenList",

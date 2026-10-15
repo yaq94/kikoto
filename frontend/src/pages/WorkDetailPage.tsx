@@ -13,6 +13,7 @@ import { useAuth } from "@/auth/AuthProvider";
 import { toastFromError, useToast } from "@/components/ui/toast";
 import {
   CatalogWorkDetail,
+  CatalogSeriesDetail,
   PersistedWorkDetailController,
   RemoteOnlyWorkDetailController,
 } from "@/features/work-detail/lazyWorkDetail";
@@ -89,6 +90,7 @@ export function WorkDetailPage({
 
   const code = active ? route.code : null;
   const catalogID = code?.startsWith("catalog:") ? Number(code.slice(8)) : null;
+  const seriesID = code?.startsWith("series:") ? Number(code.slice(7)) : null;
   const remoteOnly = code !== null && isRemoteOnlyWorkLocation(route.search);
   const remoteTarget = useMemo(
     () => (remoteOnly ? remoteTargetFromLocation(route.path, route.search, sources) : null),
@@ -100,13 +102,19 @@ export function WorkDetailPage({
   );
   const detail = useLibraryWorkDetail({
     principalID,
-    selectedCode: remoteOnly || catalogID ? null : code,
+    selectedCode: remoteOnly || catalogID || seriesID ? null : code,
     onCodeResolved: resolveCode,
   });
 
   if (code === null) return null;
 
   const back = () => navigateToHistoryReturn({ fallbackLocation });
+  if (seriesID)
+    return (
+      <Suspense fallback={<WorkDetailLoading />}>
+        <CatalogSeriesDetail id={seriesID} onBack={back} />
+      </Suspense>
+    );
   if (catalogID) {
     return (
       <Suspense fallback={<WorkDetailLoading />}>

@@ -46,7 +46,7 @@
 | [08 完整来源索引与恢复](issues/08-recoverable-full-source-index.md) | 07 | in-progress | 独立工作区实施中；发布仍等待 07 LIVE 及本票全部验收 | 待完成本票验收 |
 | [09 每日更新与扫描复用](issues/09-daily-index-update.md) | 08 | pending | 等待前置验收 | 待执行 |
 | [10 来源生命周期与记录保留](issues/10-source-lifecycle-retention.md) | 08 | pending | 等待前置验收 | 待执行 |
-| [11 系列卡片与单集归组](issues/11-series-and-episode-grouping.md) | 07 | pending | 本地开发先决条件已满足；发布仍等待 07 LIVE 及本票全部验收 | 待执行 |
+| [11 系列卡片与单集归组](issues/11-series-and-episode-grouping.md) | 07 | in-progress | 独立工作区实现系列与预览；071 等待 070 正式集成后组合验证 | [预备证据与后续接入](evidence/11-preparation.md)；H/R/F 未完成 |
 | [12 系列与单集个人评价](issues/12-series-episode-personal-reviews.md) | 11 | pending | 等待前置验收 | 待执行 |
 | [13 共享关联与本人冲突确认](issues/13-shared-link-conflict-review.md) | 12 | pending | 等待前置验收 | 待执行 |
 | [14 高置信唯一候选关联](issues/14-high-confidence-work-matching.md) | 13 | pending | 等待前置验收 | 待执行 |

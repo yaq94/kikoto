@@ -8,6 +8,8 @@
 **发布依赖:** 07 全部验收（含真实媒体 LIVE）和本票完整清单仍须通过；本地开发不关闭外部缺口，也不改变作品身份及个人记录保护要求。
 
 **Status:** ready-for-agent
+**Implementation:** in-progress
+**预备阶段:** [代码、实际证据和 070/071 后续接入](../evidence/11-preparation.md)。整票尚未通过 H/R/F，不可部署。
 
 **依据:** [正式规格](../spec.md) · [工单总览](../ticket-proposal.md)
 

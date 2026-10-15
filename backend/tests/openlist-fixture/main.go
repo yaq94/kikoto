@@ -85,6 +85,16 @@ func run() error {
 				content = []map[string]any{{"name": "Example folder", "is_dir": true}, {"name": "intro.wav", "size": len(data)}}
 			case "/Translation Example/Example folder":
 				content = []map[string]any{{"name": "01 opening.wav", "size": len(data)}}
+			case "/Example series":
+				content = []map[string]any{{"name": "Episode 2", "is_dir": true}, {"name": "Episode 1", "is_dir": true}}
+			case "/Example series/Episode 1", "/Example series/Episode 2":
+				content = []map[string]any{{"name": "WAV", "is_dir": true}, {"name": "MP3", "is_dir": true}}
+			case "/Example series/Episode 1/WAV", "/Example series/Episode 2/WAV":
+				content = []map[string]any{{"name": "01 opening.wav", "size": len(data)}, {"name": "02 ending.wav", "size": len(data)}}
+			case "/Example series/Episode 1/MP3", "/Example series/Episode 2/MP3":
+				content = []map[string]any{{"name": "01 opening.mp3", "size": 12}}
+			case "/Creator/Similar A", "/Creator/Similar B":
+				content = []map[string]any{{"name": "audio.wav", "size": len(data)}}
 			default:
 				http.NotFound(w, r)
 				return
@@ -105,6 +115,11 @@ func run() error {
 		INSERT INTO file_source_endpoint(file_source_id,base_url,api_url) VALUES(1,?,?);`, upstream.URL, upstream.URL)
 	if err != nil {
 		return err
+	}
+	if os.Getenv("OPENLIST_SERIES_FIXTURE") == "1" {
+		if _, err = db.Exec(`UPDATE file_source SET config_json='{"openListRoots":["/Example series","/Creator/Similar A","/Creator/Similar B"],"openListIntervalMs":100}' WHERE id=1`); err != nil {
+			return err
+		}
 	}
 	if _, err = translation.NewStore(db).Update(context.Background(), translation.Patch{BaseURL: &upstream.URL}); err != nil {
 		return err

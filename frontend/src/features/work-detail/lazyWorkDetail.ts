@@ -9,6 +9,9 @@ const catalogWorkDetail = preloadableComponent(() =>
   import("./CatalogWorkDetail").then((module) => module.CatalogWorkDetail),
 );
 export const CatalogWorkDetail = catalogWorkDetail.Component;
+export const CatalogSeriesDetail = preloadableComponent(() =>
+  import("./CatalogSeriesDetail").then((module) => module.CatalogSeriesDetail),
+).Component;
 const remoteOnlyWorkDetail = preloadableComponent(() =>
   loadWorkDetail().then((module) => module.RemoteOnlyWorkDetailController),
 );

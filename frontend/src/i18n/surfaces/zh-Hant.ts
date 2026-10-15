@@ -1,6 +1,23 @@
 import { surfaceEnglish } from "./en";
 
 export const surfaceHant = {
+  catalogSeries: {
+    series: "音聲系列",
+    episodes: "單集",
+    openEpisode: "開啟單集",
+    openSeries: "開啟系列",
+    group: "歸入系列",
+    title: "系列標題",
+    search: "搜尋目前來源",
+    preview: "預覽歸組",
+    confirm: "確認歸組",
+    revise: "調整選擇",
+    hint: "成員保留各自的身分、格式、播放和個人評價。共用系列按選擇的次序排列。",
+    selected: "已選擇 {{count}} 項",
+    previous: "上一頁",
+    next: "下一頁",
+    stale: "預覽暫不可用，請重新選擇後再試。",
+  },
   openlist: {
     kikoeruType: "Kikoeru",
     openlistType: "OpenList",

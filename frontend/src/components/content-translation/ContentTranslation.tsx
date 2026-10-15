@@ -132,6 +132,7 @@ export function TranslatedText({
     resource?.sourceId,
     resource?.code,
     resource?.catalogEntryId,
+    resource?.seriesId,
     field,
     text,
     mediaId,
@@ -141,14 +142,17 @@ export function TranslatedText({
   const workId = resource?.workId,
     sourceId = resource?.sourceId,
     code = resource?.code,
-    catalogEntryId = resource?.catalogEntryId;
+    catalogEntryId = resource?.catalogEntryId,
+    seriesId = resource?.seriesId;
   const input = useMemo(
-    () => ({ workId, sourceId, code, catalogEntryId, field, text, language, mediaId, path }),
-    [workId, sourceId, code, catalogEntryId, field, text, language, mediaId, path],
+    () => ({ workId, sourceId, code, catalogEntryId, seriesId, field, text, language, mediaId, path }),
+    [workId, sourceId, code, catalogEntryId, seriesId, field, text, language, mediaId, path],
   );
   const [settled, setSettled] = useState<{ key: string; result: ContentTranslationResult } | null>(null);
   const readable = Boolean(
-    canRead && (resource?.workId || resource?.sourceId || resource?.code || resource?.catalogEntryId) && text.trim(),
+    canRead &&
+    (resource?.workId || resource?.sourceId || resource?.code || resource?.catalogEntryId || resource?.seriesId) &&
+    text.trim(),
   );
   const enabled = readable && language !== "origin";
   useEffect(() => {

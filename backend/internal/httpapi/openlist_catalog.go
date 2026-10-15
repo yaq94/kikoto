@@ -127,6 +127,22 @@ func (s *Server) scanOpenListCatalog(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) persistOpenListRoot(ctx context.Context, source remoteSourceForUse, root string, files []openlist.File) (int64, error) {
+	if id, split, err := s.persistCatalogEpisodeRoots(ctx, source, root, files); split || err != nil {
+		return id, err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	id, err := persistOpenListSnapshotTx(ctx, tx, source.ID, root, files)
+	if err != nil {
+		return 0, err
+	}
+	return id, tx.Commit()
+}
+
+func persistOpenListSnapshotTx(ctx context.Context, tx *sql.Tx, sourceID int64, root string, files []openlist.File) (int64, error) {
 	code := normalizeWorkCode(path.Base(root))
 	// Product codes may be embedded in an authored work folder name.
 	if code == "" {
@@ -137,15 +153,10 @@ func (s *Server) persistOpenListRoot(ctx context.Context, source remoteSourceFor
 			}
 		}
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return 0, err
-	}
-	defer func() { _ = tx.Rollback() }()
 	var id int64
-	err = tx.QueryRowContext(ctx, `INSERT INTO source_catalog_entry(file_source_id,root_path,primary_code,title)
+	err := tx.QueryRowContext(ctx, `INSERT INTO source_catalog_entry(file_source_id,root_path,primary_code,title)
 		VALUES(?,?,?,?) ON CONFLICT(file_source_id,root_path) DO UPDATE SET title=excluded.title,updated_at=CURRENT_TIMESTAMP
-		RETURNING id`, source.ID, root, code, path.Base(root)).Scan(&id)
+		RETURNING id`, sourceID, root, code, path.Base(root)).Scan(&id)
 	if err != nil {
 		return 0, err
 	}
@@ -157,7 +168,10 @@ func (s *Server) persistOpenListRoot(ctx context.Context, source remoteSourceFor
 			return 0, err
 		}
 	}
-	return id, tx.Commit()
+	if err = attachCatalogSeriesTx(ctx, tx, id); err != nil {
+		return 0, err
+	}
+	return id, nil
 }
 
 // loadSourceCatalogEntry is the shared original-text and source-read boundary.
@@ -228,7 +242,12 @@ func (s *Server) getSourceCatalogEntry(w http.ResponseWriter, r *http.Request) {
 	if rating.Valid {
 		personalRating = rating.Int64
 	}
-	writeJSON(w, 200, map[string]any{"catalogEntryId": entry.ID, "sourceId": entry.SourceID, "sourceName": source.DisplayName, "title": entry.Title, "primaryCode": entry.PrimaryCode, "workId": entry.WorkID, "personalRating": personalRating, "personalNote": note})
+	var seriesID *int64
+	if err = s.db.QueryRowContext(r.Context(), `SELECT series_id FROM catalog_series_member WHERE catalog_entry_id=?`, entry.ID).Scan(&seriesID); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, 200, map[string]any{"seriesId": seriesID, "catalogEntryId": entry.ID, "sourceId": entry.SourceID, "sourceName": source.DisplayName, "title": entry.Title, "primaryCode": entry.PrimaryCode, "workId": entry.WorkID, "personalRating": personalRating, "personalNote": note})
 }
 
 func (s *Server) getSourceCatalogTracks(w http.ResponseWriter, r *http.Request) {
@@ -289,14 +308,22 @@ func (s *Server) listOpenListWorks(w http.ResponseWriter, r *http.Request, sourc
 		pageSize = 24
 	}
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
-	where := `file_source_id=? AND (?='' OR instr(lower(title),lower(?))>0 OR instr(lower(primary_code),lower(?))>0)`
-	args := []any{source.ID, q, q, q}
+	from := `FROM (
+		SELECT e.id,0 AS series_id,e.primary_code,e.title,e.work_id,e.updated_at FROM source_catalog_entry e
+		WHERE e.file_source_id=? AND NOT EXISTS(SELECT 1 FROM catalog_series_member m WHERE m.catalog_entry_id=e.id)
+		AND (?='' OR instr(lower(e.title),lower(?))>0 OR instr(lower(e.primary_code),lower(?))>0)
+		UNION ALL
+		SELECT 0,s.id,'',s.title,s.work_id,s.created_at FROM catalog_series s
+		WHERE EXISTS(SELECT 1 FROM catalog_series_member m JOIN source_catalog_entry e ON e.id=m.catalog_entry_id
+		WHERE m.series_id=s.id AND e.file_source_id=? AND (?='' OR instr(lower(s.title),lower(?))>0 OR instr(lower(e.title),lower(?))>0 OR instr(lower(e.primary_code),lower(?))>0))
+	) AS cards`
+	args := []any{source.ID, q, q, q, source.ID, q, q, q, q}
 	var total int
-	if err := s.db.QueryRowContext(r.Context(), "SELECT COUNT(*) FROM source_catalog_entry WHERE "+where, args...).Scan(&total); err != nil {
+	if err := s.db.QueryRowContext(r.Context(), "SELECT COUNT(*) "+from, args...).Scan(&total); err != nil {
 		writeError(w, err)
 		return
 	}
-	rows, err := s.db.QueryContext(r.Context(), "SELECT id,primary_code,title,work_id,updated_at FROM source_catalog_entry WHERE "+where+" ORDER BY id DESC LIMIT ? OFFSET ?", append(args, pageSize, (page-1)*pageSize)...)
+	rows, err := s.db.QueryContext(r.Context(), "SELECT id,series_id,primary_code,title,work_id,updated_at "+from+" ORDER BY updated_at DESC,series_id DESC,id DESC LIMIT ? OFFSET ?", append(args, pageSize, (page-1)*pageSize)...)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -304,10 +331,13 @@ func (s *Server) listOpenListWorks(w http.ResponseWriter, r *http.Request, sourc
 	works := []remoteWorkSummary{}
 	for rows.Next() {
 		var item remoteWorkSummary
-		if err = rows.Scan(&item.CatalogEntryID, &item.PrimaryCode, &item.Title, &item.WorkID, &item.UpdatedAt); err != nil {
+		if err = rows.Scan(&item.CatalogEntryID, &item.SeriesID, &item.PrimaryCode, &item.Title, &item.WorkID, &item.UpdatedAt); err != nil {
 			break
 		}
 		item.RemoteID = strconv.FormatInt(item.CatalogEntryID, 10)
+		if item.SeriesID > 0 {
+			item.RemoteID = "series:" + strconv.FormatInt(item.SeriesID, 10)
+		}
 		item.RemoteCode = item.PrimaryCode
 		item.RemotePlayable = true
 		item.ImportStatus = "remote"

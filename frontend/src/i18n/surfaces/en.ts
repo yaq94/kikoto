@@ -4,6 +4,23 @@
  * persisted user data never become translated at the domain boundary.
  */
 export const surfaceEnglish = {
+  catalogSeries: {
+    series: "Series",
+    episodes: "Episodes",
+    openEpisode: "Open episode",
+    openSeries: "Open series",
+    group: "Group into a series",
+    title: "Series title",
+    search: "Search this source",
+    preview: "Preview grouping",
+    confirm: "Confirm grouping",
+    revise: "Revise selection",
+    hint: "Members keep their own identity, formats, playback and private reviews. The shared series follows the selected order.",
+    selected: "{{count}} selected",
+    previous: "Previous page",
+    next: "Next page",
+    stale: "The preview could not be used. Refresh the selection and try again.",
+  },
   openlist: {
     kikoeruType: "Kikoeru",
     openlistType: "OpenList",
