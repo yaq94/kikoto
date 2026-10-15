@@ -4,6 +4,20 @@ import type { PersonalReview, PersonalReviewPatch } from "@/lib/workApi";
 
 export type AssociationSubject = { kind: "work" | "catalog" | "series"; id: number };
 export type AssociationReview = { rating: number | null; note: string };
+export type SplitAllocation = "left" | "right" | "both";
+export type SharedSplit = {
+  id: number;
+  associationId: number;
+  status: "preview" | "pending" | "completed" | "stale";
+  version: string;
+  left: AssociationObject;
+  right: AssociationObject;
+  myBeforeLeft: AssociationReview;
+  myBeforeRight: AssociationReview;
+  myCurrentReview: AssociationReview;
+  myRecordChange: "unchanged" | "added" | "modified";
+  myAllocation: SplitAllocation | "";
+};
 export type AssociationObject = {
   subject: AssociationSubject;
   title: string;
@@ -104,6 +118,15 @@ export type CatalogIndexProgress = {
 };
 
 export const sourceCatalogApi = {
+  previewSharedSplit: (associationId: number) =>
+    postJSONBody<SharedSplit>(`/api/shared-associations/${associationId}/split-preview`, {}),
+  listSharedSplits: (associationId: number, signal?: AbortSignal) =>
+    getJSON<Array<Pick<SharedSplit, "id" | "status">>>(`/api/shared-associations/${associationId}/splits`, signal),
+  getSharedSplit: (id: number, signal?: AbortSignal) => getJSON<SharedSplit>(`/api/shared-splits/${id}`, signal),
+  startSharedSplit: (id: number, version: string) =>
+    postJSONBody<SharedSplit>(`/api/shared-splits/${id}/start`, { version }),
+  decideSharedSplit: (id: number, version: string, allocation: SplitAllocation) =>
+    postJSONBody<SharedSplit>(`/api/shared-splits/${id}/decision`, { version, allocation }),
   previewSharedAssociation: (left: AssociationSubject, right: AssociationSubject) =>
     postJSONBody<SharedAssociation>("/api/shared-associations/previews", { left, right }),
   getSharedAssociation: (id: number, signal?: AbortSignal) =>

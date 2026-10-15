@@ -1,6 +1,39 @@
 import { surfaceEnglish } from "./en";
 
 export const surfaceHans = {
+  sharedSplit: {
+    title: "拆分关联",
+    hint: "核对原条目和本人当前评价，选择关联后修改记录的归属。未选择的一侧保留原评价；所有记录本人确认后才完成拆分。",
+    preview: "预览拆分",
+    operations: "拆分操作",
+    open: "打开拆分 {{id}}",
+    current: "本人当前共享评价",
+    start: "发起共享拆分",
+    allocation: "将本人修改的评价保留到",
+    choose: "请选择归属",
+    left: "第一侧：{{title}}",
+    right: "第二侧：{{title}}",
+    both: "两侧都保留",
+    confirm: "确认本人归属",
+    saved: "本人的归属选择已保存，等待其他记录本人确认。",
+    refresh: "刷新拆分状态",
+    error: "拆分未能保存。请刷新预览；记录变更或后续关联需要重新核对。",
+    before: {
+      left: "关联前第一侧",
+      right: "关联前第二侧",
+    },
+    change: {
+      unchanged: "关联后未变化，将恢复关联前记录。",
+      added: "关联后新增，请选择保留位置。",
+      modified: "关联后已修改，请选择保留位置。",
+    },
+    status: {
+      preview: "拆分预览已就绪",
+      pending: "等待本人选择记录归属",
+      completed: "拆分已完成",
+      stale: "拆分预览已过期",
+    },
+  },
   sharedAssociation: {
     title: "共享关联",
     hint: "关联同一作品、系列或单集。来源与播放版本保持独立，个人评价冲突仅由记录本人处理。",

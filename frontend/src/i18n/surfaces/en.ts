@@ -4,6 +4,40 @@
  * persisted user data never become translated at the domain boundary.
  */
 export const surfaceEnglish = {
+  sharedSplit: {
+    title: "Split association",
+    hint: "Review the original entries and your current review. Choose where to keep changes made after association. The other side keeps its original review; all owners must confirm before splitting.",
+    preview: "Preview split",
+    operations: "Split operations",
+    open: "Open split {{id}}",
+    current: "My current shared review",
+    start: "Start shared split",
+    allocation: "Keep my changed review in",
+    choose: "Choose a destination",
+    left: "First entry: {{title}}",
+    right: "Second entry: {{title}}",
+    both: "Both entries",
+    confirm: "Confirm my allocation",
+    saved: "Your allocation is saved. Other owners still need to confirm.",
+    refresh: "Refresh split",
+    error:
+      "The split could not be saved. Refresh the preview; changed records or a later association require a fresh review.",
+    before: {
+      left: "First entry before association",
+      right: "Second entry before association",
+    },
+    change: {
+      unchanged: "Unchanged since association; the original records will be restored.",
+      added: "Added after association. Choose where to keep it.",
+      modified: "Changed after association. Choose where to keep it.",
+    },
+    status: {
+      preview: "Split preview ready",
+      pending: "Waiting for record allocations",
+      completed: "Split completed",
+      stale: "Split preview expired",
+    },
+  },
   sharedAssociation: {
     title: "Shared association",
     hint: "Associate the same work, series or episode. Sources and playback versions stay distinct. Only each record owner can resolve private review conflicts.",
