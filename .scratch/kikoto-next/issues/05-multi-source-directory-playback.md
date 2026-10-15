@@ -6,6 +6,12 @@
 
 **Status:** ready-for-agent
 
+**Implementation:** verified-local
+
+**证据:** [05 来源与播放验证](../evidence/05-source-playback.md)。既有来源主线通过；待吸收 02／07 后完成兼容复验。
+
+**测试契约:** H 真实路由、登录会话与迁移 SQLite；F 使用独立 API 和合成 WAV，关闭截图、trace、video。测试覆盖逐源 freshness、未知来源探测、故障恢复、目录切换与显式播放／继续；必要 U 仅保护纯来源状态规则。
+
 **依据:** [正式规格](../spec.md) · [工单总览](../ticket-proposal.md)
 
 ## 验收范围

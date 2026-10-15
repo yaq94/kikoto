@@ -124,6 +124,8 @@ export type SourceAvailabilitySource = {
   sourceCode: string;
   displayName: string;
   status: "available" | "not_found" | "unavailable" | "disabled" | "error" | "unknown";
+  /** This source's observation time, in UTC; absent on older servers. */
+  checkedAt?: string;
   remoteId: string;
   primaryCode: string;
   title: string;
@@ -365,12 +367,14 @@ export const remoteSourceApi = {
     assertApiSession(version);
     return { ...metadata, tracks: tracks.tracks };
   },
-  getSourceAvailability: (code: string) =>
-    getJSON<SourceAvailabilityResponse>(`/api/works/${encodeURIComponent(code)}/source-availability`),
-  checkSourceAvailability: (code: string, sourceId = 0) =>
-    postJSONBody<SourceAvailabilityResponse>(`/api/works/${encodeURIComponent(code)}/source-availability`, {
-      sourceId,
-    }),
+  getSourceAvailability: (code: string, signal?: AbortSignal) =>
+    getJSON<SourceAvailabilityResponse>(`/api/works/${encodeURIComponent(code)}/source-availability`, signal),
+  checkSourceAvailability: (code: string, sourceId = 0, signal?: AbortSignal, force = false) =>
+    postJSONBody<SourceAvailabilityResponse>(
+      `/api/works/${encodeURIComponent(code)}/source-availability`,
+      { sourceId, force },
+      signal,
+    ),
   planRemoteSourceWorkSave: (
     id: number,
     code: string,

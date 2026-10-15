@@ -174,6 +174,7 @@ export function PersistedWorkDetailController({
     initialSourceIntent,
     initialTrackedSourceID,
     initialRemoteCode,
+    canCheckSources: !auth.demoMode && auth.hasPermission("remote:track"),
   });
   const {
     remoteSources,
