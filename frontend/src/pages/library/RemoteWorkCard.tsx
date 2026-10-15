@@ -82,7 +82,7 @@ export function RemoteWorkCard({
       }
       onOpen={onOpen}
       onTagOpen={onTagOpen}
-      canOpen={Boolean(work.primaryCode || work.catalogEntryId)}
+      canOpen={Boolean(work.primaryCode || work.catalogEntryId || work.seriesId)}
       footer={
         <WorkCardFooter
           className={layout === "row" ? "h-10 border-border/40" : undefined}
@@ -138,10 +138,14 @@ function remoteWorkCardView(
 ): WorkCardViewModel {
   const sourceLabel = source.displayName || source.code || i18n.t("workCard.remoteSource");
   return {
-    translationResource: work.catalogEntryId
-      ? { catalogEntryId: work.catalogEntryId }
-      : { sourceId: source.id, code: work.remoteCode || work.primaryCode || work.remoteId },
-    code: work.primaryCode || (work.catalogEntryId ? i18n.t("openlist.numberless") : work.remoteId),
+    translationResource: work.seriesId
+      ? { seriesId: work.seriesId }
+      : work.catalogEntryId
+        ? { catalogEntryId: work.catalogEntryId }
+        : { sourceId: source.id, code: work.remoteCode || work.primaryCode || work.remoteId },
+    code: work.seriesId
+      ? i18n.t("catalogSeries.series")
+      : work.primaryCode || (work.catalogEntryId ? i18n.t("openlist.numberless") : work.remoteId),
     title: work.title,
     circle: work.circle || sourceLabel || i18n.t("workCard.unknownCircle"),
     ageRating: work.ageRating,

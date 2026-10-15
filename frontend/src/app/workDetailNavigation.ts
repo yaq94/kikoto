@@ -13,6 +13,7 @@ export type WorkDetailSourceIntent = {
 };
 
 export type WorkDetailIntent =
+  | { kind: "catalog-series"; seriesId: number }
   | { kind: "catalog"; catalogEntryId: number }
   | {
       kind: "known";
@@ -34,6 +35,8 @@ export type WorkDetailNavigationOptions = {
 };
 
 export function workDetailRoute(intent: WorkDetailIntent) {
+  if (intent.kind === "catalog-series")
+    return validSourceID(intent.seriesId) ? `/catalog-series/${intent.seriesId}` : null;
   if (intent.kind === "catalog")
     return validSourceID(intent.catalogEntryId) ? `/catalog/${intent.catalogEntryId}` : null;
   if (intent.kind === "remote-only") {
@@ -84,6 +87,8 @@ export function openWorkDetail(intent: WorkDetailIntent, options: WorkDetailNavi
  * chunk loads.
  */
 export function workDetailCodeFromLocation(path: string, search: string) {
+  const series = path.match(/^\/catalog-series\/([1-9][0-9]*)\/?$/);
+  if (series) return `series:${series[1]}`;
   const internal = path.match(/^\/(catalog|work)\/([1-9][0-9]*)\/?$/);
   if (internal) return internal[1] === "catalog" ? `catalog:${internal[2]}` : internal[2];
   const standardMatch = path.match(WORK_CODE_PATH_PATTERN);

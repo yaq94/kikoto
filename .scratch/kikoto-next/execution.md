@@ -2,7 +2,7 @@
 
 **Status:** ready-for-agent
 **Implementation:** in-progress
-**阶段:** 01–06 已集成并 resolved；07、08 和 OpenList 单来源代理兼容修复已集成并取得本地证据，07/08 仍 verified-local，真实媒体 LIVE 和真实索引覆盖待补。09/10 已获准基于当前扫描接口串行本地开发；11 独立分支正在补齐迁移与验收，尚未集成。完整发布前置保持有效。
+**阶段:** 01–06 已集成并 resolved；07、08 和 OpenList 单来源代理兼容修复已集成并取得本地证据，07/08 仍 verified-local，真实媒体 LIVE 和真实索引覆盖待补。11 已集成 071 迁移及本地 H/R/F，保持 verified-local；09 已独立验证，等待串行集成；10/12 可继续本地开发。完整发布前置保持有效。
 **依据:** [正式规格](spec.md) · [工单总览](ticket-proposal.md) · [领域词汇表](../../GLOSSARY.md) · [作品身份与个人记录 ADR](../../docs/adr/0001-work-identity-and-personal-state.md)
 
 ## 当前授权与完成条件
@@ -46,8 +46,8 @@
 | [08 完整来源索引与恢复](issues/08-recoverable-full-source-index.md) | 07 | verified-local | 已集成；完整合成树、070 升级/恢复、资源限制、清理与管理进度 H/R/F 通过；真实来源覆盖待补 | [08 证据](evidence/08-source-index.md)、[集成复验](evidence/08-integration.md) |
 | [09 每日更新与扫描复用](issues/09-daily-index-update.md) | 08 | in-progress | 已认领，基于 08 集成接口在独立 worktree 实施；发布前置保留 | 待执行 |
 | [10 来源生命周期与记录保留](issues/10-source-lifecycle-retention.md) | 08 | pending | 已授权在 09 完成后串行本地实施；发布前置保留 | 待执行 |
-| [11 系列卡片与单集归组](issues/11-series-and-episode-grouping.md) | 07 | in-progress | 独立分支正在补齐 071 迁移及 H/F，尚未集成；已可依赖 08 的根选择入口继续本地开发，发布仍等待全部验收 | 预备实现不计作验收证据 |
-| [12 系列与单集个人评价](issues/12-series-episode-personal-reviews.md) | 11 | pending | 等待前置验收 | 待执行 |
+| [11 系列卡片与单集归组](issues/11-series-and-episode-grouping.md) | 07 | verified-local | 已集成 071、系列/单集发现与手工归组；完整发布前置保留 | [11 证据](evidence/11-series.md)、[集成复验](evidence/11-integration.md) |
+| [12 系列与单集个人评价](issues/12-series-episode-personal-reviews.md) | 11 | in-progress | 基于 11 的独立分支实施，暂无新迁移；发布前置保留 | 待执行 |
 | [13 共享关联与本人冲突确认](issues/13-shared-link-conflict-review.md) | 12 | pending | 等待前置验收 | 待执行 |
 | [14 高置信唯一候选关联](issues/14-high-confidence-work-matching.md) | 13 | pending | 等待前置验收 | 待执行 |
 | [15 拆分与本人记录归属](issues/15-split-personal-record-allocation.md) | 13 | pending | 等待前置验收 | 待执行 |
@@ -76,12 +76,10 @@ catalog 翻译已在集成产物上取得 H/R/F 证据；其剩余缺口是实�
 
 ## 迁移协调
 
-现有最高迁移为 070：08 的 `070_source_catalog_scan.sql` 与 `compat/070_dev.sql`
-已集成。完整链、新装、既有库升级、重复及并发启动、开发基线一致性均通过复验；
-001–069 与发布 `baseline/068_v0.8.3.sql` 保持不变。01–06 无新增业务迁移，译文缓存使用
-独立 CacheRoot。071 保留给 11，预备提交尚未包含该迁移，未进入集成分支。
-11 可复用 `source_catalog_roots.go:catalogAdmissionRoot`；实施前仍须重新核实目录、
-生成对应开发基线并验证旧库升级与重复启动。
+现有最高迁移为 071：11 的 `071_catalog_series.sql` 与 `compat/071_dev.sql` 已集成。
+完整链、新装、070 旧库升级、重复及并发启动、开发基线一致性均通过集成复验；
+001–070 与发布 `baseline/068_v0.8.3.sql` 保持不变。09 复用 070 与 app_setting，没有新迁移。
+12 预计复用 071；10 若确需新迁移须先协调编号。
 
 ## 验证证据登记
 

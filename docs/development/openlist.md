@@ -2,8 +2,9 @@
 
 OpenList sources use `sourceType: "openlist"` and an administrator-configured
 HTTP(S) API endpoint. `config.openListRoots` contains at most 8 explicit audio
-work directories. A root owns its audio tracks and format subdirectories; it
-does not infer series or episodes. An explicit bounded scan visits at most 32
+work directories. A root owns its audio tracks and format subdirectories. Explicit episode or
+series-directory evidence groups independent entries as described in
+[Catalog series](catalog-series.md). An explicit bounded scan visits at most 32
 directories, 8 levels, 2,000 entries, and 100 pages per root. Only a completely
 read root containing audio becomes a catalog entry. Archives and subtitles
 alone are excluded. Password-protected directories are never unlocked.
@@ -69,8 +70,9 @@ the database volume must also be monitored by the operator.
 
 Numbered directories own their descendants. A directory with audio, or with
 only recognized format subdirectories, owns its track/format tree; other
-directories remain traversal containers. Series and episode relationships are
-separate from this admission rule. No title matching merges catalog identities.
+directories remain traversal containers. Evidenced episodes own their descendants;
+existing published containers retain their identity and require explicit review
+to split. Series membership is attached in the same publication transaction. No title matching merges catalog identities.
 Only roots with observed playable audio become searchable cards. Source-returned
 URLs are discarded; neither discovery nor publication registers works or
 downloads media. Missing observations do not delete cards or private records.

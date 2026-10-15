@@ -12,6 +12,7 @@ import (
 // Requests identify a readable public field. Client text is only a stale-read
 // guard and must exactly match that field before it can reach the model.
 type contentTranslationRequest struct {
+	SeriesID       int64  `json:"seriesId"`
 	CatalogEntryID int64  `json:"catalogEntryId"`
 	WorkID         int64  `json:"workId"`
 	SourceID       int64  `json:"sourceId"`
@@ -50,7 +51,7 @@ func (s *Server) translateContent(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.requirePermission(w, r, "library:read"); !ok {
 		return
 	}
-	if in.CatalogEntryID <= 0 && in.WorkID <= 0 && in.SourceID <= 0 && in.Code != "" {
+	if in.SeriesID <= 0 && in.CatalogEntryID <= 0 && in.WorkID <= 0 && in.SourceID <= 0 && in.Code != "" {
 		identity, err := s.resolveWorkCodeIdentity(r.Context(), in.Code)
 		if err != nil {
 			writeWorkReadError(w, err)
@@ -58,7 +59,7 @@ func (s *Server) translateContent(w http.ResponseWriter, r *http.Request) {
 		}
 		in.WorkID = identity.WorkID
 	}
-	if in.CatalogEntryID <= 0 && in.SourceID <= 0 && !s.requireDemoWork(w, r, in.WorkID) {
+	if in.SeriesID <= 0 && in.CatalogEntryID <= 0 && in.SourceID <= 0 && !s.requireDemoWork(w, r, in.WorkID) {
 		return
 	}
 	field, err := s.loadTranslationField(r.Context(), in)

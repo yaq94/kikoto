@@ -1,6 +1,23 @@
 import { surfaceEnglish } from "./en";
 
 export const surfaceKorean = {
+  catalogSeries: {
+    series: "시리즈",
+    episodes: "에피소드",
+    openEpisode: "에피소드 열기",
+    openSeries: "시리즈 열기",
+    group: "시리즈로 묶기",
+    title: "시리즈 제목",
+    search: "현재 소스 검색",
+    preview: "그룹 미리 보기",
+    confirm: "그룹 확정",
+    revise: "선택 변경",
+    hint: "각 항목의 식별자, 형식, 재생 및 개인 평가는 유지됩니다. 선택 순서대로 공유 시리즈에 추가합니다.",
+    selected: "{{count}}개 선택",
+    previous: "이전 페이지",
+    next: "다음 페이지",
+    stale: "미리 보기를 사용할 수 없습니다. 선택을 갱신한 후 다시 시도하세요.",
+  },
   openlist: {
     kikoeruType: "Kikoeru",
     openlistType: "OpenList",

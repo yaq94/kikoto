@@ -9,6 +9,21 @@ export type CatalogEntry = PersonalReview & {
   primaryCode: string;
   title: string;
   workId: number | null;
+  seriesId?: number | null;
+};
+export type CatalogSeriesEpisode = Omit<CatalogEntry, keyof PersonalReview> & { position: number };
+export type CatalogSeries = {
+  seriesId: number;
+  title: string;
+  workId: number | null;
+  episodes: CatalogSeriesEpisode[];
+};
+export type CatalogGroupingPreview = {
+  previewId: number;
+  title: string;
+  status: "pending" | "completed";
+  seriesId: number | null;
+  episodes: CatalogSeriesEpisode[];
 };
 export type CatalogTrack = RemoteTrack & { path: string; children: CatalogTrack[] };
 export type CatalogDirectory = Omit<CatalogEntry, keyof PersonalReview> & {
@@ -67,6 +82,13 @@ export type CatalogIndexProgress = {
 };
 
 export const sourceCatalogApi = {
+  getCatalogSeries: (id: number, signal?: AbortSignal) => getJSON<CatalogSeries>(`/api/catalog-series/${id}`, signal),
+  previewCatalogGrouping: (title: string, catalogEntryIds: number[], signal?: AbortSignal) =>
+    postJSONBody<CatalogGroupingPreview>(`/api/catalog-series/previews`, { title, catalogEntryIds }, signal),
+  getCatalogGroupingPreview: (id: number, signal?: AbortSignal) =>
+    getJSON<CatalogGroupingPreview>(`/api/catalog-series/previews/${id}`, signal),
+  confirmCatalogGrouping: (id: number, signal?: AbortSignal) =>
+    postJSONBody<CatalogGroupingPreview>(`/api/catalog-series/previews/${id}/confirm`, {}, signal),
   getCatalogIndex: (id: number, page = 1, signal?: AbortSignal) =>
     getJSON<CatalogIndexProgress>(`/api/remote-sources/${id}/catalog/index?page=${page}`, signal),
   startCatalogIndex: (id: number, options: Partial<CatalogIndexOptions>) =>

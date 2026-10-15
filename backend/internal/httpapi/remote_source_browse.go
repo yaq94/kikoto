@@ -40,6 +40,7 @@ const (
 )
 
 type remoteWorkSummary struct {
+	SeriesID        int64             `json:"seriesId,omitempty"`
 	CatalogEntryID  int64             `json:"catalogEntryId,omitempty"`
 	RemoteID        string            `json:"remoteId"`
 	PrimaryCode     string            `json:"primaryCode"`

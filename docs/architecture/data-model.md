@@ -14,6 +14,13 @@ stores its observed directory tree without persisting signed media URLs.
 See [OpenList catalog boundary](../development/openlist.md) for admission,
 registration, and the separation between identity and source location.
 
+`catalog_series` stores a stable series id, title, optional independent work
+reference and optional source-local discovery evidence. `catalog_series_member`
+keeps ordered catalog entries without changing their work or edition references.
+`catalog_series_preview` stores actor-owned, expiring confirmation snapshots;
+private reviews are never copied into preview payloads. See
+[Catalog series](../development/catalog-series.md).
+
 ## Work Metadata
 
 Important tables:

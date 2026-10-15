@@ -601,6 +601,16 @@ export function LibraryPage({ active = true }: { active?: boolean }) {
   };
 
   const openRemotePreview = (source: LibrarySource, work: RemoteWork) => {
+    if (work.seriesId) {
+      openWorkDetail(
+        { kind: "catalog-series", seriesId: work.seriesId },
+        {
+          returnTo: libraryLocation(pathForActiveLibrary(activeTab, localScope), activeBrowseState),
+          returnLabel: t("nav.library"),
+        },
+      );
+      return;
+    }
     if (work.catalogEntryId) {
       openWorkDetail(
         { kind: "catalog", catalogEntryId: work.catalogEntryId },

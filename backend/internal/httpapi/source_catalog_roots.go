@@ -11,6 +11,11 @@ type catalogDirectorySummary struct{ Audio, FormatDirectories, OtherDirectories 
 // directory and its parent's assignment. This does not create series or merge
 // identities; callers retain every real parent/child directory observation.
 func catalogAdmissionRoot(directoryPath, parentRoot string, observed catalogDirectorySummary) string {
+	if _, episode := catalogEpisodeEvidence(directoryPath); episode && catalogDirectoryCode(parentRoot) == "" {
+		if _, parentEpisode := catalogEpisodeEvidence(parentRoot); !parentEpisode {
+			return directoryPath
+		}
+	}
 	if parentRoot != "" {
 		return parentRoot
 	}

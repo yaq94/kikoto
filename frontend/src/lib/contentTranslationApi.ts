@@ -1,6 +1,12 @@
 import { apiTransport } from "@/lib/apiTransport";
 
-export type ContentTranslationResource = { workId?: number; sourceId?: number; code?: string; catalogEntryId?: number };
+export type ContentTranslationResource = {
+  workId?: number;
+  sourceId?: number;
+  code?: string;
+  catalogEntryId?: number;
+  seriesId?: number;
+};
 export type ContentTranslationRequest = ContentTranslationResource & {
   field: "title" | "description" | "tag" | "directory";
   text: string;

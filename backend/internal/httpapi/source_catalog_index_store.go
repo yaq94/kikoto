@@ -168,7 +168,17 @@ func completeCatalogDirectoryTx(ctx context.Context, tx *sql.Tx, sourceID, gener
 	if err != nil {
 		return err
 	}
-	d.Root = catalogAdmissionRoot(d.Path, d.Root, catalogDirectorySummary{audio, formats, otherDirs})
+	// An already published container keeps its identity even if a later scan
+	// discovers episode markers below it. Splitting it needs explicit review.
+	var existingRoot string
+	err = tx.QueryRowContext(ctx, `SELECT root_path FROM source_catalog_entry WHERE file_source_id=? AND root_path IN (?,?) ORDER BY length(root_path) LIMIT 1`, sourceID, d.Path, d.Root).Scan(&existingRoot)
+	if err == nil {
+		d.Root = existingRoot
+	} else if errors.Is(err, sql.ErrNoRows) {
+		d.Root = catalogAdmissionRoot(d.Path, d.Root, catalogDirectorySummary{audio, formats, otherDirs})
+	} else {
+		return err
+	}
 	return nil
 }
 
@@ -273,6 +283,9 @@ func (s *Server) publishCatalogBatch(ctx context.Context, job workflowJobRecord,
 		var id int64
 		err = tx.QueryRowContext(ctx, `INSERT INTO source_catalog_entry(file_source_id,root_path,primary_code,title) VALUES(?,?,?,?) ON CONFLICT(file_source_id,root_path) DO UPDATE SET title=excluded.title,updated_at=CURRENT_TIMESTAMP RETURNING id`, sourceID, p.root, catalogDirectoryCode(p.root), path.Base(p.root)).Scan(&id)
 		if err != nil {
+			return 0, err
+		}
+		if err = attachCatalogSeriesTx(ctx, tx, id); err != nil {
 			return 0, err
 		}
 		rel := strings.TrimPrefix(path.Join(p.dir, p.name), strings.TrimRight(p.root, "/")+"/")

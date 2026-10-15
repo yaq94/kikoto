@@ -18,6 +18,14 @@ type readableTranslationField struct {
 }
 
 func (s *Server) loadTranslationField(ctx context.Context, in contentTranslationRequest) (readableTranslationField, error) {
+	if in.SeriesID > 0 {
+		if s.cfg.IsDemo() || in.Field != "title" {
+			return readableTranslationField{}, sql.ErrNoRows
+		}
+		var title string
+		err := s.db.QueryRowContext(ctx, `SELECT title FROM catalog_series WHERE id=?`, in.SeriesID).Scan(&title)
+		return readableTranslationField{Text: title, Original: title}, err
+	}
 	if in.CatalogEntryID > 0 {
 		entry, _, err := s.loadSourceCatalogEntry(ctx, in.CatalogEntryID)
 		if err != nil {
