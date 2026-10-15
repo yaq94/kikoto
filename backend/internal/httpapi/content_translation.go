@@ -50,13 +50,7 @@ func (s *Server) translateContent(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.requirePermission(w, r, "library:read"); !ok {
 		return
 	}
-	// Source catalog resolution is supplied by the catalog feature. A selector
-	// must not silently fall back to another work while that feature is absent.
-	if in.CatalogEntryID > 0 {
-		writeAPIError(w, 404, "not_found", "Content is unavailable.", false)
-		return
-	}
-	if in.WorkID <= 0 && in.SourceID <= 0 && in.Code != "" {
+	if in.CatalogEntryID <= 0 && in.WorkID <= 0 && in.SourceID <= 0 && in.Code != "" {
 		identity, err := s.resolveWorkCodeIdentity(r.Context(), in.Code)
 		if err != nil {
 			writeWorkReadError(w, err)
@@ -64,7 +58,7 @@ func (s *Server) translateContent(w http.ResponseWriter, r *http.Request) {
 		}
 		in.WorkID = identity.WorkID
 	}
-	if in.SourceID <= 0 && !s.requireDemoWork(w, r, in.WorkID) {
+	if in.CatalogEntryID <= 0 && in.SourceID <= 0 && !s.requireDemoWork(w, r, in.WorkID) {
 		return
 	}
 	field, err := s.loadTranslationField(r.Context(), in)

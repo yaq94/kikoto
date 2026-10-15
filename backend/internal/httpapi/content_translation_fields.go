@@ -18,6 +18,27 @@ type readableTranslationField struct {
 }
 
 func (s *Server) loadTranslationField(ctx context.Context, in contentTranslationRequest) (readableTranslationField, error) {
+	if in.CatalogEntryID > 0 {
+		entry, _, err := s.loadSourceCatalogEntry(ctx, in.CatalogEntryID)
+		if err != nil {
+			return readableTranslationField{}, err
+		}
+		if in.Field == "title" {
+			return readableTranslationField{Text: entry.Title, Original: entry.Title}, nil
+		}
+		if in.Field == "directory" {
+			files, err := s.loadSourceCatalogFiles(ctx, in.CatalogEntryID)
+			if err != nil {
+				return readableTranslationField{}, err
+			}
+			for _, file := range files {
+				if file.Path == in.Path {
+					return readableTranslationField{Text: file.Title, Original: file.Title}, nil
+				}
+			}
+		}
+		return readableTranslationField{}, sql.ErrNoRows
+	}
 	if in.SourceID > 0 {
 		return s.loadRemoteTranslationField(ctx, in)
 	}

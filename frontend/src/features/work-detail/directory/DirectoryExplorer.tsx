@@ -273,7 +273,7 @@ function FolderTile({
         </span>
         <span className="min-w-0 flex-1">
           <span className="block whitespace-normal break-words font-medium [overflow-wrap:anywhere]">
-            <TranslatedText text={folder.name} field="directory" controls={false} />
+            <TranslatedText text={folder.name} field="directory" path={folder.path} controls={false} />
           </span>
           <span className="mt-0.5 block text-xs text-muted-foreground">{folderSummary(folder)}</span>
         </span>

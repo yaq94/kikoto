@@ -6,6 +6,14 @@ reference used by relationships and personal state. Numbered lookups retain
 [identity boundary](core-boundaries.md#unified-work-identity) distinguishes code
 resolution from an explicit edition reference.
 
+Numberless works have empty `work.primary_code`,
+`logical_work.canonical_code`, and `work_edition.primary_code`; nonempty work
+and canonical codes have partial unique indexes. `source_catalog_entry` has a
+persistent integer id and an optional work reference. `source_catalog_file`
+stores its observed directory tree without persisting signed media URLs.
+See [OpenList catalog boundary](../development/openlist.md) for admission,
+registration, and the separation between identity and source location.
+
 ## Work Metadata
 
 Important tables:

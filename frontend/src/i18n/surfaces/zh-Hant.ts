@@ -1,6 +1,20 @@
 import { surfaceEnglish } from "./en";
 
 export const surfaceHant = {
+  openlist: {
+    kikoeruType: "Kikoeru",
+    openlistType: "OpenList",
+    detail: "來源索引作品",
+    numberless: "無發行編號",
+    scan: "掃描已設定目錄",
+    scanStatus: "目錄掃描",
+    running: "正在掃描已設定目錄…",
+    complete: "已完成設定目錄的掃描。",
+    partial: "部分目錄未能完成掃描。",
+    failed: "掃描已停止或失敗，可稍後重試。",
+    roots: "作品目錄",
+    rootsHint: "每行一個作品的絕對目錄，最多 8 個；音軌和格式目錄保留在對應作品內。",
+  },
   workTitles: {
     manual: "目前語言的手動標題",
     manualAll: "全語言手動標題",

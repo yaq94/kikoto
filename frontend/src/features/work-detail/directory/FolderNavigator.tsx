@@ -127,7 +127,15 @@ export function FolderNavigatorList({
                       ? row.labelParts.map((part, index) => (
                           <span key={index}>
                             {index > 0 ? " / " : ""}
-                            <TranslatedText text={part} field="directory" controls={false} />
+                            <TranslatedText
+                              text={part}
+                              field="directory"
+                              path={row.node.path
+                                .split("/")
+                                .slice(0, row.node.path.split("/").length - row.labelParts.length + index + 1)
+                                .join("/")}
+                              controls={false}
+                            />
                           </span>
                         ))
                       : label}

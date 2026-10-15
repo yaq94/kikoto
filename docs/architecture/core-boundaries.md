@@ -17,8 +17,10 @@ and personal-state updates.
 A source location, display title or signed media URL is not a permanent identity.
 The [accepted identity decision](../adr/0001-work-identity-and-personal-state.md)
 also permits numberless admission within an explicitly scoped source workflow.
-The current numbered ingestion and schema still require codes; that constraint
-must be extended at admission, never worked around with invented product codes.
+The [finite OpenList catalog](../development/openlist.md) admits numberless
+audio through persistent catalog ids and registers a work only when personal
+state requires it. A missing code is empty and never enters numbered ingestion
+or code-specific operations. Numbered codes remain unique when present.
 
 ## Metadata Sources
 
@@ -49,6 +51,7 @@ Examples:
 
 - Local folders.
 - Kikoeru-compatible remote sources.
+- Explicitly configured OpenList audio directories.
 - Cache files.
 
 File availability belongs in source presence and media file location tables.

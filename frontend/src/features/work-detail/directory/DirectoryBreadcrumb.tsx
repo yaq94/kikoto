@@ -75,7 +75,12 @@ export function DirectoryBreadcrumb({ path, onChange }: { path: string[]; onChan
                   >
                     <Folder className="h-4 w-4 shrink-0 text-primary" />
                     <span className="min-w-0 flex-1 truncate">
-                      <TranslatedText text={part} field="directory" controls={false} />
+                      <TranslatedText
+                        text={part}
+                        field="directory"
+                        path={path.slice(0, index + 1).join("/")}
+                        controls={false}
+                      />
                     </span>
                   </button>
                 ))}
@@ -90,7 +95,7 @@ export function DirectoryBreadcrumb({ path, onChange }: { path: string[]; onChan
             title={current}
             aria-current="page"
           >
-            <TranslatedText text={current} field="directory" controls={false} />
+            <TranslatedText text={current} field="directory" path={path.join("/")} controls={false} />
           </span>
         )}
       </div>
@@ -113,7 +118,12 @@ export function DirectoryBreadcrumb({ path, onChange }: { path: string[]; onChan
                   title={part}
                   aria-current="page"
                 >
-                  <TranslatedText text={part} field="directory" controls={false} />
+                  <TranslatedText
+                    text={part}
+                    field="directory"
+                    path={path.slice(0, index + 1).join("/")}
+                    controls={false}
+                  />
                 </span>
               ) : (
                 <button
@@ -121,7 +131,12 @@ export function DirectoryBreadcrumb({ path, onChange }: { path: string[]; onChan
                   title={part}
                   onClick={() => onChange(path.slice(0, index + 1))}
                 >
-                  <TranslatedText text={part} field="directory" controls={false} />
+                  <TranslatedText
+                    text={part}
+                    field="directory"
+                    path={path.slice(0, index + 1).join("/")}
+                    controls={false}
+                  />
                 </button>
               )}
             </span>

@@ -30,6 +30,8 @@ The backend is a Go HTTP API with SQLite persistence.
   an edition or its availability status.
 - `backend/internal/kikoeru`: Kikoeru-compatible client, including the
   account and SQLite readers used by personal data import.
+- `backend/internal/openlist`: bounded anonymous directory and file URL reads
+  for the [finite catalog API](../development/openlist.md).
 - `backend/internal/metasync`: metadata sync.
 - `backend/internal/remotemetadata`: remote source metadata ordering,
   bounded snapshot decoding, and reconciliation for the opt-in fallback.

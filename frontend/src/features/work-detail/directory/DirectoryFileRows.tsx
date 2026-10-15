@@ -315,6 +315,7 @@ export function DirectoryFileRow({
             text={file.title}
             field="directory"
             mediaId={file.mediaItemId > 0 ? file.mediaItemId : undefined}
+            path={file.sourcePath}
           />
         </span>
         <MetaList items={meta} lastItemCompactOnly={isTrack && state.lyricsChoices.length > 0} />

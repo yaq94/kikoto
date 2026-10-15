@@ -1,6 +1,20 @@
 import { surfaceEnglish } from "./en";
 
 export const surfaceJapanese = {
+  openlist: {
+    kikoeruType: "Kikoeru",
+    openlistType: "OpenList",
+    detail: "ソースカタログの作品",
+    numberless: "作品番号なし",
+    scan: "設定したフォルダーをスキャン",
+    scanStatus: "カタログスキャン",
+    running: "設定したフォルダーをスキャン中…",
+    complete: "設定したフォルダーをスキャンしました。",
+    partial: "一部のフォルダーをスキャンできませんでした。",
+    failed: "スキャンが停止または失敗しました。再試行できます。",
+    roots: "作品フォルダー",
+    rootsHint: "1 行に 1 作品の絶対パス、最大 8 件。トラックと形式別フォルダーは作品内に保持します。",
+  },
   workTitles: {
     manual: "この言語の手動タイトル",
     manualAll: "全言語の手動タイトル",

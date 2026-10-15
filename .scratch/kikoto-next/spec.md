@@ -2,7 +2,7 @@
 
 **Status:** ready-for-agent
 **设计状态:** 已确认（Q31）；用户故事、验收要求与测试边界作为实施合同。
-**Implementation:** in-progress；01、04、06 已集成并完成所属验收，其余功能与部署验收按执行记录推进。
+**Implementation:** in-progress；01、02、04、06 已集成并完成所属验收，07 已完成本地集成验收但真实媒体 LIVE 未通过，其余功能与部署验收按执行记录推进。
 **执行授权:** 用户已授权本规格全部功能实现、必要依赖安装、测试、数据库迁移、部署与回滚；进度及证据见[执行记录](execution.md)。
 **领域依据:** [GLOSSARY](../../GLOSSARY.md) · [作品身份与个人记录 ADR](../../docs/adr/0001-work-identity-and-personal-state.md)
 

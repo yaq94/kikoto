@@ -5,6 +5,10 @@ import { preloadableComponent } from "@/lib/preloadableComponent";
 // location starts it with the page, so opening or restoring a work normally
 // renders without suspending. Every caller shares this one dynamic import.
 const loadWorkDetail = () => import("@/features/work-detail/WorkDetail");
+const catalogWorkDetail = preloadableComponent(() =>
+  import("./CatalogWorkDetail").then((module) => module.CatalogWorkDetail),
+);
+export const CatalogWorkDetail = catalogWorkDetail.Component;
 const remoteOnlyWorkDetail = preloadableComponent(() =>
   loadWorkDetail().then((module) => module.RemoteOnlyWorkDetailController),
 );

@@ -14,6 +14,7 @@ import (
 )
 
 type workDetail struct {
+	CatalogEntryID   int64                      `json:"catalogEntryId,omitempty"`
 	ID               int64                      `json:"id"`
 	PrimaryCode      string                     `json:"primaryCode"`
 	BaseCode         string                     `json:"baseCode"`
@@ -344,6 +345,9 @@ func (s *Server) loadWorkDetailBase(ctx context.Context, userID int64, id int64)
 		&personalRating,
 		&work.PersonalNote,
 	); err != nil {
+		return workDetail{}, err
+	}
+	if err := s.db.QueryRowContext(ctx, `SELECT COALESCE(MIN(entry.id),0) FROM source_catalog_entry AS entry JOIN file_source AS source ON source.id=entry.file_source_id WHERE entry.work_id=? AND source.enabled=1 AND source.source_type='openlist'`, id).Scan(&work.CatalogEntryID); err != nil {
 		return workDetail{}, err
 	}
 	work.Favorite = favorite != 0

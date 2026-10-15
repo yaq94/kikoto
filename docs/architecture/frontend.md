@@ -507,8 +507,12 @@ volatile queue with a diagnostic and a normal network loss window of up to
   controls or fetch a replacement collection. Returning reveals the loaded
   cards and restores the originating history entry's filters and page before
   list effects may write or fetch.
-- A work detail entry belongs to the page it was opened from. The work URL
-  stays the canonical `/<primary_code>`; the history entry records its owner
+- A work detail entry belongs to the page it was opened from. Numbered works
+  use `/<primary_code>`, registered numberless works use `/work/{workId}`, and
+  source catalog entries use `/catalog/{catalogEntryId}`. The catalog detail
+  reuses the directory explorer, global player and personal review editor;
+  [catalog paths and display names](../development/openlist.md) remain separate.
+  The history entry records its owner
   when it is created (`historyStateForNavigation` in `app/appRoutes`), a work
   opened from another work inherits that work's owner, and a direct link
   belongs to Library. The owner decides which navigation item is current, which

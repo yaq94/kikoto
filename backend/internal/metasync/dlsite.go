@@ -1434,7 +1434,7 @@ func (s *DLsiteSyncer) ensureWorkForProduct(ctx context.Context, product dlsite.
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO work (primary_code, work_type, title, title_kana, description, release_date, age_rating)
 		VALUES (?, 'audio', ?, ?, ?, ?, ?)
-		ON CONFLICT(primary_code) DO UPDATE SET
+		ON CONFLICT(primary_code) WHERE primary_code <> '' DO UPDATE SET
 			title = excluded.title,
 			title_kana = excluded.title_kana,
 			description = excluded.description,
@@ -1711,7 +1711,7 @@ func upsertDLsiteWorkEdition(ctx context.Context, tx *sql.Tx, providerID int64, 
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO logical_work (canonical_work_id, canonical_code, updated_at)
 		VALUES (?, ?, CURRENT_TIMESTAMP)
-		ON CONFLICT(canonical_code) DO UPDATE SET
+		ON CONFLICT(canonical_code) WHERE canonical_code <> '' DO UPDATE SET
 			canonical_work_id = COALESCE(excluded.canonical_work_id, logical_work.canonical_work_id),
 			updated_at = CURRENT_TIMESTAMP
 	`, canonical, canonicalCode); err != nil {

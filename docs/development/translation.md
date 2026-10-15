@@ -43,8 +43,11 @@ remote `sourceId` plus `code`), `field` (`title`, `description`, `tag`, `directo
 `text`, and metadata `language` (`origin`, `zh-cn`, `zh-tw`, `en-us`, `ja-jp`,
 `ko-kr`). `mediaId` and `path` narrow directory selection. Numeric `workId`
 preserves the selected edition and does not require a product code.
-`catalogEntryId` is a reserved selector that returns 404 without falling back to
-another resource. Content reads do not register works or download media.
+`catalogEntryId` selects a source catalog entry without falling back to another
+resource. Its title is checked against the stored entry title; directory fields
+require the exact real relative `path` and its stored display title. The shared
+catalog loaders recheck source enabled/type and Demo restrictions before cache
+lookup. Content reads do not register works or download media.
 
 The server reloads the selected public field and verifies the exact text before
 reading cache or generating. Changed text returns 409; missing content returns

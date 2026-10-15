@@ -23,6 +23,7 @@ export type WorkPlaybackCursorResponse = {
 };
 
 export type WorkDetail = {
+  catalogEntryId?: number;
   titleChoices?: Record<string, WorkTitleChoice>;
   id: number;
   primaryCode: string;
