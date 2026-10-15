@@ -5,7 +5,7 @@ import type { ReactNode } from "react";
 
 import {
   type RemoteSourceAvailability,
-  remoteSourceCanBrowse,
+  remoteSourceCanLoad,
   type SourceTabInfo,
 } from "@/features/work-detail/source/sourceContextModel";
 import type {
@@ -179,9 +179,11 @@ export function persistedDirectoryLoadState({
     selectedRemoteSource &&
     !selectedRemoteDetail &&
     !selectedRemoteSource.error &&
-    remoteSourceCanBrowse(selectedRemoteSource.summary),
+    remoteSourceCanLoad(selectedRemoteSource.summary),
   );
-  const mediaLoadError = selectedRemoteSource ? selectedRemoteTreeError : mediaError;
+  const mediaLoadError = selectedRemoteSource
+    ? selectedRemoteTreeError || selectedRemoteSource.error || ""
+    : mediaError;
   return {
     sourceDetailsLoading,
     mediaLoadError,

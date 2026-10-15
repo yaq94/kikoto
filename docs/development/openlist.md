@@ -28,6 +28,35 @@ personal review. `GET .../tracks` reads its persisted directory snapshot.
 `GET .../media?path=<relative path>` selects a file from that snapshot, resolves
 its current URL from OpenList, and streams it without creating a media cache.
 
+`GET /api/works/{id}/catalog-directories` projects catalog entries into the saved
+work's source tabs. Numeric references retain the exact edition; numbered
+references and unregistered numbered entries use existing canonical/alias
+relationships. Numberless entries require an existing `work_id`. Each response
+entry carries `directoryType: "catalog"`, `catalogEntryId`, source id/name,
+work id, title, product code, status and UTC `checkedAt`. Reading this projection,
+tracks or translations does not register works or media.
+
+`POST /api/source-catalog/{id}/refresh` requires `sources:write`. It scans only
+that entry's observed root with the same per-root limits and a five-minute
+overall deadline. It publishes a complete playable snapshot atomically. An
+upstream error or empty audio result retains the previous snapshot. Source tab
+selection and content-language changes do not trigger a scan. The directory's
+**Check sources** action requests this explicit refresh; read-only viewers
+reload the saved snapshot.
+
+`POST /api/source-catalog/{id}/playback` requires `playback:use` and an already
+registered work. Its body supplies `paths` (1–256 exact audio paths, at most
+16 KiB total JSON), or one `path`. The response's `targets` contain path, work id,
+media item id, location id and stream URL. Unknown files return 404 and an
+unregistered work returns 409. Preparation creates only missing media identities
+and locations in one transaction. Both catalog pages and saved-work tabs use
+`catalog:<catalogEntryId>:<relative path>` as the playback identity and preserve
+the existing work/media progress API. Different entries never share a timeline
+because their display names match. `catalog_stream` locations use the same
+Range streaming path through `/api/media/{locationId}/stream` and do not enter
+the Kikoeru file cache. Preview playback of an unregistered entry remains
+temporary; saving a review performs the explicit registration described below.
+
 The persistent catalog id is independent of display text, source paths and
 signed links. `source_catalog_entry` keeps source id, observed root path, title,
 optional product code, and optional `work_id`; `source_catalog_file` keeps the

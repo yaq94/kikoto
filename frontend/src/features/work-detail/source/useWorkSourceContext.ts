@@ -8,14 +8,17 @@ import {
   type RemoteWorkDetail,
   type SourceAvailabilityResponse,
   type WorkDetail,
+  type CatalogDirectory,
 } from "@/lib/api";
 import {
   buildSourceTabs,
   buildTrackedPresenceOptions,
   currentRemoteSourceWorkCode,
-  remoteSourceCanBrowse,
+  remoteSourceCanLoad,
   remoteSourceForTrackedPresence,
   remoteSourceTabKey,
+  sourceProvidesDirectory,
+  sourceAvailabilityNeedsCheck,
   trackedPresenceForked,
   trackedPresenceSourceID,
   type DetailSourceIntent,
@@ -29,6 +32,8 @@ export function useWorkSourceContext({
   initialSourceIntent,
   initialTrackedSourceID,
   initialRemoteCode,
+  canCheckSources,
+  catalogDirectories,
 }: {
   code: string;
   work: WorkDetail | null;
@@ -36,6 +41,8 @@ export function useWorkSourceContext({
   initialSourceIntent: DetailSourceIntent;
   initialTrackedSourceID: number | null;
   initialRemoteCode: string;
+  canCheckSources: boolean;
+  catalogDirectories: CatalogDirectory[];
 }) {
   const [remoteSources, setRemoteSources] = useState<RemoteSourceAvailability[]>(() =>
     seedRemoteSources(sources, code),
@@ -46,6 +53,8 @@ export function useWorkSourceContext({
   const [selectedTrackedPresenceKey, setSelectedTrackedPresenceKey] = useState("");
   const [remoteLoadVersion, setRemoteLoadVersion] = useState(0);
   const remoteRequestSequence = useRef(0);
+  const availabilityRequest = useRef<AbortController | null>(null);
+  const initialCatalogWork = useRef<number | null>(null);
   const trackedPresenceOptions = useMemo(
     () => buildTrackedPresenceOptions(work?.mediaItems ?? [], remoteSources, work?.sourcePresence ?? []),
     [remoteSources, work?.mediaItems, work?.sourcePresence],
@@ -59,8 +68,23 @@ export function useWorkSourceContext({
     [initialTrackedSourceID, selectedTrackedPresenceKey, trackedPresenceOptions],
   );
   const sourceTabs = useMemo(
-    () => buildSourceTabs(work?.mediaItems ?? [], remoteSources, work?.sourcePresence ?? [], selectedTrackedOption),
-    [remoteSources, selectedTrackedOption, work?.mediaItems, work?.sourcePresence],
+    () => [
+      ...buildSourceTabs(work?.mediaItems ?? [], remoteSources, work?.sourcePresence ?? [], selectedTrackedOption),
+      ...catalogDirectories.map((entry) => ({
+        key: `catalog:${entry.catalogEntryId}`,
+        label:
+          catalogDirectories.filter((item) => item.sourceId === entry.sourceId).length > 1
+            ? `${entry.sourceName} · ${entry.title}`
+            : entry.sourceName,
+        sourceName: entry.sourceName,
+        kind: "catalog" as const,
+        fileSourceId: null,
+        status: entry.status === "disabled" ? ("unavailable" as const) : ("available" as const),
+        statusLabel: entry.status === "disabled" ? "Disabled" : "Available",
+        autoVisible: entry.status !== "disabled",
+      })),
+    ],
+    [remoteSources, selectedTrackedOption, work?.mediaItems, work?.sourcePresence, catalogDirectories],
   );
   const selectedSource =
     sourceTabs.find((source) => source.key === activeSourceKey) ??
@@ -90,17 +114,16 @@ export function useWorkSourceContext({
 
   const applyAvailability = useCallback(
     (result: SourceAvailabilityResponse) => {
-      const knownSources = sources
-        .filter((source) => source.sourceType.startsWith("kikoeru"))
-        .map((source) => ({
-          source,
-          summary:
-            result.sources.find((summary) => summary.sourceId === source.id) ??
-            seedRemoteSources([source], result.workCode)[0].summary,
-        }));
+      const knownSources = sources.filter(sourceProvidesDirectory).map((source) => ({
+        source,
+        summary:
+          result.sources.find((summary) => summary.sourceId === source.id) ??
+          seedRemoteSources([source], result.workCode)[0].summary,
+      }));
       setRemoteSources((current) =>
         knownSources.map((next) => {
           const previous = current.find((item) => item.source.id === next.source.id);
+          if (previous && !result.sources.some((summary) => summary.sourceId === next.source.id)) return previous;
           return previous?.detail
             ? {
                 ...next,
@@ -108,6 +131,7 @@ export function useWorkSourceContext({
                 loading: previous.loading,
                 error: previous.error,
                 treeLoading: previous.treeLoading,
+                treeLoaded: previous.treeLoaded,
                 treeError: previous.treeError,
               }
             : next;
@@ -121,13 +145,25 @@ export function useWorkSourceContext({
 
   const refreshAvailability = useCallback(async () => {
     if (!work?.primaryCode) return null;
+    availabilityRequest.current?.abort();
+    const controller = new AbortController();
+    availabilityRequest.current = controller;
     setIsCheckingSources(true);
     try {
-      const result = await api.checkSourceAvailability(work.primaryCode);
+      const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(60_000)]);
+      const result = await api.checkSourceAvailability(work.primaryCode, 0, signal, true);
+      signal.throwIfAborted();
       applyAvailability(result);
+      setRemoteSources((items) =>
+        items.map((item) =>
+          result.sources.some((summary) => summary.sourceId === item.source.id && summary.status === "available")
+            ? { ...item, treeLoaded: false, error: "", treeError: "" }
+            : item,
+        ),
+      );
       return result;
     } finally {
-      setIsCheckingSources(false);
+      if (!controller.signal.aborted) setIsCheckingSources(false);
     }
   }, [applyAvailability, work?.primaryCode]);
 
@@ -174,6 +210,7 @@ export function useWorkSourceContext({
                   loading: false,
                   error: "",
                   treeLoading: true,
+                  treeLoaded: false,
                   treeError: "",
                   summary: {
                     ...item.summary,
@@ -200,6 +237,7 @@ export function useWorkSourceContext({
                   ...item,
                   detail: item.detail ? { ...item.detail, tracks: tree.tracks } : { ...detail, tracks: tree.tracks },
                   treeLoading: false,
+                  treeLoaded: true,
                   treeError: "",
                 }
               : item,
@@ -250,25 +288,73 @@ export function useWorkSourceContext({
   }, [activeSourceKey, sourceCheckedAt, sourceTabs, work]);
 
   const availabilityCode = work?.primaryCode ?? "";
+  const supportsLookup = !work || Boolean(work.primaryCode);
   // Before the work loads, remote tabs are seeded with the requested code.
   const seedCode = work?.primaryCode ?? code;
   useEffect(() => {
-    setRemoteSources(seedRemoteSources(sources, seedCode));
+    setRemoteSources(supportsLookup ? seedRemoteSources(sources, seedCode) : []);
     setSourceCheckedAt("");
+    setIsCheckingSources(false);
     if (!availabilityCode || sources.length === 0) return;
-    let cancelled = false;
-    api
-      .getSourceAvailability(availabilityCode)
-      .then((result) => {
-        if (!cancelled) applyAvailability(result);
-      })
-      .catch(() => {
-        if (!cancelled) setRemoteSources(seedRemoteSources(sources, availabilityCode));
-      });
+    const controller = new AbortController();
+    availabilityRequest.current = controller;
+    void (async () => {
+      let summaries = seedRemoteSources(sources, availabilityCode).map((remote) => remote.summary);
+      try {
+        const result = await api.getSourceAvailability(availabilityCode, controller.signal);
+        if (controller.signal.aborted) return;
+        applyAvailability(result);
+        summaries = result.sources;
+      } catch {
+        if (controller.signal.aborted) return;
+      }
+      if (!canCheckSources) return;
+      const pending = summaries.filter(
+        (summary) =>
+          sources.some(
+            (source) => source.id === summary.sourceId && source.enabled && sourceProvidesDirectory(source),
+          ) && sourceAvailabilityNeedsCheck(summary),
+      );
+      if (pending.length === 0) return;
+      setIsCheckingSources(true);
+      try {
+        // One bounded probe at a time; publish each answer without waiting for all sources.
+        for (const summary of pending) {
+          if (controller.signal.aborted) return;
+          try {
+            const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(20_000)]);
+            const result = await api.checkSourceAvailability(availabilityCode, summary.sourceId, signal);
+            if (!controller.signal.aborted) applyAvailability(result);
+          } catch {
+            // A failed probe leaves the cached directory and other sources intact.
+          }
+        }
+      } finally {
+        if (!controller.signal.aborted) setIsCheckingSources(false);
+      }
+    })();
     return () => {
-      cancelled = true;
+      controller.abort();
+      availabilityRequest.current?.abort();
+      availabilityRequest.current = null;
     };
-  }, [applyAvailability, availabilityCode, seedCode, sources]);
+  }, [applyAvailability, availabilityCode, canCheckSources, seedCode, sources, supportsLookup]);
+
+  useEffect(() => {
+    if (
+      work &&
+      !work.primaryCode &&
+      activeSourceKey === "local" &&
+      catalogDirectories[0] &&
+      initialCatalogWork.current !== work.id &&
+      !work.mediaItems.some((item) =>
+        item.locations.some((location) => location.locationType === "local" && location.availability === "available"),
+      )
+    ) {
+      initialCatalogWork.current = work.id;
+      setActiveSourceKey(`catalog:${catalogDirectories[0].catalogEntryId}`);
+    }
+  }, [work, activeSourceKey, catalogDirectories]);
 
   // The load below marks the selected source as loading, so it reads the
   // selection without subscribing to it: re-running on that update would abort
@@ -284,9 +370,10 @@ export function useWorkSourceContext({
     );
     if (
       !selectedRemoteSource ||
-      (!remoteSourceCanBrowse(selectedRemoteSource.summary) && !routedRemoteSource) ||
-      selectedRemoteSource.detail ||
-      selectedRemoteSource.loading ||
+      !selectedRemoteSource.source.enabled ||
+      selectedRemoteSource.summary.status === "disabled" ||
+      (!remoteSourceCanLoad(selectedRemoteSource.summary) && !routedRemoteSource) ||
+      selectedRemoteSource.treeLoaded ||
       selectedRemoteSource.error
     )
       return;
@@ -305,14 +392,17 @@ export function useWorkSourceContext({
     );
     void (async () => {
       try {
-        const metadata = await api.getRemoteSourceWorkMetadata(sourceID, selectedRemoteWorkCode, controller.signal);
+        const metadata =
+          selectedRemoteSource.detail ??
+          (await api.getRemoteSourceWorkMetadata(sourceID, selectedRemoteWorkCode, controller.signal));
+        if (controller.signal.aborted || requestID !== remoteRequestSequence.current) return;
         const detail: RemoteWorkDetail = { ...metadata, tracks: [] };
         setRemoteSources((items) =>
           items.map((item) =>
             item.source.id === sourceID
               ? {
                   ...item,
-                  detail,
+                  detail: item.detail ?? detail,
                   loading: false,
                   error: "",
                   treeLoading: true,
@@ -334,6 +424,7 @@ export function useWorkSourceContext({
           metadata.remoteCode || selectedRemoteWorkCode,
           controller.signal,
         );
+        if (controller.signal.aborted || requestID !== remoteRequestSequence.current) return;
         setRemoteSources((items) =>
           items.map((item) =>
             item.source.id === sourceID
@@ -341,6 +432,7 @@ export function useWorkSourceContext({
                   ...item,
                   detail: item.detail ? { ...item.detail, tracks: tree.tracks } : { ...detail, tracks: tree.tracks },
                   treeLoading: false,
+                  treeLoaded: true,
                   treeError: "",
                 }
               : item,
@@ -376,7 +468,7 @@ export function useWorkSourceContext({
         );
       } finally {
         window.clearTimeout(timeout);
-        if (requestID === remoteRequestSequence.current) {
+        if (!controller.signal.aborted && requestID === remoteRequestSequence.current) {
           setRemoteSources((items) =>
             items.map((item) => (item.source.id === sourceID ? { ...item, loading: false, treeLoading: false } : item)),
           );
@@ -386,6 +478,9 @@ export function useWorkSourceContext({
     return () => {
       window.clearTimeout(timeout);
       controller.abort();
+      setRemoteSources((items) =>
+        items.map((item) => (item.source.id === sourceID ? { ...item, loading: false, treeLoading: false } : item)),
+      );
     };
   }, [
     initialRemoteCode,
@@ -430,26 +525,24 @@ export function useWorkSourceContext({
 }
 
 function seedRemoteSources(sources: LibrarySource[], workCode: string): RemoteSourceAvailability[] {
-  return sources
-    .filter((source) => source.sourceType.startsWith("kikoeru"))
-    .map((source) => ({
-      source,
-      summary: {
-        sourceId: source.id,
-        sourceCode: source.code,
-        displayName: source.displayName,
-        status: "unknown" as const,
-        remoteId: "",
-        primaryCode: workCode,
-        title: "",
-        coverUrl: "",
-        workId: null,
-        hasRemote: false,
-        hasTracked: false,
-        hasCache: false,
-        hasLocal: false,
-        error: "",
-        elapsedMs: 0,
-      },
-    }));
+  return sources.filter(sourceProvidesDirectory).map((source) => ({
+    source,
+    summary: {
+      sourceId: source.id,
+      sourceCode: source.code,
+      displayName: source.displayName,
+      status: source.enabled ? ("unknown" as const) : ("disabled" as const),
+      remoteId: "",
+      primaryCode: workCode,
+      title: "",
+      coverUrl: "",
+      workId: null,
+      hasRemote: false,
+      hasTracked: false,
+      hasCache: false,
+      hasLocal: false,
+      error: "",
+      elapsedMs: 0,
+    },
+  }));
 }

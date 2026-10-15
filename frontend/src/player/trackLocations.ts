@@ -49,7 +49,7 @@ export function applyTrackLocation(track: PlayerTrack, location: PlayerTrackLoca
     streamUrl: location.streamUrl,
     availability: location.availability,
     playbackKey:
-      track.remoteSourceId && track.remoteWorkCode && track.remotePath
+      location.locationType === "catalog_stream" || (track.remoteSourceId && track.remoteWorkCode && track.remotePath)
         ? track.playbackKey
         : playbackKeyForLocation(location.locationId),
   };

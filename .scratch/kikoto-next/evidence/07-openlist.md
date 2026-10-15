@@ -3,8 +3,8 @@
 Implementation: verified-local
 
 本记录对应 `codex/kikoto-next-t07` 的本票实现，基于 integration
-`e5dc48e692b956a5abfe4d681ebf6629ddc93b3a`。真实媒体 LIVE 和 02
-集成后的 catalog 翻译联测未完成，不能据此关闭整票。
+`e5dc48e692b956a5abfe4d681ebf6629ddc93b3a`。本地 catalog 翻译及 069 升级已在
+[02/07 集成](02-07-integration.md)复验；真实媒体 LIVE 未通过，不能关闭整票。
 
 ## 实现与范围
 
@@ -90,8 +90,21 @@ Server `cloudflare`、Content-Type `application/json; charset=utf-8`，
 `owner_action_required=true`。这不是 OpenList JSON 业务码。诊断命令退出 0 仅证明
 读到拒绝原因，不代表媒体成功。主流程决定停止重试；未登录、未绕密码或验证码。
 
-尚无真实可播放文件定位、指定偏移内容或真实媒体解码证据。只有入口得到站方允许
-或用户提供可用公开接口后，在隔离环境设置下面两个变量再执行：
+IAB 已通过正常匿名导航取得一个文件定位，并观察到网页播放器时间推进。该定位
+保存在仓库外，不是 Kikoto 媒体 Range 或解码证据。后续只读诊断报告
+`openlist-client-diagnosis.md` 与相关日志位于主流程的仓库外实施研究目录，源码为
+`08b14696c76c63d3a75e5fb0c984dbb2e568ad12`，确认：
+
+- 未配置应用代理的 fs/get：`route_proxies=0`，连接重置 errno 10054，未收到 HTTP。
+- 隔离合成库通过正式 Settings 契约配置已有代理后：`route_proxies=1`，HTTP 403、
+  HTML、`cf-mitigated: challenge`。这是挑战页分类，本次没有 1010 证据。
+- 环境 HTTP_PROXY 不会自动成为数据库中的应用代理配置；四次有限诊断均在
+  fs/get 之前或该阶段结束，没有 raw_url、媒体请求或 Range 字节。生产 fs/get
+  未重测，也不能把这些结果追认为更早单次 LIVE 的确切错误。
+
+已停止该挑战入口的探测，未改变指纹、凭据或生产路由。17 再次执行真实媒体验收
+时须使用正式应用配置核对代理路由，不能仅设置进程环境代理就推断请求使用了它。
+当前 opt-in 入口仍为：
 
 ```sh
 KIKOTO_OPENLIST_LIVE_URL=https://audio.example.invalid \
@@ -117,4 +130,5 @@ killed。未修改生产系统。构建产物、node_modules 和临时测试日�
 下游可复用 `loadSourceCatalogEntry`（先检查 source 可读性）、
 `loadSourceCatalogFiles`（原文 Title 与真实 Path 分开）。08 扩展索引范围，
 05 接入多源切换，10 负责来源/路径生命周期。catalog id 不因同名迁移给另一路径。
-02 的 catalog 内容翻译接入与联测尚待其主分支集成，不能把 loader 的存在当作已接通。
+02 的 catalog 内容翻译接入与联测已由 [02/07 集成](02-07-integration.md)验收；
+05 的目录与播放隔离已由 [03/05 集成](03-05-integration.md)复验。

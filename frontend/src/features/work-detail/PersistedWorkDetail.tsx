@@ -93,6 +93,9 @@ import {
 } from "@/features/work-detail/PersistedDetailOverlays";
 import { useWorkEditionSelection } from "@/features/work-detail/useWorkEditionSelection";
 import { PersonalReviewEditor } from "@/features/work-detail/PersonalReviewEditor";
+import { useWorkCatalogDirectories } from "./source/useWorkCatalogDirectories";
+import { CatalogSourceDirectory } from "./CatalogSourceDirectory";
+import { DirectoryLoadErrorPanel } from "./directory/SourceDirectoryPanels";
 
 async function resolvePersistedResumeContext(
   cursor: WorkProgressSummary,
@@ -104,6 +107,10 @@ async function resolvePersistedResumeContext(
       ? await api.getWork(cursor.mediaWorkId)
       : localDirectoryWork;
   if (!resumeWork) throw new Error(i18n.t("libraryDetail.savedTrackUnavailable"));
+  if (!resumeWork.mediaItems.some((item) => item.id === cursor.mediaItemId)) {
+    const refreshed = await api.getWork(cursor.mediaWorkId ?? resumeWork.id);
+    return { resumeWork: refreshed, resumeTree: buildTree(refreshed.mediaItems, null, refreshed.primaryCode) };
+  }
   return {
     resumeWork,
     resumeTree:
@@ -168,6 +175,8 @@ export function PersistedWorkDetailController({
   const auth = useAuth();
   const toast = useToast();
   const { t } = useTranslation();
+  const catalog = useWorkCatalogDirectories(work?.id ?? null);
+  const catalogDirectories = catalog.directories;
   const sourceContext = useWorkSourceContext({
     code,
     work,
@@ -175,6 +184,8 @@ export function PersistedWorkDetailController({
     initialSourceIntent,
     initialTrackedSourceID,
     initialRemoteCode,
+    canCheckSources: !auth.demoMode && auth.hasPermission("remote:track"),
+    catalogDirectories,
   });
   const {
     remoteSources,
@@ -735,6 +746,9 @@ export function PersistedWorkDetailController({
     />
   );
   const displayTranslations = persistedDisplayTranslations(localDirectoryWork, selectedRemoteDetail);
+  const selectedCatalog = catalogDirectories.find(
+    (entry) => resolvedActiveSourceKey === `catalog:${entry.catalogEntryId}`,
+  );
   const presentation = persistedWorkDetailPresentation({
     hero,
     work,
@@ -761,20 +775,33 @@ export function PersistedWorkDetailController({
       mobileTab={mobileDetailTab}
       onMobileTabChange={setMobileDetailTab}
       actions={heroActions}
-      renderSourceActions={renderSourceActions}
+      renderSourceActions={selectedCatalog ? () => null : renderSourceActions}
       directory={
-        <ContentResourceScope
-          resource={
-            selectedRemoteDetail
-              ? {
-                  sourceId: selectedRemoteDetail.sourceId,
-                  code: selectedRemoteDetail.remoteCode || selectedRemoteDetail.primaryCode,
-                }
-              : { workId: localDirectoryWork?.id ?? work?.id }
-          }
-        >
-          {directoryPanel}
-        </ContentResourceScope>
+        <>
+          {catalog.error && <DirectoryLoadErrorPanel message={catalog.error} onRetry={catalog.retry} />}
+          {selectedCatalog ? (
+            <CatalogSourceDirectory
+              key={selectedCatalog.catalogEntryId}
+              entry={selectedCatalog}
+              tabs={sourceTabs}
+              onSelect={changeSourceKey}
+              directoryRoutingRules={directoryRoutingRules}
+            />
+          ) : (
+            <ContentResourceScope
+              resource={
+                selectedRemoteDetail
+                  ? {
+                      sourceId: selectedRemoteDetail.sourceId,
+                      code: selectedRemoteDetail.remoteCode || selectedRemoteDetail.primaryCode,
+                    }
+                  : { workId: localDirectoryWork?.id ?? work?.id }
+              }
+            >
+              {directoryPanel}
+            </ContentResourceScope>
+          )}
+        </>
       }
       onBack={onBack}
     >
