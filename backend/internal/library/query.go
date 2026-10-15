@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"regexp"
 	"strings"
 	"sync"
 	"unicode/utf8"
@@ -438,6 +439,8 @@ func listOptionsWhere(options ListOptions) (string, []any) {
 	return where, args
 }
 
+var associationWorkQualifier = regexp.MustCompile(`\bwork\.`)
+
 func listWhere(scope string, status string, queryText string, userID int64, demoOnly bool) (string, []any) {
 	clauses := []string{"1 = 1"}
 	args := []any{}
@@ -474,7 +477,13 @@ func listWhere(scope string, status string, queryText string, userID int64, demo
 	if demoOnly {
 		clauses = append(clauses, contentpolicy.DemoEligibleWorkSQL("work"))
 	}
-	return strings.Join(clauses, " AND "), args
+	where := strings.Join(clauses, " AND ")
+	// A confirmed identity has one card. Search and scope still consider each
+	// retained edition, so an alternate title or source can find that card.
+	where = `NOT EXISTS (SELECT 1 FROM shared_identity_member hidden WHERE hidden.work_id=work.id AND hidden.identity_work_id<>work.id) AND
+		EXISTS (SELECT 1 FROM work AS associated_work WHERE associated_work.id IN
+		(SELECT work_id FROM shared_work_identity WHERE identity_work_id=work.id) AND (` + associationWorkQualifier.ReplaceAllString(where, "associated_work.") + `))`
+	return where, args
 }
 
 // Keep direct presence and edition-family presence as separate indexed probes.

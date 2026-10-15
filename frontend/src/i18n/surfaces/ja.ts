@@ -1,6 +1,39 @@
 import { surfaceEnglish } from "./en";
 
 export const surfaceJapanese = {
+  sharedAssociation: {
+    title: "共有の関連付け",
+    hint: "同じ作品、シリーズ、エピソードを関連付けます。音源と再生バージョンは独立して保持され、個人評価の競合は記録した本人だけが解決できます。",
+    target: "もう一方の項目のリンク",
+    preview: "関連付けをプレビュー",
+    operations: "関連付け操作",
+    open: "関連付け {{id}} を開く",
+    left: "最初の項目",
+    right: "二番目の項目",
+    start: "共有の関連付けを開始",
+    editorRequired: "共有操作の開始には資料編集権限が必要です。",
+    ownDecision: "自分の評価の最終値を選択してください。他の利用者の競合には本人の確認が必要です。",
+    finalRating: "最終的な個人評価",
+    finalNote: "最終的な個人メモ",
+    decide: "自分の評価を確定",
+    choiceSaved: "選択を保存しました。他の記録者の確認を待っています。",
+    refresh: "関連付けを更新",
+    newPreview: "新しいプレビューを作成",
+    error:
+      "保存できませんでした。項目のリンクを確認し、プレビューを更新してください。関連データの変更後は新しいプレビューが必要です。",
+    level: {
+      work: "作品",
+      episode: "エピソード",
+      series: "シリーズ",
+    },
+    status: {
+      preview: "プレビュー準備完了",
+      pending: "記録者の確認待ち",
+      completed: "関連付け完了",
+      stale: "関連データの変更によりプレビューが失効しました",
+      undone: "関連付けを分離済み",
+    },
+  },
   catalogSeries: {
     seriesReview: "シリーズの個人評価",
     episodeReview: "エピソードの個人評価：{{title}}",

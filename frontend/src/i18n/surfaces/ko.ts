@@ -1,6 +1,39 @@
 import { surfaceEnglish } from "./en";
 
 export const surfaceKorean = {
+  sharedAssociation: {
+    title: "공유 연결",
+    hint: "동일한 작품, 시리즈 또는 에피소드를 연결합니다. 소스와 재생 버전은 독립적으로 유지되며 개인 평가 충돌은 기록한 본인만 해결할 수 있습니다.",
+    target: "다른 항목의 링크",
+    preview: "연결 미리 보기",
+    operations: "연결 작업",
+    open: "연결 {{id}} 열기",
+    left: "첫 번째 항목",
+    right: "두 번째 항목",
+    start: "공유 연결 시작",
+    editorRequired: "공유 작업을 시작하려면 자료 편집 권한이 필요합니다.",
+    ownDecision: "본인 평가의 최종 값을 선택하세요. 다른 사용자의 충돌은 본인이 확인해야 합니다.",
+    finalRating: "최종 개인 평점",
+    finalNote: "최종 개인 메모",
+    decide: "본인 평가 확인",
+    choiceSaved: "선택이 저장되었습니다. 나머지 기록자의 확인을 기다립니다.",
+    refresh: "연결 상태 새로 고침",
+    newPreview: "새 미리 보기 만들기",
+    error:
+      "저장하지 못했습니다. 항목 링크를 확인하고 미리 보기를 새로 고치세요. 관련 데이터가 바뀌면 새 미리 보기가 필요합니다.",
+    level: {
+      work: "작품",
+      episode: "에피소드",
+      series: "시리즈",
+    },
+    status: {
+      preview: "미리 보기 준비됨",
+      pending: "기록자 확인 대기",
+      completed: "연결 완료",
+      stale: "관련 데이터가 변경되어 미리 보기가 만료됨",
+      undone: "연결 분리 완료",
+    },
+  },
   catalogSeries: {
     seriesReview: "시리즈 개인 평가",
     episodeReview: "에피소드 개인 평가: {{title}}",
