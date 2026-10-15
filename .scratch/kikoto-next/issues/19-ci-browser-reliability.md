@@ -26,4 +26,6 @@ Blocked by: none
 
 ## Comments
 
+附加验收：原 hook 对照仍重现 4 个目录错误状态失败；补齐既有 fixture 的空 `catalog-directories` 响应后，原断言 8/8 通过。保留为独立提交和证据第 4 节，不并入三项原始失败的根因。
+
 证据：[19-ci-browser](../evidence/19-ci-browser.md)。每项独立提交；最终集成最新 tip 后复验。本票本地证据不代表完整 CI 或部署通过。

@@ -58,4 +58,8 @@
 
 ## 4. 集成后的旧 fixture 契约
 
-完整回归暴露 `catalog-directories` API 被旧 `mockApplication` 返回 404 `Not mocked`，多出一个目录错误区。原 database contention 用例因此命中两个错误区，三个 pending edition 用例原本应无错误却命中一个。临时还原到本票前的同步 `onMediaRequest` 后，4 条仍全部失败（退出 2），证明不由本票 await 引起。所有原错误数量与状态断言保留，修复待完成。
+完整回归暴露 `catalog-directories` API 被旧 `mockApplication` 返回 404 `Not mocked`，多出一个目录错误区。原 database contention 用例因此命中两个错误区，三个 pending edition 用例原本应无错误却命中一个。临时还原到本票前的同步 `onMediaRequest` 后，4 条仍全部失败（退出 2），证明不由本票 await 引起。所有原错误数量与状态断言保留。fixture 为本地作品返回类型化的 `{ directories: [] }`；没有修改产品错误呈现或掩盖真实 503。
+
+- 原 4 项 × 2，2 workers、retries 0：8 passed / 14.2 s，退出 0。
+- `make -o frontend-install frontend-format frontend-lint sensitive-check`：格式、lint、E2E 类型及隐私检查均通过，退出 0。
+- 此项为主集成在发现四项失败后明确授权的同 fixture 契约收尾，与原三项问题分开提交。

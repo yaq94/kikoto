@@ -498,6 +498,10 @@ export async function mockApplication(
       });
       return;
     }
+    if (/^\/api\/works\/\d+\/catalog-directories$/.test(url.pathname)) {
+      await route.fulfill({ json: { directories: [] } satisfies ApiResponse<"getWorkCatalogDirectories"> });
+      return;
+    }
     const mediaMatch = url.pathname.match(/^\/api\/works\/(\d+|[RBV]J\d{8}|CC\d{8})\/media$/);
     if (mediaMatch) {
       const workId = readWorkID(mediaMatch[1]);
