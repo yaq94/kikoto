@@ -2,7 +2,7 @@
 
 **Status:** ready-for-agent
 **Implementation:** in-progress
-**阶段:** 01–06 已集成并 resolved；07–13 及 OpenList 单来源代理兼容修复已集成并保持 verified-local。10 来源生命周期、13 共享关联和 18 迁移完成一致性已合入，组合验证见本批证据；15 已由原实施任务提交候选、待独立集成验收，19 前端 CI 修复待合入。真实媒体 LIVE、真实索引覆盖和完整发布前置保持有效。
+**阶段:** 01–06 已集成并 resolved；07–13 及 OpenList 单来源代理兼容修复已集成并保持 verified-local。10 来源生命周期、13 共享关联和 18 迁移完成一致性已合入，组合验证见本批证据；15 原实施任务的候选已追加合入并取得本地 H/R/F 组合证据，19 前端 CI 修复待合入。真实媒体 LIVE、真实索引覆盖和完整发布前置保持有效。
 **依据:** [正式规格](spec.md) · [工单总览](ticket-proposal.md) · [领域词汇表](../../GLOSSARY.md) · [作品身份与个人记录 ADR](../../docs/adr/0001-work-identity-and-personal-state.md)
 
 ## 当前授权与完成条件
@@ -27,6 +27,7 @@
 - 集成分支：`codex/kikoto-next-integration`。
 - 固定审查基线：`9949175e53979bcd590c75a624bc0efc67684da3`。后续审查始终包含该基线后的全部实施差异，不以最新准备提交缩小范围。
 - 本次续做起点：`f0fd5d77be1072f260fc817245c01d1b6334ea0f`，工作区干净；`main` 仍为固定审查基线，`git diff 9949175e53979bcd590c75a624bc0efc67684da3...HEAD` 非空。10/13/18 合入后的功能代码 SHA 为 `2c2e87c4f454aa3a45e6672980972a2a25d09336`，各合并及组合验收见[本批证据](evidence/10-13-18-integration.md)。
+- 追加 15 后的功能代码 SHA：`5341b8d623d6c0363f65765f128c8c14b246b645`；合入前已核实原任务终态与候选，当前产物的拆分及来源交叉证据见[15 集成复验](evidence/15-integration.md)。
 - 应用起点及兼容要求沿用规格 D-01；准备检查时集成 HEAD 等于上述基线，工作区无已有修改。
 - 主代理实际调用原生 App `create_worktree` 返回 `Not a git repository`。聊天绑定外层工作区，源码为其内的独立仓库，原生工具无法指定该嵌套仓库；已核实源码 Git 根后使用 Git worktree 备用路径，不重复相同失败调用或改变 App 项目。
 - 项目内工作区使用已忽略的 `.worktrees/`。首批目录为 `.worktrees/kikoto-t01`、`.worktrees/kikoto-t04`，分支分别为 `codex/kikoto-next-t01`、`codex/kikoto-next-t04`，从准备提交后的集成 HEAD 创建。
@@ -53,7 +54,7 @@
 | [12 系列与单集个人评价](issues/12-series-episode-personal-reviews.md) | 11 | verified-local | 已集成；系列与单集独立评价、跨源关系、隔离和重启 H/R/F 通过；无新迁移 | [12 证据](evidence/12-series-reviews.md)、[集成复验](evidence/12-integration.md) |
 | [13 共享关联与本人冲突确认](issues/13-shared-link-conflict-review.md) | 12 | verified-local | 原实施任务提交 9844975 已集成；073、本人冲突确认及精确播放版本保留，完整发布前置保留 | [13 证据](evidence/13-shared-association.md)、[集成复验](evidence/10-13-18-integration.md) |
 | [14 高置信唯一候选关联](issues/14-high-confidence-work-matching.md) | 13 | pending | 13 的本地契约已可用于实施，仍须完成本票验收 | 待执行 |
-| [15 拆分与本人记录归属](issues/15-split-personal-record-allocation.md) | 13 | in-progress | 原实施任务已交接 41a3412 候选，分支与 origin 一致且干净；本批只读核对，没有接管、测试或集成 15 | 待独立集成复验 |
+| [15 拆分与本人记录归属](issues/15-split-personal-record-allocation.md) | 13 | verified-local | 原实施任务的 41a3412 已追加集成；本人选择、重启、系列/嵌套关系和来源状态交叉验证通过，完整发布前置保留 | [15 候选证据](evidence/15-shared-split.md)、[集成复验](evidence/15-integration.md) |
 | [16 个人数据导入导出](issues/16-personal-data-transfer-compatibility.md) | 12 | pending | 本地前置已具备，按 13 共享身份公开契约归一本人记录 | 待执行 |
 | [17 组合验收与部署回退](issues/17-integrated-acceptance-release-plan.md) | 03、05、09、10、14、15、16、18、19 | pending | 完整 AC、CI 终态、备份回滚及部署验收待执行 | 待执行 |
 | [18 迁移完成与维护状态一致性](issues/18-ci-migration-completion-state.md) | 无 | verified-local | 已集成 924f807；最终状态、失败及取消恢复已本地验证，Full CI 待执行 | [18 证据](evidence/18-ci-migration.md)、[集成复验](evidence/10-13-18-integration.md) |
@@ -81,7 +82,7 @@ catalog 翻译已在集成产物上取得 H/R/F 证据；其剩余缺口是实�
 
 ## 迁移协调
 
-现有最高迁移为 073：071 系列、072 来源生命周期和 073 共享关联均已集成；开发模式选择最高 `compat/073_dev.sql`。完整链、新装、旧库升级、重复及并发启动、开发基线一致性通过本批集成复验；001–071 与发布 `baseline/068_v0.8.3.sql` 相对续做起点保持不变。09 复用 070 与 app_setting，12 复用 071，18 复用现有布局迁移状态；这些票没有新 schema。15 候选相对 13 无迁移变更，继续复用 073；该候选的功能尚未进入本批集成验证。后续新增迁移须继续按最高编号协调。
+现有最高迁移为 073：071 系列、072 来源生命周期和 073 共享关联均已集成；开发模式选择最高 `compat/073_dev.sql`。完整链、新装、旧库升级、重复及并发启动、开发基线一致性通过本批集成复验；001–071 与发布 `baseline/068_v0.8.3.sql` 相对续做起点保持不变。09 复用 070 与 app_setting，12 复用 071，18 复用现有布局迁移状态；这些票没有新 schema。15 已追加集成并复用 073，无迁移或依赖变更；后续新增迁移须继续按最高编号协调。
 
 ## 验证证据登记
 
