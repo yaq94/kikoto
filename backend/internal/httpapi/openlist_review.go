@@ -33,7 +33,7 @@ func (s *Server) updateSourceCatalogUserState(w http.ResponseWriter, r *http.Req
 		writeAPIError(w, 400, "invalid_request", "personal review is required", false)
 		return
 	}
-	entry, source, err := s.loadSourceCatalogEntry(r.Context(), id)
+	entry, source, err := s.loadRetainedSourceCatalogEntry(r.Context(), id)
 	if err != nil {
 		writeUpstreamError(w, err)
 		return
@@ -59,6 +59,12 @@ func (s *Server) updateSourceCatalogUserState(w http.ResponseWriter, r *http.Req
 		return
 	}
 	defer func() { _ = tx.Rollback() }()
+	entry, err = resolveCatalogEntry(r.Context(), tx, id)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	id = entry.ID
 	// Obtain the writer lock before reading registration state. Concurrent saves
 	// cannot both observe an unregistered entry and publish separate works.
 	if _, err = tx.ExecContext(r.Context(), "UPDATE source_catalog_entry SET id=id WHERE id=?", id); err != nil {
@@ -107,9 +113,11 @@ func (s *Server) updateSourceCatalogUserState(w http.ResponseWriter, r *http.Req
 		writeError(w, err)
 		return
 	}
-	if err = upsertWorkSourcePresence(r.Context(), tx, workSourcePresence{WorkID: workID.Int64, FileSourceID: source.ID, PresenceType: sourcePresenceTypeRemoteSource, RemoteID: strconv.FormatInt(id, 10), RemoteCode: entry.PrimaryCode, Availability: "available", RawJSON: mustJSON(map[string]any{"catalogEntryId": id})}); err != nil {
-		writeError(w, err)
-		return
+	if source.ID != 0 {
+		if err = upsertWorkSourcePresence(r.Context(), tx, workSourcePresence{WorkID: workID.Int64, FileSourceID: source.ID, PresenceType: sourcePresenceTypeRemoteSource, RemoteID: strconv.FormatInt(id, 10), RemoteCode: entry.PrimaryCode, Availability: entry.Status, RawJSON: mustJSON(map[string]any{"catalogEntryId": id})}); err != nil {
+			writeError(w, err)
+			return
+		}
 	}
 	state, err := patchWorkUserState(r.Context(), tx, user.ID, workID.Int64, patch)
 	if err != nil {

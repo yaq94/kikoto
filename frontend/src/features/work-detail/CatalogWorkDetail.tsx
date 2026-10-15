@@ -14,6 +14,7 @@ import { buildCatalogTree } from "./catalogTreeModel";
 import { catalogPlaybackQueue, catalogResumeQueue } from "./catalogPlayback";
 import { useWorkPlaybackCursor } from "./media/useWorkPlaybackCursor";
 import { CatalogGroupingEditor } from "./CatalogGroupingEditor";
+import { CatalogAvailabilityNotice } from "./CatalogAvailabilityNotice";
 
 export function CatalogWorkDetail({ id, onBack }: { id: number; onBack: () => void }) {
   const { t } = useTranslation();
@@ -98,6 +99,7 @@ export function CatalogWorkDetail({ id, onBack }: { id: number; onBack: () => vo
               </Button>
             )}
           </header>
+          <CatalogAvailabilityNotice entry={entry} />
           {entry.seriesId ? (
             <Button
               variant="outline"

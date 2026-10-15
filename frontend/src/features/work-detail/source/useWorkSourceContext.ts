@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useStableCallback } from "@/hooks/useStableCallback";
+import i18n from "@/i18n";
 
 import {
   api,
@@ -75,12 +76,12 @@ export function useWorkSourceContext({
         label:
           catalogDirectories.filter((item) => item.sourceId === entry.sourceId).length > 1
             ? `${entry.sourceName} · ${entry.title}`
-            : entry.sourceName,
-        sourceName: entry.sourceName,
+            : entry.sourceName || i18n.t("sourceLifecycle.removedSource"),
+        sourceName: entry.sourceName || i18n.t("sourceLifecycle.removedSource"),
         kind: "catalog" as const,
         fileSourceId: null,
-        status: entry.status === "disabled" ? ("unavailable" as const) : ("available" as const),
-        statusLabel: entry.status === "disabled" ? "Disabled" : "Available",
+        status: entry.status === "available" ? ("available" as const) : ("unavailable" as const),
+        statusLabel: i18n.t(`sourceLifecycle.${entry.status}`),
         autoVisible: entry.status !== "disabled",
       })),
     ],
@@ -341,18 +342,19 @@ export function useWorkSourceContext({
   }, [applyAvailability, availabilityCode, canCheckSources, seedCode, sources, supportsLookup]);
 
   useEffect(() => {
+    const preferredCatalog = catalogDirectories.find((entry) => entry.status === "available") ?? catalogDirectories[0];
     if (
       work &&
       !work.primaryCode &&
       activeSourceKey === "local" &&
-      catalogDirectories[0] &&
+      preferredCatalog &&
       initialCatalogWork.current !== work.id &&
       !work.mediaItems.some((item) =>
         item.locations.some((location) => location.locationType === "local" && location.availability === "available"),
       )
     ) {
       initialCatalogWork.current = work.id;
-      setActiveSourceKey(`catalog:${catalogDirectories[0].catalogEntryId}`);
+      setActiveSourceKey(`catalog:${preferredCatalog.catalogEntryId}`);
     }
   }, [work, activeSourceKey, catalogDirectories]);
 

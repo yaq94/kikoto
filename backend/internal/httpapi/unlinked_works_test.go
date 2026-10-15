@@ -28,7 +28,7 @@ func TestCheckUnlinkedWorkSourcesEnqueuesOneParentWorkflow(t *testing.T) {
 	}
 	server := NewServer(db, config.Config{})
 	request := httptest.NewRequest(http.MethodPost, "/api/maintenance/unlinked-works/source-check", strings.NewReader(`{"workIds":[101,102]}`))
-	request = request.WithContext(context.WithValue(request.Context(), currentUserKey, currentUser{ID: 1, Permissions: []string{"sources:write"}}))
+	request = request.WithContext(context.WithValue(request.Context(), currentUserKey, currentUser{ID: 1, Permissions: []string{"sources:write", "library:write"}}))
 	response := httptest.NewRecorder()
 
 	server.Routes().ServeHTTP(response, request)
@@ -126,7 +126,7 @@ func TestUnlinkedWorkSourceCheckKeepsMissingWorksAndLinksAvailableWorks(t *testi
 	}
 }
 
-func TestDeleteUnlinkedWorksDeletesWholeFamilyButKeepsFiles(t *testing.T) {
+func TestDeleteUnlinkedWorksRetainsReferencedWholeFamilyAndFiles(t *testing.T) {
 	db := openMigratedTestDB(t)
 	insertUnlinkedMaintenanceUser(t, db, 1)
 	dataRoot := t.TempDir()
@@ -169,7 +169,7 @@ func TestDeleteUnlinkedWorksDeletesWholeFamilyButKeepsFiles(t *testing.T) {
 	}
 	server := NewServer(db, config.Config{DataRoot: dataRoot})
 	request := httptest.NewRequest(http.MethodPost, "/api/maintenance/unlinked-works/delete", strings.NewReader(`{"workIds":[121,123],"confirm":true}`))
-	request = request.WithContext(context.WithValue(request.Context(), currentUserKey, currentUser{ID: 1, Permissions: []string{"sources:write"}}))
+	request = request.WithContext(context.WithValue(request.Context(), currentUserKey, currentUser{ID: 1, Permissions: []string{"sources:write", "library:write"}}))
 	response := httptest.NewRecorder()
 
 	server.Routes().ServeHTTP(response, request)
@@ -181,17 +181,17 @@ func TestDeleteUnlinkedWorksDeletesWholeFamilyButKeepsFiles(t *testing.T) {
 	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
 		t.Fatal(err)
 	}
-	if result.DeletedFamilyCount != 1 || result.DeletedWorkCount != 2 || result.RetainedAssetFiles != 1 {
+	if result.DeletedFamilyCount != 0 || result.DeletedWorkCount != 0 || result.RetainedAssetFiles != 0 {
 		t.Fatalf("result = %+v", result)
 	}
-	if len(result.Skipped) != 1 || result.Skipped[0].WorkID != 123 || result.Skipped[0].Reason != "source_available" {
+	if len(result.Skipped) != 2 || result.Skipped[0].WorkID != 121 || result.Skipped[0].Reason != "personal_records" || result.Skipped[1].WorkID != 123 || result.Skipped[1].Reason != "source_available" {
 		t.Fatalf("skipped = %+v", result.Skipped)
 	}
-	assertUnlinkedMaintenanceCount(t, db, "SELECT COUNT(*) FROM work WHERE id IN (121, 122)", 0)
-	assertUnlinkedMaintenanceCount(t, db, "SELECT COUNT(*) FROM logical_work WHERE id = 21", 0)
-	assertUnlinkedMaintenanceCount(t, db, "SELECT COUNT(*) FROM metadata_snapshot WHERE external_id IN ('RJ00000004', 'RJ00000005')", 0)
-	assertUnlinkedMaintenanceCount(t, db, "SELECT COUNT(*) FROM media_item WHERE id = 211", 0)
-	assertUnlinkedMaintenanceCount(t, db, "SELECT COUNT(*) FROM user_work_state WHERE work_id = 121", 0)
+	assertUnlinkedMaintenanceCount(t, db, "SELECT COUNT(*) FROM work WHERE id IN (121, 122)", 2)
+	assertUnlinkedMaintenanceCount(t, db, "SELECT COUNT(*) FROM logical_work WHERE id = 21", 1)
+	assertUnlinkedMaintenanceCount(t, db, "SELECT COUNT(*) FROM metadata_snapshot WHERE external_id IN ('RJ00000004', 'RJ00000005')", 2)
+	assertUnlinkedMaintenanceCount(t, db, "SELECT COUNT(*) FROM media_item WHERE id = 211", 1)
+	assertUnlinkedMaintenanceCount(t, db, "SELECT COUNT(*) FROM user_work_state WHERE work_id = 121", 1)
 	assertUnlinkedMaintenanceCount(t, db, "SELECT COUNT(*) FROM work WHERE id = 123", 1)
 	assertUnlinkedMaintenanceCount(t, db, "SELECT COUNT(*) FROM audit_log WHERE action = 'unlinked_works.delete' AND actor_user_id = 1", 1)
 	if _, err := os.Stat(mediaPath); err != nil {
@@ -213,7 +213,7 @@ func TestDeleteUnlinkedWorksRequiresPermissionAndConfirmation(t *testing.T) {
 	}
 
 	withoutConfirmation := httptest.NewRequest(http.MethodPost, "/api/maintenance/unlinked-works/delete", strings.NewReader(`{"workIds":[1]}`))
-	withoutConfirmation = withoutConfirmation.WithContext(context.WithValue(withoutConfirmation.Context(), currentUserKey, currentUser{ID: 1, Permissions: []string{"sources:write"}}))
+	withoutConfirmation = withoutConfirmation.WithContext(context.WithValue(withoutConfirmation.Context(), currentUserKey, currentUser{ID: 1, Permissions: []string{"sources:write", "library:write"}}))
 	confirmationResponse := httptest.NewRecorder()
 	server.deleteUnlinkedWorks(confirmationResponse, withoutConfirmation)
 	if confirmationResponse.Code != http.StatusBadRequest || !strings.Contains(confirmationResponse.Body.String(), "confirmation is required") {
