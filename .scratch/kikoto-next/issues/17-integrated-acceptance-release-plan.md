@@ -2,12 +2,12 @@
 
 **What to build:** 以同一当前构建验证各能力组合，形成可追溯的测试、真实样例与资源证据，验证备份恢复与回滚路径，将已验收版本部署到现有服务并完成实际验收。
 
-**Blocked by:** [03：简繁转换与受保护名称保持](03-traditional-chinese-conversion.md)；[05：多源目录刷新与播放状态隔离](05-multi-source-directory-playback.md)；[09：每日更新与已有扫描复用](09-daily-index-update.md)；[10：来源目录改名、失联、删除与恢复](10-source-lifecycle-retention.md)；[14：高置信唯一候选自动关联](14-high-confidence-work-matching.md)；[15：拆分预览与本人记录归属选择](15-split-personal-record-allocation.md)；[16：编号、无码、系列与单集个人数据导入导出](16-personal-data-transfer-compatibility.md)。
+**Blocked by:** [03：简繁转换与受保护名称保持](03-traditional-chinese-conversion.md)；[05：多源目录刷新与播放状态隔离](05-multi-source-directory-playback.md)；[09：每日更新与已有扫描复用](09-daily-index-update.md)；[10：来源目录改名、失联、删除与恢复](10-source-lifecycle-retention.md)；[14：高置信唯一候选自动关联](14-high-confidence-work-matching.md)；[15：拆分预览与本人记录归属选择](15-split-personal-record-allocation.md)；[16：编号、无码、系列与单集个人数据导入导出](16-personal-data-transfer-compatibility.md)；[18：迁移完成状态与维护状态一致发布](18-ci-migration-completion-state.md)；[19：既有浏览器测试可靠性](19-ci-browser-reliability.md)。
 
 **Status:** ready-for-agent
 **Implementation:** pending
 
-**补充发布依赖:** [18：迁移完成状态与维护状态一致发布](18-ci-migration-completion-state.md) 和 19 前端 CI 修复须先合入，再取得对应集成 SHA 的完整 CI 终态。
+**补充发布依赖:** 18 与 19 已合入，仍须取得对应最终集成 SHA 的完整 Full/Gate 终态及固定审查基线后的完整审查结果。
 
 **依据:** [正式规格](../spec.md) · [工单总览](../ticket-proposal.md)
 
