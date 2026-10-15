@@ -6,6 +6,7 @@ import { Input, NativeSelect, Textarea } from "@/components/ui/input";
 import { api, type AssociationSubject, type SharedAssociation } from "@/lib/api";
 import { openWorkDetail } from "@/app/workDetailNavigation";
 import { WORK_CODE_PATH_PATTERN } from "@/lib/workCode";
+import { SharedSplitPanel } from "./SharedSplitPanel";
 
 export function SharedAssociationPanel({
   subject,
@@ -217,6 +218,16 @@ export function SharedAssociationPanel({
             >
               {t("sharedAssociation.newPreview")}
             </Button>
+          )}
+          {(operation.status === "completed" || operation.status === "undone") && (
+            <SharedSplitPanel
+              associationId={operation.id}
+              alreadySplit={operation.status === "undone"}
+              onCompleted={() => {
+                setOperation((current) => (current ? { ...current, status: "undone" } : current));
+                onCompleted?.();
+              }}
+            />
           )}
         </div>
       )}

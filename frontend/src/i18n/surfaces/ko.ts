@@ -1,6 +1,39 @@
 import { surfaceEnglish } from "./en";
 
 export const surfaceKorean = {
+  sharedSplit: {
+    title: "연결 분리",
+    hint: "원래 항목과 현재 본인 평가를 확인하고 연결 후 변경한 기록을 보관할 위치를 선택하세요. 선택하지 않은 쪽은 원래 평가를 유지하며 모든 기록자가 확인하면 분리됩니다.",
+    preview: "분리 미리 보기",
+    operations: "분리 작업",
+    open: "분리 {{id}} 열기",
+    current: "현재 본인 공유 평가",
+    start: "공유 분리 시작",
+    allocation: "변경한 본인 평가 보관 위치",
+    choose: "위치를 선택하세요",
+    left: "첫 번째 항목: {{title}}",
+    right: "두 번째 항목: {{title}}",
+    both: "두 항목 모두",
+    confirm: "본인 보관 위치 확인",
+    saved: "보관 위치가 저장되었습니다. 다른 기록자의 확인을 기다립니다.",
+    refresh: "분리 상태 새로 고침",
+    error: "분리를 저장하지 못했습니다. 기록이 변경되거나 추가 연결이 있으면 새 미리 보기에서 확인하세요.",
+    before: {
+      left: "연결 전 첫 번째 항목",
+      right: "연결 전 두 번째 항목",
+    },
+    change: {
+      unchanged: "연결 후 변경되지 않아 원래 기록으로 복원됩니다.",
+      added: "연결 후 추가한 기록입니다. 보관 위치를 선택하세요.",
+      modified: "연결 후 변경한 기록입니다. 보관 위치를 선택하세요.",
+    },
+    status: {
+      preview: "분리 미리 보기 준비됨",
+      pending: "기록 보관 위치 확인 대기",
+      completed: "분리 완료",
+      stale: "분리 미리 보기가 만료됨",
+    },
+  },
   sharedAssociation: {
     title: "공유 연결",
     hint: "동일한 작품, 시리즈 또는 에피소드를 연결합니다. 소스와 재생 버전은 독립적으로 유지되며 개인 평가 충돌은 기록한 본인만 해결할 수 있습니다.",

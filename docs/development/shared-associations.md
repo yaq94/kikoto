@@ -79,10 +79,44 @@ Cross-feature SQL consumers use these stable contracts:
   one final review per identity transactionally. Sequential trigger writes are
   not a conflict-resolution policy and must not choose between differing imports.
 
+## Splitting an association
+
+`POST /api/shared-associations/{id}/split-preview` requires `library:read` and
+captures the original two sides, their source ownership and the current shared
+review state. `GET /api/shared-associations/{id}/splits` lists pending or completed
+splits and the viewer's drafts. `GET /api/shared-splits/{id}` returns only that
+viewer’s original reviews, current review, change classification and allocation.
+
+The creating editor submits `POST /api/shared-splits/{id}/start` with its opaque
+`version` and `library:write`. Changed or newly added reviews remain shared and
+addressable until each record owner posts `{version, allocation}` to
+`/api/shared-splits/{id}/decision`; `allocation` is `left`, `right` or `both`.
+Choosing has no shared-edit permission requirement and cannot target another
+user. An explicit score/note clear is a change and requires an allocation too.
+
+The chosen side receives the current review; an unchosen side restores its
+original review. Unchanged records restore the captured original values without
+new decisions. Original and applied records remain in the protected operation
+snapshots. The final transaction removes the active mapping, restores any prior
+groups, applies the allocations, marks the association `undone` and marks the
+split `completed`. Review synchronization is confined to the restored groups.
+No work, personal-state row, series member or media location is physically
+deleted by splitting.
+
+The split rechecks identity, sources, membership and rating/note revisions before
+each mutation. Stale previews cannot commit, and a new preview never reuses old
+choices. A failed transaction leaves the shared relationship and records intact.
+Pending choices survive application shutdown and reopening the same database.
+Nested associations split in reverse order; splitting an older association while
+a later one includes its members is rejected. Both resulting objects are
+independently browsable and editable through their retained references.
+
 ## Functional checks
 
-`TestSharedAssociation*` uses real HTTP, sessions and migrated SQLite, including
+`TestSharedAssociation*` and `TestSharedSplit*` use real HTTP, sessions and migrated SQLite, including
 closing and reopening the application and the same disk database. The synthetic
 OpenList fixture supports `shared-association.spec.ts`, which checks preview,
 stale refresh, permissions, two record owners, reload and HTTP readback.
-Screenshots, traces and videos are disabled in this functional test.
+`shared-split.spec.ts` covers original/current record evidence, private owner
+allocation, reopening and final independent HTTP readback. Screenshots, traces
+and videos are disabled in both functional tests.

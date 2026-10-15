@@ -1,6 +1,39 @@
 import { surfaceEnglish } from "./en";
 
 export const surfaceHant = {
+  sharedSplit: {
+    title: "拆分關聯",
+    hint: "核對原條目和本人目前評價，選擇關聯後修改記錄的歸屬。未選擇的一側保留原評價；所有記錄本人確認後才完成拆分。",
+    preview: "預覽拆分",
+    operations: "拆分操作",
+    open: "開啟拆分 {{id}}",
+    current: "本人目前共用評價",
+    start: "發起共用拆分",
+    allocation: "將本人修改的評價保留到",
+    choose: "請選擇歸屬",
+    left: "第一側：{{title}}",
+    right: "第二側：{{title}}",
+    both: "兩側都保留",
+    confirm: "確認本人歸屬",
+    saved: "本人的歸屬選擇已儲存，等待其他記錄本人確認。",
+    refresh: "重新整理拆分狀態",
+    error: "拆分未能儲存。請重新整理預覽；記錄變更或後續關聯需要重新核對。",
+    before: {
+      left: "關聯前第一側",
+      right: "關聯前第二側",
+    },
+    change: {
+      unchanged: "關聯後未變化，將還原關聯前記錄。",
+      added: "關聯後新增，請選擇保留位置。",
+      modified: "關聯後已修改，請選擇保留位置。",
+    },
+    status: {
+      preview: "拆分預覽已就緒",
+      pending: "等待本人選擇記錄歸屬",
+      completed: "拆分已完成",
+      stale: "拆分預覽已過期",
+    },
+  },
   sharedAssociation: {
     title: "共用關聯",
     hint: "關聯同一作品、系列或單集。來源與播放版本保持獨立，個人評價衝突僅由記錄本人處理。",
