@@ -12,7 +12,7 @@ export type CatalogEntry = PersonalReview & {
   seriesId?: number | null;
 };
 export type CatalogSeriesEpisode = Omit<CatalogEntry, keyof PersonalReview> & { position: number };
-export type CatalogSeries = {
+export type CatalogSeries = PersonalReview & {
   seriesId: number;
   title: string;
   workId: number | null;
@@ -82,6 +82,8 @@ export type CatalogIndexProgress = {
 };
 
 export const sourceCatalogApi = {
+  updateCatalogSeriesReview: (id: number, patch: PersonalReviewPatch) =>
+    patchJSONBody<PersonalReview & { workId: number }>(`/api/catalog-series/${id}/user-state`, patch),
   getCatalogSeries: (id: number, signal?: AbortSignal) => getJSON<CatalogSeries>(`/api/catalog-series/${id}`, signal),
   previewCatalogGrouping: (title: string, catalogEntryIds: number[], signal?: AbortSignal) =>
     postJSONBody<CatalogGroupingPreview>(`/api/catalog-series/previews`, { title, catalogEntryIds }, signal),
