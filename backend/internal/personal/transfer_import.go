@@ -3,35 +3,69 @@ package personal
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"math"
-	"sort"
 	"time"
 )
 
 type ImportPreview struct {
-	Works             int      `json:"works"`
-	Playlists         int      `json:"playlists"`
-	Tags              int      `json:"tags"`
-	MatchedWorks      int      `json:"matchedWorks"`
-	MissingCodes      []string `json:"missingCodes"`
-	Conflicts         int      `json:"conflicts"`
-	UnmatchedProgress int      `json:"unmatchedProgress"`
+	issueBytes        int
+	Works             int           `json:"works"`
+	Playlists         int           `json:"playlists"`
+	Tags              int           `json:"tags"`
+	MatchedWorks      int           `json:"matchedWorks"`
+	MissingCodes      []string      `json:"missingCodes"`
+	Conflicts         int           `json:"conflicts"`
+	UnmatchedProgress int           `json:"unmatchedProgress"`
+	NewWorks          int           `json:"newWorks"`
+	Issues            []ImportIssue `json:"issues,omitempty"`
+}
+
+func (p *ImportPreview) addIssue(issue ImportIssue) error {
+	p.issueBytes += len(issue.Ref) + len(issue.Title) + len(issue.Reason)
+	if issue.Incoming != nil {
+		p.issueBytes += len(issue.Incoming.Note)
+	}
+	if issue.Existing != nil {
+		p.issueBytes += len(issue.Existing.Note)
+	}
+	if p.issueBytes > MaxTransferBytes {
+		return ErrLimit
+	}
+	p.Issues = append(p.Issues, issue)
+	return nil
+}
+
+type TransferReview struct {
+	Rating *int   `json:"rating"`
+	Note   string `json:"note"`
+}
+type ImportIssue struct {
+	Title    string          `json:"title,omitempty"`
+	Ref      string          `json:"ref"`
+	Reason   string          `json:"reason"`
+	Incoming *TransferReview `json:"incoming,omitempty"`
+	Existing *TransferReview `json:"existing,omitempty"`
 }
 
 type ImportResult struct {
-	ImportedWorks   int `json:"importedWorks"`
-	SkippedWorks    int `json:"skippedWorks"`
-	Playlists       int `json:"playlists"`
-	Tags            int `json:"tags"`
-	SkippedProgress int `json:"skippedProgress"`
+	ImportedWorks   int           `json:"importedWorks"`
+	SkippedWorks    int           `json:"skippedWorks"`
+	Playlists       int           `json:"playlists"`
+	Tags            int           `json:"tags"`
+	SkippedProgress int           `json:"skippedProgress"`
+	Issues          []ImportIssue `json:"issues,omitempty"`
 }
 
 type importPlan struct {
-	preview   ImportPreview
-	works     map[string]int64
-	conflicts map[int64]bool
-	media     map[string]int64
+	preview    ImportPreview
+	works      map[string]int64
+	conflicts  map[int64]bool
+	media      map[string]int64
+	blocked    map[string]bool
+	identities map[string]int64
+	reviews    map[int64]TransferReview
 }
 
 func resolveCode(ctx context.Context, tx *sql.Tx, code string) (int64, error) {
@@ -56,6 +90,23 @@ func matchProgress(ctx context.Context, tx *sql.Tx, work int64, p *BackupProgres
 	if p.MediaTitle == "" {
 		return 0, nil
 	}
+	if p.MediaIdentity != nil {
+		m, err := resolveTransferIdentity(ctx, tx, p.MediaIdentity, p.MediaWorkCode)
+		if err != nil || m.work == 0 || m.problem != "" {
+			return 0, err
+		}
+		var canonical int64
+		err = tx.QueryRowContext(ctx, `SELECT COALESCE(l.canonical_work_id,w.id) FROM work w LEFT JOIN work_edition e ON e.work_id=w.id LEFT JOIN logical_work l ON l.id=e.logical_work_id WHERE w.id=?`, m.work).Scan(&canonical)
+		if err != nil || (canonical != work && m.work != work) {
+			return 0, err
+		}
+		var id, count int64
+		err = tx.QueryRowContext(ctx, `SELECT COUNT(*),COALESCE(MIN(id),0) FROM media_item WHERE work_id=? AND title=? AND kind IN ('audio','video') AND track_no IS ? AND disc_no IS ?`, m.work, p.MediaTitle, p.TrackNumber, p.DiscNumber).Scan(&count, &id)
+		if count != 1 {
+			return 0, err
+		}
+		return id, err
+	}
 	mediaWork, err := resolveCode(ctx, tx, p.MediaWorkCode)
 	if err != nil || mediaWork != work {
 		return 0, err
@@ -73,61 +124,6 @@ func matchProgress(ctx context.Context, tx *sql.Tx, work int64, p *BackupProgres
 	return id, nil
 }
 
-func buildImportPlan(ctx context.Context, tx *sql.Tx, user int64, b Backup) (importPlan, error) {
-	p := importPlan{preview: ImportPreview{Works: len(b.Works), Playlists: len(b.Playlists), Tags: len(b.Tags), MissingCodes: []string{}}, works: map[string]int64{}, conflicts: map[int64]bool{}, media: map[string]int64{}}
-	codes := map[string]bool{}
-	for _, w := range b.Works {
-		codes[w.PrimaryCode] = true
-	}
-	for _, l := range b.Playlists {
-		for _, i := range l.Items {
-			codes[i.PrimaryCode] = true
-		}
-	}
-	for code := range codes {
-		id, err := resolveCode(ctx, tx, code)
-		if err != nil {
-			return p, err
-		}
-		p.works[code] = id
-		if id == 0 {
-			p.preview.MissingCodes = append(p.preview.MissingCodes, code)
-		}
-	}
-	sort.Strings(p.preview.MissingCodes)
-	seen := map[int64]bool{}
-	for _, w := range b.Works {
-		id := p.works[w.PrimaryCode]
-		if id == 0 {
-			continue
-		}
-		if seen[id] {
-			return p, ErrConflict
-		}
-		seen[id] = true
-		p.preview.MatchedWorks++
-		var exists bool
-		err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM user_work_state WHERE user_id=? AND work_id=?) OR EXISTS(SELECT 1 FROM user_work_tag WHERE user_id=? AND work_id=?) OR EXISTS(SELECT 1 FROM user_work_playback_cursor WHERE user_id=? AND work_id=?) OR EXISTS(SELECT 1 FROM user_listening_session WHERE user_id=? AND work_id=?) OR EXISTS(SELECT 1 FROM user_listening_import WHERE user_id=? AND work_id=?)`, user, id, user, id, user, id, user, id, user, id).Scan(&exists)
-		if err != nil {
-			return p, err
-		}
-		p.conflicts[id] = exists
-		if exists {
-			p.preview.Conflicts++
-		}
-		if w.Progress != nil {
-			p.media[w.PrimaryCode], err = matchProgress(ctx, tx, id, w.Progress)
-			if err != nil {
-				return p, err
-			}
-			if p.media[w.PrimaryCode] == 0 {
-				p.preview.UnmatchedProgress++
-			}
-		}
-	}
-	return p, nil
-}
-
 func (s Store) PreviewImport(ctx context.Context, user int64, b Backup) (ImportPreview, error) {
 	tx, err := s.DB.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
@@ -139,37 +135,88 @@ func (s Store) PreviewImport(ctx context.Context, user int64, b Backup) (ImportP
 }
 
 func (s Store) Import(ctx context.Context, user int64, b Backup, overwrite bool) (ImportResult, error) {
+	return s.ImportWithRegistration(ctx, user, b, overwrite, false)
+}
+
+func (s Store) ImportWithRegistration(ctx context.Context, user int64, b Backup, overwrite, allowRegistration bool) (ImportResult, error) {
 	result := ImportResult{}
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return result, err
 	}
 	defer func() { _ = tx.Rollback() }()
+	// Serialize admission and conflict readback before planning an atomic import.
+	if _, err = tx.ExecContext(ctx, `UPDATE user_account SET id=id WHERE id=?`, user); err != nil {
+		return result, err
+	}
 	plan, err := buildImportPlan(ctx, tx, user, b)
 	if err != nil {
 		return result, err
 	}
+	if plan.preview.NewWorks > 0 && !allowRegistration {
+		return result, ErrRegistrationPermission
+	}
+	result.Issues = plan.preview.Issues
 	for _, tag := range b.Tags {
 		if _, err = importTag(ctx, tx, user, tag, overwrite); err != nil {
 			return result, err
 		}
 		result.Tags++
 	}
+	appliedReviews := map[int64]TransferReview{}
 	for _, w := range b.Works {
-		id := plan.works[w.PrimaryCode]
-		if id == 0 || (plan.conflicts[id] && !overwrite) {
+		id := plan.works[w.key()]
+		if plan.blocked[w.key()] || (plan.conflicts[id] && !overwrite) {
 			result.SkippedWorks++
 			continue
 		}
-		if err = importWork(ctx, tx, user, id, plan.media[w.PrimaryCode], w, overwrite); err != nil {
+		if id == 0 && w.Identity != nil {
+			id, err = registerTransferWork(ctx, tx, w)
+			if err != nil {
+				return result, err
+			}
+			plan.works[w.key()] = id
+			plan.identities[w.key()] = id
+			plan.reviews[id] = TransferReview{Rating: w.Rating, Note: w.Note}
+		}
+		if id == 0 {
+			result.SkippedWorks++
+			continue
+		}
+		if w.Identity != nil {
+			if err = saveTransferReferences(ctx, tx, id, w.Identity); err != nil {
+				return result, err
+			}
+		}
+		if err = importWork(ctx, tx, user, id, plan.media[w.key()], w, overwrite); err != nil {
 			return result, err
 		}
+		identity := plan.identities[w.key()]
+		appliedReviews[identity] = plan.reviews[identity]
 		result.ImportedWorks++
-		if w.Progress != nil && plan.media[w.PrimaryCode] == 0 {
+		if w.Progress != nil && plan.media[w.key()] == 0 {
 			result.SkippedProgress++
 		}
 	}
+	for identity, review := range appliedReviews {
+		if _, err = tx.ExecContext(ctx, `INSERT INTO user_work_state(user_id,work_id,rating,note) VALUES(?,?,?,?) ON CONFLICT(user_id,work_id) DO UPDATE SET rating=excluded.rating,note=excluded.note,updated_at=CURRENT_TIMESTAMP`, user, identity, review.Rating, review.Note); err != nil {
+			return result, err
+		}
+	}
+	for key := range plan.blocked {
+		plan.works[key] = 0
+	}
 	for _, list := range b.Playlists {
+		unresolved := false
+		for _, item := range list.Items {
+			if item.WorkRef != "" && plan.works[item.key()] == 0 {
+				unresolved = true
+				result.Issues = append(result.Issues, ImportIssue{Ref: item.WorkRef, Title: list.Name, Reason: "playlist_preserved"})
+			}
+		}
+		if unresolved {
+			continue
+		}
 		changed, err := importPlaylist(ctx, tx, user, list, plan.works, overwrite)
 		if err != nil {
 			return result, err
@@ -204,7 +251,7 @@ func importTag(ctx context.Context, tx *sql.Tx, user int64, tag BackupTag, overw
 }
 
 func importWork(ctx context.Context, tx *sql.Tx, user, id, media int64, w BackupWork, overwrite bool) error {
-	_, err := tx.ExecContext(ctx, `INSERT INTO user_work_state (user_id,work_id,listening_status,rating,note) VALUES (?,?,?,?,?) ON CONFLICT(user_id,work_id) DO UPDATE SET listening_status=excluded.listening_status,rating=excluded.rating,note=excluded.note,updated_at=CURRENT_TIMESTAMP`, user, id, w.ListeningStatus, w.Rating, w.Note)
+	_, err := tx.ExecContext(ctx, `INSERT INTO user_work_state (user_id,work_id,listening_status) VALUES (?,?,?) ON CONFLICT(user_id,work_id) DO UPDATE SET listening_status=excluded.listening_status,updated_at=CURRENT_TIMESTAMP`, user, id, w.ListeningStatus)
 	if err != nil {
 		return err
 	}
@@ -226,6 +273,20 @@ func importWork(ctx context.Context, tx *sql.Tx, user, id, media int64, w Backup
 		// Import is a new explicit edit, regardless of the backup's historical date.
 		// The marker sorts after valid client ids so tied offline reports stay stale.
 		_, err = tx.ExecContext(ctx, `INSERT INTO user_work_playback_cursor (user_id,work_id,media_item_id,position_seconds,duration_seconds,completed,last_played_at,report_order,report_id) VALUES (?,?,?,?,?,?,NULLIF(?,''),?,'~import') ON CONFLICT(user_id,work_id) DO UPDATE SET media_item_id=excluded.media_item_id,file_source_id=NULL,location_id=NULL,location_type='',position_seconds=excluded.position_seconds,duration_seconds=excluded.duration_seconds,completed=excluded.completed,last_played_at=excluded.last_played_at,updated_at=CURRENT_TIMESTAMP,report_order=MAX(report_order+1,excluded.report_order),report_id=excluded.report_id`, user, id, media, p.PositionSeconds, p.DurationSeconds, p.Completed, p.LastPlayedAt, time.Now().UnixMilli())
+		if err != nil {
+			return err
+		}
+	}
+	if w.Identity != nil && w.Progress != nil {
+		if media > 0 {
+			_, err = tx.ExecContext(ctx, `DELETE FROM personal_transfer_progress WHERE user_id=? AND work_id=?`, user, id)
+		} else {
+			raw, marshalErr := json.Marshal(w.Progress)
+			if marshalErr != nil {
+				return marshalErr
+			}
+			_, err = tx.ExecContext(ctx, `INSERT INTO personal_transfer_progress(user_id,work_id,progress_json) VALUES(?,?,?) ON CONFLICT(user_id,work_id) DO UPDATE SET progress_json=excluded.progress_json`, user, id, string(raw))
+		}
 		if err != nil {
 			return err
 		}
@@ -266,7 +327,7 @@ func importPlaylist(ctx context.Context, tx *sql.Tx, user int64, list BackupPlay
 		return false, err
 	}
 	for _, item := range list.Items {
-		work := works[item.PrimaryCode]
+		work := works[item.key()]
 		if work == 0 {
 			continue
 		}

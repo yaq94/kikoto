@@ -283,7 +283,7 @@ export const personalKorean = {
       exportFailed: "내보내기를 준비하지 못했습니다.",
       importTitle: "가져오기",
       importDescription:
-        "작품은 작품 코드로 라이브러리의 기존 작품과 알려진 별칭에 대조합니다. 가져오기는 메타데이터를 가져오거나 라이브러리에 없는 작품을 추가하지 않습니다.",
+        "Kikoto 백업은 안정적인 참조로 번호가 있는 작품, 번호 없는 작품, 시리즈와 개별 에피소드를 복원합니다. 없는 항목을 복원하려면 등록 권한이 필요하며 정보만 추가합니다. 이전 형식은 기존 작품 코드와 별칭으로 대조합니다.",
       source: "가져올 곳",
       sources: {
         kikoto: "Kikoto 내보내기 파일",
@@ -416,7 +416,22 @@ export const personalKorean = {
       preview: "미리 보기",
       previewing: "파일 확인 중...",
       previewStale: "파일, 형식 또는 충돌 처리 방식을 바꾸면 미리 보기가 갱신됩니다.",
+      transferIssues: "가져오기 상세 확인 ({{count}})",
+      existingReview: "내 기존 평가",
+      incomingReview: "가져올 평가",
+      transferReasons: {
+        existing_record: "덮어쓰기를 선택할 때까지 기존 개인 기록을 유지합니다.",
+        incoming_review_conflict:
+          "같은 공유 작품의 입력 평가가 일치하지 않습니다. 이 그룹을 건너뜁니다. 파일을 수정한 후 다시 가져오세요.",
+        identity_conflict: "식별 참조가 충돌하여 이 항목을 건너뜁니다.",
+        unregistered_source: "알려진 소스가 등록되지 않았습니다. 먼저 등록하세요.",
+        source_reference_retained: "전송용 소스 참조를 보관하며 소스 연결은 만들지 않습니다.",
+        relationships_not_imported:
+          "에피소드를 독립 항목으로 복원합니다. 시리즈 소속과 공유 연결은 자료 편집에서 확인하세요.",
+        playlist_preserved: "목록에 해결되지 않은 참조가 있어 전체 목록을 유지합니다.",
+      },
       previewCounts: {
+        newWorks: "등록할 항목",
         works: "파일의 작품",
         matchedWorks: "라이브러리와 일치",
         playlists: "목록",

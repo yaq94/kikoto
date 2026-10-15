@@ -248,7 +248,7 @@ func TestKikoeruStatusesAndStrictImportValidation(t *testing.T) {
 		}
 	}
 	for _, raw := range []string{
-		`{"format":"kikoto-user-data","version":2,"works":[]}`,
+		`{"format":"kikoto-user-data","version":3,"works":[]}`,
 		`{"format":"kikoto-user-data","version":1,"credentials":"synthetic-token"}`,
 		`{"format":"kikoto-user-data","version":1,"works":[{"primaryCode":"RJ00000000","listeningStatus":"invalid"}]}`,
 		`{"format":"kikoto-user-data","version":1} {}`,

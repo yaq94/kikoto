@@ -10,6 +10,8 @@ export type UserDataImportRequest = {
 };
 
 export type UserDataImportPreview = {
+  newWorks?: number;
+  issues?: UserDataImportIssue[];
   works: number;
   playlists: number;
   tags: number;
@@ -20,11 +22,27 @@ export type UserDataImportPreview = {
 };
 
 export type UserDataImportResult = {
+  issues?: UserDataImportIssue[];
   importedWorks: number;
   skippedWorks: number;
   playlists: number;
   tags: number;
   skippedProgress: number;
+};
+
+export type UserDataImportIssue = {
+  title?: string;
+  ref: string;
+  reason:
+    | "existing_record"
+    | "incoming_review_conflict"
+    | "identity_conflict"
+    | "unregistered_source"
+    | "source_reference_retained"
+    | "relationships_not_imported"
+    | "playlist_preserved";
+  incoming?: { rating: number | null; note: string };
+  existing?: { rating: number | null; note: string };
 };
 
 export type KikoeruImportOptions = {

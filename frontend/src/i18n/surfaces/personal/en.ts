@@ -284,7 +284,7 @@ export const personalEnglish = {
       exportFailed: "The export could not be prepared.",
       importTitle: "Import",
       importDescription:
-        "Works match existing library works and known aliases by product code. Import never fetches metadata or adds works that are not already in the library.",
+        "Kikoto backups restore numbered works, numberless works, series and episodes using stable references. Restoring missing objects requires registration permission and adds information only. Legacy files match existing product codes and aliases.",
       source: "Source",
       sources: {
         kikoto: "Kikoto export file",
@@ -419,7 +419,22 @@ export const personalEnglish = {
       preview: "Preview",
       previewing: "Checking the file...",
       previewStale: "The preview updates when the file, format, or conflict choice changes.",
+      transferIssues: "Review import details ({{count}})",
+      existingReview: "Your existing review",
+      incomingReview: "Incoming review",
+      transferReasons: {
+        existing_record: "Your existing record is kept unless you choose Overwrite.",
+        incoming_review_conflict:
+          "Incoming reviews disagree for one shared identity. This group is skipped; reconcile the file before importing again.",
+        identity_conflict: "Identity evidence disagrees. This object is skipped.",
+        unregistered_source: "The known source is not registered. Register it before importing this record.",
+        source_reference_retained: "This source reference is retained for transfer; no source connection is created.",
+        relationships_not_imported:
+          "The episode is restored independently. Series membership and shared associations require the shared editing workflow.",
+        playlist_preserved: "A list contains an unresolved reference. The list is kept unchanged.",
+      },
       previewCounts: {
+        newWorks: "Objects to register",
         works: "Works in file",
         matchedWorks: "Matched in library",
         playlists: "Lists",
