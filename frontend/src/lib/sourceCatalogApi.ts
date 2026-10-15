@@ -2,6 +2,28 @@ import { getJSON, patchJSONBody, postJSONBody } from "@/lib/apiTransport";
 import type { RemoteTrack } from "@/lib/remoteSourceApi";
 import type { PersonalReview, PersonalReviewPatch } from "@/lib/workApi";
 
+export type AssociationSubject = { kind: "work" | "catalog" | "series"; id: number };
+export type AssociationReview = { rating: number | null; note: string };
+export type AssociationObject = {
+  subject: AssociationSubject;
+  title: string;
+  level: "work" | "episode" | "series";
+  workId: number | null;
+  sources: Array<{ catalogEntryId: number; sourceName: string; title: string; workId: number | null }>;
+};
+export type SharedAssociation = {
+  id: number;
+  status: "preview" | "pending" | "completed" | "stale" | "undone";
+  version: string;
+  left: AssociationObject;
+  right: AssociationObject;
+  myConflictFields: Array<"rating" | "note">;
+  myLeftReview: AssociationReview;
+  myRightReview: AssociationReview;
+  myDecision: AssociationReview | null;
+  waitingForOwners: boolean;
+};
+
 export type CatalogEntry = PersonalReview & {
   catalogEntryId: number;
   sourceId: number;
@@ -82,6 +104,19 @@ export type CatalogIndexProgress = {
 };
 
 export const sourceCatalogApi = {
+  previewSharedAssociation: (left: AssociationSubject, right: AssociationSubject) =>
+    postJSONBody<SharedAssociation>("/api/shared-associations/previews", { left, right }),
+  getSharedAssociation: (id: number, signal?: AbortSignal) =>
+    getJSON<SharedAssociation>(`/api/shared-associations/${id}`, signal),
+  listSharedAssociations: (subject: AssociationSubject, signal?: AbortSignal) =>
+    getJSON<Array<Pick<SharedAssociation, "id" | "status">>>(
+      `/api/shared-associations?kind=${subject.kind}&id=${subject.id}`,
+      signal,
+    ),
+  startSharedAssociation: (id: number, version: string) =>
+    postJSONBody<SharedAssociation>(`/api/shared-associations/${id}/start`, { version }),
+  decideSharedAssociation: (id: number, version: string, review: AssociationReview) =>
+    postJSONBody<SharedAssociation>(`/api/shared-associations/${id}/decision`, { version, ...review }),
   updateCatalogSeriesReview: (id: number, patch: PersonalReviewPatch) =>
     patchJSONBody<PersonalReview & { workId: number }>(`/api/catalog-series/${id}/user-state`, patch),
   getCatalogSeries: (id: number, signal?: AbortSignal) => getJSON<CatalogSeries>(`/api/catalog-series/${id}`, signal),

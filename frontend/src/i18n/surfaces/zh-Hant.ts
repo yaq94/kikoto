@@ -1,6 +1,38 @@
 import { surfaceEnglish } from "./en";
 
 export const surfaceHant = {
+  sharedAssociation: {
+    title: "共用關聯",
+    hint: "關聯同一作品、系列或單集。來源與播放版本保持獨立，個人評價衝突僅由記錄本人處理。",
+    target: "另一條目的連結",
+    preview: "預覽關聯",
+    operations: "關聯操作",
+    open: "開啟關聯 {{id}}",
+    left: "第一個條目",
+    right: "第二個條目",
+    start: "發起共用關聯",
+    editorRequired: "需要資料編輯者發起共用操作。",
+    ownDecision: "選擇本人評價的最終內容。其他使用者的衝突仍須其本人確認。",
+    finalRating: "最終個人評分",
+    finalNote: "最終個人備註",
+    decide: "確認本人評價",
+    choiceSaved: "本人的選擇已儲存，等待其餘記錄本人確認。",
+    refresh: "重新整理關聯狀態",
+    newPreview: "建立新預覽",
+    error: "操作未能儲存。請檢查條目連結並重新整理預覽；相關記錄改變後需要建立新預覽。",
+    level: {
+      work: "作品",
+      episode: "單集",
+      series: "系列",
+    },
+    status: {
+      preview: "預覽已就緒",
+      pending: "等待記錄本人確認",
+      completed: "關聯已完成",
+      stale: "預覽已過期：相關資料已變更",
+      undone: "關聯已拆分",
+    },
+  },
   catalogSeries: {
     seriesReview: "系列評價",
     episodeReview: "單集評價：{{title}}",

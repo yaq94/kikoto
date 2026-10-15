@@ -1,6 +1,38 @@
 import { surfaceEnglish } from "./en";
 
 export const surfaceHans = {
+  sharedAssociation: {
+    title: "共享关联",
+    hint: "关联同一作品、系列或单集。来源与播放版本保持独立，个人评价冲突仅由记录本人处理。",
+    target: "另一条目的链接",
+    preview: "预览关联",
+    operations: "关联操作",
+    open: "打开关联 {{id}}",
+    left: "第一个条目",
+    right: "第二个条目",
+    start: "发起共享关联",
+    editorRequired: "需要资料编辑者发起共享操作。",
+    ownDecision: "选择本人评价的最终内容。其他用户的冲突仍须其本人确认。",
+    finalRating: "最终个人评分",
+    finalNote: "最终个人备注",
+    decide: "确认本人评价",
+    choiceSaved: "本人的选择已保存，等待其余记录本人确认。",
+    refresh: "刷新关联状态",
+    newPreview: "创建新预览",
+    error: "操作未能保存。请检查条目链接并刷新预览；相关记录改变后需要创建新预览。",
+    level: {
+      work: "作品",
+      episode: "单集",
+      series: "系列",
+    },
+    status: {
+      preview: "预览已就绪",
+      pending: "等待记录本人确认",
+      completed: "关联已完成",
+      stale: "预览已过期：相关数据已变更",
+      undone: "关联已拆分",
+    },
+  },
   catalogSeries: {
     seriesReview: "系列评价",
     episodeReview: "单集评价：{{title}}",

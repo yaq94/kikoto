@@ -10,6 +10,7 @@ import {
 } from "@/components/content-translation/ContentTranslation";
 import { openWorkDetail } from "@/app/workDetailNavigation";
 import { PersonalReviewEditor } from "./PersonalReviewEditor";
+import { SharedAssociationPanel } from "./SharedAssociationPanel";
 
 export function CatalogSeriesDetail({ id, onBack }: { id: number; onBack: () => void }) {
   const { t } = useTranslation();
@@ -67,6 +68,15 @@ export function CatalogSeriesDetail({ id, onBack }: { id: number; onBack: () => 
               </li>
             ))}
           </ol>
+          <SharedAssociationPanel
+            subject={{ kind: "series", id }}
+            onCompleted={() => {
+              void api
+                .getCatalogSeries(id)
+                .then(setSeries)
+                .catch(() => setError(true));
+            }}
+          />
           <PersonalReviewEditor
             key={`${id}:${auth.user?.id}`}
             title={t("catalogSeries.seriesReview")}

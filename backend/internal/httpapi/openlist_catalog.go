@@ -312,7 +312,7 @@ func (s *Server) listOpenListWorks(w http.ResponseWriter, r *http.Request, sourc
 		pageSize = 24
 	}
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
-	from := `FROM (
+	from := `FROM (SELECT candidates.*,ROW_NUMBER() OVER (PARTITION BY CASE WHEN work_id IS NOT NULL THEN 'work:' || (SELECT identity_work_id FROM shared_work_identity WHERE work_id=candidates.work_id) WHEN series_id>0 THEN 'series:' || series_id ELSE 'catalog:' || id END ORDER BY series_id,id) AS identity_rank FROM (
 		SELECT e.id,0 AS series_id,e.primary_code,e.title,e.work_id,e.updated_at FROM source_catalog_entry e
 		WHERE e.file_source_id=? AND NOT EXISTS(SELECT 1 FROM catalog_series_member m WHERE m.catalog_entry_id=e.id)
 		AND (?='' OR instr(lower(e.title),lower(?))>0 OR instr(lower(e.primary_code),lower(?))>0)
@@ -320,7 +320,7 @@ func (s *Server) listOpenListWorks(w http.ResponseWriter, r *http.Request, sourc
 		SELECT 0,s.id,'',s.title,s.work_id,s.created_at FROM catalog_series s
 		WHERE EXISTS(SELECT 1 FROM catalog_series_member m JOIN source_catalog_entry e ON e.id=m.catalog_entry_id
 		WHERE m.series_id=s.id AND e.file_source_id=? AND (?='' OR instr(lower(s.title),lower(?))>0 OR instr(lower(e.title),lower(?))>0 OR instr(lower(e.primary_code),lower(?))>0))
-	) AS cards`
+	) AS candidates) AS cards WHERE identity_rank=1`
 	args := []any{source.ID, q, q, q, source.ID, q, q, q, q}
 	var total int
 	if err := s.db.QueryRowContext(r.Context(), "SELECT COUNT(*) "+from, args...).Scan(&total); err != nil {

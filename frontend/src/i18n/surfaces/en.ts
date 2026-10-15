@@ -4,6 +4,39 @@
  * persisted user data never become translated at the domain boundary.
  */
 export const surfaceEnglish = {
+  sharedAssociation: {
+    title: "Shared association",
+    hint: "Associate the same work, series or episode. Sources and playback versions stay distinct. Only each record owner can resolve private review conflicts.",
+    target: "Link to the other entry",
+    preview: "Preview association",
+    operations: "Association operations",
+    open: "Open association {{id}}",
+    left: "First entry",
+    right: "Second entry",
+    start: "Start shared association",
+    editorRequired: "A library editor must start the shared operation.",
+    ownDecision: "Choose the final values for your own review. Other owners must confirm their own conflicts.",
+    finalRating: "Final personal rating",
+    finalNote: "Final personal note",
+    decide: "Confirm my review",
+    choiceSaved: "Your choice is saved. Waiting for the remaining owners.",
+    refresh: "Refresh association",
+    newPreview: "Create a fresh preview",
+    error:
+      "The operation could not be saved. Check the entry link and refresh the preview; changed records require a new preview.",
+    level: {
+      work: "Work",
+      episode: "Episode",
+      series: "Series",
+    },
+    status: {
+      preview: "Preview ready",
+      pending: "Waiting for record owners",
+      completed: "Association completed",
+      stale: "Preview expired: related data changed",
+      undone: "Association split",
+    },
+  },
   catalogSeries: {
     seriesReview: "Series review",
     episodeReview: "Episode review: {{title}}",

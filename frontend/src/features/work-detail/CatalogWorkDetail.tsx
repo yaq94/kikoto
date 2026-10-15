@@ -14,6 +14,7 @@ import { buildCatalogTree } from "./catalogTreeModel";
 import { catalogPlaybackQueue, catalogResumeQueue } from "./catalogPlayback";
 import { useWorkPlaybackCursor } from "./media/useWorkPlaybackCursor";
 import { CatalogGroupingEditor } from "./CatalogGroupingEditor";
+import { SharedAssociationPanel } from "./SharedAssociationPanel";
 
 export function CatalogWorkDetail({ id, onBack }: { id: number; onBack: () => void }) {
   const { t } = useTranslation();
@@ -123,6 +124,15 @@ export function CatalogWorkDetail({ id, onBack }: { id: number; onBack: () => vo
             onPlayFolder={
               auth.hasPermission("playback:use") ? (files, locationId) => void play(files, locationId) : undefined
             }
+          />
+          <SharedAssociationPanel
+            subject={{ kind: "catalog", id }}
+            onCompleted={() => {
+              void api
+                .getCatalogEntry(id)
+                .then(setEntry)
+                .catch(() => setFailed(true));
+            }}
           />
           <PersonalReviewEditor
             key={`${id}:${auth.user?.id}`}
