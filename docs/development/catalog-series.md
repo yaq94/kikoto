@@ -42,7 +42,8 @@ Previews expire after 24 hours. An actor may retain at most 32 unexpired pending
 and 32 completed previews. Identity, location, title, source visibility,
 membership or personal-record changes invalidate a pending preview. Existing
 groups cannot be merged through this entry point; member work identities and
-records remain intact. Private values contribute only to an internal digest.
+records remain intact. [Shared associations](shared-associations.md) provide
+same-level series or episode association with record-owner conflict confirmation. Private values contribute only to an internal digest.
 
 Source browsing shows one series card and still matches episode titles during
 search. Opening an episode selects its existing directory controls. Opening a

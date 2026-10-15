@@ -68,6 +68,14 @@ func (s *Server) executeSourceCatalogIndexJob(ctx context.Context, job workflowJ
 			if p.Failed+p.Restricted+p.Empty > 0 {
 				status = "partial"
 			} else {
+				pending, err := s.settleCatalogLifecycleBatch(ctx, job, input.SourceID)
+				if err != nil {
+					return err
+				}
+				if pending {
+					count++
+					continue
+				}
 				n, err := s.cleanupCatalogStagingBatch(ctx, job, input.SourceID)
 				if err != nil {
 					return err

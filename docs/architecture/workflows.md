@@ -63,7 +63,9 @@ Media, cleanup, and database:
   grace period and prune empty directories.
 - `media_location_cleanup`: delete selected cache or local files and mark their
   locations unavailable. `media_cleanup_forget_work` also removes the then
-  unlinked work family and its personal state.
+  unlinked work family when no account-owned record refers to it. Personal
+  references retain the family and report partial completion with
+  `personal_records`; requested media cleanup still runs.
 - `local_media_delete`: delete one local media file and mark only that location
   unavailable. `local_symlink_review` notifies users when such a request
   targets a symlink.
@@ -760,8 +762,11 @@ across restarts until finished. A configured mode switch or
 Fetch pool switch requires a preview and confirmation. Kikoto blocks ordinary
 requests during the durable copy, checksum verification, database path update,
 source cleanup, and local scan. Administrators see progress and can retry a
-failed move; other users see maintenance. A pool that still holds unrelated
-works cannot be removed.
+failed move; other users see maintenance. The migration detail reports
+`completed` only after the local scan succeeds, the final database update
+succeeds, and ordinary requests can leave maintenance. A failed final update
+keeps maintenance active and retains the scan checkpoint for retry or restart
+recovery. A pool that still holds unrelated works cannot be removed.
 The plan includes indexed local roots and unindexed work folders visible at
 the current scan depth. A folder below that depth remains outside the scan's
 scope until the administrator increases the depth and scans it.

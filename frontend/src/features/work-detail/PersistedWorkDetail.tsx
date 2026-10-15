@@ -93,6 +93,7 @@ import {
 } from "@/features/work-detail/PersistedDetailOverlays";
 import { useWorkEditionSelection } from "@/features/work-detail/useWorkEditionSelection";
 import { PersonalReviewEditor } from "@/features/work-detail/PersonalReviewEditor";
+import { SharedAssociationPanel } from "./SharedAssociationPanel";
 import { useWorkCatalogDirectories } from "./source/useWorkCatalogDirectories";
 import { CatalogSourceDirectory } from "./CatalogSourceDirectory";
 import { DirectoryLoadErrorPanel } from "./directory/SourceDirectoryPanels";
@@ -811,6 +812,9 @@ export function PersistedWorkDetailController({
           value={{ personalRating: work.personalRating ?? null, personalNote: work.personalNote ?? "" }}
           onSave={(patch) => api.updateWorkUserState(work.id, patch)}
         />
+      )}
+      {work && (
+        <SharedAssociationPanel subject={{ kind: "work", id: work.id }} onCompleted={() => void metadataSaved()} />
       )}
       <PersistedFilePreviewOverlay
         preview={preview}

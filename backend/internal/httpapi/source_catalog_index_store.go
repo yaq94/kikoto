@@ -92,7 +92,7 @@ func (s *Server) persistCatalogPage(ctx context.Context, job workflowJobRecord, 
 				status, errorCode = "failed", "path_limit"
 				break
 			}
-			_, err = tx.ExecContext(ctx, `INSERT INTO source_catalog_observation(file_source_id,directory_path,name,revision,kind,size_bytes) VALUES(?,?,?,?,?,?) ON CONFLICT(file_source_id,directory_path,name) DO UPDATE SET revision=excluded.revision,kind=excluded.kind,size_bytes=excluded.size_bytes,published_generation=0 WHERE source_catalog_observation.revision<>excluded.revision`, sourceID, d.Path, obj.Name, d.Revision, openlist.Kind(obj.Name, obj.IsDir), obj.Size)
+			_, err = tx.ExecContext(ctx, `INSERT INTO source_catalog_observation(file_source_id,directory_path,name,revision,kind,size_bytes,content_hash) VALUES(?,?,?,?,?,?,?) ON CONFLICT(file_source_id,directory_path,name) DO UPDATE SET revision=excluded.revision,kind=excluded.kind,size_bytes=excluded.size_bytes,content_hash=excluded.content_hash,published_generation=0 WHERE source_catalog_observation.revision<>excluded.revision`, sourceID, d.Path, obj.Name, d.Revision, openlist.Kind(obj.Name, obj.IsDir), obj.Size, obj.ContentHash())
 			if err != nil {
 				return err
 			}
@@ -118,6 +118,19 @@ func (s *Server) persistCatalogPage(ctx context.Context, job workflowJobRecord, 
 	}
 	if status == "listing_complete" {
 		if err = completeCatalogDirectoryTx(ctx, tx, sourceID, job.RunID, &d); err != nil {
+			return err
+		}
+	}
+	if status == "failed" || status == "restricted" || status == "empty" {
+		availability := catalogFailureStatus(requestErr)
+		if status == "empty" {
+			availability = "unconfirmed_empty"
+		}
+		root := d.Path
+		if d.Root != "" {
+			root = d.Root
+		}
+		if err = markCatalogRangeStatusTx(ctx, tx, sourceID, root, availability); err != nil {
 			return err
 		}
 	}
@@ -254,20 +267,20 @@ func (s *Server) publishCatalogBatch(ctx context.Context, job workflowJobRecord,
 	if err = verifyCatalogLease(ctx, tx, job); err != nil {
 		return 0, err
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT d.path,d.catalog_root,o.name,o.kind,o.size_bytes FROM source_catalog_directory d JOIN source_catalog_observation o ON o.file_source_id=d.file_source_id AND o.directory_path=d.path AND o.revision=d.revision
+	rows, err := tx.QueryContext(ctx, `SELECT d.path,d.catalog_root,o.name,o.kind,o.size_bytes,o.content_hash FROM source_catalog_directory d JOIN source_catalog_observation o ON o.file_source_id=d.file_source_id AND o.directory_path=d.path AND o.revision=d.revision
 	WHERE d.file_source_id=? AND d.generation=? AND d.status='complete' AND d.catalog_root<>'' AND o.published_generation<>? AND EXISTS(
 	SELECT 1 FROM source_catalog_directory a JOIN source_catalog_observation b ON b.file_source_id=a.file_source_id AND b.directory_path=a.path AND b.revision=a.revision WHERE a.file_source_id=d.file_source_id AND a.generation=d.generation AND a.catalog_root=d.catalog_root AND a.status='complete' AND b.kind='audio') LIMIT 100`, sourceID, job.RunID, job.RunID)
 	if err != nil {
 		return 0, err
 	}
 	type publication struct {
-		dir, root, name, kind string
-		size                  int64
+		dir, root, name, kind, hash string
+		size                        int64
 	}
 	items := []publication{}
 	for rows.Next() {
 		var p publication
-		if err = rows.Scan(&p.dir, &p.root, &p.name, &p.kind, &p.size); err != nil {
+		if err = rows.Scan(&p.dir, &p.root, &p.name, &p.kind, &p.size, &p.hash); err != nil {
 			break
 		}
 		items = append(items, p)
@@ -281,7 +294,7 @@ func (s *Server) publishCatalogBatch(ctx context.Context, job workflowJobRecord,
 	}
 	for _, p := range items {
 		var id int64
-		err = tx.QueryRowContext(ctx, `INSERT INTO source_catalog_entry(file_source_id,root_path,primary_code,title) VALUES(?,?,?,?) ON CONFLICT(file_source_id,root_path) DO UPDATE SET title=excluded.title,updated_at=CURRENT_TIMESTAMP RETURNING id`, sourceID, p.root, catalogDirectoryCode(p.root), path.Base(p.root)).Scan(&id)
+		err = tx.QueryRowContext(ctx, `INSERT INTO source_catalog_entry(file_source_id,root_path,primary_code,title,last_seen_generation,discovered_generation) VALUES(?,?,?,?,?,?) ON CONFLICT(file_source_id,root_path) DO UPDATE SET title=excluded.title,last_seen_generation=excluded.last_seen_generation,updated_at=CURRENT_TIMESTAMP RETURNING id`, sourceID, p.root, catalogDirectoryCode(p.root), path.Base(p.root), job.RunID, job.RunID).Scan(&id)
 		if err != nil {
 			return 0, err
 		}
@@ -289,7 +302,7 @@ func (s *Server) publishCatalogBatch(ctx context.Context, job workflowJobRecord,
 			return 0, err
 		}
 		rel := strings.TrimPrefix(path.Join(p.dir, p.name), strings.TrimRight(p.root, "/")+"/")
-		_, err = tx.ExecContext(ctx, `INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes) VALUES(?,?,?,?,?) ON CONFLICT(catalog_entry_id,relative_path) DO UPDATE SET title=excluded.title,kind=excluded.kind,size_bytes=excluded.size_bytes`, id, rel, p.name, p.kind, p.size)
+		_, err = tx.ExecContext(ctx, `INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes,content_hash,observed_generation) VALUES(?,?,?,?,?,?,?) ON CONFLICT(catalog_entry_id,relative_path) DO UPDATE SET title=excluded.title,kind=excluded.kind,size_bytes=excluded.size_bytes,content_hash=excluded.content_hash,observed_generation=excluded.observed_generation`, id, rel, p.name, p.kind, p.size, p.hash, job.RunID)
 		if err != nil {
 			return 0, err
 		}

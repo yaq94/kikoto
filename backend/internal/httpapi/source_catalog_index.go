@@ -202,7 +202,7 @@ func (s *Server) enqueueSourceCatalogIndexTx(ctx context.Context, tx *sql.Tx, so
 	if err != nil {
 		return catalogIndexQueued{}, err
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO source_catalog_scan(file_source_id,workflow_run_id,options_json) VALUES(?,?,?) ON CONFLICT(file_source_id) DO UPDATE SET workflow_run_id=excluded.workflow_run_id,options_json=excluded.options_json,pause_reason='',requests=0,started_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP`, sourceID, runID, mustJSON(options))
+	_, err = tx.ExecContext(ctx, `INSERT INTO source_catalog_scan(file_source_id,workflow_run_id,options_json) VALUES(?,?,?) ON CONFLICT(file_source_id) DO UPDATE SET workflow_run_id=excluded.workflow_run_id,options_json=excluded.options_json,pause_reason='',requests=0,lifecycle_stage='observe',lifecycle_cursor=0,started_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP`, sourceID, runID, mustJSON(options))
 	if err != nil {
 		return catalogIndexQueued{}, err
 	}

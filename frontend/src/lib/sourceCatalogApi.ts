@@ -2,6 +2,44 @@ import { getJSON, patchJSONBody, postJSONBody } from "@/lib/apiTransport";
 import type { RemoteTrack } from "@/lib/remoteSourceApi";
 import type { PersonalReview, PersonalReviewPatch } from "@/lib/workApi";
 
+export type CatalogStatus =
+  "available" | "unavailable" | "maintenance" | "restricted" | "unconfirmed_empty" | "missing" | "disabled";
+export type AssociationSubject = { kind: "work" | "catalog" | "series"; id: number };
+export type AssociationReview = { rating: number | null; note: string };
+export type SplitAllocation = "left" | "right" | "both";
+export type SharedSplit = {
+  id: number;
+  associationId: number;
+  status: "preview" | "pending" | "completed" | "stale";
+  version: string;
+  left: AssociationObject;
+  right: AssociationObject;
+  myBeforeLeft: AssociationReview;
+  myBeforeRight: AssociationReview;
+  myCurrentReview: AssociationReview;
+  myRecordChange: "unchanged" | "added" | "modified";
+  myAllocation: SplitAllocation | "";
+};
+export type AssociationObject = {
+  subject: AssociationSubject;
+  title: string;
+  level: "work" | "episode" | "series";
+  workId: number | null;
+  sources: Array<{ catalogEntryId: number; sourceName: string; title: string; workId: number | null }>;
+};
+export type SharedAssociation = {
+  id: number;
+  status: "preview" | "pending" | "completed" | "stale" | "undone";
+  version: string;
+  left: AssociationObject;
+  right: AssociationObject;
+  myConflictFields: Array<"rating" | "note">;
+  myLeftReview: AssociationReview;
+  myRightReview: AssociationReview;
+  myDecision: AssociationReview | null;
+  waitingForOwners: boolean;
+};
+
 export type CatalogEntry = PersonalReview & {
   catalogEntryId: number;
   sourceId: number;
@@ -10,6 +48,8 @@ export type CatalogEntry = PersonalReview & {
   title: string;
   workId: number | null;
   seriesId?: number | null;
+  status?: CatalogStatus;
+  relocationCandidates?: Array<{ catalogEntryId: number; title: string; reason: string }>;
 };
 export type CatalogSeriesEpisode = Omit<CatalogEntry, keyof PersonalReview> & { position: number };
 export type CatalogSeries = PersonalReview & {
@@ -28,7 +68,7 @@ export type CatalogGroupingPreview = {
 export type CatalogTrack = RemoteTrack & { path: string; children: CatalogTrack[] };
 export type CatalogDirectory = Omit<CatalogEntry, keyof PersonalReview> & {
   directoryType: "catalog";
-  status: "available" | "disabled";
+  status: CatalogStatus;
   checkedAt: string;
 };
 export type CatalogPlaybackTarget = {
@@ -82,6 +122,28 @@ export type CatalogIndexProgress = {
 };
 
 export const sourceCatalogApi = {
+  previewSharedSplit: (associationId: number) =>
+    postJSONBody<SharedSplit>(`/api/shared-associations/${associationId}/split-preview`, {}),
+  listSharedSplits: (associationId: number, signal?: AbortSignal) =>
+    getJSON<Array<Pick<SharedSplit, "id" | "status">>>(`/api/shared-associations/${associationId}/splits`, signal),
+  getSharedSplit: (id: number, signal?: AbortSignal) => getJSON<SharedSplit>(`/api/shared-splits/${id}`, signal),
+  startSharedSplit: (id: number, version: string) =>
+    postJSONBody<SharedSplit>(`/api/shared-splits/${id}/start`, { version }),
+  decideSharedSplit: (id: number, version: string, allocation: SplitAllocation) =>
+    postJSONBody<SharedSplit>(`/api/shared-splits/${id}/decision`, { version, allocation }),
+  previewSharedAssociation: (left: AssociationSubject, right: AssociationSubject) =>
+    postJSONBody<SharedAssociation>("/api/shared-associations/previews", { left, right }),
+  getSharedAssociation: (id: number, signal?: AbortSignal) =>
+    getJSON<SharedAssociation>(`/api/shared-associations/${id}`, signal),
+  listSharedAssociations: (subject: AssociationSubject, signal?: AbortSignal) =>
+    getJSON<Array<Pick<SharedAssociation, "id" | "status">>>(
+      `/api/shared-associations?kind=${subject.kind}&id=${subject.id}`,
+      signal,
+    ),
+  startSharedAssociation: (id: number, version: string) =>
+    postJSONBody<SharedAssociation>(`/api/shared-associations/${id}/start`, { version }),
+  decideSharedAssociation: (id: number, version: string, review: AssociationReview) =>
+    postJSONBody<SharedAssociation>(`/api/shared-associations/${id}/decision`, { version, ...review }),
   updateCatalogSeriesReview: (id: number, patch: PersonalReviewPatch) =>
     patchJSONBody<PersonalReview & { workId: number }>(`/api/catalog-series/${id}/user-state`, patch),
   getCatalogSeries: (id: number, signal?: AbortSignal) => getJSON<CatalogSeries>(`/api/catalog-series/${id}`, signal),

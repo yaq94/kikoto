@@ -240,9 +240,13 @@ export function WorkMaintenance({
         );
       }
       if (response.skipped.length > 0) {
-        toast.warning(
-          `${response.skipped.length} ${response.skipped.length === 1 ? "work was" : "works were"} skipped because source state changed.`,
-        );
+        const retained = response.skipped.filter((item) => item.reason === "personal_records").length;
+        if (retained > 0) toast.warning(t("sourceLifecycle.retained", { count: retained }));
+        const changed = response.skipped.length - retained;
+        if (changed > 0)
+          toast.warning(
+            `${changed} ${changed === 1 ? "work was" : "works were"} skipped because source state changed.`,
+          );
       }
       if (nextPage !== page) setPage(nextPage);
       else setRefreshKey((current) => current + 1);
@@ -693,6 +697,7 @@ function UnlinkedWorkDeleteDialog({
     <Dialog onClose={onClose} layer="sheet" size="lg" role="alertdialog" dismissible={!deleting}>
       <DialogHeader title={t("unlinked.confirmTitle")} description={t("unlinked.confirmDescription")} />
       <DialogBody>
+        <p className="text-sm text-muted-foreground">{t("sourceLifecycle.cleanupHint")}</p>
         <div className="max-h-40 overflow-y-auto rounded-md border bg-muted/25 px-3 py-2 text-xs">
           {pending.labels.slice(0, 12).map((label) => (
             <div key={label} className="truncate py-1" title={label}>

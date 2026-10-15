@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"database/sql"
 	"net/http"
 	"time"
 )
@@ -26,6 +27,12 @@ func (s *Server) refreshCatalogDirectory(w http.ResponseWriter, r *http.Request)
 	defer cancel()
 	files, err := s.openListClient(source).ScanRoot(ctx, entry.RootPath)
 	if err != nil {
+		if ctx.Err() == nil {
+			if statusErr := s.setCatalogEntryStatus(ctx, entry.ID, catalogFailureStatus(err)); statusErr != nil {
+				writeError(w, statusErr)
+				return
+			}
+		}
 		writeUpstreamError(w, err)
 		return
 	}
@@ -37,6 +44,10 @@ func (s *Server) refreshCatalogDirectory(w http.ResponseWriter, r *http.Request)
 		}
 	}
 	if !playable {
+		if err = s.setCatalogEntryStatus(ctx, entry.ID, "unconfirmed_empty"); err != nil {
+			writeError(w, err)
+			return
+		}
 		writeAPIError(w, 502, "upstream_error", "catalog directory has no playable files", true)
 		return
 	}
@@ -63,10 +74,11 @@ func (s *Server) getWorkCatalogDirectories(w http.ResponseWriter, r *http.Reques
 		writeWorkReadError(w, err)
 		return
 	}
-	rows, err := s.db.QueryContext(r.Context(), `SELECT entry.id,entry.file_source_id,source.display_name,entry.title,entry.primary_code,source.enabled,
-	 COALESCE(strftime('%Y-%m-%dT%H:%M:%SZ',entry.updated_at),'')
-	 FROM source_catalog_entry AS entry JOIN file_source AS source ON source.id=entry.file_source_id
-	 WHERE source.source_type='openlist' AND (entry.work_id=? OR (entry.work_id IS NULL AND entry.primary_code<>'' AND
+	rows, err := s.db.QueryContext(r.Context(), `SELECT entry.id,COALESCE(entry.file_source_id,0),COALESCE(source.display_name,''),entry.title,entry.primary_code,COALESCE(source.enabled,0),entry.work_id,
+	 CASE WHEN entry.file_source_id IS NULL THEN 'missing' ELSE entry.availability_status END,
+	 COALESCE(strftime('%Y-%m-%dT%H:%M:%SZ',COALESCE(entry.status_checked_at,entry.updated_at)),'')
+	 FROM source_catalog_entry AS entry LEFT JOIN file_source AS source ON source.id=entry.file_source_id
+	 WHERE entry.relocated_to_id IS NULL AND (source.source_type='openlist' OR entry.file_source_id IS NULL) AND (entry.work_id IN (SELECT peer.work_id FROM shared_work_identity own JOIN shared_work_identity peer ON peer.identity_work_id=own.identity_work_id WHERE own.work_id=?) OR (entry.work_id IS NULL AND entry.primary_code<>'' AND
 	 (entry.primary_code=? OR entry.primary_code IN (SELECT alias.primary_code FROM work_code_alias AS alias JOIN logical_work AS logical ON logical.id=alias.logical_work_id WHERE logical.canonical_work_id=?))))
 	 ORDER BY source.priority,source.id,entry.id`, id, code, id)
 	if err != nil {
@@ -77,17 +89,21 @@ func (s *Server) getWorkCatalogDirectories(w http.ResponseWriter, r *http.Reques
 	directories := []map[string]any{}
 	for rows.Next() {
 		var entryID, sourceID int64
-		var sourceName, title, primaryCode, checkedAt string
+		var sourceName, title, primaryCode, checkedAt, status string
 		var enabled bool
-		if err = rows.Scan(&entryID, &sourceID, &sourceName, &title, &primaryCode, &enabled, &checkedAt); err != nil {
+		var exactWorkID sql.NullInt64
+		if err = rows.Scan(&entryID, &sourceID, &sourceName, &title, &primaryCode, &enabled, &exactWorkID, &status, &checkedAt); err != nil {
 			writeError(w, err)
 			return
 		}
-		status := "available"
-		if !enabled {
+		if !enabled && sourceID != 0 {
 			status = "disabled"
 		}
-		directories = append(directories, map[string]any{"catalogEntryId": entryID, "sourceId": sourceID, "sourceName": sourceName, "title": title, "primaryCode": primaryCode, "workId": id, "directoryType": "catalog", "status": status, "checkedAt": checkedAt})
+		directoryWorkID := id
+		if exactWorkID.Valid {
+			directoryWorkID = exactWorkID.Int64
+		}
+		directories = append(directories, map[string]any{"catalogEntryId": entryID, "sourceId": sourceID, "sourceName": sourceName, "title": title, "primaryCode": primaryCode, "workId": directoryWorkID, "directoryType": "catalog", "status": status, "checkedAt": checkedAt})
 	}
 	if err = rows.Err(); err != nil {
 		writeError(w, err)

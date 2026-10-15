@@ -188,6 +188,8 @@ func (s *Server) getPublicLibraryMigration(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *Server) loadLibraryMigrationStatus(ctx context.Context) (layoutMigrationStatus, error) {
+	s.layoutMigrationMu.Lock()
+	defer s.layoutMigrationMu.Unlock()
 	var status layoutMigrationStatus
 	err := s.db.QueryRowContext(ctx, `SELECT status, phase, progress_current, progress_total, progress_bytes_current, progress_bytes_total FROM library_layout_migration WHERE id = 1`).Scan(
 		&status.Status, &status.Phase, &status.ProgressCurrent, &status.ProgressTotal, &status.ProgressBytesCurrent, &status.ProgressBytesTotal)

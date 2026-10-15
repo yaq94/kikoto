@@ -18,6 +18,7 @@ func (s *Server) streamSourceCatalogMedia(w http.ResponseWriter, r *http.Request
 		return
 	}
 	relative := r.URL.Query().Get("path")
+	id = entry.ID
 	// The supplied path must be an exact previously listed audio file. Display
 	// names and arbitrary URLs never participate in file selection.
 	var kind string

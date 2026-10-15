@@ -21,6 +21,7 @@ var (
 	ErrRestricted  = errors.New("OpenList directory requires access permission")
 	ErrLimit       = errors.New("OpenList directory exceeds the finite scan limit")
 	ErrInvalid     = errors.New("OpenList returned invalid directory data")
+	ErrMaintenance = errors.New("OpenList source is under maintenance")
 )
 
 type Client struct {
@@ -29,12 +30,13 @@ type Client struct {
 	maxResponseBytes int64
 }
 type Object struct {
-	Name     string `json:"name"`
-	Size     int64  `json:"size"`
-	IsDir    bool   `json:"is_dir"`
-	Type     int    `json:"type"`
-	Modified string `json:"modified"`
-	RawURL   string `json:"raw_url"`
+	Name     string          `json:"name"`
+	Size     int64           `json:"size"`
+	IsDir    bool            `json:"is_dir"`
+	Type     int             `json:"type"`
+	Modified string          `json:"modified"`
+	RawURL   string          `json:"raw_url"`
+	HashInfo json.RawMessage `json:"hash_info"`
 }
 type File struct {
 	Path  string
@@ -108,6 +110,9 @@ func (c *Client) request(ctx context.Context, operation string, input, output an
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode == 401 || resp.StatusCode == 403 {
 		return ErrRestricted
+	}
+	if resp.StatusCode == http.StatusServiceUnavailable {
+		return errors.Join(ErrUnavailable, ErrMaintenance)
 	}
 	if resp.StatusCode != http.StatusOK {
 		return ErrUnavailable
