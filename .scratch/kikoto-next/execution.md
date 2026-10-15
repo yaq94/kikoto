@@ -2,12 +2,14 @@
 
 **Status:** ready-for-agent
 **Implementation:** in-progress
-**阶段:** 01–06 已集成并 resolved；07、08 和 OpenList 单来源代理兼容修复已集成并取得本地证据，07/08 仍 verified-local，真实媒体 LIVE 和真实索引覆盖待补。11 已集成 071 迁移及本地 H/R/F，保持 verified-local；09 每日更新已集成并 verified-local；12 系列/单集个人评价已集成并 verified-local；10 在独立分支本地开发。完整发布前置保持有效。
+**阶段:** 01–06 已集成并 resolved；07–13 及 OpenList 单来源代理兼容修复已集成并保持 verified-local。10 来源生命周期、13 共享关联和 18 迁移完成一致性已合入，组合验证见本批证据；15 已由原实施任务提交候选、待独立集成验收，19 前端 CI 修复待合入。真实媒体 LIVE、真实索引覆盖和完整发布前置保持有效。
 **依据:** [正式规格](spec.md) · [工单总览](ticket-proposal.md) · [领域词汇表](../../GLOSSARY.md) · [作品身份与个人记录 ADR](../../docs/adr/0001-work-identity-and-personal-state.md)
 
 ## 当前授权与完成条件
 
 用户已授权全部 17 票的功能实现、必要依赖安装、测试、数据库迁移、部署与回滚。当前执行授权适用于全部工单；工单中的发布说明只描述发布行为，不限制本阶段已经确认的授权。功能要求、各票验收清单、权限、个人记录保护和非视觉测试边界保持有效，未完成需求不得删去或改列范围外。
+
+2026-10-15 续做授权明确覆盖工单补齐、依赖调整、Git 提交与合并、推送现有私有仓库、必要迁移、服务更新与重启、实际部署验收及故障回滚，替代旧“生产部署单独决定”约定。新增 CI18、CI19 必须在 17 前集成；备份恢复、可执行回滚路径、全部实际验收和对应版本的 CI 终态仍为发布要求。
 
 分诊 `Status` 保持 `ready-for-agent`。独立 `Implementation` 字段使用以下值：
 
@@ -24,6 +26,7 @@
 
 - 集成分支：`codex/kikoto-next-integration`。
 - 固定审查基线：`9949175e53979bcd590c75a624bc0efc67684da3`。后续审查始终包含该基线后的全部实施差异，不以最新准备提交缩小范围。
+- 本次续做起点：`f0fd5d77be1072f260fc817245c01d1b6334ea0f`，工作区干净；`main` 仍为固定审查基线，`git diff 9949175e53979bcd590c75a624bc0efc67684da3...HEAD` 非空。10/13/18 合入后的功能代码 SHA 为 `2c2e87c4f454aa3a45e6672980972a2a25d09336`，各合并及组合验收见[本批证据](evidence/10-13-18-integration.md)。
 - 应用起点及兼容要求沿用规格 D-01；准备检查时集成 HEAD 等于上述基线，工作区无已有修改。
 - 主代理实际调用原生 App `create_worktree` 返回 `Not a git repository`。聊天绑定外层工作区，源码为其内的独立仓库，原生工具无法指定该嵌套仓库；已核实源码 Git 根后使用 Git worktree 备用路径，不重复相同失败调用或改变 App 项目。
 - 项目内工作区使用已忽略的 `.worktrees/`。首批目录为 `.worktrees/kikoto-t01`、`.worktrees/kikoto-t04`，分支分别为 `codex/kikoto-next-t01`、`codex/kikoto-next-t04`，从准备提交后的集成 HEAD 创建。
@@ -45,14 +48,16 @@
 | [07 OpenList 有限无码链路](issues/07-openlist-first-playable-slice.md) | 04、06 | verified-local | 本地链路、069 升级与 catalog 翻译通过；正式测试代理下 fs/get 返回挑战页，真实媒体 LIVE 未通过 | [07 证据](evidence/07-openlist.md)、[集成复验](evidence/02-07-integration.md) |
 | [08 完整来源索引与恢复](issues/08-recoverable-full-source-index.md) | 07 | verified-local | 已集成；完整合成树、070 升级/恢复、资源限制、清理与管理进度 H/R/F 通过；真实来源覆盖待补 | [08 证据](evidence/08-source-index.md)、[集成复验](evidence/08-integration.md) |
 | [09 每日更新与扫描复用](issues/09-daily-index-update.md) | 08 | verified-local | 每日调度、同源复用、真实重启及资源 H/R 已集成；发布前置保留 | [09 证据](evidence/09-daily-index.md)、[集成复验](evidence/09-integration.md) |
-| [10 来源生命周期与记录保留](issues/10-source-lifecycle-retention.md) | 08 | in-progress | 基于 09/11/071 集成底座在独立 worktree 实施；迁移号按需要协调 | 待执行 |
+| [10 来源生命周期与记录保留](issues/10-source-lifecycle-retention.md) | 08 | verified-local | 已集成 072、来源状态/改名恢复与个人引用清理保护；07/08 发布前置保留 | [10 证据](evidence/10-source-lifecycle.md)、[集成复验](evidence/10-13-18-integration.md) |
 | [11 系列卡片与单集归组](issues/11-series-and-episode-grouping.md) | 07 | verified-local | 已集成 071、系列/单集发现与手工归组；完整发布前置保留 | [11 证据](evidence/11-series.md)、[集成复验](evidence/11-integration.md) |
 | [12 系列与单集个人评价](issues/12-series-episode-personal-reviews.md) | 11 | verified-local | 已集成；系列与单集独立评价、跨源关系、隔离和重启 H/R/F 通过；无新迁移 | [12 证据](evidence/12-series-reviews.md)、[集成复验](evidence/12-integration.md) |
-| [13 共享关联与本人冲突确认](issues/13-shared-link-conflict-review.md) | 12 | pending | 等待前置验收 | 待执行 |
-| [14 高置信唯一候选关联](issues/14-high-confidence-work-matching.md) | 13 | pending | 等待前置验收 | 待执行 |
-| [15 拆分与本人记录归属](issues/15-split-personal-record-allocation.md) | 13 | pending | 等待前置验收 | 待执行 |
-| [16 个人数据导入导出](issues/16-personal-data-transfer-compatibility.md) | 12 | pending | 等待前置验收 | 待执行 |
-| [17 组合验收与部署回退](issues/17-integrated-acceptance-release-plan.md) | 03、05、09、10、14、15、16 | pending | 完整 AC 验证及部署验收待执行 | 待执行 |
+| [13 共享关联与本人冲突确认](issues/13-shared-link-conflict-review.md) | 12 | verified-local | 原实施任务提交 9844975 已集成；073、本人冲突确认及精确播放版本保留，完整发布前置保留 | [13 证据](evidence/13-shared-association.md)、[集成复验](evidence/10-13-18-integration.md) |
+| [14 高置信唯一候选关联](issues/14-high-confidence-work-matching.md) | 13 | pending | 13 的本地契约已可用于实施，仍须完成本票验收 | 待执行 |
+| [15 拆分与本人记录归属](issues/15-split-personal-record-allocation.md) | 13 | in-progress | 原实施任务已交接 41a3412 候选，分支与 origin 一致且干净；本批只读核对，没有接管、测试或集成 15 | 待独立集成复验 |
+| [16 个人数据导入导出](issues/16-personal-data-transfer-compatibility.md) | 12 | pending | 本地前置已具备，按 13 共享身份公开契约归一本人记录 | 待执行 |
+| [17 组合验收与部署回退](issues/17-integrated-acceptance-release-plan.md) | 03、05、09、10、14、15、16、18、19 | pending | 完整 AC、CI 终态、备份回滚及部署验收待执行 | 待执行 |
+| [18 迁移完成与维护状态一致性](issues/18-ci-migration-completion-state.md) | 无 | verified-local | 已集成 924f807；最终状态、失败及取消恢复已本地验证，Full CI 待执行 | [18 证据](evidence/18-ci-migration.md)、[集成复验](evidence/10-13-18-integration.md) |
+| 19 前端 CI 修复 | 无 | in-progress | 独立 kikoto-ci-frontend 工作区负责骨架同步、收藏用例与移动双击；待合入 | 待独立任务交接 |
 
 ## 开发依赖与发布依赖
 
@@ -76,10 +81,7 @@ catalog 翻译已在集成产物上取得 H/R/F 证据；其剩余缺口是实�
 
 ## 迁移协调
 
-现有最高迁移为 071：11 的 `071_catalog_series.sql` 与 `compat/071_dev.sql` 已集成。
-完整链、新装、070 旧库升级、重复及并发启动、开发基线一致性均通过集成复验；
-001–070 与发布 `baseline/068_v0.8.3.sql` 保持不变。09 复用 070 与 app_setting，没有新迁移。
-12 复用 071，无新迁移。072 已明确分配给 10 的来源生命周期，073 分配给 13；尚未写入集成分支的迁移不计作已验证。
+现有最高迁移为 073：071 系列、072 来源生命周期和 073 共享关联均已集成；开发模式选择最高 `compat/073_dev.sql`。完整链、新装、旧库升级、重复及并发启动、开发基线一致性通过本批集成复验；001–071 与发布 `baseline/068_v0.8.3.sql` 相对续做起点保持不变。09 复用 070 与 app_setting，12 复用 071，18 复用现有布局迁移状态；这些票没有新 schema。15 候选相对 13 无迁移变更，继续复用 073；该候选的功能尚未进入本批集成验证。后续新增迁移须继续按最高编号协调。
 
 ## 验证证据登记
 
@@ -103,6 +105,7 @@ catalog 翻译已在集成产物上取得 H/R/F 证据；其剩余缺口是实�
 | 03/05 集成复验 | 已通过 | [本批证据](evidence/03-05-integration.md)：39 个 H/R 顶层及 2 个 U/race、867 项前端 U、全后端/静态/构建/文档及少量非视觉 F；不新增迁移，不重复实际 Index 调用，07 LIVE 缺口保留。 |
 | 08 本地集成复验 | 已通过 | [本批证据](evidence/08-integration.md)：40 个 H/R、66 个存储、3 个 race 顶层与 3 个非视觉 F，前后端静态/类型/构建/文档检查通过；070 为最高迁移，07/08 仍 verified-local。 |
 | OpenList 单来源代理兼容集成 | 已通过本地复验 | [本批证据](evidence/openlist-proxy-integration.md)：合入 `7d75de59e830312fba90dfad219cf15d751a8ee0`，37 个 H/R 顶层、前端类型/构建及文档检查通过；07/08 的 LIVE/真实覆盖缺口保留。 |
+| 10/13/18 本地集成复验 | 见本批证据 | [本批证据](evidence/10-13-18-integration.md)：固定三个候选顺序合入，072/073、来源生命周期与共享身份、迁移完成一致性组合验证；不代替剩余 LIVE、Full CI、最终审查和部署。 |
 | 生产部署、实际迁移与上线验收 | 待执行 | 同一已验收产物、备份、迁移、重启与功能回读证据。 |
 | 备份恢复与回退 | 待执行 | 恢复演练、适用前提及必要回滚的执行结果。 |
 
