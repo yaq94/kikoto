@@ -9,6 +9,7 @@ import {
   TranslatedText,
 } from "@/components/content-translation/ContentTranslation";
 import { openWorkDetail } from "@/app/workDetailNavigation";
+import { PersonalReviewEditor } from "./PersonalReviewEditor";
 
 export function CatalogSeriesDetail({ id, onBack }: { id: number; onBack: () => void }) {
   const { t } = useTranslation();
@@ -66,6 +67,17 @@ export function CatalogSeriesDetail({ id, onBack }: { id: number; onBack: () => 
               </li>
             ))}
           </ol>
+          <PersonalReviewEditor
+            key={`${id}:${auth.user?.id}`}
+            title={t("catalogSeries.seriesReview")}
+            value={series}
+            needsRegistration={series.workId === null}
+            onSave={async (patch) => {
+              const result = await api.updateCatalogSeriesReview(id, patch);
+              setSeries((current) => (current?.seriesId === id ? { ...current, workId: result.workId } : current));
+              return result;
+            }}
+          />
         </ContentTranslationScope>
       )}
       {!series && !error && <p role="status">{t("app.loadingPage")}</p>}

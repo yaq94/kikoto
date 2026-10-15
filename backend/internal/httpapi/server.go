@@ -355,6 +355,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/file-sources/detect", s.detectFileSource)
 	handleSlowFirstResponse("POST /api/remote-sources/{id}/catalog/scan", s.scanOpenListCatalog)
 	mux.HandleFunc("GET /api/catalog-series/{id}", s.getCatalogSeries)
+	mux.HandleFunc("PATCH /api/catalog-series/{id}/user-state", s.updateCatalogSeriesReview)
 	mux.HandleFunc("POST /api/catalog-series/previews", s.createCatalogGroupingPreview)
 	mux.HandleFunc("GET /api/catalog-series/previews/{id}", s.catalogGroupingPreview)
 	mux.HandleFunc("POST /api/catalog-series/previews/{id}/confirm", s.catalogGroupingPreview)

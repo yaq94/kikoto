@@ -2,6 +2,8 @@ import { surfaceEnglish } from "./en";
 
 export const surfaceJapanese = {
   catalogSeries: {
+    seriesReview: "シリーズの個人評価",
+    episodeReview: "エピソードの個人評価：{{title}}",
     series: "シリーズ",
     episodes: "各エピソード",
     openEpisode: "エピソードを開く",

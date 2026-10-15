@@ -31,10 +31,12 @@ type catalogSeriesEpisode struct {
 }
 
 type catalogSeriesView struct {
-	ID       int64                  `json:"seriesId"`
-	Title    string                 `json:"title"`
-	WorkID   *int64                 `json:"workId"`
-	Episodes []catalogSeriesEpisode `json:"episodes"`
+	PersonalRating *int64                 `json:"personalRating"`
+	PersonalNote   string                 `json:"personalNote"`
+	ID             int64                  `json:"seriesId"`
+	Title          string                 `json:"title"`
+	WorkID         *int64                 `json:"workId"`
+	Episodes       []catalogSeriesEpisode `json:"episodes"`
 }
 
 type catalogGroupingInput struct {
@@ -61,7 +63,8 @@ func (s *Server) getCatalogSeries(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	view := catalogSeriesView{ID: id, Episodes: []catalogSeriesEpisode{}}
-	if err = s.db.QueryRowContext(r.Context(), `SELECT title,work_id FROM catalog_series WHERE id=?`, id).Scan(&view.Title, &view.WorkID); err != nil {
+	if err = s.db.QueryRowContext(r.Context(), `SELECT s.title,s.work_id,u.rating,COALESCE(u.note,'') FROM catalog_series s
+	LEFT JOIN user_work_state u ON u.work_id=s.work_id AND u.user_id=? WHERE s.id=?`, optionalUserID(r.Context()), id).Scan(&view.Title, &view.WorkID, &view.PersonalRating, &view.PersonalNote); err != nil {
 		writeCatalogGroupingError(w, err)
 		return
 	}

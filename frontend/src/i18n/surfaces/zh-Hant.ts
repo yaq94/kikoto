@@ -2,6 +2,8 @@ import { surfaceEnglish } from "./en";
 
 export const surfaceHant = {
   catalogSeries: {
+    seriesReview: "系列評價",
+    episodeReview: "單集評價：{{title}}",
     series: "音聲系列",
     episodes: "單集",
     openEpisode: "開啟單集",
