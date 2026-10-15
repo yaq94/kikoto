@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 
 	"github.com/yexca/kikoto/backend/internal/openlist"
@@ -112,6 +113,10 @@ func (s *Server) startSourceCatalogIndex(w http.ResponseWriter, r *http.Request)
 	decoder.DisallowUnknownFields()
 	if err = decoder.Decode(&options); err != nil {
 		writeAPIError(w, 400, "invalid_request", "invalid catalog scan options", false)
+		return
+	}
+	if err = decoder.Decode(new(any)); !errors.Is(err, io.EOF) {
+		writeAPIError(w, 400, "invalid_request", "request must contain one options object", false)
 		return
 	}
 	if err = options.validate(); err != nil {

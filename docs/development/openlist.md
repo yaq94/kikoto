@@ -8,12 +8,13 @@ directories, 8 levels, 2,000 entries, and 100 pages per root. Only a completely
 read root containing audio becomes a catalog entry. Archives and subtitles
 alone are excluded. Password-protected directories are never unlocked.
 
-In Settings, add a remote source, select OpenList, enter its site base URL and
-one absolute work-directory path per line, then save. Open that source in
-Library and choose **Scan configured directories**. Search uses the stored
-titles and product codes. Open a card to browse format folders and play a track;
-saving its personal review registers only the necessary work information.
-Directories must be chosen explicitly; the site root is not a valid work root.
+In Settings, add a remote source, select OpenList, and enter its site base URL.
+Finite work-directory paths are optional. Open the source in Library and choose
+**Index all anonymous audio** for the full source, or **Scan configured
+directories** for selected work roots. Search uses stored titles and product
+codes. Open a card to browse format folders and play a track; saving its personal
+review registers only the necessary work information. The site root is not a
+finite work root.
 
 `POST /api/remote-sources/{id}/catalog/scan` requires `sources:write` and scans
 only the configured roots. It returns per-root outcomes; partial, inaccessible,
@@ -38,6 +39,13 @@ reports a whole-source percentage with an unknown denominator. An empty answer
 remains unconfirmed; permission failures and unfinished ranges prevent complete
 coverage. The existing workflow cancel and retry endpoints stop or resume the
 same scan without discarding its published catalog or private reviews.
+
+The Library source panel shows index status, counts, timestamps, partition
+coverage and unresolved directories. **Index limits** configures the next start
+or resume; active settings are read-only. **Cancel**, **Resume index** and
+**Refresh progress** operate on persisted state. Reloading the page returns to
+the same run. Polling is limited to active scans and requests are cancelled when
+the panel unmounts; newly published cards refresh the source results.
 
 Scan options are saved with the source's checkpoint and reused by an empty
 start request. An active run keeps its options until it is stopped and resumed.

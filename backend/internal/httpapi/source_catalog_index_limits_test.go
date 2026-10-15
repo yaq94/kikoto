@@ -41,14 +41,17 @@ func TestSourceCatalogIndexLowDiskPausesBeforePublishingAndResumes(t *testing.T)
 		}
 		return diskSpaceSnapshot{Available: 4 << 30}, nil
 	}
+	metadataReviewExec(t, f.server.db, `INSERT INTO source_catalog_entry(id,file_source_id,root_path,title) VALUES(91,1,'/Retained','Example retained card')`)
+	reviewRequest(t, f.handler, f.cookie, http.MethodPatch, "/api/source-catalog/91/user-state", `{"rating":0,"note":"Example retained note"}`, 200)
 	f.request(t, http.MethodPost, "/catalog/index", `{"intervalMs":100}`, 202)
 	p := f.drain(t)
 	if p["status"] != "paused" || p["pauseReason"] != "low_disk_space" || p["indexedEntries"] != float64(0) || p["observedEntries"] != float64(1) {
 		t.Fatalf("low space admitted new publication: %#v", p)
 	}
-	if list := f.request(t, http.MethodGet, "/works", "", 200); list["total"] != float64(0) {
+	if list := f.request(t, http.MethodGet, "/works", "", 200); list["total"] != float64(1) {
 		t.Fatal("low space created new catalog entries")
 	}
+	assertReview(t, reviewRequest(t, f.handler, f.cookie, http.MethodGet, "/api/source-catalog/91", "", 200), float64(0), "Example retained note")
 	f.server.catalogDiskSpace = func(string) (diskSpaceSnapshot, error) { return diskSpaceSnapshot{Available: 4 << 30}, nil }
 	f.request(t, http.MethodPost, "/catalog/index", `{}`, 202)
 	p = f.drain(t)

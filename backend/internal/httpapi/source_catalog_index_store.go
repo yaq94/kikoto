@@ -168,9 +168,7 @@ func completeCatalogDirectoryTx(ctx context.Context, tx *sql.Tx, sourceID, gener
 	if err != nil {
 		return err
 	}
-	if d.Root == "" && (catalogDirectoryCode(d.Path) != "" || audio > 0 || (d.Path != "/" && formats > 0 && otherDirs == 0)) {
-		d.Root = d.Path
-	}
+	d.Root = catalogAdmissionRoot(d.Path, d.Root, catalogDirectorySummary{audio, formats, otherDirs})
 	return nil
 }
 
@@ -233,23 +231,6 @@ func (s *Server) expandCatalogDirectory(ctx context.Context, job workflowJobReco
 		return false, err
 	}
 	return true, tx.Commit()
-}
-
-func catalogFormatDirectory(name string) bool {
-	switch strings.ToLower(strings.TrimSpace(name)) {
-	case "mp3", "flac", "wav", "ogg", "opus", "m4a", "aac", "aiff":
-		return true
-	}
-	return false
-}
-
-func catalogDirectoryCode(root string) string {
-	for _, word := range strings.FieldsFunc(path.Base(root), func(r rune) bool { return r == '[' || r == ']' || r == ' ' || r == '【' || r == '】' }) {
-		if code := normalizeWorkCode(word); code != "" {
-			return code
-		}
-	}
-	return normalizeWorkCode(path.Base(root))
 }
 
 // Publish a bounded number of validated observations. The first playable
