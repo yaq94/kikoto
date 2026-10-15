@@ -142,6 +142,11 @@ func (s *Server) runLibraryMigration(ctx context.Context, plan layoutMigrationPl
 	if err := s.waitForLibraryMigrationScan(ctx); err != nil {
 		return err
 	}
+	// Publish completion and release maintenance under the same lock used by
+	// status readers. The scan must finish before taking this lock because
+	// its worker also needs it to claim the queued job.
+	s.layoutMigrationMu.Lock()
+	defer s.layoutMigrationMu.Unlock()
 	if _, err := s.db.ExecContext(ctx, `UPDATE library_layout_migration SET status = 'completed', phase = 'completed', error_message = '', updated_at = CURRENT_TIMESTAMP WHERE id = 1`); err != nil {
 		return err
 	}
