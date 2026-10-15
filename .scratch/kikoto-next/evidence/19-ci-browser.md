@@ -38,3 +38,24 @@
 - 拆分的 8 个 desktop 用例，2 workers、repeat-each 3、retries 0：24 passed / 42.7 s，退出 0；单项 2.1–4.2 s。
 - `make -o frontend-install frontend-lint sensitive-check`：lint、E2E 类型与隐私扫描通过，退出 0；目标文件按仓库行尾规则格式化。
 - 一次前序批次因本地 Vite 服务意外中断全部在 `page.goto` 报连接拒绝；FastCtx 记录 interrupted、无退出记录。重启该工作树自身服务后重新执行，未把此环境失败计为产品红例。
+
+## 3. 移动封面触摸
+
+历史证据边界：按原 SHA 查得 3 个 workflow run，只有一个 Full、attempt 1；E2E 1/4 和 2/4 为 success，3/4 和 4/4 为 failure。仅有 3/4、4/4 浏览器工件，目录中没有移动封面失败 trace。本次诊断不冒充那次 CI 的失败记录。
+
+原逻辑在正常环境 2 workers × 8 及 4 workers × 6 共 28 条通过。采用临时 Chromium 6 倍 CPU slowdown 后，同样的两条测试 × 3 出现 1 failed / 5 passed：失败的两个 click 均为 trusted touch、坐标 `[206, 304]`，事件时间戳相隔 476.3 ms、处理时相隔 508.8 ms、detail 为 `[1, 1]`，URL 保持 `/` 且 full player 仍打开。测试中 100 ms 等待不包含 locator 的自动等待与调度开销，实际未生成产品既有 360 ms 窗口内的双击。
+
+实现：保留 FullPlayer。测试先完成封面的可见、启用与稳定滚动等待，再在同一坐标连续执行两次 `page.touchscreen.tap`。记录并断言两次真实 trusted touch、时间与位置满足既有阈值；保留原收起、目标 URL、目录内容、来源 Circles 恢复，并验证 history 恰好增加一次。独立单击测试确认 URL、history 和 full player 保持。没有提高超时或新增 retry。
+
+验证：
+
+- 相同慢 CPU 条件的 6 次双击均通过，click 间隔 57.0–132.0 ms；连同 3 次正常单击为 9 passed / 27.9 s。
+- 单击单独在慢 CPU 下重复 3 次：3 passed / 6.7 s。
+- 移除临时 CPU slowdown 后，3 个触摸用例 × 3：9 passed / 13.5 s，退出 0。
+- 中间曾用 `tap({ trial: true })` 等待稳定；浏览器 tap 计数受该动作影响，6 条双击只观察到一个 click 就导航，因此该尝试已移除，最终使用不发送输入的等待方式。
+- `make -o frontend-install frontend-format frontend-lint frontend-build` 全部通过，退出 0；现有 playingWorkNavigation 与 queueDrag 单测为 2 files / 8 passed。
+- 三文件完整回归：65 passed / 4 failed。4 个额外失败均在原 work-detail 错误状态断言，不属于上述触摸、骨架或收藏用例；另项诊断处理。
+
+## 4. 集成后的旧 fixture 契约
+
+完整回归暴露 `catalog-directories` API 被旧 `mockApplication` 返回 404 `Not mocked`，多出一个目录错误区。原 database contention 用例因此命中两个错误区，三个 pending edition 用例原本应无错误却命中一个。临时还原到本票前的同步 `onMediaRequest` 后，4 条仍全部失败（退出 2），证明不由本票 await 引起。所有原错误数量与状态断言保留，修复待完成。
