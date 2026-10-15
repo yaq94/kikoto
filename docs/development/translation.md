@@ -54,15 +54,30 @@ reading cache or generating. Changed text returns 409; missing content returns
 404; unavailable remote sources return 503. Remote enabled state is checked on
 every request, including cache hits. Private fields and arbitrary text are
 rejected. Existing target-language titles, descriptions and system-tag names
-take precedence over generation. Existing Traditional Chinese fields are usable;
-missing Traditional fields return a failed result without model generation.
+take precedence over generation. Missing Traditional Chinese fields use the
+matching authored Simplified field, or obtain its generated Simplified translation
+through the shared queue and cache. OpenCC `s2t` converts that text locally before
+protected names are restored; selecting either script never sends a Traditional
+target to the model. Authored Traditional fields retain precedence.
 
 Responses contain `text`, `original`, `language`, `status` (`original`, `existing`,
 `translated`, `failed`), optional error `code`, and optional `cacheStatus`.
 `origin` resolves original text without calling the model. Circle and voice actor
 names are replaced with placeholders before generation; missing, duplicated or
 modified placeholders reject the output. Personal notes and personal tags have
-no automatic translation path.
+no automatic translation path. Conversion failures return the verified original,
+`status=failed` and `translation_conversion_failed`; the same original/retry
+controls remain available. Conversion accepts at most 256 KiB of valid UTF-8 text.
+
+The pure Go dependency `github.com/longbridgeapp/opencc` is pinned to `v0.3.13`.
+It embeds the upstream OpenCC dictionaries and requires no C runtime, dictionary
+installation or outbound request. The `s2t` converter initializes once per process
+on first use; subsequent conversions read the shared immutable dictionaries.
+Only the Simplified model output enters the disk cache. Traditional text is
+computed for each response, so a dictionary upgrade cannot reuse a stale
+Traditional derivative or overwrite Simplified text. Frontend state keys retain
+the selected display language. Cache budgets and model/template invalidation
+apply to the shared Simplified entry.
 
 `ContentLanguageProvider` reads the account's display preference independently
 of UI locale. `ContentTranslationScope` supplies the resource and shared
@@ -188,6 +203,10 @@ routes, real sessions and migrated disposable SQLite, replacing only the externa
 model. `POST /__fixture/stop` closes it and removes its owned temporary directory.
 The three tests disable screenshots, traces and video, and verify text,
 preferences, cancellation, pagination, original/retry controls and dynamic files.
+`traditional-translation.spec.ts` uses the same fixture for two additional
+nonvisual script-switching, name-preservation and failure/retry scenarios. Override
+`CONTENT_TRANSLATION_FIXTURE_ADDR`, `PLAYWRIGHT_BASE_URL` and
+`KIKOTO_CONTENT_TRANSLATION_URL` together when choosing dedicated test ports.
 
 `TestTranslationLiveConfiguredService` is skipped by normal tests. For a finite
 dedicated HTTPS sample, inject `KIKOTO_TRANSLATION_LIVE_CONFIG` as process-only
@@ -195,3 +214,8 @@ JSON containing `baseUrl`, `apiKey` and `model`. Do not put those values in
 arguments, source, logs or tracked files. The test saves them through the real
 API into a disposable private test database and issues one short Japanese to
 Simplified Chinese request; cleanup closes and removes the test database.
+`TestContentTranslationTraditionalLiveConfiguredService` uses the same opt-in
+configuration for two neutral Japanese/Chinese public titles. It requests
+Traditional, Simplified and Traditional again through authenticated content routes,
+checks one stored generation and two cache hits per title, and logs only the
+synthetic text, configured model and timing. It is skipped in ordinary tests.

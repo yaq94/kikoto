@@ -41,6 +41,7 @@ export const translationAdmin = {
   result: "번역 결과",
   resultMetadata: "{{model}} · {{milliseconds}}밀리초",
   errors: {
+    translation_conversion_failed: "번체 변환에 실패했습니다. 원문을 읽고 다시 시도할 수 있습니다.",
     translation_invalid_config: "URL, 모델, 키와 제한 시간(1–60초)을 확인하세요.",
     translation_invalid_input: "짧은 글(최대 8 KiB)과 지원되는 대상 언어를 입력하세요.",
     translation_not_configured: "먼저 번역 서비스를 설정하세요.",

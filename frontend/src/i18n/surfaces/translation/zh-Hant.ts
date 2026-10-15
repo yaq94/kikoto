@@ -41,6 +41,7 @@ export const translationAdmin = {
   result: "翻譯結果",
   resultMetadata: "{{model}} · {{milliseconds}} 毫秒",
   errors: {
+    translation_conversion_failed: "繁體轉換失敗，仍可閱讀原文並重試。",
     translation_invalid_config: "請檢查位址、模型、金鑰和逾時（1–60 秒）。",
     translation_invalid_input: "請輸入短文字（最多 8 KiB），並選擇支援的目標語言。",
     translation_not_configured: "請先設定翻譯服務。",
