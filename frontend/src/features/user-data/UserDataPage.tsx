@@ -13,7 +13,12 @@ import { announceUserTagsChanged } from "@/lib/userTagEvents";
 
 import { KikoeruAccountPanel, KikoeruDatabasePanel } from "./KikoeruImportPanels";
 import { saveUserDataExport } from "./userDataExportFile";
-import { userDataApi, type KikoeruImportResponse, type UserDataConflictPolicy } from "./userDataApi";
+import {
+  userDataApi,
+  type KikoeruImportResponse,
+  type UserDataConflictPolicy,
+  type UserDataImportIssue,
+} from "./userDataApi";
 import {
   canImport,
   classifyUserDataRequestError,
@@ -344,7 +349,10 @@ function ImportPreviewPanel({ state, onRetry }: { state: UserDataImportState; on
         className="flex items-start gap-2 bg-success-surface px-4 py-3 text-sm text-success-foreground"
       >
         <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
-        <span>{t("personal.userData.imported", state.result)}</span>
+        <div>
+          <p>{t("personal.userData.imported", state.result)}</p>
+          <ImportIssues issues={state.result.issues} />
+        </div>
       </div>
     );
   }
@@ -395,6 +403,7 @@ function ImportPreviewPanel({ state, onRetry }: { state: UserDataImportState; on
   const counts = [
     ["works", result.works],
     ["matchedWorks", result.matchedWorks],
+    ["newWorks", result.newWorks ?? 0],
     ["playlists", result.playlists],
     ["tags", result.tags],
     ["conflicts", result.conflicts],
@@ -429,6 +438,35 @@ function ImportPreviewPanel({ state, onRetry }: { state: UserDataImportState; on
       {result.unmatchedProgress > 0 && (
         <p className="text-xs text-muted-foreground">{t("personal.userData.unmatchedProgressHint")}</p>
       )}
+      <ImportIssues issues={result.issues} />
     </section>
+  );
+}
+
+function ImportIssues({ issues }: { issues?: UserDataImportIssue[] }) {
+  const { t } = useTranslation();
+  if (!issues?.length) return null;
+  return (
+    <details className="mt-3 text-sm">
+      <summary>{t("personal.userData.transferIssues", { count: issues.length })}</summary>
+      <ul className="app-scrollbar mt-2 max-h-64 space-y-3 overflow-y-auto">
+        {issues.map((issue, index) => (
+          <li key={`${issue.ref}-${issue.reason}-${index}`}>
+            <p className="break-words font-medium">{issue.title ?? issue.ref}</p>
+            <p>{t(`personal.userData.transferReasons.${issue.reason}`)}</p>
+            {issue.existing && (
+              <p className="whitespace-pre-wrap">
+                {t("personal.userData.existingReview")}: {issue.existing.rating ?? "—"} · {issue.existing.note}
+              </p>
+            )}
+            {issue.incoming && (
+              <p className="whitespace-pre-wrap">
+                {t("personal.userData.incomingReview")}: {issue.incoming.rating ?? "—"} · {issue.incoming.note}
+              </p>
+            )}
+          </li>
+        ))}
+      </ul>
+    </details>
   );
 }

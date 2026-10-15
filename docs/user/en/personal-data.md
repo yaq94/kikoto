@@ -95,29 +95,42 @@ delayed reports from before the clear.
 
 ## Export and import
 
-Version 1 Kikoto personal JSON contains per-work listening marks, personal
-ratings/notes, resume information, lifetime listening totals, work tag
-assignments, custom tag definitions, and ordered favorite playlists with their
-icons. System
-Marked membership is derived from marks. Circle/voice tag definitions are
-included; their entity assignments and other state are outside this format.
+Version 2 Kikoto personal JSON contains numbered and numberless works, series
+and episodes, their stable opaque references and original titles, and your
+ratings/notes, listening marks, resume information, lifetime listening totals,
+work tags, custom tag definitions, and ordered favorite lists with icons.
+System Marked membership is derived from marks. Circle/voice tag definitions
+are included; their entity assignments and other state are outside this format.
 
 Media, source settings, endpoints, credentials, provider metadata, raw sessions,
-and daily statistics are excluded. Track titles and track/disc numbers identify
-resume targets; local paths and source-local ids are not exported.
+and daily statistics are excluded. Opaque source references contain no local
+path, source-local id or signed link.
 
-Choose a source (a JSON file, a Kikoeru account, or a Kikoeru database), then
-Preview before Import. Keep existing skips
-works with personal state and preserves existing playlists. Overwrite replaces
-marks, notes, work tags, matching progress and same-name playlists from the file.
-Listening totals merge by maximum so repeated imports cannot double count or
-reduce measured listening.
+Choose a file, Kikoeru account or Kikoeru database and inspect Preview before
+Import. Keep existing preserves existing personal records and same-name lists.
+Overwrite explicitly replaces supplied personal fields and lists. Listening
+totals merge by maximum. Conflicting incoming reviews for one shared identity
+are skipped together even with Overwrite; the details show your current and
+incoming reviews so you can reconcile the file. Contradictory identities and
+unregistered known sources are reported separately, while safe records import.
 
-Only existing works and unambiguous known aliases match by primary code.
-Missing codes are listed; import never fetches metadata or creates works.
-Missing or ambiguous tracks leave existing progress intact. Import commits
-atomically. Limits: 10 MiB, 20,000 works, 5,000 tag definitions, 1,000 playlists
-and 50,000 playlist items or work tag assignments.
+Version 2 can restore missing objects from the file's necessary information
+with registration permission. It never downloads media or changes existing
+shared relationships. Episodes remain independently evaluable; series membership
+and shared associations must be confirmed through the shared editing workflow.
+Unknown source references remain portable without creating source connections.
+Repeated imports reuse references. Version 1 and Kikoeru formats match existing
+product codes and unambiguous aliases; missing codes are listed and skipped.
+
+Resume targets require an exact work/edition and an unambiguous track title
+with track/disc numbers. Missing or ambiguous tracks preserve existing playback
+progress. Version 2 retains unmatched incoming resume information for later
+export; it does not invent media or translate positions between editions.
+Lists with unresolved version 2 references remain unchanged.
+
+Import commits atomically and only handles the signed-in account. Limits are
+10 MiB, 20,000 works, 5,000 tag definitions, 1,000 lists, 50,000 list items or
+work-tag assignments, and 100 additional opaque references per work.
 
 ## Kikoeru
 

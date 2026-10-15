@@ -281,7 +281,7 @@ export const personalJapanese = {
       exportFailed: "エクスポートを準備できませんでした。",
       importTitle: "インポート",
       importDescription:
-        "作品はライブラリの既存作品と既知の別名に作品コードで照合されます。インポートでメタデータを取得したり、ライブラリにない作品を追加したりすることはありません。",
+        "Kikoto バックアップは安定した参照で番号付き作品、番号なし作品、シリーズ、各話を復元します。不足する項目の復元には登録権限が必要で、情報だけを追加します。旧形式は既存の作品コードと別名で照合します。",
       source: "取り込み元",
       sources: {
         kikoto: "Kikoto エクスポートファイル",
@@ -418,7 +418,22 @@ export const personalJapanese = {
       preview: "プレビュー",
       previewing: "ファイルを確認中...",
       previewStale: "ファイル、形式、競合時の扱いを変更するとプレビューが更新されます。",
+      transferIssues: "インポートの詳細（{{count}}）",
+      existingReview: "自分の現在の評価",
+      incomingReview: "取り込む評価",
+      transferReasons: {
+        existing_record: "上書きを選ぶまで現在の個人記録を保持します。",
+        incoming_review_conflict:
+          "同じ共有作品への入力評価が一致しません。このグループをスキップします。ファイルを修正してください。",
+        identity_conflict: "識別情報が矛盾するため、この項目をスキップします。",
+        unregistered_source: "既知のソースが未登録です。登録してから取り込んでください。",
+        source_reference_retained: "転送用のソース参照を保持します。ソース接続は作成しません。",
+        relationships_not_imported:
+          "各話を独立した項目として復元します。シリーズ所属と共有関連は資料編集で確認してください。",
+        playlist_preserved: "リストに未解決の参照があるため、リスト全体を保持します。",
+      },
       previewCounts: {
+        newWorks: "登録する項目",
         works: "ファイル内の作品",
         matchedWorks: "ライブラリと一致",
         playlists: "リスト",
