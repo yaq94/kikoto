@@ -9,11 +9,12 @@ import (
 type Store struct{ DB *sql.DB }
 
 var (
-	ErrInvalid        = errors.New("invalid personal data")
-	ErrNotFound       = errors.New("personal record not found")
-	ErrConflict       = errors.New("personal record already exists")
-	ErrLimit          = errors.New("personal data limit exceeded")
-	ErrHistoryCleared = errors.New("listening history was cleared")
+	ErrInvalid                = errors.New("invalid personal data")
+	ErrNotFound               = errors.New("personal record not found")
+	ErrConflict               = errors.New("personal record already exists")
+	ErrLimit                  = errors.New("personal data limit exceeded")
+	ErrHistoryCleared         = errors.New("listening history was cleared")
+	ErrRegistrationPermission = errors.New("metadata registration permission required")
 )
 
 func pageBounds(page, size int) (int, int) {

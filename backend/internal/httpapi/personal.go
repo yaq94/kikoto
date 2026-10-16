@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"slices"
 	"time"
 
 	"github.com/yexca/kikoto/backend/internal/metadatatags"
@@ -13,6 +14,8 @@ import (
 
 func writePersonalError(w http.ResponseWriter, err error) {
 	switch {
+	case errors.Is(err, personal.ErrRegistrationPermission):
+		writeAPIError(w, http.StatusForbidden, "permission_denied", "Metadata registration permission is required to restore missing works.", false)
 	case errors.Is(err, personal.ErrHistoryCleared):
 		writeAPIError(w, http.StatusConflict, "listening_history_cleared", "Listening history was cleared. Start a new listening session.", false)
 	case errors.Is(err, personal.ErrInvalid):
@@ -328,6 +331,7 @@ func (s *Server) importPersonalData(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	store := personal.Store{DB: s.db}
+	w.Header().Set("Cache-Control", "no-store")
 	if r.URL.Path == "/api/user-data/import/preview" {
 		preview, err := store.PreviewImport(r.Context(), user.ID, b)
 		if err != nil {
@@ -337,7 +341,7 @@ func (s *Server) importPersonalData(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, preview)
 		return
 	}
-	result, err := store.Import(r.Context(), user.ID, b, payload.Conflict == "overwrite")
+	result, err := store.ImportWithRegistration(r.Context(), user.ID, b, payload.Conflict == "overwrite", slices.Contains(user.Permissions, "remote:track") || slices.Contains(user.Permissions, "system:admin"))
 	if err != nil {
 		writePersonalError(w, err)
 		return

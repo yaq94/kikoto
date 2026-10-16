@@ -2,6 +2,7 @@ package personal
 
 import (
 	"bytes"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"strings"
@@ -27,6 +28,7 @@ type Backup struct {
 
 type BackupWork struct {
 	PrimaryCode     string            `json:"primaryCode"`
+	Identity        *BackupIdentity   `json:"identity,omitempty"`
 	ListeningStatus string            `json:"listeningStatus"`
 	Rating          *int              `json:"rating"`
 	Note            string            `json:"note"`
@@ -35,15 +37,39 @@ type BackupWork struct {
 	Statistics      *BackupStatistics `json:"statistics,omitempty"`
 }
 
+// Ref names an exact retained object. References are opaque portable aliases,
+// never source addresses, translated titles or permission to change relations.
+type BackupIdentity struct {
+	Ref        string   `json:"ref"`
+	Kind       string   `json:"kind"`
+	Title      string   `json:"title"`
+	References []string `json:"references,omitempty"`
+}
+
+func (w BackupWork) key() string {
+	if w.Identity != nil {
+		return w.Identity.Ref
+	}
+	return w.PrimaryCode
+}
+
+func (w BackupWork) label() string {
+	if w.Identity != nil {
+		return w.Identity.Title
+	}
+	return w.PrimaryCode
+}
+
 type BackupProgress struct {
-	MediaWorkCode   string   `json:"mediaWorkCode"`
-	MediaTitle      string   `json:"mediaTitle"`
-	TrackNumber     *int     `json:"trackNumber"`
-	DiscNumber      *int     `json:"discNumber"`
-	PositionSeconds float64  `json:"positionSeconds"`
-	DurationSeconds *float64 `json:"durationSeconds"`
-	Completed       bool     `json:"completed"`
-	LastPlayedAt    string   `json:"lastPlayedAt"`
+	MediaWorkCode   string          `json:"mediaWorkCode"`
+	MediaIdentity   *BackupIdentity `json:"mediaIdentity,omitempty"`
+	MediaTitle      string          `json:"mediaTitle"`
+	TrackNumber     *int            `json:"trackNumber"`
+	DiscNumber      *int            `json:"discNumber"`
+	PositionSeconds float64         `json:"positionSeconds"`
+	DurationSeconds *float64        `json:"durationSeconds"`
+	Completed       bool            `json:"completed"`
+	LastPlayedAt    string          `json:"lastPlayedAt"`
 }
 
 type BackupStatistics struct {
@@ -68,8 +94,16 @@ type BackupPlaylist struct {
 
 type BackupPlaylistItem struct {
 	PrimaryCode string `json:"primaryCode"`
+	WorkRef     string `json:"workRef,omitempty"`
 	Note        string `json:"note"`
 	SortOrder   int64  `json:"sortOrder"`
+}
+
+func (i BackupPlaylistItem) key() string {
+	if i.WorkRef != "" {
+		return i.WorkRef
+	}
+	return i.PrimaryCode
 }
 
 type ImportRequest struct {
@@ -105,7 +139,7 @@ func ParseImport(request ImportRequest) (Backup, error) {
 		if err := DecodeJSON(request.Data, &backup, true); err != nil {
 			return backup, err
 		}
-		if backup.Format != "kikoto-user-data" || backup.Version != 1 {
+		if backup.Format != "kikoto-user-data" || (backup.Version != 1 && backup.Version != 2) {
 			return backup, ErrInvalid
 		}
 	case "kikoeru":
@@ -163,6 +197,8 @@ func validateBackup(b *Backup) error {
 		return ErrLimit
 	}
 	seen := map[string]bool{}
+	references := map[string]bool{}
+	numbered := map[string]bool{}
 	items := 0
 	assignments := 0
 	for i := range b.Works {
@@ -171,11 +207,33 @@ func validateBackup(b *Backup) error {
 		if assignments > maxTransferItems {
 			return ErrLimit
 		}
-		code, err := normalizeCode(w.PrimaryCode)
-		if err != nil || seen[code] {
+		var err error
+		if b.Version == 2 {
+			if !validBackupIdentity(w.Identity) {
+				return ErrInvalid
+			}
+			for _, ref := range append([]string{w.Identity.Ref}, w.Identity.References...) {
+				if references[ref] {
+					return ErrInvalid
+				}
+				references[ref] = true
+			}
+		} else if w.Identity != nil {
 			return ErrInvalid
 		}
-		seen[code], w.PrimaryCode = true, code
+		if w.PrimaryCode != "" || b.Version != 2 {
+			w.PrimaryCode, err = normalizeCode(w.PrimaryCode)
+		}
+		if err != nil || seen[w.key()] {
+			return ErrInvalid
+		}
+		seen[w.key()] = true
+		if w.PrimaryCode != "" {
+			if numbered[w.PrimaryCode] {
+				return ErrInvalid
+			}
+			numbered[w.PrimaryCode] = true
+		}
 		if !validStatus(w.ListeningStatus) || len(w.Tags) > maxTransferTags || (w.Rating != nil && (*w.Rating < 0 || *w.Rating > 5)) {
 			return ErrInvalid
 		}
@@ -188,7 +246,16 @@ func validateBackup(b *Backup) error {
 			tagSeen[tagNameKey(name)], w.Tags[j] = true, name
 		}
 		if p := w.Progress; p != nil {
-			p.MediaWorkCode, err = normalizeCode(p.MediaWorkCode)
+			if b.Version == 2 {
+				if !validBackupIdentity(p.MediaIdentity) {
+					return ErrInvalid
+				}
+			} else if p.MediaIdentity != nil {
+				return ErrInvalid
+			}
+			if p.MediaWorkCode != "" || b.Version != 2 {
+				p.MediaWorkCode, err = normalizeCode(p.MediaWorkCode)
+			}
 			if err != nil || !validNumber(p.PositionSeconds) || p.PositionSeconds > 31536000 || (p.DurationSeconds != nil && (!validNumber(*p.DurationSeconds) || *p.DurationSeconds > 31536000 || p.PositionSeconds > *p.DurationSeconds)) {
 				return ErrInvalid
 			}
@@ -207,6 +274,7 @@ func validateBackup(b *Backup) error {
 			}
 		}
 	}
+	workRefs := seen
 	seen = map[string]bool{}
 	for i := range b.Tags {
 		tag := &b.Tags[i]
@@ -240,12 +308,44 @@ func validateBackup(b *Backup) error {
 		codes := map[string]bool{}
 		for j := range list.Items {
 			item := &list.Items[j]
-			code, err := normalizeCode(item.PrimaryCode)
-			if err != nil || codes[code] {
+			var err error
+			if b.Version == 2 {
+				if !workRefs[item.WorkRef] {
+					return ErrInvalid
+				}
+			} else if item.WorkRef != "" {
 				return ErrInvalid
 			}
-			codes[code], item.PrimaryCode = true, code
+			if item.PrimaryCode != "" || b.Version != 2 {
+				item.PrimaryCode, err = normalizeCode(item.PrimaryCode)
+			}
+			if err != nil || codes[item.key()] {
+				return ErrInvalid
+			}
+			codes[item.key()] = true
 		}
 	}
 	return nil
+}
+
+func validTransferRef(ref string) bool {
+	if len(ref) != 34 || (ref[:2] != "w:" && ref[:2] != "c:" && ref[:2] != "s:") {
+		return false
+	}
+	_, err := hex.DecodeString(ref[2:])
+	return err == nil && strings.ToLower(ref) == ref
+}
+
+func validBackupIdentity(i *BackupIdentity) bool {
+	if i == nil || !validTransferRef(i.Ref) || (i.Kind != "work" && i.Kind != "episode" && i.Kind != "series") || strings.TrimSpace(i.Title) == "" || len(i.References) > 100 {
+		return false
+	}
+	seen := map[string]bool{i.Ref: true}
+	for _, ref := range i.References {
+		if !validTransferRef(ref) || seen[ref] {
+			return false
+		}
+		seen[ref] = true
+	}
+	return true
 }

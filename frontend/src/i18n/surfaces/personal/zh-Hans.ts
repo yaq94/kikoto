@@ -278,7 +278,7 @@ export const personalHans = {
       exportFailed: "无法准备导出。",
       importTitle: "导入",
       importDescription:
-        "按作品编号将作品与资料库中已有的作品和已知别名匹配。导入不会获取元数据，也不会添加资料库中尚不存在的作品。",
+        "Kikoto 备份使用稳定引用恢复编号作品、无码作品、系列与单集。恢复缺失对象需要登记权限，只添加必要资料。旧格式按已有作品编号和别名匹配。",
       source: "来源",
       sources: {
         kikoto: "Kikoto 导出文件",
@@ -404,7 +404,20 @@ export const personalHans = {
       preview: "预览",
       previewing: "正在检查文件...",
       previewStale: "更改文件、格式或冲突处理方式后，预览会更新。",
+      transferIssues: "查看导入明细（{{count}}）",
+      existingReview: "本人现有评价",
+      incomingReview: "导入评价",
+      transferReasons: {
+        existing_record: "保留本人现有记录；选择覆盖后才替换。",
+        incoming_review_conflict: "同一共享评价对象的导入记录不一致。本组已跳过，请整理文件后重新导入。",
+        identity_conflict: "身份引用存在矛盾，本对象已跳过。",
+        unregistered_source: "已知来源尚未登记，请先登记后导入此记录。",
+        source_reference_retained: "已保留此来源引用供后续传输，未建立来源连接。",
+        relationships_not_imported: "单集已作为独立对象恢复。系列成员与共享关联须通过资料编辑流程确认。",
+        playlist_preserved: "列表包含无法归属的引用，保留整个列表。",
+      },
       previewCounts: {
+        newWorks: "待登记对象",
         works: "文件中的作品",
         matchedWorks: "与资料库匹配",
         playlists: "列表",

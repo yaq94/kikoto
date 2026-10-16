@@ -278,7 +278,7 @@ export const personalHant = {
       exportFailed: "無法準備匯出。",
       importTitle: "匯入",
       importDescription:
-        "依作品編號將作品與資料庫中已有的作品和已知別名比對。匯入不會取得中繼資料，也不會新增資料庫中尚不存在的作品。",
+        "Kikoto 備份使用穩定引用還原編號作品、無碼作品、系列與單集。還原缺失物件需要登記權限，只新增必要資料。舊格式依既有作品編號和別名比對。",
       source: "來源",
       sources: {
         kikoto: "Kikoto 匯出檔案",
@@ -404,7 +404,20 @@ export const personalHant = {
       preview: "預覽",
       previewing: "正在檢查檔案...",
       previewStale: "變更檔案、格式或衝突處理方式後，預覽會更新。",
+      transferIssues: "查看匯入明細（{{count}}）",
+      existingReview: "本人現有評價",
+      incomingReview: "匯入評價",
+      transferReasons: {
+        existing_record: "保留本人現有記錄；選擇覆寫後才替換。",
+        incoming_review_conflict: "同一共用評價物件的匯入記錄不一致。本組已略過，請整理檔案後重新匯入。",
+        identity_conflict: "身分引用存在矛盾，本物件已略過。",
+        unregistered_source: "已知來源尚未登記，請先登記後匯入此記錄。",
+        source_reference_retained: "已保留此來源引用供後續傳輸，未建立來源連線。",
+        relationships_not_imported: "單集已作為獨立物件還原。系列成員與共用關聯須透過資料編輯流程確認。",
+        playlist_preserved: "清單包含無法歸屬的引用，保留整份清單。",
+      },
       previewCounts: {
+        newWorks: "待登記物件",
         works: "檔案中的作品",
         matchedWorks: "與資料庫相符",
         playlists: "清單",
