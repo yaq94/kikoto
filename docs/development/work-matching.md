@@ -28,7 +28,7 @@ release dates, edition labels, metadata languages or work types prevent a
 heuristic association. The same checks include retained members of an existing
 shared identity. Series, episodes and works remain different evaluation levels.
 Episodes additionally need consistent series titles and positive episode positions.
-A previously split pair always requires manual review.
+A split pair always requires manual review.
 
 All saved sources participate in candidate lookup. A queued, running, failed or
 partial full source index pauses new associations until its requested ranges

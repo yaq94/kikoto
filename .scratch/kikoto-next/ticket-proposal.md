@@ -2,7 +2,7 @@
 
 **Status:** ready-for-agent
 **发布状态:** 用户已批准本拆分，17 张独立工单已发布。
-**Implementation:** in-progress；01–06 已集成并 resolved，07/08 及 OpenList 代理兼容修复已取得本地集成证据，07/08 保持 verified-local；09 已集成并 verified-local，10 在独立分支本地开发，11 已集成 071 并 verified-local，12 已集成并 verified-local。完整发布依赖保留，逐票状态见执行记录。
+**Implementation:** in-progress；01–06、14 已集成并 resolved，07–13、15、16、18、19 已取得本地集成证据并保持 verified-local，17 组合验收与部署回滚进行中。完整发布依赖保留，逐票状态见执行记录。
 **执行授权:** 用户已授权全部功能实现、必要依赖安装、测试、数据库迁移、部署与回滚；[执行记录](execution.md)维护当前状态与证据。
 **依据:** [正式规格](spec.md) · [领域词汇表](../../GLOSSARY.md) · [作品身份与个人记录 ADR](../../docs/adr/0001-work-identity-and-personal-state.md)
 
