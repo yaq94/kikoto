@@ -94,6 +94,57 @@ func TestOpenListMediaRejectsUntrustedDestinations(t *testing.T) {
 	reviewRequest(t, handler, cookie, http.MethodGet, "/api/source-catalog/1/media?path=track.mp3", "", 502)
 }
 
+// Streaming an already listed catalog file follows the instance media model:
+// the request needs a session, or the enabled anonymous read policy, exactly
+// like every other media stream. Preparing playback stays a mutation that
+// requires its own permission.
+func TestOpenListMediaFollowsTheInstanceReadPolicy(t *testing.T) {
+	var remote *httptest.Server
+	remote = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/fs/get" {
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": 200, "data": map[string]any{
+				"name": "track.mp3", "size": 16, "raw_url": remote.URL + "/audio",
+			}})
+			return
+		}
+		w.Header().Set("Content-Type", "audio/mpeg")
+		http.ServeContent(w, r, "track.mp3", time.Unix(0, 0), strings.NewReader("0123456789abcdef"))
+	}))
+	defer remote.Close()
+	_, handler, cookie := openListBoundaryApp(t, remote.URL)
+	const mediaPath = "/api/source-catalog/1/media?path=track.mp3"
+
+	anonymous := func() *httptest.ResponseRecorder {
+		request := httptest.NewRequest(http.MethodGet, mediaPath, nil)
+		request.Header.Set("Range", "bytes=0-3")
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		return response
+	}
+	if response := anonymous(); response.Code != http.StatusUnauthorized {
+		t.Fatalf("signed-out stream status = %d, want 401 while anonymous access is disabled", response.Code)
+	}
+	if response := anonymous(); strings.Contains(response.Body.String(), "track.mp3") {
+		t.Fatal("refusal leaked the requested catalog path")
+	}
+
+	reviewRequest(t, handler, cookie, http.MethodPatch, "/api/access-policy", `{"anonymousAccessEnabled":true}`, 200)
+	response := anonymous()
+	if response.Code != http.StatusPartialContent || response.Body.String() != "0123" {
+		t.Fatalf("anonymous stream = %d %q, want the enabled read policy to serve the range", response.Code, response.Body.String())
+	}
+
+	// Preparation creates media identities, so it stays behind the mutation
+	// rules: an anonymous POST is refused even though reads are allowed.
+	request := httptest.NewRequest(http.MethodPost, "/api/source-catalog/1/playback", strings.NewReader(`{"path":"track.mp3"}`))
+	request.Header.Set("Content-Type", "application/json")
+	prepared := httptest.NewRecorder()
+	handler.ServeHTTP(prepared, request)
+	if prepared.Code != http.StatusUnauthorized {
+		t.Fatalf("anonymous playback preparation status = %d, want 401", prepared.Code)
+	}
+}
+
 func TestOpenListMetadataRequestsAreSerializedPacedAndCancellable(t *testing.T) {
 	var active, maxActive atomic.Int32
 	var mu sync.Mutex

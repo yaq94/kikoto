@@ -152,6 +152,12 @@ Range streaming path through `/api/media/{locationId}/stream` and do not enter
 the Kikoeru file cache. Preview playback of an unregistered entry remains
 temporary; saving a review performs the explicit registration described below.
 
+`GET /api/source-catalog/{id}/media` selects one exact previously listed audio
+path and streams its bytes; it does not mutate stored state. It follows the
+instance media model rather than repeating the `playback:use` gate: a session is
+required, or an enabled anonymous-read policy for `GET`/`HEAD`. Preparation
+creates media identities, so the `POST` above keeps its own permission.
+
 The persistent catalog id is independent of display text, source paths and
 signed links. `source_catalog_entry` keeps source id, observed root path, title,
 optional product code, and optional `work_id`; `source_catalog_file` keeps the
