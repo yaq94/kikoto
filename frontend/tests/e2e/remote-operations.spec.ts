@@ -547,7 +547,7 @@ test("local Delete enables work forgetting only for a complete root and confirms
 });
 
 test("work detail preserves Local and Tracked entry intent while keeping every remote source tab", async ({ page }) => {
-  let sourceChecks = 0;
+  const sourceChecks: Array<{ sourceId: number; force: boolean }> = [];
   const cleanupBodies: Record<string, unknown>[] = [];
   const trackedPresences: SourcePresenceItem[] = [
     {
@@ -707,8 +707,8 @@ test("work detail preserves Local and Tracked entry intent while keeping every r
       importStatus: "tracked",
       workId: 1,
     }),
-    onSourceCheck: () => {
-      sourceChecks += 1;
+    onSourceCheck: (body) => {
+      sourceChecks.push(body);
     },
   });
 
@@ -765,7 +765,12 @@ test("work detail preserves Local and Tracked entry intent while keeping every r
     .getByRole("menu", { name: "Directory actions" })
     .getByRole("menuitem", { name: "Check sources", exact: true })
     .click();
-  await expect.poll(() => sourceChecks).toBe(1);
+  // Opening the work probes each stale or unknown directory source on its own,
+  // and the explicit action asks for one forced check of every source.
+  await expect
+    .poll(() => [...new Set(sourceChecks.filter((check) => !check.force).map((check) => check.sourceId))])
+    .toEqual([7, 8]);
+  await expect.poll(() => sourceChecks.filter((check) => check.force)).toEqual([{ sourceId: 0, force: true }]);
 
   await page.getByRole("main").getByRole("button", { name: "Library", exact: true }).click();
   await page.getByRole("button", { name: "Tracked", exact: true }).click();

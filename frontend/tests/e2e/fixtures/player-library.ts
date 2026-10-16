@@ -160,7 +160,7 @@ type MockApplicationFixture = {
   librarySources?: LibrarySource[];
   sourceAvailability?: SourceAvailabilityResponse;
   remoteDetail?: RemoteWorkDetail;
-  onSourceCheck?: () => void;
+  onSourceCheck?: (body: { sourceId: number; force: boolean }) => void;
   onUntrack?: (workId: number, sourceId: number) => void;
   onLocalRefresh?: () => void;
   onMediaRequest?: () => void | Promise<void>;
@@ -362,7 +362,8 @@ export async function mockApplication(
       return;
     }
     if (url.pathname === `/api/works/${fixture.work?.primaryCode ?? work.primaryCode}/source-availability`) {
-      if (route.request().method() === "POST") fixture.onSourceCheck?.();
+      if (route.request().method() === "POST")
+        fixture.onSourceCheck?.(route.request().postDataJSON() as { sourceId: number; force: boolean });
       await route.fulfill({
         json:
           fixture.sourceAvailability ??

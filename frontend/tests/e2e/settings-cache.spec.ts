@@ -623,6 +623,7 @@ test("administrators see administration tabs after the personal tabs in one list
     "Library",
     "Cache & Fetch",
     "Proxy",
+    "Translation",
     "Cleanup",
     "Users",
   ]);
@@ -693,7 +694,7 @@ test("@desktop the Settings tabs can move into a row above the content and back"
         pageFits: document.documentElement.scrollWidth <= window.innerWidth,
       };
     });
-  const administration = ["Library", "Cache & Fetch", "Proxy", "Cleanup", "Users"];
+  const administration = ["Library", "Cache & Fetch", "Proxy", "Translation", "Cleanup", "Users"];
   for (const [width, named] of [
     [1920, ["Account", "Playback", "Recommendations", "Tags", ...administration]],
     [1280, administration],
@@ -875,7 +876,7 @@ for (const layout of ["mobile", "@desktop"]) {
     );
     // A deep link to a later tab scrolls the compact row so the selected tab shows.
     await expect(navigation.getByRole("tab", { name: "Library", exact: true })).toBeInViewport({ ratio: 1 });
-    await expect(navigation.getByRole("tab")).toHaveCount(9);
+    await expect(navigation.getByRole("tab")).toHaveCount(10);
     const boxes = await navigation.getByRole("tab").evaluateAll((buttons) =>
       buttons.map((button) => {
         const box = button.getBoundingClientRect();

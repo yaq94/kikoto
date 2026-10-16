@@ -98,7 +98,9 @@ test("local video fallback and native HLS retry retain position and playback int
     element.currentTime = 84;
     element.dispatchEvent(new Event("error"));
   });
-  await expect(page.getByRole("alert")).toContainText("This video could not be played.");
+  // The preview dialog owns the playback alert; the work detail behind it has its own regions.
+  const previewAlerts = page.getByRole("dialog", { name: "example.avi", exact: true }).getByRole("alert");
+  await expect(previewAlerts).toContainText("This video could not be played.");
   const beforeRetry = requests.length;
   await page.getByRole("button", { name: "Retry", exact: true }).click();
   await expect.poll(() => requests.length).toBeGreaterThan(beforeRetry);
@@ -110,7 +112,7 @@ test("local video fallback and native HLS retry retain position and playback int
       ),
     )
     .toBe(true);
-  await expect(page.getByRole("alert")).toHaveCount(0);
+  await expect(previewAlerts).toHaveCount(0);
 });
 
 test("busy local video preparation stops automatic retries and keeps manual recovery available", async ({ page }) => {
@@ -133,7 +135,8 @@ test("busy local video preparation stops automatic retries and keeps manual reco
     );
   });
   const video = await openVideo(page);
-  await expect(page.getByRole("alert")).toContainText("Video playback is temporarily busy.");
+  const previewAlerts = page.getByRole("dialog", { name: "example.avi", exact: true }).getByRole("alert");
+  await expect(previewAlerts).toContainText("Video playback is temporarily busy.");
   // Development StrictMode may cancel one additional initial request.
   expect(requests).toBeGreaterThanOrEqual(3);
   expect(requests).toBeLessThanOrEqual(4);
@@ -142,5 +145,5 @@ test("busy local video preparation stops automatic retries and keeps manual reco
   await page.getByRole("button", { name: "Retry", exact: true }).click();
   await expect.poll(() => video.evaluate((element: HTMLVideoElement) => element.readyState)).toBeGreaterThan(0);
   expect(requests).toBe(beforeRetry + 1);
-  await expect(page.getByRole("alert")).toHaveCount(0);
+  await expect(previewAlerts).toHaveCount(0);
 });

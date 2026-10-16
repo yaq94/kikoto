@@ -23,7 +23,10 @@ import { useMobileNavigationLayout } from "@/hooks/useMobileNavigationLayout";
 import { api, assetURL, type MaintenanceWork, type MaintenanceWorkPage, type Work } from "@/lib/api";
 import { currentPageSelection, pageAfterUnlinkedDelete, setCurrentPageSelected } from "./unlinkedWorksModel";
 
+import { useAuth } from "@/auth/AuthProvider";
 import { NAVIGATION_EVENT } from "@/lib/browserHistory";
+import { currentClientStorageScope } from "@/lib/clientStorageScope";
+import { CONTENT_LANGUAGE_CHANGED } from "@/lib/contentLanguageEvents";
 import { MaintenanceToolbar, useMaintenanceSearch, type MaintenanceToolbarSlots } from "./MaintenanceControls";
 import { MetadataIssueDetails } from "./MetadataIssueDetails";
 
@@ -74,6 +77,8 @@ export function WorkMaintenance({
 }) {
   const toast = useToast();
   const { t } = useTranslation();
+  const auth = useAuth();
+  const contentLanguageScope = currentClientStorageScope(auth.user?.id ?? null);
   const wide = !useMobileNavigationLayout();
   const columnCount = wide ? 5 : 3;
   const [page, setPage] = useState(1);
@@ -101,6 +106,17 @@ export function WorkMaintenance({
   useEffect(() => {
     setSelectedWorkIds(new Set());
   }, [page, pageSize, query, reason, runId]);
+
+  // Server-projected titles follow the viewer's content language, so a saved
+  // language change reloads the visible list in place: same page, search and
+  // selection, without remounting the page or touching playback state.
+  useEffect(() => {
+    const refresh = (event: Event) => {
+      if ((event as CustomEvent<string>).detail === contentLanguageScope) setRefreshKey((value) => value + 1);
+    };
+    window.addEventListener(CONTENT_LANGUAGE_CHANGED, refresh);
+    return () => window.removeEventListener(CONTENT_LANGUAGE_CHANGED, refresh);
+  }, [contentLanguageScope]);
 
   useEffect(() => {
     const controller = new AbortController();
