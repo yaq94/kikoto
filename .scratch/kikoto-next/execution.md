@@ -2,7 +2,7 @@
 
 **Status:** ready-for-agent
 **Implementation:** in-progress
-**阶段:** 01–06 已集成并 resolved；07–13、15、16 及 OpenList 单来源代理兼容修复已集成并保持 verified-local。18 迁移完成一致性、19 前端 CI 修复均已合入；16/19 在同一集成产物上取得传输、共享关联/拆分、迁移和前端组合证据。14 功能已合入集成分支；真实媒体 LIVE、真实索引覆盖、完整 CI、最终审查和部署前置保持有效。
+**阶段:** 01–06、14 已集成并 resolved；07 在真实媒体 LIVE 通过后转为 resolved，08–13、15、16、18、19 已集成并保持 verified-local。完整 CI 已在当前集成产物上取得全绿终态；真实索引覆盖、最终审查与部署前置继续推进。
 **依据:** [正式规格](spec.md) · [工单总览](ticket-proposal.md) · [领域词汇表](../../GLOSSARY.md) · [作品身份与个人记录 ADR](../../docs/adr/0001-work-identity-and-personal-state.md)
 
 ## 当前授权与完成条件
@@ -47,7 +47,7 @@
 | [04 编号作品个人评价](issues/04-numbered-work-personal-reviews.md) | 无 | resolved | 已集成；编号评价、隔离、必要登记与恢复通过 | [04 证据](evidence/04-personal-reviews.md)、[集成复验](evidence/01-04-integration.md) |
 | [05 多源目录与播放隔离](issues/05-multi-source-directory-playback.md) | 无 | resolved | 已集成；编号/无码逐源刷新、目录故障恢复、内容语言隔离与精确文件播放/游标 H/F 复验通过 | [05 证据](evidence/05-source-playback.md)、[集成复验](evidence/03-05-integration.md) |
 | [06 稳定内部引用与编号兼容](issues/06-stable-identity-compatibility.md) | 无 | resolved | 已集成；数字版本、编号/别名、旧库升级与个人记录保留通过，无新增迁移 | [06 证据](evidence/06-stable-references.md)、[集成复验](evidence/06-integration.md) |
-| [07 OpenList 有限无码链路](issues/07-openlist-first-playable-slice.md) | 04、06 | verified-local | 本地链路、069 升级与 catalog 翻译通过；正式测试代理下 fs/get 返回挑战页，真实媒体 LIVE 未通过 | [07 证据](evidence/07-openlist.md)、[集成复验](evidence/02-07-integration.md) |
+| [07 OpenList 有限无码链路](issues/07-openlist-first-playable-slice.md) | 04、06 | resolved | 本地链路、069 升级、catalog 翻译与真实媒体 LIVE 均通过；真实入口因出站身份被拒，声明 Kikoto 身份并可由管理员覆盖后取得两段 Range 证据 | [07 证据](evidence/07-openlist.md)、[集成复验](evidence/02-07-integration.md) |
 | [08 完整来源索引与恢复](issues/08-recoverable-full-source-index.md) | 07 | verified-local | 已集成；完整合成树、070 升级/恢复、资源限制、清理与管理进度 H/R/F 通过；真实来源覆盖待补 | [08 证据](evidence/08-source-index.md)、[集成复验](evidence/08-integration.md) |
 | [09 每日更新与扫描复用](issues/09-daily-index-update.md) | 08 | verified-local | 每日调度、同源复用、真实重启及资源 H/R 已集成；发布前置保留 | [09 证据](evidence/09-daily-index.md)、[集成复验](evidence/09-integration.md) |
 | [10 来源生命周期与记录保留](issues/10-source-lifecycle-retention.md) | 08 | verified-local | 已集成 072、来源状态/改名恢复与个人引用清理保护；07/08 发布前置保留 | [10 证据](evidence/10-source-lifecycle.md)、[集成复验](evidence/10-13-18-integration.md) |

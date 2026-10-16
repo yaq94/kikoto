@@ -5,7 +5,7 @@
 **Blocked by:** [04：编号作品全源个人评分与备注](04-numbered-work-personal-reviews.md)；[06：稳定内部引用与编号兼容入口](06-stable-identity-compatibility.md)
 
 **Status:** ready-for-agent
-**Implementation:** verified-local
+**Implementation:** resolved
 
 **依据:** [正式规格](../spec.md) · [工单总览](../ticket-proposal.md)
 
@@ -23,7 +23,7 @@ AC-08 的有限集合、AC-09 的无码身份、AC-12 的无码评价；全量�
 - [x] 无码身份跨重启稳定，不伪造发行编号；格式及分轨属于正确作品，纯压缩包或纯字幕目录不显示为可播放作品。
 - [x] 保存个人记录按需登记必要信息并遵守当前用户权限，不触发媒体下载或持久音频镜像。
 - [x] 显示名、来源路径与临时媒体链接分别处理；链接过期能重新取址，选中音轨对应正确来源文件。
-- [ ] 对有限真实匿名媒体验证实际范围读取与指定偏移；不把目录/get 成功、合成 WAV 或健康检查当成真实源播放证明。
+- [x] 对有限真实匿名媒体验证实际范围读取与指定偏移；不把目录/get 成功、合成 WAV 或健康检查当成真实源播放证明。
 - [x] 元数据请求遵守并发、速率、响应大小和取消边界；本票新增来源出站路径自行完成 AC-27。
 - [x] 有限样例只证明本票链路，不宣称全站索引或多源播放切换完成；后者分别由 08、05 验收。
 
@@ -40,10 +40,9 @@ H 使用真实 HTTP 路由、会话与迁移 SQLite；R 实际关闭并重启同
 ## Comments
 
 本地 H/R/F、069 升级及 catalog 翻译已集成复验，见[原票证据](../evidence/07-openlist.md)
-与[集成证据](../evidence/02-07-integration.md)。IAB 匿名页面正常；后续同文件
-fs/get 诊断在 `08b1469` 上确认直连无应用代理时连接重置、未收到 HTTP；隔离库经
-正式 Settings 配置已有代理后返回 HTTP 403 HTML、`cf-mitigated: challenge`。
-这次没有 1010 证据，没有 raw_url 或 Range 读取；生产 fs/get 未重测。环境代理
-不自动进入应用代理路由，详细脱敏摘要与仓库外诊断指针见[07 证据](../evidence/07-openlist.md#live-缺口与可复验入口)。
-本票保持 verified-local，LIVE 未勾选，不代表生产部署验收。08/11 仅可按
-[开发先决条件](../execution.md#开发依赖与发布依赖)开始本地开发；完整发布依赖保留。
+与[集成证据](../evidence/02-07-integration.md)。真实媒体 LIVE 在 `ba9ef02` 起的
+当前产物上以独立实例运行通过：`bytes=0-31` 与 `bytes=1024-1055` 均为 206、32
+字节，sha256 与服务器直连探测一致，未使用应用代理。此前 403 的根因是 Go 默认
+User-Agent 触发通用 bot 规则，出站身份已改为声明 `Kikoto/<version>` 并可由
+管理员覆盖。结果与二进制摘要见[07 证据](../evidence/07-openlist.md#真实媒体-live-结果)。
+08/11 的发布依赖已满足；本票不代表生产部署验收。

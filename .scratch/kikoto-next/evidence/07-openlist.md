@@ -1,10 +1,11 @@
 # 07：有限 OpenList 本地验收
 
-Implementation: verified-local
+Implementation: resolved
 
 本记录对应 `codex/kikoto-next-t07` 的本票实现，基于 integration
 `e5dc48e692b956a5abfe4d681ebf6629ddc93b3a`。本地 catalog 翻译及 069 升级已在
-[02/07 集成](02-07-integration.md)复验；真实媒体 LIVE 未通过，不能关闭整票。
+[02/07 集成](02-07-integration.md)复验。真实媒体 LIVE 的拒绝根因是出站身份，
+已在 `ba9ef02` 修复并取得真实结果，见下文。
 
 ## 实现与范围
 
@@ -28,7 +29,7 @@ Implementation: verified-local
 | AC-12 | H/R/F 必要登记、评分 0/null/遗漏、备注更新和清分、重载保留 | 无媒体落盘及工作流 |
 | AC-13 | H 两用户不同记录、未授权拒绝、并发登记幂等 | 共享身份合并由后续票负责 |
 | AC-25 | H 元数据大小、目录数、分页完整性、取消、串行及间隔边界 | 组合负载和低空间由 17 验收 |
-| AC-27 | H 非法协议、凭据 URL、私网、越界重定向、超大响应、取消 | LIVE 尚未验证站点协议可用性 |
+| AC-27 | H 非法协议、凭据 URL、私网、越界重定向、超大响应、取消；LIVE 站点协议可用性见真实结果 | 无 |
 | AC-28 | F 仅文本、点击、API 持久状态、媒体进度 | screenshot/trace/video 全关闭 |
 
 ## 红绿记录
@@ -116,6 +117,31 @@ go test ./internal/httpapi -run '^TestOpenListLiveRangeSample$' -count=1 -v
 真实应用媒体路由请求 `0-31` 与 `1024-1055`；仅接受 206，每次最多消费 33 字节，
 随后关闭响应。拒绝完整 200 响应，不扫描目录、不下载完整媒体。日志只记录定位
 摘要、Range、协议头和字节摘要。未配置时退出 0 并 SKIP，不能算 LIVE 通过。
+
+## 真实媒体 LIVE 结果
+
+拒绝原因是出站身份：Go 默认 User-Agent 触发匿名网关的通用 bot 规则，服务器
+IP 未被封。`ba9ef02` 起 OpenList 客户端声明 `Kikoto/<version>` 并请求 JSON，
+同一已知文件的匿名链路随之可用。当前产物在服务器以独立实例运行应用级 LIVE
+入口，真实 HTTP 与迁移 SQLite 参与，未配置应用代理（`route=direct proxies=0
+direct_fallback=false`）：
+
+| 请求 | 状态 | 字节 | sha256 |
+| --- | --- | --- | --- |
+| `bytes=0-31` | 206 | 32 | `4fb6c3a4551197a5c98835c7b735fbb889c573969567972b605147e1983e97cf` |
+| `bytes=1024-1055` | 206 | 32 | `9740754c10a3a907c96ea936e635b8e238e298b21ae37330d79c32aa6aa44f31` |
+
+`TestOpenListLiveRangeSample` 退出 0（2.56 秒）；同一产物的
+`TestOpenListIdentitySelfCheck` 也退出 0（`fs/list` 200、`fs/get` 200、
+`size=3900160`）。二进制 sha256：应用级 LIVE
+`613a44cc91635adfca6c817ee1c99a87ad5fa69f634392394c6b4d97ce275732`，自检
+`a0e56060a2a73e575c2364600856704d2b339a56e52de01869c350d725c9068a`。运行所需
+端点、路径与实例变量保存在服务器临时目录，未进入仓库；摘要：
+`/tmp/kikoto-live-ba9ef02/`（`ticket07.log`、`run07.env`）。
+
+身份可通过 `config.openListUserAgent` 与 `config.openListHeaders` 按管理员
+决定覆盖；默认值仍是声明 Kikoto 身份。challenge 与普通匿名拒绝分类保持可分。
+AC-27 的站点协议可用性随本结果一并满足。
 
 ## 清理与交接
 
