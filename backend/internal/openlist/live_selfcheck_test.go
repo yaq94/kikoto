@@ -4,7 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"fmt"
+	"errors"
 	"io"
 	"net/http"
 	"os"
@@ -94,6 +94,8 @@ func selfCheckRange(ctx context.Context, rawURL, header string) (int, int, strin
 	}
 	request.Header.Set("Range", header)
 	request.Header.Set("User-Agent", buildinfo.UserAgent())
+	// The operator-run probe reads one already authorized sample URL directly;
+	// it is not part of the application's outbound policy surface.
 	response, err := http.DefaultClient.Do(request)
 	if err != nil {
 		return 0, 0, "", err
@@ -111,33 +113,19 @@ func selfCheckCategory(err error) string {
 	switch {
 	case err == nil:
 		return "ok"
-	case isErr(err, ErrChallenged):
+	case errors.Is(err, ErrChallenged):
 		return "challenged"
-	case isErr(err, ErrRestricted):
+	case errors.Is(err, ErrRestricted):
 		return "restricted"
-	case isErr(err, ErrLimit):
+	case errors.Is(err, ErrLimit):
 		return "limit_exceeded"
-	case isErr(err, ErrInvalid):
+	case errors.Is(err, ErrInvalid):
 		return "invalid_response"
-	case isErr(err, ErrUnavailable):
+	case errors.Is(err, ErrUnavailable):
 		return "unavailable"
-	case isErr(err, context.DeadlineExceeded):
+	case errors.Is(err, context.DeadlineExceeded):
 		return "timeout"
 	default:
-		return fmt.Sprintf("transport")
+		return "transport"
 	}
-}
-
-func isErr(err, target error) bool {
-	for err != nil {
-		if err == target {
-			return true
-		}
-		unwrapped, ok := err.(interface{ Unwrap() error })
-		if !ok {
-			return false
-		}
-		err = unwrapped.Unwrap()
-	}
-	return false
 }

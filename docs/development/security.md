@@ -57,15 +57,15 @@ Do not apply a blanket "block every private IP" rule: that would break the
 intentional local-NAS use case. Model the explicitly configured private origin
 separately from source-returned or redirected destinations.
 
-`198.18.0.0/15` needs one narrow clarification. It is the RFC 2544 benchmarking
-range, and local transparent resolvers (a TUN-mode proxy, for example) commonly
-use it as their fake-IP pool: every foreign hostname is answered from that pool
-and the local resolver maps the placeholder back to the real destination. A
-resolved hostname answered from this range is therefore accepted, while an IP
-literal in the same range stays rejected, because a literal is caller input
-rather than a resolver artifact. Every other private, loopback, link-local and
-documentation range keeps its existing rejection for untrusted destinations,
-and the connection still goes to the resolved numeric address.
+`198.18.0.0/15` is the RFC 2544 benchmarking range, and local transparent
+resolvers (a TUN-mode proxy, for example) commonly use it as their fake-IP pool:
+every foreign hostname is answered from that pool and the local resolver maps
+the placeholder back to the real destination. A resolved hostname answered from
+this range is therefore accepted, while an IP literal in the same range stays
+rejected, because a literal is caller input rather than a resolver artifact.
+Every other private, loopback, link-local and documentation range keeps its
+existing rejection for untrusted destinations, and the connection still goes to
+the resolved numeric address.
 
 ### Kikoeru account import
 

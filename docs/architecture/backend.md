@@ -310,9 +310,12 @@ The shared outbound transport accepts only HTTP(S) URLs without embedded
 credentials, validates the initial request and every redirect hop, strips
 credentials on allowed origin changes, validates the complete DNS answer, and
 dials one of those same validated numeric addresses. Built-in public metadata
-destinations reject private and reserved addresses; a NAT64 well-known-prefix
-address (`64:ff9b::/96`) is judged by the IPv4 address it embeds, so DNS64
-networks keep working. Administrator-configured
+destinations reject private and reserved addresses, with two documented
+exceptions: a NAT64 well-known-prefix address (`64:ff9b::/96`) is judged by the
+IPv4 address it embeds so DNS64 networks keep working, and a hostname resolved
+into the local transparent-resolver fake-IP range (`198.18.0.0/15`) is accepted
+as described in [Development security](../development/security.md).
+Administrator-configured
 source origins may explicitly reach private LAN addresses.
 
 Requests to a compatible remote source send `Accept-Language`: on behalf of a

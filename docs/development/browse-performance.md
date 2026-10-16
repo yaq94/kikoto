@@ -145,6 +145,13 @@ delayed loopback source, and cold AAC preparation. The spec measures
 controlled-latency browsing against the Vite development server. Run them
 directly only when a change touches those paths.
 
+`TestSharedIdentityListWhereScaling`
+(`internal/library/shared_identity_performance_test.go`) is gated by
+`KIKOTO_SHARED_IDENTITY_PERF=1` and has no Make target. It prints the Library
+predicate's `EXPLAIN QUERY PLAN` rows and the best of three count times for
+growing fixture sizes, so a change to the shared-identity predicate can be
+compared against the covering-index plan it is expected to use.
+
 ### Recommendation scaling
 
 The recommendation experiment uses the bounded

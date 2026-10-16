@@ -121,7 +121,11 @@ search response. OpenList cards add `catalogEntryId` and may have an empty
 `GET /api/source-catalog/{id}` reads the current entry and only the viewer's
 personal review. `GET .../tracks` reads its persisted directory snapshot.
 `GET .../media?path=<relative path>` selects a file from that snapshot, resolves
-its current URL from OpenList, and streams it without creating a media cache.
+its current URL from OpenList, and streams it without creating a media cache. It
+does not mutate stored state, so it follows the instance media model rather than
+repeating the `playback:use` gate: a session is required, or an enabled
+anonymous-read policy for `GET`/`HEAD`. Playback preparation creates media
+identities, so it keeps its own `playback:use` permission.
 
 `GET /api/works/{id}/catalog-directories` projects catalog entries into the saved
 work's source tabs. Numeric references retain the exact edition; numbered
@@ -151,12 +155,6 @@ because their display names match. `catalog_stream` locations use the same
 Range streaming path through `/api/media/{locationId}/stream` and do not enter
 the Kikoeru file cache. Preview playback of an unregistered entry remains
 temporary; saving a review performs the explicit registration described below.
-
-`GET /api/source-catalog/{id}/media` selects one exact previously listed audio
-path and streams its bytes; it does not mutate stored state. It follows the
-instance media model rather than repeating the `playback:use` gate: a session is
-required, or an enabled anonymous-read policy for `GET`/`HEAD`. Preparation
-creates media identities, so the `POST` above keeps its own permission.
 
 The persistent catalog id is independent of display text, source paths and
 signed links. `source_catalog_entry` keeps source id, observed root path, title,
@@ -237,8 +235,9 @@ present. `config.openListHeaders` adds at most 8 whitelisted headers: custom
 `X-` names and `Accept-Language`. The configuration layer rejects `Host`,
 `Content-Length`, `Connection`, `Transfer-Encoding`, `Upgrade`, proxy headers,
 `Cookie`/`Set-Cookie`, `Authorization`, `Accept`, `Accept-Encoding`,
-`Content-Type`, `User-Agent` and any value containing a line break, and stored
-rows that predate validation are dropped again on load.
+`Content-Type`, `User-Agent` and any value containing a line break. Loading
+stored configuration applies the same bounds, so an unsafe stored value cannot
+reach a request.
 
 An HTTP 403/429 answer marked `Cf-Mitigated: challenge`, or an HTML refusal
 carrying the documented interstitial markers, is classified as a challenge

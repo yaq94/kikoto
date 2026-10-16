@@ -254,8 +254,10 @@ Every redirect hop is checked and credentials remain removed throughout the
 chain after an allowed origin change, including a later return to the original
 origin. DNS answers are validated as a complete set and the connection is made
 to one of those same validated addresses. Built-in public metadata destinations
-reject private and reserved addresses, while administrator-configured source
-origins retain the intentional private-LAN exception.
+reject private and reserved addresses, except a NAT64 well-known-prefix address
+judged by its embedded IPv4 address and a hostname resolved into the local
+transparent-resolver fake-IP range (`198.18.0.0/15`); administrator-configured
+source origins retain the intentional private-LAN exception.
 
 Remote sources use public-host compatibility mode by default: source-returned
 media, cover, and text URLs may use a different origin, but unconfigured
