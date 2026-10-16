@@ -78,10 +78,11 @@ func TestCatalogSeriesUpgradePreviewRestartAndStaleConfirmation(t *testing.T) {
 		listener := workReferenceLogin(t, app, "synthetic-listener")
 		var preview catalogGroupingPreview
 		body := `{"title":"Confirmed series","catalogEntryIds":[1,2]}`
-		if boot == 0 {
+		switch boot {
+		case 0:
 			workReferenceRequest(t, app, admin, "POST", "/api/catalog-series/previews", body, 201, &preview)
 			previewID = preview.ID
-		} else if boot == 1 {
+		case 1:
 			url := "/api/catalog-series/previews/" + strconv.FormatInt(previewID, 10)
 			workReferenceRequest(t, app, admin, "GET", url, "", 200, &preview)
 			if preview.Status != "pending" || len(preview.Episodes) != 2 {
@@ -98,7 +99,7 @@ func TestCatalogSeriesUpgradePreviewRestartAndStaleConfirmation(t *testing.T) {
 			previewID = preview.ID
 			workReferenceRequest(t, app, admin, "POST", "/api/catalog-series/previews/"+strconv.FormatInt(previewID, 10)+"/confirm", "{}", 200, &preview)
 			seriesID = *preview.SeriesID
-		} else {
+		default:
 			workReferenceRequest(t, app, admin, "POST", "/api/catalog-series/previews/"+strconv.FormatInt(previewID, 10)+"/confirm", "{}", 200, &preview)
 			if preview.SeriesID == nil || *preview.SeriesID != seriesID {
 				t.Fatal("repeated confirmation changed series identity")
