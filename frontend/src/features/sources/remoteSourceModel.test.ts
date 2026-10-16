@@ -11,9 +11,9 @@ describe("OpenList request header editing", () => {
 
   it("keeps header values containing a colon and drops malformed lines", () => {
     const parsed = parseRequestHeaderLines(
-      ["X-Trace: a:b", "not-a-header", "  ", ": empty name", "X-Spaced :   trimmed  "].join("\n"),
+      ["X-Trace: a:b", "not-a-header", "  ", ": empty name", "X-Spaced :   trimmed  ", "X_Client: v"].join("\n"),
     );
-    expect(parsed).toEqual({ "X-Trace": "a:b", "X-Spaced": "trimmed" });
+    expect(parsed).toEqual({ "X-Trace": "a:b", "X-Spaced": "trimmed", X_Client: "v" });
   });
 
   it("returns undefined so an emptied field is not submitted", () => {

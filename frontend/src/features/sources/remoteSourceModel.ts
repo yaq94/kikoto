@@ -80,8 +80,6 @@ export function sourcePayload(source: FileSource) {
   };
 }
 
-const REQUEST_HEADER_NAME = /^[A-Za-z0-9-]+$/;
-
 /**
  * Configured OpenList request headers as one "Name: value" line each, so the
  * dialog edits them without a bespoke repeater component. The server remains
@@ -94,6 +92,9 @@ export function requestHeaderLines(headers: Record<string, string> | undefined) 
     .map(([name, value]) => `${name}: ${value}`)
     .join("\n");
 }
+
+/** RFC 7230 token characters, matching the server's header-name rule. */
+const REQUEST_HEADER_NAME = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
 
 export function parseRequestHeaderLines(text: string) {
   const headers: Record<string, string> = {};
