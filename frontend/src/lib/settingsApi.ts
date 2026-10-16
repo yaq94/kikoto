@@ -134,6 +134,10 @@ export type FileSource = {
     saveRootTemplate?: string;
     openListRoots?: string[];
     openListIntervalMs?: number;
+    /** Declared client identity for OpenList requests; empty keeps Kikoto/<version>. */
+    openListUserAgent?: string;
+    /** Extra whitelisted OpenList request headers: custom X-* names and Accept-Language. */
+    openListHeaders?: Record<string, string>;
     scanDepth?: number;
     /** Language a remote source is asked in last, after the viewer's metadata languages. */
     requestLanguage?: string;

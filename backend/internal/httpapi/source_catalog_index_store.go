@@ -63,6 +63,11 @@ func (s *Server) persistCatalogPage(ctx context.Context, job workflowJobRecord, 
 	status, errorCode := "pending", ""
 	if requestErr != nil {
 		status, errorCode = "failed", "upstream_unavailable"
+		if errors.Is(requestErr, openlist.ErrChallenged) {
+			// A bot challenge is a transport-level refusal: never retried
+			// tightly, and never reported as an anonymous permission denial.
+			status, errorCode = "restricted", "challenge_detected"
+		}
 		if errors.Is(requestErr, openlist.ErrRestricted) {
 			status, errorCode = "restricted", "access_restricted"
 		}

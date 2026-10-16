@@ -153,6 +153,13 @@ export const surfaceJapanese = {
     failed: "スキャンが停止または失敗しました。再試行できます。",
     roots: "作品フォルダー",
     rootsHint: "任意の限定スキャン用作品フォルダー。1行1件、最大8件。全体索引はソースのルートから開始します。",
+    userAgent: "リクエスト識別子",
+    userAgentPlaceholder: "Kikoto/<バージョン>",
+    userAgentHint:
+      "このソースで宣言するクライアント識別子です。空欄なら Kikoto の識別子を維持します。ボット検証が出る場合は明示的な指定が必要になることがあります。",
+    headers: "追加リクエストヘッダー",
+    headersHint:
+      "任意。1行に「名前: 値」を1件、最大8件まで。独自の X-* 名と Accept-Language のみ指定できます。その他のヘッダーは拒否されます。",
   },
   sourceIndex: {
     title: "ソース全体の索引",
@@ -202,6 +209,8 @@ export const surfaceJapanese = {
       source_unavailable: "ソースが無効または利用できません。",
       upstream_unavailable: "フォルダー要求に失敗しました。",
       access_restricted: "匿名アクセスが拒否されました。",
+      challenge_detected:
+        "ソースがボット判定ページを返しました。業務データとして解析せず、しばらくしてから再試行するか、リクエスト識別子を調整してください。",
       response_limit: "メタデータ応答が上限を超えました。",
       invalid_page: "ソースのフォルダーデータが無効です。",
       pagination_changed: "ページ構成が繰り返し変わりました。",

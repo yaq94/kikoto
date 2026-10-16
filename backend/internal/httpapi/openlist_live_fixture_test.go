@@ -116,7 +116,9 @@ func TestOpenListLiveFixtureReportsSafeMetadataFailure(t *testing.T) {
 	if completed != 0 || err == nil {
 		t.Fatal("metadata refusal must fail before media reads")
 	}
-	for _, expected := range []string{"stage=metadata", "status=403", "category=restricted", "challenge=true", "route=direct"} {
+	// A challenge is its own category: it is a transport refusal that hides the
+	// real answer, not an anonymous permission verdict.
+	for _, expected := range []string{"stage=metadata", "status=403", "category=challenged", "challenge=true", "route=direct"} {
 		if !strings.Contains(err.Error(), expected) {
 			t.Fatalf("missing safe diagnostic %s", expected)
 		}

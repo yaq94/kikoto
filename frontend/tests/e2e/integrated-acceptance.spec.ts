@@ -27,7 +27,8 @@ test("the current build combines numbered and numberless content, translation, r
   await api("POST", "/api/library/onboarding/complete", { startupScan: false, watchFolders: false });
   const observedRequests: string[] = [];
   page.on("request", (request) => {
-    if (request.url().includes("/api/")) observedRequests.push(`${request.method()} ${new URL(request.url()).pathname}`);
+    if (request.url().includes("/api/"))
+      observedRequests.push(`${request.method()} ${new URL(request.url()).pathname}`);
   });
 
   await page.goto("/RJ00000000");
@@ -104,10 +105,15 @@ test("the current build combines numbered and numberless content, translation, r
   expect(registered.personalNote).toBe("Example combined numberless note");
   expect(registered.workId).toBeGreaterThan(0);
   expect((await api("GET", "/api/workflow-runs")).total).toBe(0);
-  const preview = await api("POST", "/api/shared-associations/previews", {
-    left: { kind: "catalog", id: 2 },
-    right: { kind: "catalog", id: 3 },
-  }, 201);
+  const preview = await api(
+    "POST",
+    "/api/shared-associations/previews",
+    {
+      left: { kind: "catalog", id: 2 },
+      right: { kind: "catalog", id: 3 },
+    },
+    201,
+  );
   const association = await api("POST", `/api/shared-associations/${preview.id}/start`, { version: preview.version });
   expect(association.status).toBe("completed");
   const alternate = await api("GET", "/api/source-catalog/3");

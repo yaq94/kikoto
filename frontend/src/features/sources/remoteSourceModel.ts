@@ -80,6 +80,34 @@ export function sourcePayload(source: FileSource) {
   };
 }
 
+const REQUEST_HEADER_NAME = /^[A-Za-z0-9-]+$/;
+
+/**
+ * Configured OpenList request headers as one "Name: value" line each, so the
+ * dialog edits them without a bespoke repeater component. The server remains
+ * the authority on naming and value rules; a malformed line is simply kept
+ * out of the parsed result.
+ */
+export function requestHeaderLines(headers: Record<string, string> | undefined) {
+  if (!headers) return "";
+  return Object.entries(headers)
+    .map(([name, value]) => `${name}: ${value}`)
+    .join("\n");
+}
+
+export function parseRequestHeaderLines(text: string) {
+  const headers: Record<string, string> = {};
+  for (const line of text.split("\n")) {
+    const separator = line.indexOf(":");
+    if (separator <= 0) continue;
+    const name = line.slice(0, separator).trim();
+    const value = line.slice(separator + 1).trim();
+    if (!REQUEST_HEADER_NAME.test(name) || !value) continue;
+    headers[name] = value;
+  }
+  return Object.keys(headers).length > 0 ? headers : undefined;
+}
+
 /** Merges a detection result into the draft without discarding typed values. */
 export function applyDetectResult(source: FileSource, result: FileSourceDetectResult): FileSource {
   return {

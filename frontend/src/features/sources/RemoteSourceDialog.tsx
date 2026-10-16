@@ -17,8 +17,10 @@ import {
   applyDetectResult,
   configuredSourceOrigins,
   LEGACY_NUMBER178_SOURCE_TYPE,
+  parseRequestHeaderLines,
   remoteFallbackLanguage,
   REMOTE_FALLBACK_LANGUAGE_OPTIONS,
+  requestHeaderLines,
   storagePathPreview,
 } from "./remoteSourceModel";
 
@@ -186,25 +188,62 @@ export function RemoteSourceDialog({
               </label>
             )}
             {source.sourceType === "openlist" && (
-              <label className="grid gap-1.5 text-sm">
-                <span>{t("openlist.roots")}</span>
-                <Textarea
-                  value={(source.config.openListRoots ?? []).join("\n")}
-                  readOnly={readOnly}
-                  onChange={(event) =>
-                    patch({
-                      config: {
-                        ...source.config,
-                        openListRoots: event.target.value
-                          .split("\n")
-                          .map((line) => line.trim())
-                          .filter(Boolean),
-                      },
-                    })
-                  }
-                />
-                <span className="text-xs text-muted-foreground">{t("openlist.rootsHint")}</span>
-              </label>
+              <>
+                <label className="grid gap-1.5 text-sm">
+                  <span>{t("openlist.roots")}</span>
+                  <Textarea
+                    value={(source.config.openListRoots ?? []).join("\n")}
+                    readOnly={readOnly}
+                    onChange={(event) =>
+                      patch({
+                        config: {
+                          ...source.config,
+                          openListRoots: event.target.value
+                            .split("\n")
+                            .map((line) => line.trim())
+                            .filter(Boolean),
+                        },
+                      })
+                    }
+                  />
+                  <span className="text-xs text-muted-foreground">{t("openlist.rootsHint")}</span>
+                </label>
+                <label className="grid gap-1.5 text-sm">
+                  <span>{t("openlist.userAgent")}</span>
+                  <Input
+                    value={source.config.openListUserAgent ?? ""}
+                    readOnly={readOnly}
+                    spellCheck={false}
+                    placeholder={t("openlist.userAgentPlaceholder")}
+                    onChange={(event) =>
+                      patch({
+                        config: {
+                          ...source.config,
+                          openListUserAgent: event.target.value.trim() ? event.target.value : undefined,
+                        },
+                      })
+                    }
+                  />
+                  <span className="text-xs text-muted-foreground">{t("openlist.userAgentHint")}</span>
+                </label>
+                <label className="grid gap-1.5 text-sm">
+                  <span>{t("openlist.headers")}</span>
+                  <Textarea
+                    value={requestHeaderLines(source.config.openListHeaders)}
+                    readOnly={readOnly}
+                    spellCheck={false}
+                    onChange={(event) =>
+                      patch({
+                        config: {
+                          ...source.config,
+                          openListHeaders: parseRequestHeaderLines(event.target.value),
+                        },
+                      })
+                    }
+                  />
+                  <span className="text-xs text-muted-foreground">{t("openlist.headersHint")}</span>
+                </label>
+              </>
             )}
             <label className="grid gap-1.5 text-sm" htmlFor="remote-source-name">
               <span className="font-medium">{t("maintenance.library.name")}</span>

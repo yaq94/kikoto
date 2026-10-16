@@ -157,6 +157,13 @@ export const surfaceEnglish = {
     failed: "Scan stopped or failed. Retry when ready.",
     roots: "Work directories",
     rootsHint: "Optional finite-scan work directories, one per line, up to 8. Full indexing starts at the source root.",
+    userAgent: "Request identity",
+    userAgentPlaceholder: "Kikoto/<version>",
+    userAgentHint:
+      "Declared client identity for this source. Leave empty to keep the Kikoto identity; a bot challenge may need an explicit value.",
+    headers: "Extra request headers",
+    headersHint:
+      "Optional, one per line as Name: value, up to 8 custom X-* names and Accept-Language. Other headers are rejected.",
   },
   sourceIndex: {
     title: "Full source index",
@@ -207,6 +214,8 @@ export const surfaceEnglish = {
       source_unavailable: "The source is disabled or unavailable.",
       upstream_unavailable: "The directory request failed.",
       access_restricted: "Anonymous access was refused.",
+      challenge_detected:
+        "The source returned a bot challenge page. It was not parsed as business data; retry later or adjust the source request identity.",
       response_limit: "The metadata response exceeded the configured limit.",
       invalid_page: "The source returned invalid directory data.",
       pagination_changed: "Directory pagination changed repeatedly.",

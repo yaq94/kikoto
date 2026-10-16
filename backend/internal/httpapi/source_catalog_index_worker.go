@@ -31,7 +31,7 @@ func (s *Server) executeSourceCatalogIndexJob(ctx context.Context, job workflowJ
 		transport.minimumInterval = time.Duration(options.IntervalMS) * time.Millisecond
 		transport.concurrency = options.Concurrency
 	}
-	client := openlist.NewClient(source.Endpoint.APIURL, httpClient).WithResponseLimit(options.MaxResponseBytes)
+	client := configuredOpenListClient(source, httpClient).WithResponseLimit(options.MaxResponseBytes)
 	for count := 0; count < options.PagesPerBatch; {
 		if err = ctx.Err(); err != nil {
 			return err

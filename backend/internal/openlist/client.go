@@ -12,6 +12,8 @@ import (
 	"net/url"
 	"path"
 	"strings"
+
+	"github.com/yexca/kikoto/backend/internal/buildinfo"
 )
 
 const MaxResponseBytes = 2 << 20
@@ -19,6 +21,10 @@ const MaxResponseBytes = 2 << 20
 var (
 	ErrUnavailable = errors.New("OpenList directory is unavailable")
 	ErrRestricted  = errors.New("OpenList directory requires access permission")
+	// ErrChallenged is a browser-interactive anti-bot challenge, not a
+	// permission decision. Callers must not treat it as a business response and
+	// must not retry it tightly; the origin gate applies its normal backoff.
+	ErrChallenged  = errors.New("OpenList directory answered with an interactive challenge")
 	ErrLimit       = errors.New("OpenList directory exceeds the finite scan limit")
 	ErrInvalid     = errors.New("OpenList returned invalid directory data")
 	ErrMaintenance = errors.New("OpenList source is under maintenance")
@@ -28,6 +34,8 @@ type Client struct {
 	endpoint         string
 	http             *http.Client
 	maxResponseBytes int64
+	userAgent        string
+	requestHeaders   map[string]string
 }
 type Object struct {
 	Name     string          `json:"name"`
@@ -49,12 +57,148 @@ func NewClient(endpoint string, client *http.Client) *Client {
 	copyClient := *client
 	// Metadata POST bodies contain source paths; do not forward them elsewhere.
 	copyClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	return &Client{endpoint: strings.TrimRight(endpoint, "/"), http: &copyClient, maxResponseBytes: MaxResponseBytes}
+	// An explicit identity is required: the Go default User-Agent is rejected by
+	// common anonymous-gateway bot rules even when the request is legitimate and
+	// no other header changes. The transport itself stays caller-supplied; the
+	// observed refusal was agent-identity based, not a connection or HTTP/2
+	// issue, so no transport setting is changed here.
+	return &Client{
+		endpoint:         strings.TrimRight(endpoint, "/"),
+		http:             &copyClient,
+		maxResponseBytes: MaxResponseBytes,
+		userAgent:        buildinfo.UserAgent(),
+	}
 }
 
 // WithResponseLimit sets a smaller or larger operator-selected metadata bound.
 // Callers validate the setting before constructing a client.
 func (c *Client) WithResponseLimit(n int64) *Client { c.maxResponseBytes = n; return c }
+
+// WithUserAgent replaces the declared identity for this client. An empty value
+// keeps the default rather than falling back to the Go default identity.
+func (c *Client) WithUserAgent(value string) *Client {
+	if trimmed := strings.TrimSpace(value); trimmed != "" && ValidHeaderValue(trimmed) {
+		c.userAgent = trimmed
+	}
+	return c
+}
+
+// WithRequestHeaders adds operator-configured request headers. Entries that
+// could change transport semantics (connection handling, framing, credentials,
+// the declared identity) are dropped here as a second line of defense; the
+// configuration layer rejects them with a readable error first.
+func (c *Client) WithRequestHeaders(headers map[string]string) *Client {
+	for name, value := range headers {
+		canonical := http.CanonicalHeaderKey(strings.TrimSpace(name))
+		if !ValidHeaderName(canonical) || !AllowedConfiguredHeader(canonical) || !ValidHeaderValue(value) {
+			continue
+		}
+		if c.requestHeaders == nil {
+			c.requestHeaders = map[string]string{}
+		}
+		c.requestHeaders[canonical] = value
+	}
+	return c
+}
+
+// ForbiddenHeader explains that a header a source configuration can never set.
+// User-Agent has a dedicated configuration field; connection, framing, proxy,
+// cookie and encoding headers belong to the transport.
+func ForbiddenHeader(name string) bool {
+	switch name {
+	case "Host", "Content-Length", "Connection", "Transfer-Encoding", "Upgrade",
+		"Proxy-Authorization", "Proxy-Connection", "Te", "Trailer", "Expect",
+		"Cookie", "Set-Cookie", "User-Agent", "Content-Type", "Accept-Encoding",
+		"Accept", "Authorization":
+		return true
+	}
+	return false
+}
+
+// AllowedConfiguredHeader is the whitelist for operator-configurable headers:
+// custom X- headers plus Accept-Language, and nothing the client owns.
+func AllowedConfiguredHeader(name string) bool {
+	if ForbiddenHeader(name) {
+		return false
+	}
+	return strings.HasPrefix(name, "X-") || name == "Accept-Language"
+}
+
+// ValidHeaderName accepts an RFC 7230 token within the configured length bound.
+func ValidHeaderName(name string) bool {
+	if name == "" || len(name) > 64 {
+		return false
+	}
+	for index := 0; index < len(name); index++ {
+		character := name[index]
+		switch {
+		case character >= 'a' && character <= 'z',
+			character >= 'A' && character <= 'Z',
+			character >= '0' && character <= '9':
+		case strings.ContainsRune("!#$%&'*+-.^_`|~", rune(character)):
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// ValidHeaderValue accepts visible ASCII plus horizontal tab, and refuses line
+// breaks or control characters that could inject additional headers.
+func ValidHeaderValue(value string) bool {
+	if value == "" || len(value) > 512 {
+		return false
+	}
+	for _, character := range value {
+		if character == '\t' {
+			continue
+		}
+		if character < 0x20 || character > 0x7e {
+			return false
+		}
+	}
+	return true
+}
+
+const challengeProbeBytes = 8 << 10
+
+// isChallengeStatus limits challenge inspection to the two refusal statuses an
+// anonymous gateway uses. Other statuses keep their existing classification.
+func isChallengeStatus(status int) bool {
+	return status == http.StatusForbidden || status == http.StatusTooManyRequests
+}
+
+// isChallengeResponse reports an interactive anti-bot challenge rather than a
+// permission decision. The explicit Cf-Mitigated marker is authoritative; when
+// it is absent, a bounded prefix of an HTML refusal is inspected for the
+// documented Cloudflare interstitial markers. The challenge page is never
+// parsed as business JSON, and detection never retries.
+func isChallengeResponse(resp *http.Response) bool {
+	if strings.EqualFold(strings.TrimSpace(resp.Header.Get("Cf-Mitigated")), "challenge") {
+		return true
+	}
+	if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(resp.Header.Get("Content-Type"))), "text/html") {
+		return false
+	}
+	peek, err := io.ReadAll(io.LimitReader(resp.Body, challengeProbeBytes))
+	if err != nil && len(peek) == 0 {
+		return false
+	}
+	lowercase := strings.ToLower(string(peek))
+	for _, marker := range []string{
+		"challenge-platform",
+		"cf-chl",
+		"cf-mitigated",
+		"just a moment",
+		"attention required",
+		"enable javascript and cookies",
+	} {
+		if strings.Contains(lowercase, marker) {
+			return true
+		}
+	}
+	return false
+}
 
 type Page struct {
 	Content []Object `json:"content"`
@@ -102,12 +246,20 @@ func (c *Client) request(ctx context.Context, operation string, input, output an
 	if err != nil {
 		return ErrInvalid
 	}
+	req.Header.Set("User-Agent", c.userAgent)
+	req.Header.Set("Accept", "application/json")
+	for name, value := range c.requestHeaders {
+		req.Header.Set(name, value)
+	}
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = resp.Body.Close() }()
+	if isChallengeStatus(resp.StatusCode) && isChallengeResponse(resp) {
+		return ErrChallenged
+	}
 	if resp.StatusCode == 401 || resp.StatusCode == 403 {
 		return ErrRestricted
 	}

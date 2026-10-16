@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"path"
@@ -33,7 +34,20 @@ type SourceCatalogFile struct {
 }
 
 func (s *Server) openListClient(source remoteSourceForUse) *openlist.Client {
-	return openlist.NewClient(source.Endpoint.APIURL, s.sourceClient(source, 30*time.Second, sourceRequestOpenList))
+	return configuredOpenListClient(source, s.sourceClient(source, 30*time.Second, sourceRequestOpenList))
+}
+
+// configuredOpenListClient applies the operator's request options to every
+// OpenList client, including the full-index worker's own transport.
+func configuredOpenListClient(source remoteSourceForUse, httpClient *http.Client) *openlist.Client {
+	client := openlist.NewClient(source.Endpoint.APIURL, httpClient)
+	if userAgent := strings.TrimSpace(source.Config.OpenListUserAgent); userAgent != "" {
+		client.WithUserAgent(userAgent)
+	}
+	if len(source.Config.OpenListHeaders) > 0 {
+		client.WithRequestHeaders(source.Config.OpenListHeaders)
+	}
+	return client
 }
 
 func validateOpenListConfig(config fileSourceConfig) error {
@@ -53,6 +67,33 @@ func validateOpenListConfig(config fileSourceConfig) error {
 	}
 	if n := config.OpenListIntervalMS; n != nil && (*n < 100 || *n > 60000) {
 		return errors.New("openListIntervalMs must be between 100 and 60000")
+	}
+	return validateOpenListRequestConfig(config)
+}
+
+// validateOpenListRequestConfig enforces the operator request options. It runs
+// against the raw submitted document, before normalization can drop an unsafe
+// value, so a rejected configuration is explained instead of silently changed.
+func validateOpenListRequestConfig(config fileSourceConfig) error {
+	if userAgent := strings.TrimSpace(config.OpenListUserAgent); userAgent != "" {
+		if len(userAgent) > 256 || !openlist.ValidHeaderValue(userAgent) {
+			return errors.New("openListUserAgent must be one line of at most 256 characters")
+		}
+	}
+	if len(config.OpenListHeaders) > maxOpenListRequestHeaders {
+		return fmt.Errorf("openListHeaders must contain at most %d headers", maxOpenListRequestHeaders)
+	}
+	for name, value := range config.OpenListHeaders {
+		canonical := http.CanonicalHeaderKey(strings.TrimSpace(name))
+		if !openlist.ValidHeaderName(canonical) {
+			return fmt.Errorf("openListHeaders contains an invalid header name")
+		}
+		if !openlist.AllowedConfiguredHeader(canonical) {
+			return fmt.Errorf("openListHeaders cannot set header %s", canonical)
+		}
+		if !openlist.ValidHeaderValue(value) {
+			return fmt.Errorf("openListHeaders value for %s must be one line of at most 512 characters", canonical)
+		}
 	}
 	return nil
 }
@@ -100,6 +141,9 @@ func (s *Server) scanOpenListCatalog(w http.ResponseWriter, r *http.Request) {
 		}
 		if err != nil {
 			outcome := "failed"
+			if errors.Is(err, openlist.ErrChallenged) {
+				outcome = "restricted"
+			}
 			if errors.Is(err, openlist.ErrRestricted) {
 				outcome = "restricted"
 			}

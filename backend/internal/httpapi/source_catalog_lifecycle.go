@@ -13,6 +13,11 @@ func catalogFailureStatus(err error) string {
 	if errors.Is(err, openlist.ErrMaintenance) {
 		return "maintenance"
 	}
+	// A challenge is a transport-level refusal that hides the real answer, so it
+	// must not overwrite availability with a permission verdict.
+	if errors.Is(err, openlist.ErrChallenged) {
+		return "restricted"
+	}
 	if errors.Is(err, openlist.ErrRestricted) {
 		return "restricted"
 	}

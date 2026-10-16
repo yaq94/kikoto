@@ -180,6 +180,8 @@ func openListLiveErrorCategory(err error) string {
 		return "cancelled"
 	case errors.Is(err, context.DeadlineExceeded), errors.As(err, &network) && network.Timeout():
 		return "timeout"
+	case errors.Is(err, openlist.ErrChallenged):
+		return "challenged"
 	case errors.Is(err, openlist.ErrRestricted):
 		return "restricted"
 	case errors.Is(err, openlist.ErrLimit):

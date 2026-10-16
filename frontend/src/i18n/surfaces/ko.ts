@@ -154,6 +154,13 @@ export const surfaceKorean = {
     roots: "작품 폴더",
     rootsHint:
       "선택 사항: 제한 스캔용 작품 폴더를 한 줄에 하나씩 최대 8개 입력합니다. 전체 색인은 소스 루트에서 시작합니다.",
+    userAgent: "요청 식별자",
+    userAgentPlaceholder: "Kikoto/<버전>",
+    userAgentHint:
+      "이 소스가 선언하는 클라이언트 식별자입니다. 비워 두면 Kikoto 식별자를 유지하며, 봇 검증이 나오면 명시적으로 지정해야 할 수 있습니다.",
+    headers: "추가 요청 헤더",
+    headersHint:
+      "선택 사항이며 한 줄에 「이름: 값」 하나씩 최대 8개입니다. 사용자 지정 X-* 이름과 Accept-Language만 지정할 수 있고 다른 헤더는 거부됩니다.",
   },
   sourceIndex: {
     title: "전체 소스 색인",
@@ -203,6 +210,8 @@ export const surfaceKorean = {
       source_unavailable: "소스가 비활성화되었거나 사용할 수 없습니다.",
       upstream_unavailable: "폴더 요청에 실패했습니다.",
       access_restricted: "익명 접근이 거부되었습니다.",
+      challenge_detected:
+        "소스가 자동 접근 차단 페이지를 반환했습니다. 업무 데이터로 해석하지 않았으며, 잠시 후 다시 시도하거나 요청 식별자를 조정하세요.",
       response_limit: "메타데이터 응답이 설정한 한도를 초과했습니다.",
       invalid_page: "소스가 잘못된 폴더 데이터를 반환했습니다.",
       pagination_changed: "폴더 페이지 구성이 반복해서 변경되었습니다.",

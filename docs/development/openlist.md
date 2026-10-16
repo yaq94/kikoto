@@ -220,6 +220,40 @@ by the shared policy; errors expose fixed messages. Range requests are passed
 through, streamed bytes and request lifetime are bounded, and every new playback
 request resolves a fresh URL. A failed expired URL is refreshed at most once.
 
+### Request identity and anti-bot refusals
+
+Every OpenList metadata request declares `Kikoto/<version>` by default. The Go
+default client identity is rejected by common anonymous-gateway bot rules even
+when the request is otherwise valid, so leaving it unset is not a neutral choice.
+`config.openListUserAgent` (one line, at most 256 characters) replaces the
+declared identity, for example a browser identity the operator has decided to
+present. `config.openListHeaders` adds at most 8 whitelisted headers: custom
+`X-` names and `Accept-Language`. The configuration layer rejects `Host`,
+`Content-Length`, `Connection`, `Transfer-Encoding`, `Upgrade`, proxy headers,
+`Cookie`/`Set-Cookie`, `Authorization`, `Accept`, `Accept-Encoding`,
+`Content-Type`, `User-Agent` and any value containing a line break, and stored
+rows that predate validation are dropped again on load.
+
+An HTTP 403/429 answer marked `Cf-Mitigated: challenge`, or an HTML refusal
+carrying the documented interstitial markers, is classified as a challenge
+rather than a permission decision. A challenge answer is never parsed as
+business JSON, is not retried within the request, and keeps the existing origin
+backoff budget instead of adding a tighter loop. Challenge refusals and ordinary
+anonymous-permission refusals therefore remain distinguishable in catalog
+progress (`challenge_detected` versus `access_restricted`), and the server's
+public error keeps its fixed message.
+
+The behavior is covered without a network by `internal/openlist` request tests
+(default and overridden identity, header whitelist, challenge classification
+versus a plain refusal, no retry) and by `internal/httpapi` tests that drive a
+catalog scan, a media request and the full-index worker through the application.
+`TestOpenListIdentitySelfCheck` (opt-in via `KIKOTO_OPENLIST_SELFCHECK_URL` and
+optional `KIKOTO_OPENLIST_SELFCHECK_FILE`) is an operator probe of one
+authorized source: it logs only the declared identity, stage, byte counts and
+SHA-256 digests for `bytes=0-31` and `bytes=1024-1055`, and is not playback
+acceptance. The playback acceptance remains
+[the two-range LIVE sample](openlist-live.md).
+
 The outbound read boundary is `loadSourceCatalogEntry(ctx, entryID)`;
 it checks the enabled source type before returning stored original text and
 source identity. `loadRetainedSourceCatalogEntry(ctx, entryID)` resolves retained

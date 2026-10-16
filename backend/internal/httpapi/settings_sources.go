@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/yexca/kikoto/backend/internal/config"
+	"github.com/yexca/kikoto/backend/internal/openlist"
 	"github.com/yexca/kikoto/backend/internal/outbound"
 	"github.com/yexca/kikoto/backend/internal/remotemetadata"
 	"github.com/yexca/kikoto/backend/internal/sqlutil"
@@ -31,6 +32,7 @@ const (
 	maxDLsiteMetadataLanguages     = 6
 	dlsiteMetadataLanguageSetting  = "dlsite_metadata_language"
 	dlsiteMetadataLanguagesSetting = "dlsite_metadata_languages"
+	maxOpenListRequestHeaders      = 8
 )
 
 func isKikoeruSourceType(sourceType string) bool {
@@ -177,6 +179,12 @@ type fileSourceConfig struct {
 	Capabilities       *[]string `json:"capabilities,omitempty"`
 	OpenListRoots      []string  `json:"openListRoots,omitempty"`
 	OpenListIntervalMS *int      `json:"openListIntervalMs,omitempty"`
+	// OpenListUserAgent overrides the declared client identity. Empty keeps the
+	// default Kikoto/<version>; a browser identity is an explicit operator choice.
+	OpenListUserAgent string `json:"openListUserAgent,omitempty"`
+	// OpenListHeaders adds whitelisted request headers (custom X-* names and
+	// Accept-Language). Request headers the transport owns cannot be set here.
+	OpenListHeaders map[string]string `json:"openListHeaders,omitempty"`
 }
 
 type fileSourceEndpoint struct {
@@ -696,6 +704,14 @@ func parseFileSourcePayload(w http.ResponseWriter, r *http.Request, allowLocal b
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return fileSourcePayload{}, false
 	}
+	// Validate the submitted request options before normalization can drop an
+	// unsafe value: a rejected header must produce an explanation.
+	if strings.TrimSpace(payload.SourceType) == sourceTypeOpenList {
+		if err := validateOpenListRequestConfig(payload.Config); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return fileSourcePayload{}, false
+		}
+	}
 	normalizeFileSourcePayload(&payload)
 	if err := validateFileSourcePayload(&payload, allowLocal, allowLegacy); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
@@ -763,6 +779,9 @@ func validateFileSourcePayload(payload *fileSourcePayload, allowLocal, allowLega
 func normalizeFileSourceConfig(config *fileSourceConfig, sourceType string) {
 	if !isKikoeruSourceType(sourceType) {
 		config.Capabilities = nil
+		if sourceType == sourceTypeOpenList {
+			normalizeOpenListRequestConfig(config)
+		}
 		return
 	}
 	if config.Capabilities != nil {
@@ -780,6 +799,33 @@ func normalizeFileSourceConfig(config *fileSourceConfig, sourceType string) {
 		return
 	}
 	config.RequestLanguage = normalizeRemoteRequestLanguage(raw)
+}
+
+// normalizeOpenListRequestConfig drops stored request options that no longer
+// satisfy the current bounds, so an operator edit that predates validation
+// cannot turn into an outbound request with a dangerous header.
+func normalizeOpenListRequestConfig(config *fileSourceConfig) {
+	config.OpenListUserAgent = strings.TrimSpace(config.OpenListUserAgent)
+	if config.OpenListUserAgent != "" && (len(config.OpenListUserAgent) > 256 || !openlist.ValidHeaderValue(config.OpenListUserAgent)) {
+		config.OpenListUserAgent = ""
+	}
+	if len(config.OpenListHeaders) == 0 {
+		config.OpenListHeaders = nil
+		return
+	}
+	headers := map[string]string{}
+	for name, value := range config.OpenListHeaders {
+		canonical := http.CanonicalHeaderKey(strings.TrimSpace(name))
+		if len(headers) >= maxOpenListRequestHeaders || !openlist.ValidHeaderName(canonical) || !openlist.AllowedConfiguredHeader(canonical) || !openlist.ValidHeaderValue(value) {
+			continue
+		}
+		headers[canonical] = value
+	}
+	if len(headers) == 0 {
+		config.OpenListHeaders = nil
+		return
+	}
+	config.OpenListHeaders = headers
 }
 
 func normalizeRemoteRequestLanguage(value string) string {

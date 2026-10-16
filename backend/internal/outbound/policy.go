@@ -631,13 +631,31 @@ func (p *Policy) validatedAddresses(ctx context.Context, host string, rule endpo
 	if len(addresses) > maxResolvedAddresses {
 		return nil, violation("outbound hostname resolved to too many addresses")
 	}
+	// A local transparent-proxy resolver can map every foreign hostname into its
+	// fake-IP placeholder range. The connection is then completed by the local
+	// resolver/proxy, so a hostname answered with this placeholder is not an
+	// internal destination. An IP literal in the same range keeps the strict
+	// rejection: it is caller-controlled input rather than a resolver artifact.
+	_, literalErr := netip.ParseAddr(host)
+	literal := literalErr == nil
 	for _, address := range addresses {
 		if err := validateAddress(address, rule.allowPrivate); err != nil {
-			return nil, err
+			if literal || !transparentProxyPlaceholderPrefix.Contains(address.Unmap()) {
+				return nil, err
+			}
 		}
 	}
 	return addresses, nil
 }
+
+// transparentProxyPlaceholderPrefix is the RFC 2544 benchmarking range that a
+// local transparent resolver (a TUN-mode proxy, for example) uses as its
+// fake-IP pool. A hostname answered from that pool is routed by the local
+// resolver, which maps the placeholder back to the real destination, so it is
+// not an internal address. An IP literal in the same range stays rejected: it
+// is caller input rather than a resolver artifact. Every real private and
+// documentation range keeps its existing rejection.
+var transparentProxyPlaceholderPrefix = netip.MustParsePrefix("198.18.0.0/15")
 
 func (p *Policy) allowsPublicHost(host string) bool {
 	if p.allowPublicOrigins {
