@@ -108,6 +108,7 @@ type Server struct {
 	translationCache               *translation.Cache
 	catalogDiskSpace               func(string) (diskSpaceSnapshot, error)
 	catalogNow                     func() time.Time
+	workMatchingMu                 sync.Mutex
 }
 
 type localMediaIndexCall struct {
@@ -359,6 +360,11 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/shared-splits/{id}", s.getSharedSplit)
 	mux.HandleFunc("POST /api/shared-splits/{id}/start", s.startSharedSplit)
 	mux.HandleFunc("POST /api/shared-splits/{id}/decision", s.decideSharedSplit)
+	mux.HandleFunc("GET /api/work-matching/settings", s.workMatchingSettings)
+	mux.HandleFunc("PUT /api/work-matching/settings", s.workMatchingSettings)
+	mux.HandleFunc("GET /api/work-matching/status", s.workMatchingStatus)
+	mux.HandleFunc("POST /api/work-matching", s.runWorkMatching)
+	mux.HandleFunc("GET /api/work-matching", s.getWorkMatching)
 	mux.HandleFunc("POST /api/shared-associations/previews", s.createSharedAssociationPreview)
 	mux.HandleFunc("GET /api/shared-associations", s.listSharedAssociations)
 	mux.HandleFunc("GET /api/shared-associations/{id}", s.getSharedAssociation)

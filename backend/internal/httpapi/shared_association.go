@@ -163,7 +163,7 @@ func (s *Server) getSharedAssociation(w http.ResponseWriter, r *http.Request) {
 	a, err := loadStoredAssociation(r.Context(), tx, id)
 	if err == nil && (a.Status == "preview" || a.Status == "pending") {
 		_, fingerprint, e := loadAssociationSnapshot(r.Context(), tx, a.Snapshot.Left.Subject, a.Snapshot.Right.Subject)
-		if e != nil || fingerprint != a.Fingerprint {
+		if e != nil || fingerprint != a.Fingerprint || validateWorkMatchingTx(r.Context(), tx, a.ID) != nil {
 			a.Status = "stale"
 		}
 	}
@@ -368,6 +368,9 @@ func registerAssociationObject(ctx context.Context, tx *sql.Tx, o *associationOb
 }
 
 func commitReadyAssociationTx(ctx context.Context, tx *sql.Tx, a *storedAssociation) error {
+	if err := validateWorkMatchingTx(ctx, tx, a.ID); err != nil {
+		return err
+	}
 	users := associationUsers(a.Snapshot)
 	merged := map[int64]associationReview{}
 	for _, user := range users {

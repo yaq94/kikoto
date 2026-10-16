@@ -5,6 +5,19 @@ import type { PersonalReview, PersonalReviewPatch } from "@/lib/workApi";
 export type CatalogStatus =
   "available" | "unavailable" | "maintenance" | "restricted" | "unconfirmed_empty" | "missing" | "disabled";
 export type AssociationSubject = { kind: "work" | "catalog" | "series"; id: number };
+export type WorkMatchResult = {
+  status: "queued" | "no_match" | "review" | "paused" | "failed" | "pending" | "completed" | "existing";
+  rule: string;
+  candidateCount: number;
+  operationId?: number;
+  candidates: Array<{
+    subject: AssociationSubject;
+    title: string;
+    rule: string;
+    reasons: string[];
+    confidence: string;
+  }>;
+};
 export type AssociationReview = { rating: number | null; note: string };
 export type SplitAllocation = "left" | "right" | "both";
 export type SharedSplit = {
@@ -122,6 +135,10 @@ export type CatalogIndexProgress = {
 };
 
 export const sourceCatalogApi = {
+  getWorkMatching: (subject: AssociationSubject, signal?: AbortSignal) =>
+    getJSON<WorkMatchResult>(`/api/work-matching?kind=${subject.kind}&id=${subject.id}`, signal),
+  runWorkMatching: (subject: AssociationSubject, signal?: AbortSignal) =>
+    postJSONBody<WorkMatchResult>("/api/work-matching", subject, signal),
   previewSharedSplit: (associationId: number) =>
     postJSONBody<SharedSplit>(`/api/shared-associations/${associationId}/split-preview`, {}),
   listSharedSplits: (associationId: number, signal?: AbortSignal) =>
