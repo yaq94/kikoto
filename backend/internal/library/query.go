@@ -480,10 +480,21 @@ func listWhere(scope string, status string, queryText string, userID int64, demo
 	where := strings.Join(clauses, " AND ")
 	// A confirmed identity has one card. Search and scope still consider each
 	// retained edition, so an alternate title or source can find that card.
-	where = `NOT EXISTS (SELECT 1 FROM shared_identity_member hidden WHERE hidden.work_id=work.id AND hidden.identity_work_id<>work.id) AND
-		EXISTS (SELECT 1 FROM work AS associated_work WHERE associated_work.id IN
-		(SELECT work_id FROM shared_work_identity WHERE identity_work_id=work.id) AND (` + associationWorkQualifier.ReplaceAllString(where, "associated_work.") + `))`
-	return where, args
+	// The outer row must satisfy the clause on its own or through one of its
+	// retained editions. Reading the editions from the indexed membership table
+	// keeps the probe proportional to the group; scanning the shared_work_identity
+	// view re-evaluated the whole predicate once per outer row.
+	//
+	// The original clause text comes first and the edition copy second, so the
+	// returned arguments repeat in that order.
+	memberWhere := associationWorkQualifier.ReplaceAllString(where, "associated_work.")
+	where = `NOT EXISTS (SELECT 1 FROM shared_identity_member hidden WHERE hidden.work_id=work.id AND hidden.identity_work_id<>work.id) AND (
+		(` + where + `) OR EXISTS (
+			SELECT 1 FROM shared_identity_member AS identity_membership
+			INNER JOIN work AS associated_work ON associated_work.id=identity_membership.work_id
+			WHERE identity_membership.identity_work_id=work.id AND (` + memberWhere + `)
+		))`
+	return where, append(append([]any{}, args...), args...)
 }
 
 // Keep direct presence and edition-family presence as separate indexed probes.
