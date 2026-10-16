@@ -2,7 +2,7 @@
 
 **Status:** ready-for-agent
 **Implementation:** in-progress
-**阶段:** 01–06 已集成并 resolved；07–13、15、16 及 OpenList 单来源代理兼容修复已集成并保持 verified-local。18 迁移完成一致性、19 前端 CI 修复均已合入；16/19 在同一集成产物上取得传输、共享关联/拆分、迁移和前端组合证据。14 功能仍待固定候选合入；真实媒体 LIVE、真实索引覆盖、完整 CI、最终审查和部署前置保持有效。
+**阶段:** 01–06 已集成并 resolved；07–13、15、16 及 OpenList 单来源代理兼容修复已集成并保持 verified-local。18 迁移完成一致性、19 前端 CI 修复均已合入；16/19 在同一集成产物上取得传输、共享关联/拆分、迁移和前端组合证据。14 功能已合入集成分支；真实媒体 LIVE、真实索引覆盖、完整 CI、最终审查和部署前置保持有效。
 **依据:** [正式规格](spec.md) · [工单总览](ticket-proposal.md) · [领域词汇表](../../GLOSSARY.md) · [作品身份与个人记录 ADR](../../docs/adr/0001-work-identity-and-personal-state.md)
 
 ## 当前授权与完成条件
@@ -54,10 +54,10 @@
 | [11 系列卡片与单集归组](issues/11-series-and-episode-grouping.md) | 07 | verified-local | 已集成 071、系列/单集发现与手工归组；完整发布前置保留 | [11 证据](evidence/11-series.md)、[集成复验](evidence/11-integration.md) |
 | [12 系列与单集个人评价](issues/12-series-episode-personal-reviews.md) | 11 | verified-local | 已集成；系列与单集独立评价、跨源关系、隔离和重启 H/R/F 通过；无新迁移 | [12 证据](evidence/12-series-reviews.md)、[集成复验](evidence/12-integration.md) |
 | [13 共享关联与本人冲突确认](issues/13-shared-link-conflict-review.md) | 12 | verified-local | 原实施任务提交 9844975 已集成；073、本人冲突确认及精确播放版本保留，完整发布前置保留 | [13 证据](evidence/13-shared-association.md)、[集成复验](evidence/10-13-18-integration.md) |
-| [14 高置信唯一候选关联](issues/14-high-confidence-work-matching.md) | 13 | in-progress | 独立工作区实施中；冻结 074 已由 16 带入，功能仍待固定候选及集成验收 | 待交接 |
+| [14 高置信唯一候选关联](issues/14-high-confidence-work-matching.md) | 13 | resolved | 已合入集成；自动关联、证据门槛、预算、并发退避、重启恢复及 F/U 全部通过 | [14 证据](evidence/14-work-matching.md) |
 | [15 拆分与本人记录归属](issues/15-split-personal-record-allocation.md) | 13 | verified-local | 原实施任务的 41a3412 已追加集成；本人选择、重启、系列/嵌套关系和来源状态交叉验证通过，完整发布前置保留 | [15 候选证据](evidence/15-shared-split.md)、[集成复验](evidence/15-integration.md) |
 | [16 个人数据导入导出](issues/16-personal-data-transfer-compatibility.md) | 12 | verified-local | 87e0071 已集成；v2 四类对象、空库/重复导入、精确引用、冲突和未匹配进度保留通过；完整发布前置保留 | [16 证据](evidence/16-personal-transfer.md)、[集成复验](evidence/16-19-integration.md) |
-| [17 组合验收与部署回退](issues/17-integrated-acceptance-release-plan.md) | 03、05、09、10、14、15、16、18、19 | pending | 完整 AC、CI 终态、备份回滚及部署验收待执行 | 待执行 |
+| [17 组合验收与部署回退](issues/17-integrated-acceptance-release-plan.md) | 03、05、09、10、14、15、16、18、19 | in-progress | 全部前置票已合入集成；完整 AC、CI 终态、备份回滚及部署验收进行中 | 待执行 |
 | [18 迁移完成与维护状态一致性](issues/18-ci-migration-completion-state.md) | 无 | verified-local | 已集成 924f807；最终状态、失败及取消恢复已本地验证，Full CI 待执行 | [18 证据](evidence/18-ci-migration.md)、[集成复验](evidence/10-13-18-integration.md) |
 | [19 前端 CI 修复](issues/19-ci-browser-reliability.md) | 无 | verified-local | ce5154e 已集成；骨架同步、收藏独立行为、真实移动触摸和旧目录 fixture 契约复验通过，Full/Gate 待执行 | [19 证据](evidence/19-ci-browser.md)、[集成复验](evidence/16-19-integration.md) |
 
