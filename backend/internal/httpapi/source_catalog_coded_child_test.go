@@ -3,6 +3,7 @@ package httpapi
 import (
 	"encoding/json"
 	"net/http"
+	"sync/atomic"
 	"testing"
 )
 
@@ -10,6 +11,10 @@ import (
 // sits below an author or uploader directory. Folding it into the parent card
 // makes the work unreachable by its code and hides its own title.
 func TestSourceCatalogKeepsCodedChildDirectoriesAsWorks(t *testing.T) {
+	// The first run publishes only the uploader card, imitating a catalog built
+	// before coded children had their own identity.
+	var legacy atomic.Bool
+	legacy.Store(true)
 	f := newCatalogIndexFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var in struct {
 			Path string `json:"path"`
@@ -22,8 +27,10 @@ func TestSourceCatalogKeepsCodedChildDirectoriesAsWorks(t *testing.T) {
 		case "/Uploader":
 			items = []map[string]any{
 				{"name": "uploader-loose.mp3", "size": 100},
-				{"name": "RJ00000041Coded Child", "is_dir": true},
 				{"name": "Numberless Child", "is_dir": true},
+			}
+			if !legacy.Load() {
+				items = append(items, map[string]any{"name": "RJ00000041Coded Child", "is_dir": true})
 			}
 		case "/Uploader/RJ00000041Coded Child":
 			items = []map[string]any{{"name": "coded.mp3", "size": 100}}
@@ -37,10 +44,22 @@ func TestSourceCatalogKeepsCodedChildDirectoriesAsWorks(t *testing.T) {
 	if p["status"] != "complete" {
 		t.Fatalf("scan = %#v", p)
 	}
+	if result := f.request(t, http.MethodGet, "/works?q=RJ00000041", "", 200); result["total"] != float64(0) {
+		t.Fatalf("legacy scan unexpectedly published the coded child: %#v", result)
+	}
+	legacy.Store(false)
+	f.request(t, http.MethodPost, "/catalog/index", `{"intervalMs":100}`, 202)
+	if p := f.drain(t); p["status"] != "complete" {
+		t.Fatalf("rescan = %#v", p)
+	}
 	for _, code := range []string{"RJ00000041"} {
 		result := f.request(t, http.MethodGet, "/works?q="+code, "", 200)
 		if result["total"] != float64(1) {
 			t.Fatalf("search %s total=%v, want the coded child", code, result["total"])
 		}
+	}
+	result := f.request(t, http.MethodGet, "/works?q=RJ00000041", "", 200)
+	if result["total"] != float64(1) {
+		t.Fatalf("rescan search total=%v, want the coded child", result["total"])
 	}
 }

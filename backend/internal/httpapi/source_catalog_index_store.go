@@ -195,17 +195,44 @@ func completeCatalogDirectoryTx(ctx context.Context, tx *sql.Tx, sourceID, gener
 	if err != nil {
 		return err
 	}
-	// An already published container keeps its identity even if a later scan
-	// discovers episode markers below it. Splitting it needs explicit review.
-	var existingRoot string
-	err = tx.QueryRowContext(ctx, `SELECT root_path FROM source_catalog_entry WHERE file_source_id=? AND root_path IN (?,?) ORDER BY length(root_path) LIMIT 1`, sourceID, d.Path, d.Root).Scan(&existingRoot)
-	if err == nil {
-		d.Root = existingRoot
-	} else if errors.Is(err, sql.ErrNoRows) {
-		d.Root = catalogAdmissionRoot(d.Path, d.Root, catalogDirectorySummary{audio, formats, otherDirs})
-	} else {
+	// A published container keeps its identity even if a later scan discovers
+	// episode markers below it; splitting that needs explicit review. An exact
+	// entry for this directory always wins, and a coded child never inherits a
+	// parent entry: otherwise a rescan keeps folding several coded works into
+	// the uploader card it created before this rule existed.
+	var exact int
+	if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM source_catalog_entry WHERE file_source_id=? AND root_path=?)`,
+		sourceID, d.Path).Scan(&exact); err != nil {
 		return err
 	}
+	if exact != 0 {
+		// An exact entry is this directory's own identity, even when it is
+		// uncoded and lives below a published uploader card.
+		d.Root = d.Path
+		return nil
+	}
+	if catalogDirectoryCode(d.Path) != "" {
+		d.Root = catalogAdmissionRoot(d.Path, "", catalogDirectorySummary{audio, formats, otherDirs})
+		return nil
+	}
+	// A parent that already holds a reviewed work or a confirmed series is an
+	// intentional container. Its uncoded episode and format children stay in
+	// it, and splitting that needs explicit review. A merely published uploader
+	// card has neither, so its children are admitted individually.
+	var reviewedParent int
+	if d.Root != "" {
+		if err = tx.QueryRowContext(ctx, `SELECT EXISTS(
+			SELECT 1 FROM source_catalog_entry e
+			WHERE e.file_source_id=? AND e.root_path=?
+				AND (e.work_id IS NOT NULL OR EXISTS(SELECT 1 FROM catalog_series_member m WHERE m.catalog_entry_id=e.id)))`,
+			sourceID, d.Root).Scan(&reviewedParent); err != nil {
+			return err
+		}
+	}
+	if reviewedParent != 0 {
+		return nil
+	}
+	d.Root = catalogAdmissionRoot(d.Path, d.Root, catalogDirectorySummary{audio, formats, otherDirs})
 	return nil
 }
 
