@@ -41,9 +41,6 @@ func (s *Server) executeSourceCatalogIndexJob(ctx context.Context, job workflowJ
 	if _, _, err = s.publishCatalogQueue(ctx, job, input.SourceID); err != nil {
 		return err
 	}
-	if _, err = s.cleanupCatalogPublishBatch(ctx, job, input.SourceID); err != nil {
-		return err
-	}
 	for count := 0; count < options.PagesPerBatch; {
 		if err = ctx.Err(); err != nil {
 			return err
@@ -71,16 +68,21 @@ func (s *Server) executeSourceCatalogIndexJob(ctx context.Context, job workflowJ
 			if more {
 				return s.settleCatalogBatch(ctx, job, input.SourceID, "queued", "")
 			}
-				// Retire rows an older generation left on entries this run
-				// republished, before the run can settle as partial.
-				removed, err := s.cleanupCatalogPublishBatch(ctx, job, input.SourceID)
+			// No directory is left to observe and the publish queue is empty,
+			// so the set of entries this generation republished is final.
+			// Retire the rows an older generation left on those entries now;
+			// the cursor must not advance before a later page can republish
+			// the entry. This runs for a partial run too: it only touches
+			// entries this generation published, never the whole source.
+			for pass := 0; pass < catalogPublishBatchesPerPass; pass++ {
+				scanned, _, err := s.cleanupCatalogPublishBatch(ctx, job, input.SourceID)
 				if err != nil {
 					return err
 				}
-				if removed > 0 {
-					count++
-					continue
+				if scanned < 100 {
+					break
 				}
+			}
 			p, err := s.sourceCatalogProgress(ctx, input.SourceID, 1)
 			if err != nil {
 				return err
@@ -147,9 +149,6 @@ func (s *Server) executeSourceCatalogIndexJob(ctx context.Context, job workflowJ
 		count += len(dirs)
 	}
 	if _, _, err = s.publishCatalogQueue(ctx, job, input.SourceID); err != nil {
-		return err
-	}
-	if _, err = s.cleanupCatalogPublishBatch(ctx, job, input.SourceID); err != nil {
 		return err
 	}
 	return s.settleCatalogBatch(ctx, job, input.SourceID, "queued", "")

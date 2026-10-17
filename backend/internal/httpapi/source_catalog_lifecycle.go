@@ -156,24 +156,24 @@ func (s *Server) settleCatalogLifecycleBatch(ctx context.Context, job workflowJo
 // never reaches the lifecycle pass that would delete them. This bounded pass
 // retires those rows as soon as the entry is republished, for every outcome of
 // the run, without touching an entry this generation did not publish.
-func (s *Server) cleanupCatalogPublishBatch(ctx context.Context, job workflowJobRecord, sourceID int64) (int64, error) {
+func (s *Server) cleanupCatalogPublishBatch(ctx context.Context, job workflowJobRecord, sourceID int64) (scanned, removed int64, err error) {
 	tx, release, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 	defer release()
 	if err = verifyCatalogLease(ctx, tx.Tx, job); err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 	var cursor int64
 	if err = tx.QueryRowContext(ctx, `SELECT publish_cleanup_cursor FROM source_catalog_scan WHERE file_source_id=?`, sourceID).Scan(&cursor); err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 	rows, err := tx.QueryContext(ctx, `SELECT id FROM source_catalog_entry
 		WHERE file_source_id=? AND last_seen_generation=? AND id>?
 		ORDER BY id LIMIT 100`, sourceID, job.RunID, cursor)
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 	ids := []int64{}
 	for rows.Next() {
@@ -188,17 +188,16 @@ func (s *Server) cleanupCatalogPublishBatch(ctx context.Context, job workflowJob
 	}
 	_ = rows.Close()
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
-	removed := int64(0)
 	for _, id := range ids {
 		result, execErr := tx.ExecContext(ctx, `DELETE FROM source_catalog_file WHERE catalog_entry_id=? AND observed_generation<>?`, id, job.RunID)
 		if execErr != nil {
-			return 0, execErr
+			return 0, 0, execErr
 		}
 		n, execErr := result.RowsAffected()
 		if execErr != nil {
-			return 0, execErr
+			return 0, 0, execErr
 		}
 		removed += n
 		// A folder row that is now its own catalog entry belongs to that
@@ -213,22 +212,22 @@ func (s *Server) cleanupCatalogPublishBatch(ctx context.Context, job workflowJob
 					AND e.relocated_to_id IS NULL AND e.id<>parent.id
 					AND parent.root_path<>'/' AND substr(e.root_path,1,length(parent.root_path)+1)=parent.root_path || '/')`, id, id)
 		if execErr != nil {
-			return 0, execErr
+			return 0, 0, execErr
 		}
 		n, execErr = result.RowsAffected()
 		if execErr != nil {
-			return 0, execErr
+			return 0, 0, execErr
 		}
 		removed += n
 		cursor = id
 	}
 	if len(ids) > 0 {
 		if _, err = tx.ExecContext(ctx, `UPDATE source_catalog_scan SET publish_cleanup_cursor=?,updated_at=CURRENT_TIMESTAMP WHERE file_source_id=?`, cursor, sourceID); err != nil {
-			return 0, err
+			return 0, 0, err
 		}
 	}
 	if err = tx.Commit(); err != nil {
-		return 0, err
+		return 0, 0, err
 	}
-	return removed, nil
+	return int64(len(ids)), removed, nil
 }
