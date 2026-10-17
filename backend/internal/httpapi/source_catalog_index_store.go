@@ -219,6 +219,28 @@ func completeCatalogDirectoryTx(ctx context.Context, tx *sql.Tx, sourceID, gener
 		d.Root = catalogAdmissionRoot(d.Path, "", catalogDirectorySummary{audio, formats, otherDirs})
 		return nil
 	}
+	// A published parent is a work container only while it has no coded child
+	// directly below it. An uploader or voice-actor folder that lists coded works
+	// is a grouping directory, so those works must not all inherit its card.
+	if d.Root != "" && d.Root != d.Path {
+		var codedSibling int
+		if err = tx.QueryRowContext(ctx, `SELECT EXISTS(
+			SELECT 1 FROM source_catalog_observation o
+			JOIN source_catalog_directory pd
+				ON pd.file_source_id=o.file_source_id AND pd.path=o.directory_path
+			WHERE o.file_source_id=? AND o.directory_path=? AND o.revision=pd.revision
+				AND o.kind='folder'
+				AND (UPPER(o.name) LIKE 'RJ%' OR UPPER(o.name) LIKE 'BJ%'
+					OR UPPER(o.name) LIKE 'VJ%' OR UPPER(o.name) LIKE 'CC%'))`,
+			sourceID, d.Root).Scan(&codedSibling); err != nil {
+			return err
+		}
+		if codedSibling != 0 {
+			// The parent was published before its coded children were seen.
+			// This directory decides from its own evidence instead.
+			d.Root = ""
+		}
+	}
 	if d.Root != "" && catalogContainerDirectory(path.Base(d.Root)) {
 		// A category parent never supplies the identity of an album below it.
 		d.Root = ""
