@@ -54,14 +54,30 @@ func TestSourceCatalogKeepsCodedChildDirectoriesAsWorks(t *testing.T) {
 	}
 	for _, code := range []string{"RJ00000041"} {
 		result := f.request(t, http.MethodGet, "/works?q="+code, "", 200)
-		if result["total"] != float64(1) {
-			t.Fatalf("search %s total=%v, want the coded child", code, result["total"])
+		if result["total"] != float64(2) {
+			t.Fatalf("search %s total=%v, want the uploader track hit and the coded child", code, result["total"])
+		}
+		titles := []string{}
+		for _, item := range result["works"].([]any) {
+			titles = append(titles, item.(map[string]any)["title"].(string))
+		}
+		if !containsString(titles, "RJ00000041Coded Child") {
+			t.Fatalf("search %s titles=%v, want the coded child card", code, titles)
 		}
 	}
 	result := f.request(t, http.MethodGet, "/works?q=RJ00000041", "", 200)
-	if result["total"] != float64(1) {
-		t.Fatalf("rescan search total=%v, want the coded child", result["total"])
+	if result["total"] != float64(2) {
+		t.Fatalf("rescan search total=%v, want both matching cards", result["total"])
 	}
+}
+
+func containsString(values []string, wanted string) bool {
+	for _, value := range values {
+		if value == wanted {
+			return true
+		}
+	}
+	return false
 }
 
 // A category such as 未分类 groups unrelated uploads. Its loose files may keep a
