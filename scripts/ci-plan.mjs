@@ -41,6 +41,7 @@ export const scriptJobs = {
   "ui-copy-baseline.json": [],
   "run-browse-performance.mjs": [],
   "run-recommendation-performance.mjs": [],
+  "run-source-index-performance.mjs": [],
   "test-kikoto-helper.ps1": [],
 };
 
