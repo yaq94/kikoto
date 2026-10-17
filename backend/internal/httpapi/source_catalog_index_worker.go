@@ -74,6 +74,12 @@ func (s *Server) executeSourceCatalogIndexJob(ctx context.Context, job workflowJ
 			// the cursor must not advance before a later page can republish
 			// the entry. This runs for a partial run too: it only touches
 			// entries this generation published, never the whole source.
+			//
+			// A resumed generation may already have advanced its cursor, so
+			// the final pass starts from the beginning once.
+			if err = s.resetCatalogPublishCleanup(ctx, job, input.SourceID); err != nil {
+				return err
+			}
 			for pass := 0; pass < catalogPublishBatchesPerPass; pass++ {
 				scanned, _, err := s.cleanupCatalogPublishBatch(ctx, job, input.SourceID)
 				if err != nil {

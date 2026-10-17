@@ -231,3 +231,22 @@ func (s *Server) cleanupCatalogPublishBatch(ctx context.Context, job workflowJob
 	}
 	return int64(len(ids)), removed, nil
 }
+
+// resetCatalogPublishCleanup restarts the cleanup cursor. Publishing order and
+// entry id order differ, so a cursor that advanced during publication can pass
+// an entry that is published later. The final pass starts from the beginning
+// once no directory or publish row remains.
+func (s *Server) resetCatalogPublishCleanup(ctx context.Context, job workflowJobRecord, sourceID int64) error {
+	tx, release, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
+	if err != nil {
+		return err
+	}
+	defer release()
+	if err = verifyCatalogLease(ctx, tx.Tx, job); err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE source_catalog_scan SET publish_cleanup_cursor=0,updated_at=CURRENT_TIMESTAMP WHERE file_source_id=?`, sourceID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
