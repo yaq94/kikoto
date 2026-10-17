@@ -21,12 +21,16 @@ audio-root check when few rows matched.
 
 ## The queue
 
-`076_source_catalog_publish_queue.sql` adds three objects:
+`076_source_catalog_publish_queue.sql` adds one column, two indexes and one
+table:
 
 - `source_catalog_observation.publish_pending`, set by page persistence and
   cleared when a batch publishes the observation;
 - a partial index
   `source_catalog_observation(file_source_id,directory_path,name) WHERE publish_pending=1`;
+- `source_catalog_directory_publish_root`, a partial covering index over
+  complete directory roots that supplies the revision and path without a table
+  lookup;
 - `source_catalog_audio_root(file_source_id,generation,catalog_root)`, one row
   per generation and root that has at least one complete directory with audio.
 
