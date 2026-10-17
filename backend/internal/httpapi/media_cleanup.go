@@ -226,25 +226,25 @@ func mediaCleanupWorkflowSpecForMode(mode mediaCleanupMode) mediaCleanupWorkflow
 
 func (s *Server) insertMediaCleanupWorkflow(ctx context.Context, targets []mediaCleanupTarget, options mediaCleanupOptions) (int64, int64, error) {
 	spec := mediaCleanupWorkflowSpecForMode(options.Mode)
-	tx, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
+	tx, release, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
 	if err != nil {
 		return 0, 0, err
 	}
-	defer func() { _ = tx.Rollback() }()
-	definition, err := workflow.EnsureDefinition(ctx, tx, spec.Code, spec.DisplayName, spec.Description, map[string]any{"nodes": spec.Nodes})
+	defer release()
+	definition, err := workflow.EnsureDefinition(ctx, tx.Tx, spec.Code, spec.DisplayName, spec.Description, map[string]any{"nodes": spec.Nodes})
 	if err != nil {
 		return 0, 0, err
 	}
 	payload := mediaCleanupJobPayload{Targets: targets, Mode: options.Mode, ActorUserID: options.ActorUserID}
-	runID, err := workflow.InsertRun(ctx, tx, definition, spec.Code, spec.DisplayName, "queued", "manual", "delete_selected", payload, map[string]any{"locations": len(targets), "mode": options.Mode})
+	runID, err := workflow.InsertRun(ctx, tx.Tx, definition, spec.Code, spec.DisplayName, "queued", "manual", "delete_selected", payload, map[string]any{"locations": len(targets), "mode": options.Mode})
 	if err != nil {
 		return 0, 0, err
 	}
-	payload, cleanupNodeID, err := insertMediaCleanupNodeRuns(ctx, tx, runID, payload)
+	payload, cleanupNodeID, err := insertMediaCleanupNodeRuns(ctx, tx.Tx, runID, payload)
 	if err != nil {
 		return 0, 0, err
 	}
-	jobID, err := workflow.InsertJob(ctx, tx, runID, workflow.JobSpec{
+	jobID, err := workflow.InsertJob(ctx, tx.Tx, runID, workflow.JobSpec{
 		NodeRunID: cleanupNodeID, WorkerType: "media_location_cleanup", Status: "queued", Priority: workflow.JobPriorityUserInitiated, ResourceKey: "media:cleanup", Payload: payload,
 		Checkpoint: mediaCleanupCheckpoint{CompletedKeys: []string{}}, Recoverable: true, MaxRetries: 3,
 		ProgressCurrent: 0, ProgressTotal: len(targets),
@@ -530,11 +530,11 @@ func (s *Server) restoreMediaCleanupFolders(ctx context.Context, runID int64) er
 
 func (s *Server) finishCancelledMediaCleanup(ctx context.Context, job workflowJobRecord) error {
 	ctx = context.WithoutCancel(ctx)
-	tx, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
+	tx, release, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer release()
 	if _, err := tx.ExecContext(ctx, `
 		UPDATE workflow_node_run
 		SET status = 'cancelled', error_message = CASE WHEN error_message <> '' THEN error_message ELSE 'cancelled manually' END,
@@ -737,12 +737,12 @@ func (s *Server) finishMediaCleanupExecution(
 	finishCancelled func() error,
 ) error {
 	fileOutput := map[string]any{"locations": len(payload.Targets), "deleted": checkpoint.Deleted}
-	tx, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
+	tx, release, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
 	if err != nil {
 		_ = s.restoreMediaCleanupFolders(ctx, job.RunID)
 		return err
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer release()
 	var runStatus string
 	if err := tx.QueryRowContext(ctx, "SELECT status FROM workflow_run WHERE id = ?", job.RunID).Scan(&runStatus); err != nil {
 		_ = s.restoreMediaCleanupFolders(ctx, job.RunID)
@@ -753,9 +753,9 @@ func (s *Server) finishMediaCleanupExecution(
 		return finishCancelled()
 	}
 	if payload.Mode == mediaCleanupFilesOnly {
-		return s.finishMediaCleanupFilesOnly(ctx, tx, job, fileOutput, finishCancelled)
+		return s.finishMediaCleanupFilesOnly(ctx, tx.Tx, job, fileOutput, finishCancelled)
 	}
-	return s.finishMediaCleanupForget(ctx, tx, job, payload, checkpoint, workIDs, fileOutput, finishCancelled)
+	return s.finishMediaCleanupForget(ctx, tx.Tx, job, payload, checkpoint, workIDs, fileOutput, finishCancelled)
 }
 
 func (s *Server) finishMediaCleanupFilesOnly(
@@ -986,11 +986,11 @@ func (s *Server) removeLocalWorkRootDirectories(rootPath string, directories []s
 }
 
 func (s *Server) markLocalWorkRootUnavailable(ctx context.Context, target mediaCleanupTarget) error {
-	tx, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
+	tx, release, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer release()
 	root := normalizeFolderRootPath(target.Path)
 	if _, err := tx.ExecContext(ctx, `
 		UPDATE media_file_location

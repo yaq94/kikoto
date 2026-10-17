@@ -307,12 +307,12 @@ func (s *Server) runLocalCandidateCleanup(ctx context.Context, candidateID int64
 		return localCandidateCleanupResult{}, fmt.Errorf("no cleanup locations selected")
 	}
 
-	tx, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
+	tx, release, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
 	if err != nil {
 		return localCandidateCleanupResult{}, err
 	}
-	defer func() { _ = tx.Rollback() }()
-	definitionID, err := workflow.EnsureDefinition(ctx, tx, "local_location_cleanup", "Clean up local locations", "Mark reviewed local locations unavailable and optionally delete the files.", map[string]any{
+	defer release()
+	definitionID, err := workflow.EnsureDefinition(ctx, tx.Tx, "local_location_cleanup", "Clean up local locations", "Mark reviewed local locations unavailable and optionally delete the files.", map[string]any{
 		"nodes": []map[string]string{
 			{"id": "select", "type": "select_media_items"},
 			{"id": "cleanup", "type": "cleanup_local_locations"},
@@ -323,24 +323,24 @@ func (s *Server) runLocalCandidateCleanup(ctx context.Context, candidateID int64
 		return localCandidateCleanupResult{}, err
 	}
 	input := map[string]any{"candidate_id": candidateID, "action": action, "location_ids": locationIDs}
-	runID, err := workflow.InsertRun(ctx, tx, definitionID, "local_location_cleanup", "Clean up local locations", "queued", "manual", action, input, map[string]any{"candidate_id": candidateID, "locations": len(locationIDs)})
+	runID, err := workflow.InsertRun(ctx, tx.Tx, definitionID, "local_location_cleanup", "Clean up local locations", "queued", "manual", action, input, map[string]any{"candidate_id": candidateID, "locations": len(locationIDs)})
 	if err != nil {
 		return localCandidateCleanupResult{}, err
 	}
-	if _, err := workflow.InsertNodeRun(ctx, tx, runID, workflow.NodeRunSpec{
+	if _, err := workflow.InsertNodeRun(ctx, tx.Tx, runID, workflow.NodeRunSpec{
 		NodeID: "select", NodeType: "select_media_items", DisplayName: "Select local locations", Position: 1, Status: "succeeded",
 		Input: input, Output: map[string]any{"locations": len(locationIDs)},
 	}); err != nil {
 		return localCandidateCleanupResult{}, err
 	}
-	cleanupNodeID, err := workflow.InsertNodeRun(ctx, tx, runID, workflow.NodeRunSpec{
+	cleanupNodeID, err := workflow.InsertNodeRun(ctx, tx.Tx, runID, workflow.NodeRunSpec{
 		NodeID: "cleanup", NodeType: "cleanup_local_locations", DisplayName: "Clean local files", Position: 2, Status: "queued",
 		Input: input, Output: nil,
 	})
 	if err != nil {
 		return localCandidateCleanupResult{}, err
 	}
-	reviewNodeID, err := workflow.InsertNodeRun(ctx, tx, runID, workflow.NodeRunSpec{
+	reviewNodeID, err := workflow.InsertNodeRun(ctx, tx.Tx, runID, workflow.NodeRunSpec{
 		NodeID: "review", NodeType: "filter_candidates", DisplayName: "Resolve review candidate", Position: 3, Status: "queued",
 		Input: map[string]any{"candidate_id": candidateID}, Output: nil,
 	})
@@ -349,7 +349,7 @@ func (s *Server) runLocalCandidateCleanup(ctx context.Context, candidateID int64
 	}
 	initialResult := localCandidateCleanupResult{RunID: runID, CandidateID: candidateID, Action: action, Status: "succeeded", Failures: []string{}}
 	initialCheckpoint := localLocationCleanupCheckpoint{CompletedLocationIDs: []int64{}, Result: initialResult}
-	jobID, err := workflow.InsertJob(ctx, tx, runID, workflow.JobSpec{
+	jobID, err := workflow.InsertJob(ctx, tx.Tx, runID, workflow.JobSpec{
 		NodeRunID: cleanupNodeID, WorkerType: "local_location_cleanup", Status: "queued", ResourceKey: "media:cleanup", Payload: input,
 		Checkpoint: initialCheckpoint, Recoverable: true, MaxRetries: 3, ProgressCurrent: 0, ProgressTotal: len(locationIDs),
 	})

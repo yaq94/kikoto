@@ -617,11 +617,11 @@ func (s *Server) recordCacheCleanupCheckpoint(
 
 func (s *Server) finishCacheOrphanCleanup(ctx context.Context, job workflowJobRecord, checkpoint cacheOrphanCleanupCheckpoint, finishCancelled func() error) error {
 	output := mustJSON(map[string]any{"deleted_files": checkpoint.DeletedFiles, "freed_bytes": checkpoint.FreedBytes})
-	tx, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
+	tx, release, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer release()
 	var runStatus string
 	if err := tx.QueryRowContext(ctx, "SELECT status FROM workflow_run WHERE id = ?", job.RunID).Scan(&runStatus); err != nil {
 		return err
@@ -630,7 +630,7 @@ func (s *Server) finishCacheOrphanCleanup(ctx context.Context, job workflowJobRe
 		_ = tx.Rollback()
 		return finishCancelled()
 	}
-	updated, err := updateCacheCleanupStep(ctx, tx, "UPDATE workflow_node_run SET status = 'succeeded', output_json = ?, finished_at = CURRENT_TIMESTAMP WHERE id = ? AND status IN ('queued', 'running')", output, job.NodeRunID)
+	updated, err := updateCacheCleanupStep(ctx, tx.Tx, "UPDATE workflow_node_run SET status = 'succeeded', output_json = ?, finished_at = CURRENT_TIMESTAMP WHERE id = ? AND status IN ('queued', 'running')", output, job.NodeRunID)
 	if err != nil {
 		return err
 	}
@@ -638,7 +638,7 @@ func (s *Server) finishCacheOrphanCleanup(ctx context.Context, job workflowJobRe
 		_ = tx.Rollback()
 		return finishCancelled()
 	}
-	updated, err = updateCacheCleanupStep(ctx, tx, "UPDATE workflow_job SET status = 'succeeded', progress_current = progress_total, locked_by = '', locked_at = NULL, heartbeat_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'running'", job.ID)
+	updated, err = updateCacheCleanupStep(ctx, tx.Tx, "UPDATE workflow_job SET status = 'succeeded', progress_current = progress_total, locked_by = '', locked_at = NULL, heartbeat_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'running'", job.ID)
 	if err != nil {
 		return err
 	}
@@ -646,7 +646,7 @@ func (s *Server) finishCacheOrphanCleanup(ctx context.Context, job workflowJobRe
 		_ = tx.Rollback()
 		return finishCancelled()
 	}
-	updated, err = updateCacheCleanupStep(ctx, tx, "UPDATE workflow_run SET status = 'succeeded', summary_json = ?, finished_at = CURRENT_TIMESTAMP WHERE id = ? AND status IN ('queued', 'running')", output, job.RunID)
+	updated, err = updateCacheCleanupStep(ctx, tx.Tx, "UPDATE workflow_run SET status = 'succeeded', summary_json = ?, finished_at = CURRENT_TIMESTAMP WHERE id = ? AND status IN ('queued', 'running')", output, job.RunID)
 	if err != nil {
 		return err
 	}

@@ -62,18 +62,18 @@ func (s *Server) createSharedAssociationPreview(w http.ResponseWriter, r *http.R
 	if !decodeAssociationBody(w, r, &input) {
 		return
 	}
-	tx, err := beginTxWithDatabaseBusyRetry(r.Context(), s.db)
+	tx, release, err := beginTxWithDatabaseBusyRetry(r.Context(), s.db)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer release()
 	// Lock before snapshotting: concurrent reviews cannot be captured half-written.
 	if _, err = tx.ExecContext(r.Context(), `UPDATE shared_association SET id=id WHERE id=-1`); err != nil {
 		writeError(w, err)
 		return
 	}
-	snapshot, fingerprint, err := loadAssociationSnapshot(r.Context(), tx, input.Left, input.Right)
+	snapshot, fingerprint, err := loadAssociationSnapshot(r.Context(), tx.Tx, input.Left, input.Right)
 	if err != nil {
 		writeAssociationError(w, err)
 		return
@@ -155,7 +155,9 @@ func (s *Server) getSharedAssociation(w http.ResponseWriter, r *http.Request) {
 		writeAssociationError(w, sql.ErrNoRows)
 		return
 	}
-	tx, err := s.db.BeginTx(r.Context(), nil)
+	// Reading one stored association never writes, so a read transaction avoids
+	// taking SQLite's single write lock.
+	tx, err := s.db.BeginTx(r.Context(), &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		writeError(w, err)
 		return
@@ -274,22 +276,22 @@ func (s *Server) mutateSharedAssociation(w http.ResponseWriter, r *http.Request,
 		writeAssociationError(w, sql.ErrNoRows)
 		return
 	}
-	tx, err := beginTxWithDatabaseBusyRetry(r.Context(), s.db)
+	tx, release, err := beginTxWithDatabaseBusyRetry(r.Context(), s.db)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer release()
 	if _, err = tx.ExecContext(r.Context(), `UPDATE shared_association SET id=id WHERE id=?`, id); err != nil {
 		writeError(w, err)
 		return
 	}
-	a, err := loadStoredAssociation(r.Context(), tx, id)
+	a, err := loadStoredAssociation(r.Context(), tx.Tx, id)
 	if err == nil && a.Version != version {
 		err = errAssociationStale
 	}
 	if err == nil {
-		err = change(r.Context(), tx, &a)
+		err = change(r.Context(), tx.Tx, &a)
 	}
 	if errors.Is(err, errAssociationNotOwner) {
 		writeAPIError(w, 403, "forbidden", "only the record owner can decide", false)
@@ -436,7 +438,9 @@ func (s *Server) listSharedAssociations(w http.ResponseWriter, r *http.Request) 
 		writeAPIError(w, 400, "invalid_request", "invalid object", false)
 		return
 	}
-	tx, err := s.db.BeginTx(r.Context(), nil)
+	// Listing reads only. A read transaction avoids taking SQLite's single
+	// write lock for a request that never writes.
+	tx, err := s.db.BeginTx(r.Context(), &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		writeError(w, err)
 		return

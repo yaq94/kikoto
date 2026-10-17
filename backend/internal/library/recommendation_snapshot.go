@@ -12,6 +12,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/yexca/kikoto/backend/internal/sqlutil"
 )
 
 type RecommendationSessionSnapshot struct {
@@ -254,16 +256,16 @@ func (s *Store) withRecommendationWrite(ctx context.Context, fn func(*sql.Tx) er
 		return ctx.Err()
 	}
 	s.recommendationDiagnostics.writerWait.Add(time.Since(start).Nanoseconds())
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, release, err := sqlutil.BeginBoundedTx(ctx, s.db)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer release()
 	var before, after int64
 	if err := tx.QueryRowContext(ctx, "SELECT total_changes()").Scan(&before); err != nil {
 		return err
 	}
-	if err := fn(tx); err != nil {
+	if err := fn(tx.Tx); err != nil {
 		return err
 	}
 	if err := tx.QueryRowContext(ctx, "SELECT total_changes()").Scan(&after); err != nil {

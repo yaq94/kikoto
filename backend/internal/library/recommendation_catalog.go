@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/yexca/kikoto/backend/internal/searchtext"
+	"github.com/yexca/kikoto/backend/internal/sqlutil"
 )
 
 var ErrRecommendationNotReady = errors.New("recommendation catalog is preparing")
@@ -46,6 +47,7 @@ func (s *Store) RunRecommendationWorker(ctx context.Context) {
 	timer := time.NewTimer(0)
 	defer timer.Stop()
 	batchSize, successes := 32, 0
+	busyBackoff := time.Duration(0)
 	for {
 		select {
 		case <-ctx.Done():
@@ -53,7 +55,14 @@ func (s *Store) RunRecommendationWorker(ctx context.Context) {
 		case <-timer.C:
 		}
 		processed, err := s.ProcessRecommendationCatalog(ctx, batchSize)
-		if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
+		if sqlutil.IsBusy(err) && ctx.Err() == nil {
+			// A contended write lock is a wait, not a failure: keep the batch
+			// size and back off briefly instead of logging a failure per tick.
+			busyBackoff = min(2*busyBackoff, time.Second)
+			if busyBackoff == 0 {
+				busyBackoff = 25 * time.Millisecond
+			}
+		} else if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
 			batchSize = max(1, batchSize/2)
 			successes = 0
 		} else if err == nil && processed > 0 {
@@ -63,8 +72,11 @@ func (s *Store) RunRecommendationWorker(ctx context.Context) {
 				successes = 0
 			}
 		}
-		if err != nil && ctx.Err() == nil {
+		if err != nil && ctx.Err() == nil && !sqlutil.IsBusy(err) {
+			busyBackoff = 0
 			slog.Warn("recommendation catalog batch failed", "error", err)
+		} else if err == nil {
+			busyBackoff = 0
 		}
 		if ctx.Err() != nil {
 			return
@@ -76,12 +88,17 @@ func (s *Store) RunRecommendationWorker(ctx context.Context) {
 		if err == nil && processed > 0 {
 			delay = time.Millisecond
 		}
+		if sqlutil.IsBusy(err) {
+			delay = busyBackoff
+		}
 		timer.Reset(delay)
 	}
 }
 
 // ProcessRecommendationCatalog commits at most limit works and names. Published
 // intervals remain readable while an unpublished epoch is built across batches.
+// The batch takes the write lock through the bounded path, so a contended batch
+// releases its connection instead of parking it behind another writer.
 func (s *Store) ProcessRecommendationCatalog(ctx context.Context, limit int) (int, error) {
 	limit = min(max(limit, 1), 64)
 	batchCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
@@ -92,11 +109,11 @@ func (s *Store) ProcessRecommendationCatalog(ctx context.Context, limit int) (in
 	case <-batchCtx.Done():
 		return 0, batchCtx.Err()
 	}
-	tx, err := s.db.BeginTx(batchCtx, nil)
+	tx, release, err := sqlutil.BeginBoundedTx(batchCtx, s.db)
 	if err != nil {
 		return 0, err
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer release()
 	var published, building sql.NullInt64
 	if err := tx.QueryRowContext(batchCtx, "SELECT published_epoch, building_epoch FROM recommendation_catalog_state WHERE id = 1").Scan(&published, &building); err != nil {
 		return 0, err
@@ -147,10 +164,10 @@ func (s *Store) ProcessRecommendationCatalog(ctx context.Context, limit int) (in
 		return 0, err
 	}
 	for _, id := range ids {
-		if err := projectRecommendationWork(batchCtx, tx, id, building.Int64); err != nil {
+		if err := projectRecommendationWork(batchCtx, tx.Tx, id, building.Int64); err != nil {
 			_ = tx.Rollback()
 			if ctx.Err() == nil {
-				_, _ = s.db.ExecContext(ctx, "UPDATE recommendation_catalog_dirty SET retry_count = retry_count + 1, retry_after = unixepoch() + MIN(300, 30 * (1 << MIN(4, retry_count))) WHERE work_id = ?", id)
+				_, _ = sqlutil.ExecBounded(ctx, s.db, "UPDATE recommendation_catalog_dirty SET retry_count = retry_count + 1, retry_after = unixepoch() + MIN(300, 30 * (1 << MIN(4, retry_count))) WHERE work_id = ?", id)
 			}
 			return 0, err
 		}
@@ -174,10 +191,10 @@ func (s *Store) ProcessRecommendationCatalog(ctx context.Context, limit int) (in
 		return 0, err
 	}
 	for _, f := range names {
-		if err := projectRecommendationNames(batchCtx, tx, f, building.Int64); err != nil {
+		if err := projectRecommendationNames(batchCtx, tx.Tx, f, building.Int64); err != nil {
 			_ = tx.Rollback()
 			if ctx.Err() == nil {
-				_, _ = s.db.ExecContext(ctx, "UPDATE recommendation_name_dirty SET retry_count = retry_count + 1, retry_after = unixepoch() + MIN(300, 30 * (1 << MIN(4, retry_count))) WHERE kind = ? AND entity_id = ?", f.Kind, f.ID)
+				_, _ = sqlutil.ExecBounded(ctx, s.db, "UPDATE recommendation_name_dirty SET retry_count = retry_count + 1, retry_after = unixepoch() + MIN(300, 30 * (1 << MIN(4, retry_count))) WHERE kind = ? AND entity_id = ?", f.Kind, f.ID)
 			}
 			return 0, err
 		}

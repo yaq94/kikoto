@@ -895,6 +895,39 @@ separate from these derived caches.
 - User state should survive metadata refresh and source replacement.
 - Playback is a work cursor, not a set of independent per-track bookmarks.
 
+## SQLite Write Concurrency
+
+SQLite admits one writer per database. The connection is opened in WAL mode with
+`synchronous=NORMAL`, `_txlock=immediate`, a 30-second busy timeout, and a
+four-connection pool. Immediate transactions take the write lock at `BEGIN`, and
+the driver's busy handler is a synchronous wait inside the driver: it does not
+observe the caller's context deadline. A writer waiting on the lock therefore
+holds its pooled connection for up to the full busy timeout. With four parked
+writers the pool is exhausted, so reads and the worker that will release the
+lock both wait behind it.
+
+Background writers that contend with a catalog index or metadata sync take the
+write lock through `sqlutil.BeginBoundedTx`. Each attempt shortens the driver's
+busy timeout to 100 ms and returns the connection to the pool between attempts;
+the wait stops at the caller's deadline, or at a five-second budget when the
+caller has none. Once the lock is held, the attempt restores the pool's
+configured busy timeout through the leased connection, so statements inside the
+transaction keep the normal policy. The transaction returns its connection when
+it commits or rolls back, so a handler that reads the database afterwards never
+waits for its own transaction's slot.
+
+This covers the index writers, the recommendation catalog and generation
+writers, the search and language-title projection batches, the metadata tag
+projection queue, workflow progress and heartbeat writes, and the HTTP write
+handlers that share the bounded begin helper. A contended background write
+fails inside its budget instead of parking a connection; its durable queue keeps
+the work for the next pass. Handlers that only read use a read-only transaction,
+which bypasses `_txlock=immediate` and takes no write lock.
+
+The deployment measures the result: index throughput, `SQLITE_BUSY` log lines,
+completed pool waits, and metadata projection failures, recorded in
+[SQLite write performance](../development/sqlite-write-performance.md).
+
 ## Related Docs
 
 - [Core boundaries](core-boundaries.md)

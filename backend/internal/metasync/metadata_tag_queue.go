@@ -71,7 +71,7 @@ func processMetadataTagQueue(ctx context.Context, db *sql.DB, limit int, priorit
 		return 0, closeErr
 	}
 	for _, id := range ids {
-		if err := ProjectWorkMetadataTagsTx(ctx, tx, id, priorities); err != nil {
+		if err := ProjectWorkMetadataTagsTx(ctx, tx.Tx, id, priorities); err != nil {
 			return 0, &metadataTagQueueWorkError{workID: id, err: err}
 		}
 	}

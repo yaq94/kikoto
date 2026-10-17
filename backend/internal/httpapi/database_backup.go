@@ -78,11 +78,11 @@ func (s *Server) backUpDatabase(w http.ResponseWriter, r *http.Request) {
 // enqueueDatabaseBackup queues one backup job. At most one backup is queued or
 // running at a time; a second request returns the active run.
 func (s *Server) enqueueDatabaseBackup(ctx context.Context, kind string, actorUserID int64) (databaseOptimizeQueuedResult, error) {
-	tx, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
+	tx, release, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
 	if err != nil {
 		return databaseOptimizeQueuedResult{}, err
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer release()
 	existing := databaseOptimizeQueuedResult{Existing: true}
 	err = tx.QueryRowContext(ctx, `
 		SELECT run.id, run.status, COALESCE((
@@ -99,7 +99,7 @@ func (s *Server) enqueueDatabaseBackup(ctx context.Context, kind string, actorUs
 	if !errors.Is(err, sql.ErrNoRows) {
 		return databaseOptimizeQueuedResult{}, err
 	}
-	definitionID, err := workflow.EnsureDefinition(ctx, tx, databaseBackupWorkflowCode, databaseBackupDisplayName,
+	definitionID, err := workflow.EnsureDefinition(ctx, tx.Tx, databaseBackupWorkflowCode, databaseBackupDisplayName,
 		"Write a verified copy of the SQLite database beside it and keep a bounded number of recent copies.",
 		map[string]any{"nodes": []map[string]string{{"id": "backup", "type": "backup_database", "displayName": "Back up database"}}})
 	if err != nil {
@@ -110,12 +110,12 @@ func (s *Server) enqueueDatabaseBackup(ctx context.Context, kind string, actorUs
 		triggerType, triggerReason, priority = "schedule", "database_backup_schedule", workflow.JobPriorityBackground
 	}
 	payload := databaseBackupPayload{RequestedByUserID: actorUserID, Kind: kind}
-	runID, err := workflow.InsertRun(ctx, tx, definitionID, databaseBackupWorkflowCode, databaseBackupDisplayName,
+	runID, err := workflow.InsertRun(ctx, tx.Tx, definitionID, databaseBackupWorkflowCode, databaseBackupDisplayName,
 		"queued", triggerType, triggerReason, payload, map[string]any{})
 	if err != nil {
 		return databaseOptimizeQueuedResult{}, err
 	}
-	nodeRunID, err := workflow.InsertNodeRun(ctx, tx, runID, workflow.NodeRunSpec{
+	nodeRunID, err := workflow.InsertNodeRun(ctx, tx.Tx, runID, workflow.NodeRunSpec{
 		NodeID: "backup", NodeType: "backup_database", DisplayName: "Back up database", Position: 1, Status: "queued",
 	})
 	if err != nil {
@@ -123,7 +123,7 @@ func (s *Server) enqueueDatabaseBackup(ctx context.Context, kind string, actorUs
 	}
 	// A backup has no checkpoint; an interrupted one leaves only a partial
 	// file that the next backup replaces, so it fails and is started again.
-	jobID, err := workflow.InsertJob(ctx, tx, runID, workflow.JobSpec{
+	jobID, err := workflow.InsertJob(ctx, tx.Tx, runID, workflow.JobSpec{
 		NodeRunID: nodeRunID, WorkerType: databaseBackupWorkerType, Status: "queued",
 		Priority: priority, ResourceKey: "database:backup", Payload: payload,
 		Checkpoint: map[string]any{}, Recoverable: false, MaxRetries: 1, ProgressTotal: 1,
@@ -175,11 +175,11 @@ func (s *Server) executeDatabaseBackupJob(ctx context.Context, job workflowJobRe
 }
 
 func (s *Server) finishDatabaseBackupJob(ctx context.Context, job workflowJobRecord, payload databaseBackupPayload, output string) error {
-	tx, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
+	tx, release, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer release()
 	for _, step := range []struct {
 		query string
 		args  []any

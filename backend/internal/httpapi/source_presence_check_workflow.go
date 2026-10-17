@@ -172,11 +172,11 @@ func (s *Server) enqueueSourcePresenceCheck(ctx context.Context, request sourceP
 	if _, err := s.sourcePresenceCheckSource(ctx, options.SourceID); err != nil {
 		return sourcePresenceCheckQueuedResult{}, err
 	}
-	tx, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
+	tx, release, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
 	if err != nil {
 		return sourcePresenceCheckQueuedResult{}, err
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer release()
 	existing := sourcePresenceCheckQueuedResult{Existing: true}
 	err = tx.QueryRowContext(ctx, `
 		SELECT run.id, run.status, COALESCE((
@@ -194,12 +194,12 @@ func (s *Server) enqueueSourcePresenceCheck(ctx context.Context, request sourceP
 	if !errors.Is(err, sql.ErrNoRows) {
 		return sourcePresenceCheckQueuedResult{}, err
 	}
-	definitionID, err := workflow.EnsureDefinition(ctx, tx, sourcePresenceCheckWorkflowCode, sourcePresenceCheckDisplayName,
+	definitionID, err := workflow.EnsureDefinition(ctx, tx.Tx, sourcePresenceCheckWorkflowCode, sourcePresenceCheckDisplayName,
 		sourcePresenceCheckDescription, map[string]any{"nodes": sourcePresenceCheckNodes})
 	if err != nil {
 		return sourcePresenceCheckQueuedResult{}, err
 	}
-	runID, err := workflow.InsertRun(ctx, tx, definitionID, sourcePresenceCheckWorkflowCode, sourcePresenceCheckDisplayName,
+	runID, err := workflow.InsertRun(ctx, tx.Tx, definitionID, sourcePresenceCheckWorkflowCode, sourcePresenceCheckDisplayName,
 		"queued", trigger.Type, trigger.Reason, options, map[string]any{})
 	if err != nil {
 		return sourcePresenceCheckQueuedResult{}, err
@@ -217,7 +217,7 @@ func (s *Server) enqueueSourcePresenceCheck(ctx context.Context, request sourceP
 		if index == 0 {
 			spec.Input = options
 		}
-		nodeRunID, err := workflow.InsertNodeRun(ctx, tx, runID, spec)
+		nodeRunID, err := workflow.InsertNodeRun(ctx, tx.Tx, runID, spec)
 		if err != nil {
 			return sourcePresenceCheckQueuedResult{}, err
 		}
@@ -225,7 +225,7 @@ func (s *Server) enqueueSourcePresenceCheck(ctx context.Context, request sourceP
 			selectNodeID = nodeRunID
 		}
 	}
-	jobID, err := workflow.InsertJob(ctx, tx, runID, workflow.JobSpec{
+	jobID, err := workflow.InsertJob(ctx, tx.Tx, runID, workflow.JobSpec{
 		NodeRunID: selectNodeID, WorkerType: sourcePresenceCheckWorkerType, Status: "queued",
 		Priority: workflowJobPriorityForTrigger(trigger.Type), ResourceKey: "remote:availability", Payload: options,
 		Checkpoint: map[string]any{"phase": "queued"}, Recoverable: true, MaxRetries: 3,
@@ -437,11 +437,11 @@ func (s *Server) selectSourcePresenceCheckWorks(ctx context.Context, options sou
 
 // advanceSourcePresenceCheckNode completes one node and starts the next.
 func (s *Server) advanceSourcePresenceCheckNode(ctx context.Context, job workflowJobRecord, doneNodeID, nextNodeID int64, output map[string]any, total int) error {
-	tx, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
+	tx, release, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer release()
 	if _, err := tx.ExecContext(ctx, `
 		UPDATE workflow_node_run SET status = 'succeeded', output_json = ?,
 			started_at = COALESCE(started_at, CURRENT_TIMESTAMP), finished_at = CURRENT_TIMESTAMP
@@ -472,11 +472,11 @@ func (s *Server) finishSourcePresenceCheckJob(ctx context.Context, job workflowJ
 	if failure != "" {
 		failures = append(failures, failure)
 	}
-	tx, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
+	tx, release, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer release()
 	ended := false
 	// Guards keep a run that was cancelled while checking cancelled.
 	for _, node := range sourcePresenceCheckNodes {
@@ -515,13 +515,13 @@ func (s *Server) finishSourcePresenceCheckJob(ctx context.Context, job workflowJ
 			return err
 		}
 	}
-	if err := workflow.InsertEvent(ctx, tx, job.RunID, workflow.EventSpec{
+	if err := workflow.InsertEvent(ctx, tx.Tx, job.RunID, workflow.EventSpec{
 		NodeRunID: nodeIDs[endNodeID], JobID: job.ID, Level: eventLevelForWorkflowStatus(status),
 		Type: "source_presence_check.completed", Message: "Source presence check " + status, Detail: summary,
 	}); err != nil {
 		return err
 	}
-	if err := updateTriggerForQueuedSystemRun(ctx, tx, job.RunID, status, failures); err != nil {
+	if err := updateTriggerForQueuedSystemRun(ctx, tx.Tx, job.RunID, status, failures); err != nil {
 		return err
 	}
 	return tx.Commit()

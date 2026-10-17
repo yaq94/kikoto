@@ -159,16 +159,16 @@ func (s *Server) settleCatalogBatch(ctx context.Context, job workflowJobRecord, 
 	}
 	progress.Status = status
 	progress.PauseReason = reason
-	tx, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
+	tx, release, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = tx.Rollback() }()
-	if err = verifyCatalogLease(ctx, tx, job); err != nil {
+	defer release()
+	if err = verifyCatalogLease(ctx, tx.Tx, job); err != nil {
 		return err
 	}
 	if status == "succeeded" {
-		if err = setCatalogNextUpdateTx(ctx, tx, sourceID, s.catalogTime()); err != nil {
+		if err = setCatalogNextUpdateTx(ctx, tx.Tx, sourceID, s.catalogTime()); err != nil {
 			return err
 		}
 	}

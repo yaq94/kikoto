@@ -40,12 +40,12 @@ func (s *Server) updateCatalogSeriesReview(w http.ResponseWriter, r *http.Reques
 		writeAPIError(w, 400, "invalid_request", "personal review is required", false)
 		return
 	}
-	tx, err := beginTxWithDatabaseBusyRetry(r.Context(), s.db)
+	tx, release, err := beginTxWithDatabaseBusyRetry(r.Context(), s.db)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer release()
 	// Acquire the writer before reading the optional identity so concurrent first
 	// saves cannot publish two works for the same series.
 	if _, err = tx.ExecContext(r.Context(), `UPDATE catalog_series SET id=id WHERE id=?`, id); err != nil {

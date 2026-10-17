@@ -402,15 +402,15 @@ func (s *Server) matchWork(ctx context.Context, subject associationSubject, acto
 	defer s.workMatchingMu.Unlock()
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	tx, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
+	tx, release, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
 	if err != nil {
 		return workMatchResult{}, err
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer release()
 	if _, err = tx.ExecContext(ctx, `UPDATE shared_association SET id=id WHERE id=-1`); err != nil {
 		return workMatchResult{}, err
 	}
-	subject, err = matchingSubject(ctx, tx, subject)
+	subject, err = matchingSubject(ctx, tx.Tx, subject)
 	if err != nil {
 		return workMatchResult{}, err
 	}
@@ -420,7 +420,7 @@ func (s *Server) matchWork(ctx context.Context, subject associationSubject, acto
 	}
 	result := workMatchResult{Status: "paused", Rule: s.catalogIndexDiskPause(catalogIndexOptions{MinFreeBytes: options.MinFreeBytes, MaxResponseBytes: 64 << 10}), Candidates: []workMatchCandidate{}}
 	if result.Rule == "" {
-		result, err = evaluateWorkMatchTx(ctx, tx, subject)
+		result, err = evaluateWorkMatchTx(ctx, tx.Tx, subject)
 	}
 	if errors.Is(err, errAssociationLimit) {
 		result = workMatchResult{Status: "paused", Rule: "metadata_limit", Candidates: []workMatchCandidate{}}
@@ -432,7 +432,7 @@ func (s *Server) matchWork(ctx context.Context, subject associationSubject, acto
 	if result.Status == "eligible" {
 		var pending int64
 		err = tx.QueryRowContext(ctx, `SELECT o.operation_id FROM work_matching_operation o JOIN shared_association a ON a.id=o.operation_id WHERE o.subject_kind=? AND o.subject_id=? AND o.evidence_fingerprint=? AND a.status='pending' ORDER BY o.operation_id DESC LIMIT 1`, subject.Kind, subject.ID, result.Fingerprint).Scan(&pending)
-		if err == nil && !freshPendingWorkMatch(ctx, tx, pending) {
+		if err == nil && !freshPendingWorkMatch(ctx, tx.Tx, pending) {
 			if _, err = tx.ExecContext(ctx, `UPDATE shared_association SET status='stale' WHERE id=?`, pending); err != nil {
 				return result, err
 			}
@@ -448,7 +448,7 @@ func (s *Server) matchWork(ctx context.Context, subject associationSubject, acto
 			e := tx.QueryRowContext(ctx, `SELECT a.id FROM shared_association a JOIN work_matching_operation m ON m.operation_id=a.id WHERE a.status='pending' AND
 			((json_extract(a.snapshot_json,'$.left.subject.kind')=? AND json_extract(a.snapshot_json,'$.left.subject.id')=? AND json_extract(a.snapshot_json,'$.right.subject.kind')=? AND json_extract(a.snapshot_json,'$.right.subject.id')=?) OR
 			(json_extract(a.snapshot_json,'$.right.subject.kind')=? AND json_extract(a.snapshot_json,'$.right.subject.id')=? AND json_extract(a.snapshot_json,'$.left.subject.kind')=? AND json_extract(a.snapshot_json,'$.left.subject.id')=?)) ORDER BY a.id DESC LIMIT 1`, subject.Kind, subject.ID, result.Target.Kind, result.Target.ID, subject.Kind, subject.ID, result.Target.Kind, result.Target.ID).Scan(&existingID)
-			if e == nil && freshPendingWorkMatch(ctx, tx, existingID) {
+			if e == nil && freshPendingWorkMatch(ctx, tx.Tx, existingID) {
 				result.Status, result.OperationID = "pending", existingID
 			} else if e != nil && !errors.Is(e, sql.ErrNoRows) {
 				return result, e
@@ -467,7 +467,7 @@ func (s *Server) matchWork(ctx context.Context, subject associationSubject, acto
 				}
 			}
 			if result.Status == "eligible" {
-				snapshot, fingerprint, e := loadAssociationSnapshot(ctx, tx, subject, result.Target)
+				snapshot, fingerprint, e := loadAssociationSnapshot(ctx, tx.Tx, subject, result.Target)
 				if e != nil {
 					return result, e
 				}
@@ -483,7 +483,7 @@ func (s *Server) matchWork(ctx context.Context, subject associationSubject, acto
 				if _, e = tx.ExecContext(ctx, `INSERT INTO work_matching_operation(operation_id,subject_kind,subject_id,evidence_fingerprint,rule) VALUES(?,?,?,?,?)`, a.ID, subject.Kind, subject.ID, result.Fingerprint, result.Rule); e != nil {
 					return result, e
 				}
-				if e = startSharedAssociationTx(ctx, tx, &a); e != nil {
+				if e = startSharedAssociationTx(ctx, tx.Tx, &a); e != nil {
 					return result, e
 				}
 				result.Status, result.OperationID = a.Status, a.ID
@@ -555,7 +555,9 @@ func (s *Server) getWorkMatching(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id, _ := strconv.ParseInt(r.URL.Query().Get("id"), 10, 64)
-	tx, err := s.db.BeginTx(r.Context(), nil)
+	// Reading pending matches never writes, so a read transaction does not take
+	// SQLite's single write lock.
+	tx, err := s.db.BeginTx(r.Context(), &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		writeError(w, err)
 		return

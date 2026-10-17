@@ -3,7 +3,6 @@ package library
 import (
 	"context"
 	"database/sql"
-	"database/sql/driver"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -11,6 +10,7 @@ import (
 	"time"
 
 	"github.com/yexca/kikoto/backend/internal/searchtext"
+	"github.com/yexca/kikoto/backend/internal/sqlutil"
 )
 
 // The work_search FTS5 table holds one folded document per work. Triggers
@@ -33,7 +33,7 @@ const (
 	// A search that finds queued documents waits only briefly for the write
 	// lock. A long-running writer then leaves the search on the previous index
 	// state instead of stalling the page, and the worker drains the queue.
-	searchIndexOpportunisticBusyTimeout = 250 * time.Millisecond
+	searchIndexOpportunisticLockBudget = 250 * time.Millisecond
 	// searchIndexPollInterval bounds how long a queued document waits when no
 	// search wakes the worker.
 	searchIndexPollInterval = 5 * time.Second
@@ -51,7 +51,7 @@ type searchDocument struct {
 // searchIndexRefresh bounds one refresh. A zero value drains the complete
 // queue and waits for the write lock like any other writer.
 type searchIndexRefresh struct {
-	busyTimeout  time.Duration
+	lockBudget   time.Duration
 	maxDocuments int
 	batchPause   time.Duration
 }
@@ -115,7 +115,7 @@ func (s *Store) PrepareSearch(ctx context.Context, queryText string) {
 		s.wakeSearchIndexWorker()
 		return
 	}
-	refresh := searchIndexRefresh{busyTimeout: searchIndexOpportunisticBusyTimeout, maxDocuments: searchIndexInlineLimit}
+	refresh := searchIndexRefresh{lockBudget: searchIndexOpportunisticLockBudget, maxDocuments: searchIndexInlineLimit}
 	if err := refreshSearchIndex(ctx, s.db, refresh); err != nil && ctx.Err() == nil {
 		slog.Warn("search index refresh deferred", "error", err)
 		s.wakeSearchIndexWorker()
@@ -132,34 +132,17 @@ func searchUsesIndex(queryText string) bool {
 	return false
 }
 
-// txBeginner is a *sql.DB, which returns its connection to the pool after
-// each batch, or a *sql.Conn whose settings a refresh has changed.
-type txBeginner interface {
-	BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error)
-}
-
 func refreshSearchIndex(ctx context.Context, db *sql.DB, options searchIndexRefresh) (err error) {
 	var pending bool
 	if err := db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM work_search_dirty)`).Scan(&pending); err != nil || !pending {
 		return err
 	}
-	var beginner txBeginner = db
-	if options.busyTimeout > 0 {
-		conn, err := db.Conn(ctx)
-		if err != nil {
-			return err
-		}
-		defer func() {
-			if closeErr := conn.Close(); err == nil {
-				err = closeErr
-			}
-		}()
-		restore, err := overrideBusyTimeout(ctx, conn, options.busyTimeout)
-		if err != nil {
-			return err
-		}
-		defer restore()
-		beginner = conn
+	if options.lockBudget > 0 {
+		// An opportunistic refresh gives up on a contended write lock instead
+		// of making the caller wait; the worker drains the queue later.
+		bounded, cancel := context.WithTimeout(ctx, options.lockBudget)
+		defer cancel()
+		ctx = bounded
 	}
 	remaining := options.maxDocuments
 	for {
@@ -167,7 +150,7 @@ func refreshSearchIndex(ctx context.Context, db *sql.DB, options searchIndexRefr
 		if options.maxDocuments > 0 {
 			limit = min(limit, remaining)
 		}
-		refreshed, err := refreshSearchIndexBatch(ctx, beginner, limit)
+		refreshed, err := refreshSearchIndexBatch(ctx, db, limit)
 		if err != nil {
 			return err
 		}
@@ -191,38 +174,20 @@ func refreshSearchIndex(ctx context.Context, db *sql.DB, options searchIndexRefr
 	}
 }
 
-// overrideBusyTimeout shortens the lock wait on one pooled connection and
-// returns a function that restores its previous value. A connection whose
-// timeout cannot be restored is discarded rather than returned to the pool.
-func overrideBusyTimeout(ctx context.Context, conn *sql.Conn, timeout time.Duration) (func(), error) {
-	var previous int64
-	if err := conn.QueryRowContext(ctx, `PRAGMA busy_timeout`).Scan(&previous); err != nil {
-		return nil, err
-	}
-	if _, err := conn.ExecContext(ctx, fmt.Sprintf("PRAGMA busy_timeout = %d", timeout.Milliseconds())); err != nil {
-		return nil, err
-	}
-	return func() {
-		if _, err := conn.ExecContext(context.Background(), fmt.Sprintf("PRAGMA busy_timeout = %d", previous)); err != nil {
-			_ = conn.Raw(func(any) error { return driver.ErrBadConn })
-		}
-	}, nil
-}
-
-func refreshSearchIndexBatch(ctx context.Context, beginner txBeginner, limit int) (int, error) {
+func refreshSearchIndexBatch(ctx context.Context, db *sql.DB, limit int) (int, error) {
 	// Connections use _txlock=immediate, so the write lock is held before the
 	// queue is read and no trigger can queue a work between the read and the
 	// queue deletion below.
-	tx, err := beginner.BeginTx(ctx, nil)
+	tx, release, err := sqlutil.BeginBoundedTx(ctx, db)
 	if err != nil {
 		return 0, err
 	}
-	defer func() { _ = tx.Rollback() }()
-	ids, err := queryInt64s(ctx, tx, `SELECT work_id FROM work_search_dirty ORDER BY work_id LIMIT ?`, limit)
+	defer release()
+	ids, err := queryInt64s(ctx, tx.Tx, `SELECT work_id FROM work_search_dirty ORDER BY work_id LIMIT ?`, limit)
 	if err != nil || len(ids) == 0 {
 		return 0, err
 	}
-	documents, err := loadSearchDocuments(ctx, tx, ids)
+	documents, err := loadSearchDocuments(ctx, tx.Tx, ids)
 	if err != nil {
 		return 0, err
 	}

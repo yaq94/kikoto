@@ -212,12 +212,12 @@ func validateLocalMediaDeletePath(dataRoot, relPath string, symlink bool) error 
 }
 
 func (s *Server) createLocalMediaDeleteWorkflow(ctx context.Context, target localMediaDeleteTarget) (int64, int64, int64, error) {
-	tx, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
+	tx, release, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
 	if err != nil {
 		return 0, 0, 0, err
 	}
-	defer func() { _ = tx.Rollback() }()
-	definitionID, err := workflow.EnsureDefinition(ctx, tx, "local_media_delete", "Delete local media", "Delete a local media file and mark only that file location unavailable.", map[string]any{
+	defer release()
+	definitionID, err := workflow.EnsureDefinition(ctx, tx.Tx, "local_media_delete", "Delete local media", "Delete a local media file and mark only that file location unavailable.", map[string]any{
 		"nodes": []map[string]string{
 			{"id": "select", "type": "select_media_items"},
 			{"id": "delete", "type": "delete_local_media"},
@@ -227,24 +227,24 @@ func (s *Server) createLocalMediaDeleteWorkflow(ctx context.Context, target loca
 		return 0, 0, 0, err
 	}
 	input := map[string]any{"local_location_id": target.LocationID, "media_item_id": target.MediaItemID, "work_id": target.WorkID, "source_id": target.SourceID, "path": target.RelPath}
-	runID, err := workflow.InsertRun(ctx, tx, definitionID, "local_media_delete", "Delete local media", "queued", "manual", "delete_local", input, map[string]any{"path": target.RelPath})
+	runID, err := workflow.InsertRun(ctx, tx.Tx, definitionID, "local_media_delete", "Delete local media", "queued", "manual", "delete_local", input, map[string]any{"path": target.RelPath})
 	if err != nil {
 		return 0, 0, 0, err
 	}
-	if _, err := workflow.InsertNodeRun(ctx, tx, runID, workflow.NodeRunSpec{
+	if _, err := workflow.InsertNodeRun(ctx, tx.Tx, runID, workflow.NodeRunSpec{
 		NodeID: "select", NodeType: "select_media_items", DisplayName: "Select local media", Position: 1, Status: "succeeded",
 		Input: input, Output: map[string]any{"availability": target.Availability},
 	}); err != nil {
 		return 0, 0, 0, err
 	}
-	deleteNodeID, err := workflow.InsertNodeRun(ctx, tx, runID, workflow.NodeRunSpec{
+	deleteNodeID, err := workflow.InsertNodeRun(ctx, tx.Tx, runID, workflow.NodeRunSpec{
 		NodeID: "delete", NodeType: "delete_local_media", DisplayName: "Delete local file", Position: 2, Status: "queued",
 		Input: input, Output: nil,
 	})
 	if err != nil {
 		return 0, 0, 0, err
 	}
-	jobID, err := workflow.InsertJob(ctx, tx, runID, workflow.JobSpec{
+	jobID, err := workflow.InsertJob(ctx, tx.Tx, runID, workflow.JobSpec{
 		NodeRunID: deleteNodeID, WorkerType: "local_media_delete", Status: "queued", ResourceKey: "media:cleanup", Payload: input,
 		Checkpoint: map[string]any{"phase": "pending"}, Recoverable: true, MaxRetries: 3, ProgressCurrent: 0, ProgressTotal: 1,
 	})

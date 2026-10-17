@@ -66,11 +66,11 @@ func (s *Server) dispatchDueCatalogUpdates(ctx context.Context) error {
 }
 
 func (s *Server) dispatchCatalogUpdate(ctx context.Context, sourceID int64, now time.Time) error {
-	tx, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
+	tx, release, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer release()
 	var saved string
 	var due sql.NullInt64
 	err = tx.QueryRowContext(ctx, `SELECT scan.options_json,
@@ -95,10 +95,10 @@ func (s *Server) dispatchCatalogUpdate(ctx context.Context, sourceID int64, now 
 	if err = options.validate(); err != nil {
 		return err
 	}
-	if _, err = s.enqueueSourceCatalogIndexTx(ctx, tx, sourceID, options, "interval"); err != nil {
+	if _, err = s.enqueueSourceCatalogIndexTx(ctx, tx.Tx, sourceID, options, "interval"); err != nil {
 		return err
 	}
-	if err = setCatalogNextUpdateTx(ctx, tx, sourceID, now); err != nil {
+	if err = setCatalogNextUpdateTx(ctx, tx.Tx, sourceID, now); err != nil {
 		return err
 	}
 	return tx.Commit()

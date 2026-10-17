@@ -59,12 +59,12 @@ func (s *Server) runCacheLimitCleanup(ctx context.Context, sourceID int64, keepL
 		return result, err
 	}
 
-	tx, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
+	tx, release, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
 	if err != nil {
 		return result, err
 	}
-	defer func() { _ = tx.Rollback() }()
-	definitionID, err := workflow.EnsureDefinition(ctx, tx, "media_cache_cleanup", "Clean media cache", "Delete cached media files and mark cache locations unavailable.", map[string]any{
+	defer release()
+	definitionID, err := workflow.EnsureDefinition(ctx, tx.Tx, "media_cache_cleanup", "Clean media cache", "Delete cached media files and mark cache locations unavailable.", map[string]any{
 		"nodes": []map[string]string{
 			{"id": "select", "type": "select_media_items"},
 			{"id": "cleanup", "type": "cleanup_cache"},
@@ -74,24 +74,24 @@ func (s *Server) runCacheLimitCleanup(ctx context.Context, sourceID int64, keepL
 		return result, err
 	}
 	input := map[string]any{"source_id": sourceID, "keep_location_id": keepLocationID, "total_limit_gb": totalLimitGB, "source_limit_gb": sourceLimitGB}
-	runID, err := workflow.InsertRun(ctx, tx, definitionID, "media_cache_cleanup", "Clean media cache", "queued", "cache_limit", "enforce_cache_limit", input, map[string]any{"source_id": sourceID})
+	runID, err := workflow.InsertRun(ctx, tx.Tx, definitionID, "media_cache_cleanup", "Clean media cache", "queued", "cache_limit", "enforce_cache_limit", input, map[string]any{"source_id": sourceID})
 	if err != nil {
 		return result, err
 	}
-	if _, err := workflow.InsertNodeRun(ctx, tx, runID, workflow.NodeRunSpec{
+	if _, err := workflow.InsertNodeRun(ctx, tx.Tx, runID, workflow.NodeRunSpec{
 		NodeID: "select", NodeType: "select_media_items", DisplayName: "Select old cached media", Position: 1, Status: "succeeded",
 		Input: input, Output: map[string]any{"policy": "oldest_last_checked_first"},
 	}); err != nil {
 		return result, err
 	}
-	cleanupNodeID, err := workflow.InsertNodeRun(ctx, tx, runID, workflow.NodeRunSpec{
+	cleanupNodeID, err := workflow.InsertNodeRun(ctx, tx.Tx, runID, workflow.NodeRunSpec{
 		NodeID: "cleanup", NodeType: "cleanup_cache", DisplayName: "Enforce cache limit", Position: 2, Status: "queued",
 		Input: input, Output: nil,
 	})
 	if err != nil {
 		return result, err
 	}
-	jobID, err := workflow.InsertJob(ctx, tx, runID, workflow.JobSpec{
+	jobID, err := workflow.InsertJob(ctx, tx.Tx, runID, workflow.JobSpec{
 		NodeRunID: cleanupNodeID, WorkerType: "media_cache_limit_cleanup", Status: "queued", ResourceKey: "media:cleanup", Payload: input,
 		Checkpoint: map[string]any{"phase": "pending"}, Recoverable: true, MaxRetries: 3, ProgressCurrent: 0, ProgressTotal: 1,
 	})

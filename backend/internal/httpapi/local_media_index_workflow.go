@@ -133,11 +133,11 @@ func (s *Server) enqueueLocalMediaIndex(ctx context.Context, trigger workflowRun
 	if err != nil {
 		return localMediaIndexQueuedResult{}, err
 	}
-	tx, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
+	tx, release, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
 	if err != nil {
 		return localMediaIndexQueuedResult{}, err
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer release()
 	existing := localMediaIndexQueuedResult{Existing: true}
 	var existingInput string
 	err = tx.QueryRowContext(ctx, `
@@ -158,13 +158,13 @@ func (s *Server) enqueueLocalMediaIndex(ctx context.Context, trigger workflowRun
 	if !errors.Is(err, sql.ErrNoRows) {
 		return localMediaIndexQueuedResult{}, err
 	}
-	definitionID, err := workflow.EnsureDefinition(ctx, tx, localMediaIndexWorkflowCode, localMediaIndexDisplayName,
+	definitionID, err := workflow.EnsureDefinition(ctx, tx.Tx, localMediaIndexWorkflowCode, localMediaIndexDisplayName,
 		localMediaIndexDescription, map[string]any{"nodes": localMediaIndexNodes})
 	if err != nil {
 		return localMediaIndexQueuedResult{}, err
 	}
 	payload := localMediaIndexPayload{Mode: mode}
-	runID, err := workflow.InsertRun(ctx, tx, definitionID, localMediaIndexWorkflowCode, localMediaIndexDisplayName,
+	runID, err := workflow.InsertRun(ctx, tx.Tx, definitionID, localMediaIndexWorkflowCode, localMediaIndexDisplayName,
 		"queued", trigger.Type, trigger.Reason, payload, map[string]any{})
 	if err != nil {
 		return localMediaIndexQueuedResult{}, err
@@ -174,20 +174,20 @@ func (s *Server) enqueueLocalMediaIndex(ctx context.Context, trigger workflowRun
 			return localMediaIndexQueuedResult{}, err
 		}
 	}
-	selectNodeID, err := workflow.InsertNodeRun(ctx, tx, runID, workflow.NodeRunSpec{
+	selectNodeID, err := workflow.InsertNodeRun(ctx, tx.Tx, runID, workflow.NodeRunSpec{
 		NodeID: localMediaIndexSelectNodeID, NodeType: localMediaIndexSelectNodeType, DisplayName: localMediaIndexSelectDisplayName,
 		Position: 1, Status: "queued", Input: payload,
 	})
 	if err != nil {
 		return localMediaIndexQueuedResult{}, err
 	}
-	if _, err := workflow.InsertNodeRun(ctx, tx, runID, workflow.NodeRunSpec{
+	if _, err := workflow.InsertNodeRun(ctx, tx.Tx, runID, workflow.NodeRunSpec{
 		NodeID: localMediaIndexIndexNodeID, NodeType: localMediaIndexIndexNodeType, DisplayName: localMediaIndexIndexDisplayName,
 		Position: 2, Status: "queued",
 	}); err != nil {
 		return localMediaIndexQueuedResult{}, err
 	}
-	jobID, err := workflow.InsertJob(ctx, tx, runID, workflow.JobSpec{
+	jobID, err := workflow.InsertJob(ctx, tx.Tx, runID, workflow.JobSpec{
 		NodeRunID: selectNodeID, WorkerType: localMediaIndexWorkerType, Status: "queued",
 		Priority: workflowJobPriorityForTrigger(trigger.Type), ResourceKey: "local:media-index", Payload: payload,
 		Checkpoint: map[string]any{"phase": "queued"}, Recoverable: true, MaxRetries: 3,
@@ -303,11 +303,11 @@ func (s *Server) selectLocalMediaIndexTargets(ctx context.Context, mode string) 
 
 func (s *Server) completeLocalMediaIndexSelection(ctx context.Context, job workflowJobRecord, nodeIDs map[string]int64, mode string, selected int) error {
 	output := mustJSON(map[string]any{"mode": mode, "selected_works": selected})
-	tx, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
+	tx, release, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer release()
 	if _, err := tx.ExecContext(ctx, `
 		UPDATE workflow_node_run SET status = 'succeeded', output_json = ?, finished_at = CURRENT_TIMESTAMP
 		WHERE id = ? AND status IN ('queued', 'running')
@@ -330,11 +330,11 @@ func (s *Server) completeLocalMediaIndexSelection(ctx context.Context, job workf
 
 func (s *Server) finishLocalMediaIndexJob(ctx context.Context, job workflowJobRecord, indexNodeID int64, status string, selected int, summary map[string]any, failures []string) error {
 	output := mustJSON(summary)
-	tx, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
+	tx, release, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer release()
 	// Guards keep a run that was cancelled while indexing cancelled.
 	for _, step := range []struct {
 		query string
@@ -353,13 +353,13 @@ func (s *Server) finishLocalMediaIndexJob(ctx context.Context, job workflowJobRe
 			return err
 		}
 	}
-	if err := workflow.InsertEvent(ctx, tx, job.RunID, workflow.EventSpec{
+	if err := workflow.InsertEvent(ctx, tx.Tx, job.RunID, workflow.EventSpec{
 		NodeRunID: indexNodeID, JobID: job.ID, Level: eventLevelForWorkflowStatus(status),
 		Type: "local_media_index.completed", Message: "Local work file refresh " + status, Detail: summary,
 	}); err != nil {
 		return err
 	}
-	if err := updateTriggerForQueuedSystemRun(ctx, tx, job.RunID, status, failures); err != nil {
+	if err := updateTriggerForQueuedSystemRun(ctx, tx.Tx, job.RunID, status, failures); err != nil {
 		return err
 	}
 	return tx.Commit()

@@ -46,12 +46,12 @@ func (s *Server) workMatchingSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		raw, _ := json.Marshal(o)
-		tx, e := beginTxWithDatabaseBusyRetry(r.Context(), s.db)
+		tx, release, e := beginTxWithDatabaseBusyRetry(r.Context(), s.db)
 		if e != nil {
 			writeError(w, e)
 			return
 		}
-		defer func() { _ = tx.Rollback() }()
+		defer release()
 		_, e = tx.ExecContext(r.Context(), `INSERT INTO app_setting(key,value_json) VALUES('work_matching_options',?) ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json`, string(raw))
 		if e == nil {
 			_, e = tx.ExecContext(r.Context(), `UPDATE work_matching_control SET revision=revision+1,status='queued',retry_after=0,attempts=0`)
@@ -123,11 +123,11 @@ func (s *Server) advanceWorkMatching(ctx context.Context, o workMatchingOptions)
 		_, err := s.db.ExecContext(ctx, `UPDATE work_matching_control SET status='paused',error_code=?`, reason)
 		return err
 	}
-	tx, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
+	tx, release, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer release()
 	if _, err = tx.ExecContext(ctx, `UPDATE work_matching_control SET id=id WHERE id=1`); err != nil {
 		return err
 	}

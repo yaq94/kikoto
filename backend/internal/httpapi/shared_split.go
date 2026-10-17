@@ -134,17 +134,17 @@ func (s *Server) createSharedSplitPreview(w http.ResponseWriter, r *http.Request
 	if !decodeAssociationBody(w, r, &body) {
 		return
 	}
-	tx, err := beginTxWithDatabaseBusyRetry(r.Context(), s.db)
+	tx, release, err := beginTxWithDatabaseBusyRetry(r.Context(), s.db)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer release()
 	if _, err = tx.ExecContext(r.Context(), `UPDATE shared_association SET id=id WHERE id=?`, id); err != nil {
 		writeError(w, err)
 		return
 	}
-	snapshot, fingerprint, err := loadSplitSnapshot(r.Context(), tx, id)
+	snapshot, fingerprint, err := loadSplitSnapshot(r.Context(), tx.Tx, id)
 	if err != nil {
 		writeAssociationError(w, err)
 		return
@@ -222,28 +222,28 @@ func (s *Server) mutateSharedSplit(w http.ResponseWriter, r *http.Request, user 
 		writeAssociationError(w, sql.ErrNoRows)
 		return
 	}
-	tx, err := beginTxWithDatabaseBusyRetry(r.Context(), s.db)
+	tx, release, err := beginTxWithDatabaseBusyRetry(r.Context(), s.db)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer release()
 	if _, err = tx.ExecContext(r.Context(), `UPDATE shared_association SET id=id WHERE id=?`, id); err != nil {
 		writeError(w, err)
 		return
 	}
-	split, err := loadStoredSplit(r.Context(), tx, id)
+	split, err := loadStoredSplit(r.Context(), tx.Tx, id)
 	if err == nil && split.Version != version {
 		err = errAssociationStale
 	}
 	if err == nil && split.Status != "completed" {
-		_, fingerprint, e := loadSplitSnapshot(r.Context(), tx, split.Snapshot.AssociationID)
+		_, fingerprint, e := loadSplitSnapshot(r.Context(), tx.Tx, split.Snapshot.AssociationID)
 		if e != nil || fingerprint != split.Fingerprint {
 			err = errAssociationStale
 		}
 	}
 	if err == nil {
-		err = change(r.Context(), tx, &split)
+		err = change(r.Context(), tx.Tx, &split)
 	}
 	if errors.Is(err, errAssociationNotOwner) {
 		writeAPIError(w, 403, "forbidden", "only the record owner can choose allocation", false)

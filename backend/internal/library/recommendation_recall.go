@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/yexca/kikoto/backend/internal/searchtext"
+	"github.com/yexca/kikoto/backend/internal/sqlutil"
 )
 
 const (
@@ -245,11 +246,11 @@ func (s *Store) prepareRecommendationContext(ctx context.Context, id string, sna
 		return nil, ctx.Err()
 	}
 	s.recommendationDiagnostics.writerWait.Add(time.Since(writeStarted).Nanoseconds())
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, release, err := sqlutil.BeginBoundedTx(ctx, s.db)
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer release()
 	var changesBefore, changesAfter int64
 	if err := tx.QueryRowContext(ctx, "SELECT total_changes()").Scan(&changesBefore); err != nil {
 		return nil, err

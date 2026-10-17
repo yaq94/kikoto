@@ -410,11 +410,11 @@ func (s *Server) claimNextQueuedWorkflowJob(ctx context.Context, runnerID string
 }
 
 func (s *Server) claimQueuedWorkflowJob(ctx context.Context, runnerID string, candidateID int64) (workflowJobRecord, bool, error) {
-	tx, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
+	tx, release, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
 	if err != nil {
 		return workflowJobRecord{}, false, err
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer release()
 
 	var job workflowJobRecord
 	err = tx.QueryRowContext(ctx, `
@@ -650,11 +650,11 @@ func (s *Server) failClaimedWorkflowJob(ctx context.Context, job workflowJobReco
 	if message == "" {
 		message = "workflow job failed"
 	}
-	tx, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
+	tx, release, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer release()
 	if _, err := tx.ExecContext(ctx, `
 		UPDATE workflow_job
 		SET status = 'failed',
@@ -669,7 +669,7 @@ func (s *Server) failClaimedWorkflowJob(ctx context.Context, job workflowJobReco
 	`, message, job.ID, job.RunID); err != nil {
 		return err
 	}
-	if err := failWorkflowRunTx(ctx, tx, job.RunID, message); err != nil {
+	if err := failWorkflowRunTx(ctx, tx.Tx, job.RunID, message); err != nil {
 		return err
 	}
 	return tx.Commit()

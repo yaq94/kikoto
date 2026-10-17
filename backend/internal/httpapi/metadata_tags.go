@@ -195,7 +195,7 @@ func (s *Server) changeMetadataTag(w http.ResponseWriter, r *http.Request) {
 	defer release()
 	reproject := payload.Hidden != nil || strings.HasSuffix(r.URL.Path, "/merge")
 	collect := func(tagID int64) error {
-		return metadatatags.EnqueueAffectedTx(ctx, tx, tagID)
+		return metadatatags.EnqueueAffectedTx(ctx, tx.Tx, tagID)
 	}
 	if reproject {
 		for _, tagID := range []int64{id, payload.TargetTagID} {
@@ -206,7 +206,7 @@ func (s *Server) changeMetadataTag(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if id == 0 {
-		id, err = metadatatags.CreateTx(ctx, tx, payload.Name, user.ID)
+		id, err = metadatatags.CreateTx(ctx, tx.Tx, payload.Name, user.ID)
 	} else {
 		if strings.HasSuffix(r.URL.Path, "/merge") {
 			if r.Method == http.MethodDelete {
@@ -215,11 +215,11 @@ func (s *Server) changeMetadataTag(w http.ResponseWriter, r *http.Request) {
 				metadataTagError(w, metadatatags.ErrInvalid)
 				return
 			}
-			err = metadatatags.MergeTx(ctx, tx, id, payload.TargetTagID)
+			err = metadatatags.MergeTx(ctx, tx.Tx, id, payload.TargetTagID)
 		} else {
 			if _, err = metadatatags.Load(ctx, tx, id); err == nil {
 				for language, name := range payload.Names {
-					if err = metadatatags.SetNameTx(ctx, tx, id, language, name, user.ID); err != nil {
+					if err = metadatatags.SetNameTx(ctx, tx.Tx, id, language, name, user.ID); err != nil {
 						break
 					}
 				}
@@ -233,7 +233,7 @@ func (s *Server) changeMetadataTag(w http.ResponseWriter, r *http.Request) {
 		metadataTagError(w, err)
 		return
 	}
-	if err := metadatatags.RefreshNamesTx(ctx, tx, priorities, id); err != nil {
+	if err := metadatatags.RefreshNamesTx(ctx, tx.Tx, priorities, id); err != nil {
 		writeError(w, err)
 		return
 	}

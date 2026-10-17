@@ -54,11 +54,11 @@ func (s *Server) enqueueGenreNameLearning(ctx context.Context, reason string) (i
 	if err != nil || pending == 0 {
 		return 0, err
 	}
-	tx, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
+	tx, release, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
 	if err != nil {
 		return 0, err
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer release()
 	var existing int64
 	err = tx.QueryRowContext(ctx, `SELECT id FROM workflow_run
 		WHERE workflow_code = ? AND status IN ('queued', 'running') ORDER BY id DESC LIMIT 1`, genreNameWorkflowCode).Scan(&existing)
@@ -68,31 +68,31 @@ func (s *Server) enqueueGenreNameLearning(ctx context.Context, reason string) (i
 	if !errors.Is(err, sql.ErrNoRows) {
 		return 0, err
 	}
-	definitionID, err := workflow.EnsureDefinition(ctx, tx, genreNameWorkflowCode, genreNameDisplayName, genreNameDescription,
+	definitionID, err := workflow.EnsureDefinition(ctx, tx.Tx, genreNameWorkflowCode, genreNameDisplayName, genreNameDescription,
 		map[string]any{"nodes": genreNameNodes})
 	if err != nil {
 		return 0, err
 	}
 	payload := genreNamePayload{Reason: reason}
-	runID, err := workflow.InsertRun(ctx, tx, definitionID, genreNameWorkflowCode, genreNameDisplayName,
+	runID, err := workflow.InsertRun(ctx, tx.Tx, definitionID, genreNameWorkflowCode, genreNameDisplayName,
 		"queued", "automatic", reason, payload, map[string]any{"pending": pending})
 	if err != nil {
 		return 0, err
 	}
-	planNodeID, err := workflow.InsertNodeRun(ctx, tx, runID, workflow.NodeRunSpec{
+	planNodeID, err := workflow.InsertNodeRun(ctx, tx.Tx, runID, workflow.NodeRunSpec{
 		NodeID: genreNamePlanNodeID, NodeType: genreNamePlanNodeType, DisplayName: genreNamePlanDisplayName,
 		Position: 1, Status: "queued", Input: payload,
 	})
 	if err != nil {
 		return 0, err
 	}
-	if _, err := workflow.InsertNodeRun(ctx, tx, runID, workflow.NodeRunSpec{
+	if _, err := workflow.InsertNodeRun(ctx, tx.Tx, runID, workflow.NodeRunSpec{
 		NodeID: genreNameLearnNodeID, NodeType: genreNameLearnNodeType, DisplayName: genreNameLearnName,
 		Position: 2, Status: "queued",
 	}); err != nil {
 		return 0, err
 	}
-	if _, err := workflow.InsertJob(ctx, tx, runID, workflow.JobSpec{
+	if _, err := workflow.InsertJob(ctx, tx.Tx, runID, workflow.JobSpec{
 		NodeRunID: planNodeID, WorkerType: genreNameWorkerType, Status: "queued",
 		Priority: workflow.JobPriorityBackground, ResourceKey: "metadata:provider", Payload: payload,
 		Checkpoint: map[string]any{"phase": "queued"}, Recoverable: true, MaxRetries: 3, ProgressTotal: pending,
@@ -151,11 +151,11 @@ func (s *Server) executeGenreNameLearningJob(ctx context.Context, job workflowJo
 }
 
 func (s *Server) startGenreNameLearning(ctx context.Context, job workflowJobRecord, nodeIDs map[string]int64, languages []string, pending int) error {
-	tx, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
+	tx, release, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer release()
 	output := mustJSON(map[string]any{"languages": languages, "pending": pending})
 	for _, step := range []struct {
 		query string
@@ -177,11 +177,11 @@ func (s *Server) startGenreNameLearning(ctx context.Context, job workflowJobReco
 func (s *Server) finishGenreNameLearningJob(ctx context.Context, job workflowJobRecord, learnNodeID int64, status string, pending int, result metasync.GenreNameLearningResult) error {
 	output := mustJSON(result)
 	done := max(0, pending-result.Remaining)
-	tx, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
+	tx, release, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer release()
 	// Guards keep a run that was cancelled while learning cancelled.
 	for _, step := range []struct {
 		query string
@@ -200,7 +200,7 @@ func (s *Server) finishGenreNameLearningJob(ctx context.Context, job workflowJob
 			return err
 		}
 	}
-	if err := workflow.InsertEvent(ctx, tx, job.RunID, workflow.EventSpec{
+	if err := workflow.InsertEvent(ctx, tx.Tx, job.RunID, workflow.EventSpec{
 		NodeRunID: learnNodeID, JobID: job.ID, Level: eventLevelForWorkflowStatus(status),
 		Type: "metadata.genre_names_learned", Message: "Tag name learning " + status, Detail: result,
 	}); err != nil {

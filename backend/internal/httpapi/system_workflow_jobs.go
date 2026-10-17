@@ -224,20 +224,20 @@ func (s *Server) persistLocalScanResults(ctx context.Context, job workflowJobRec
 			return localScanResult{}, nil, err
 		}
 	}
-	tx, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
+	tx, release, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
 	if err != nil {
 		return localScanResult{}, nil, err
 	}
-	defer func() { _ = tx.Rollback() }()
-	if err := markMissingExternalWorkFolderLocations(ctx, tx, fileSourceID, seenRoots, scope.contains); err != nil {
+	defer release()
+	if err := markMissingExternalWorkFolderLocations(ctx, tx.Tx, fileSourceID, seenRoots, scope.contains); err != nil {
 		return localScanResult{}, nil, err
 	}
-	missingWorkIDs, err := markMissingLocalPresence(ctx, tx, fileSourceID, state.seenWorkIDs, scope.contains)
+	missingWorkIDs, err := markMissingLocalPresence(ctx, tx.Tx, fileSourceID, state.seenWorkIDs, scope.contains)
 	if err != nil {
 		return localScanResult{}, nil, err
 	}
 	for _, workID := range missingWorkIDs {
-		missing, err := markAvailableLocalLocationsMissingForWork(ctx, tx, workID, fileSourceID, scope)
+		missing, err := markAvailableLocalLocationsMissingForWork(ctx, tx.Tx, workID, fileSourceID, scope)
 		if err != nil {
 			return localScanResult{}, nil, err
 		}
@@ -263,10 +263,10 @@ func (s *Server) persistLocalScanResults(ctx context.Context, job workflowJobRec
 	if len(scope.offline) > 0 {
 		runSummary["offline_pools"] = scope.offlinePoolSummaries()
 	}
-	if err := completeLocalScanNodes(ctx, tx, nodeIDs, fileSourceID, scanSummary, state); err != nil {
+	if err := completeLocalScanNodes(ctx, tx.Tx, nodeIDs, fileSourceID, scanSummary, state); err != nil {
 		return localScanResult{}, nil, err
 	}
-	if err := insertLocalDuplicateCandidates(ctx, tx, job.RunID, scanSummary.DuplicateGroups); err != nil {
+	if err := insertLocalDuplicateCandidates(ctx, tx.Tx, job.RunID, scanSummary.DuplicateGroups); err != nil {
 		return localScanResult{}, nil, err
 	}
 	if _, err := tx.ExecContext(ctx, "UPDATE workflow_run SET summary_json = ? WHERE id = ?", mustJSON(runSummary), job.RunID); err != nil {
@@ -286,12 +286,12 @@ func (s *Server) persistLocalScanResults(ctx context.Context, job workflowJobRec
 }
 
 func (s *Server) ensureLocalScanFileSource(ctx context.Context, scanDepth int) (int64, error) {
-	tx, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
+	tx, release, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
 	if err != nil {
 		return 0, err
 	}
-	defer func() { _ = tx.Rollback() }()
-	fileSourceID, err := s.upsertLocalFileSource(ctx, tx, scanDepth)
+	defer release()
+	fileSourceID, err := s.upsertLocalFileSource(ctx, tx.Tx, scanDepth)
 	if err != nil {
 		return 0, err
 	}
@@ -299,14 +299,14 @@ func (s *Server) ensureLocalScanFileSource(ctx context.Context, scanDepth int) (
 }
 
 func (s *Server) persistLocalScanFolderBatch(ctx context.Context, fileSourceID int64, folders []localfs.WorkFolder, state *localScanPersistState, seenRoots map[string]bool) error {
-	tx, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
+	tx, release, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer release()
 	for _, folder := range folders {
 		seenRoots[normalizeFolderRootPath(folder.RelPath)] = true
-		if _, err := s.persistLocalScanFolder(ctx, tx, fileSourceID, folder, state); err != nil {
+		if _, err := s.persistLocalScanFolder(ctx, tx.Tx, fileSourceID, folder, state); err != nil {
 			return err
 		}
 	}

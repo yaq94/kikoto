@@ -144,12 +144,12 @@ func finishRemoteFetchWorkflowTx(ctx context.Context, tx *sql.Tx, manifest remot
 }
 
 func (s *Server) completeRemoteFetchManifest(ctx context.Context, manifest remoteFetchManifestRecord, plan remoteWorkSavePlan, summary any, locations, removedCache int) error {
-	tx, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
+	tx, release, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = tx.Rollback() }()
-	if err := retireFetchRemoteStreams(ctx, tx, manifest.WorkID, remoteFetchPlanSourceIDs(plan, manifest.RemoteSourceID)); err != nil {
+	defer release()
+	if err := retireFetchRemoteStreams(ctx, tx.Tx, manifest.WorkID, remoteFetchPlanSourceIDs(plan, manifest.RemoteSourceID)); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `
@@ -160,7 +160,7 @@ func (s *Server) completeRemoteFetchManifest(ctx context.Context, manifest remot
 	`, manifest.ID); err != nil {
 		return err
 	}
-	if err := finishRemoteFetchWorkflowTx(ctx, tx, manifest, plan, summary, locations, removedCache); err != nil {
+	if err := finishRemoteFetchWorkflowTx(ctx, tx.Tx, manifest, plan, summary, locations, removedCache); err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {
@@ -176,11 +176,11 @@ func (s *Server) completeRemoteFetchManifest(ctx context.Context, manifest remot
 // Registration is resumable. Keep remote identities and the rollback backup
 // until cleanup/review effects and the terminal workflow result have committed.
 func (s *Server) registerRemoteFetchFolder(ctx context.Context, manifest remoteFetchManifestRecord) error {
-	tx, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
+	tx, release, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer release()
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO work_folder_location (
 			work_id, file_source_id, root_path, role, origin_source_id,

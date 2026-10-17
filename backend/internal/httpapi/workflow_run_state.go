@@ -52,16 +52,16 @@ func updateWorkflowJobProgress(ctx context.Context, db *sql.DB, jobID int64, cur
 }
 
 func finishWorkflowRunSimple(ctx context.Context, db *sql.DB, runID int64, nodeID int64, jobID int64, status string, errorMessage string, current int, total int, summary remoteWorkSaveSummary) error {
-	tx, err := beginTxWithDatabaseBusyRetry(ctx, db)
+	tx, release, err := beginTxWithDatabaseBusyRetry(ctx, db)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer release()
 	output := mustJSON(map[string]any{"plan": summary, "error": errorMessage})
 	if _, err := tx.ExecContext(ctx, "UPDATE workflow_node_run SET status = ?, output_json = json_patch(COALESCE(NULLIF(output_json, ''), '{}'), ?), error_message = ?, finished_at = CURRENT_TIMESTAMP WHERE id = ?", status, output, errorMessage, nodeID); err != nil {
 		return err
 	}
-	if err := finishWorkflowRunResultTx(ctx, tx, runID, jobID, status, errorMessage, current, total, output); err != nil {
+	if err := finishWorkflowRunResultTx(ctx, tx.Tx, runID, jobID, status, errorMessage, current, total, output); err != nil {
 		return err
 	}
 	return tx.Commit()

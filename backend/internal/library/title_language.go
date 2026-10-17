@@ -7,6 +7,7 @@ import (
 
 	"github.com/yexca/kikoto/backend/internal/dlsite"
 	"github.com/yexca/kikoto/backend/internal/metadatatitles"
+	"github.com/yexca/kikoto/backend/internal/sqlutil"
 )
 
 // work_title_language holds each work's display title for every language that
@@ -49,16 +50,16 @@ func refreshTitleLanguages(ctx context.Context, db *sql.DB) error {
 }
 
 func refreshTitleLanguageBatch(ctx context.Context, db *sql.DB, limit int) (int, error) {
-	tx, err := db.BeginTx(ctx, nil)
+	tx, release, err := sqlutil.BeginBoundedTx(ctx, db)
 	if err != nil {
 		return 0, err
 	}
-	defer func() { _ = tx.Rollback() }()
-	ids, err := queryInt64s(ctx, tx, `SELECT work_id FROM work_title_language_dirty ORDER BY work_id LIMIT ?`, limit)
+	defer release()
+	ids, err := queryInt64s(ctx, tx.Tx, `SELECT work_id FROM work_title_language_dirty ORDER BY work_id LIMIT ?`, limit)
 	if err != nil || len(ids) == 0 {
 		return 0, err
 	}
-	inputs, err := metadatatitles.LoadInputs(ctx, tx, ids, false)
+	inputs, err := metadatatitles.LoadInputs(ctx, tx.Tx, ids, false)
 	if err != nil {
 		return 0, err
 	}

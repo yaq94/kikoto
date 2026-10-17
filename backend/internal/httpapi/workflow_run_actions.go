@@ -22,13 +22,13 @@ func (s *Server) cancelWorkflowRun(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid workflow run id"})
 		return
 	}
-	tx, err := beginTxWithDatabaseBusyRetry(r.Context(), s.db)
+	tx, release, err := beginTxWithDatabaseBusyRetry(r.Context(), s.db)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
-	defer func() { _ = tx.Rollback() }()
-	run, err := s.loadWorkflowRunTx(r.Context(), tx, id)
+	defer release()
+	run, err := s.loadWorkflowRunTx(r.Context(), tx.Tx, id)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "workflow run not found"})
@@ -50,7 +50,7 @@ func (s *Server) cancelWorkflowRun(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "only queued or running workflow runs can be cancelled"})
 		return
 	}
-	changed, err := s.cancelWorkflowRunTx(r.Context(), tx, run, id)
+	changed, err := s.cancelWorkflowRunTx(r.Context(), tx.Tx, run, id)
 	if err != nil {
 		writeError(w, err)
 		return

@@ -6,12 +6,12 @@ import "context"
 // and page revisions. Catalog identities, file snapshots and reviews are never
 // touched. Each writer transaction removes at most 100 staging objects.
 func (s *Server) cleanupCatalogStagingBatch(ctx context.Context, job workflowJobRecord, sourceID int64) (int64, error) {
-	tx, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
+	tx, release, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
 	if err != nil {
 		return 0, err
 	}
-	defer func() { _ = tx.Rollback() }()
-	if err = verifyCatalogLease(ctx, tx, job); err != nil {
+	defer release()
+	if err = verifyCatalogLease(ctx, tx.Tx, job); err != nil {
 		return 0, err
 	}
 	result, err := tx.ExecContext(ctx, `DELETE FROM source_catalog_observation WHERE rowid IN (

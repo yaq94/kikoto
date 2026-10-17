@@ -55,11 +55,11 @@ func (s *Server) optimizeDatabase(w http.ResponseWriter, r *http.Request) {
 func (s *Server) enqueueDatabaseOptimize(ctx context.Context, actorUserID int64) (databaseOptimizeQueuedResult, error) {
 	// Write transactions begin immediately, so the active-run check and the
 	// insert below are serialized against a concurrent request.
-	tx, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
+	tx, release, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
 	if err != nil {
 		return databaseOptimizeQueuedResult{}, err
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer release()
 	existing := databaseOptimizeQueuedResult{Existing: true}
 	err = tx.QueryRowContext(ctx, `
 		SELECT run.id, run.status, COALESCE((
@@ -76,19 +76,19 @@ func (s *Server) enqueueDatabaseOptimize(ctx context.Context, actorUserID int64)
 	if !errors.Is(err, sql.ErrNoRows) {
 		return databaseOptimizeQueuedResult{}, err
 	}
-	definitionID, err := workflow.EnsureDefinition(ctx, tx, databaseOptimizeWorkflowCode, databaseOptimizeDisplayName,
+	definitionID, err := workflow.EnsureDefinition(ctx, tx.Tx, databaseOptimizeWorkflowCode, databaseOptimizeDisplayName,
 		"Compact the SQLite database, refresh query planner statistics, and truncate the write-ahead log.",
 		map[string]any{"nodes": []map[string]string{{"id": "optimize", "type": "optimize_database", "displayName": "Compact database"}}})
 	if err != nil {
 		return databaseOptimizeQueuedResult{}, err
 	}
 	payload := databaseOptimizePayload{RequestedByUserID: actorUserID}
-	runID, err := workflow.InsertRun(ctx, tx, definitionID, databaseOptimizeWorkflowCode, databaseOptimizeDisplayName,
+	runID, err := workflow.InsertRun(ctx, tx.Tx, definitionID, databaseOptimizeWorkflowCode, databaseOptimizeDisplayName,
 		"queued", "manual", "maintenance_database_optimize", payload, map[string]any{})
 	if err != nil {
 		return databaseOptimizeQueuedResult{}, err
 	}
-	nodeRunID, err := workflow.InsertNodeRun(ctx, tx, runID, workflow.NodeRunSpec{
+	nodeRunID, err := workflow.InsertNodeRun(ctx, tx.Tx, runID, workflow.NodeRunSpec{
 		NodeID: "optimize", NodeType: "optimize_database", DisplayName: "Compact database", Position: 1, Status: "queued",
 	})
 	if err != nil {
@@ -97,7 +97,7 @@ func (s *Server) enqueueDatabaseOptimize(ctx context.Context, actorUserID int64)
 	// VACUUM has no checkpoint to resume from, so the job is not recoverable:
 	// an optimization interrupted by a crash fails at restart and can simply
 	// be started again.
-	jobID, err := workflow.InsertJob(ctx, tx, runID, workflow.JobSpec{
+	jobID, err := workflow.InsertJob(ctx, tx.Tx, runID, workflow.JobSpec{
 		NodeRunID: nodeRunID, WorkerType: databaseOptimizeWorkerType, Status: "queued",
 		Priority: workflow.JobPriorityUserInitiated, ResourceKey: "database:optimize", Payload: payload,
 		Checkpoint: map[string]any{}, Recoverable: false, MaxRetries: 1, ProgressTotal: 1,
@@ -152,11 +152,11 @@ func (s *Server) finishDatabaseOptimizeJob(ctx context.Context, job workflowJobR
 	output := mustJSON(map[string]any{
 		"before_bytes": result.BeforeBytes, "after_bytes": result.AfterBytes, "reclaimed_bytes": max(result.BeforeBytes-result.AfterBytes, 0),
 	})
-	tx, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
+	tx, release, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer release()
 	for _, step := range []struct {
 		query string
 		args  []any

@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/yexca/kikoto/backend/internal/library"
+	"github.com/yexca/kikoto/backend/internal/sqlutil"
 )
 
 const maxJSONRequestBytes int64 = 1 << 20
@@ -155,19 +156,7 @@ func jsonBodyErrorMessage(err error) string {
 }
 
 func isDatabaseBusyError(err error) bool {
-	if err == nil {
-		return false
-	}
-	for current := err; current != nil; current = errors.Unwrap(current) {
-		message := strings.ToLower(current.Error())
-		if strings.Contains(message, "database is locked") ||
-			strings.Contains(message, "database table is locked") ||
-			strings.Contains(message, "database is busy") ||
-			strings.Contains(message, "sqlite_busy") {
-			return true
-		}
-	}
-	return false
+	return sqlutil.IsBusy(err)
 }
 
 func mustJSON(value any) string {

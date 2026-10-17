@@ -42,12 +42,12 @@ func (s *Server) pendingCatalogDirectories(ctx context.Context, sourceID, genera
 // Every page and its next cursor commit together; no pooled connection remains
 // checked out while an HTTP response is pending.
 func (s *Server) persistCatalogPage(ctx context.Context, job workflowJobRecord, sourceID int64, d catalogScanDirectory, data openlist.Page, requestErr error, options catalogIndexOptions) error {
-	tx, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
+	tx, release, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = tx.Rollback() }()
-	if err = verifyCatalogLease(ctx, tx, job); err != nil {
+	defer release()
+	if err = verifyCatalogLease(ctx, tx.Tx, job); err != nil {
 		return err
 	}
 	var revision int
@@ -122,7 +122,7 @@ func (s *Server) persistCatalogPage(ctx context.Context, job workflowJobRecord, 
 		}
 	}
 	if status == "listing_complete" {
-		if err = completeCatalogDirectoryTx(ctx, tx, sourceID, job.RunID, &d); err != nil {
+		if err = completeCatalogDirectoryTx(ctx, tx.Tx, sourceID, job.RunID, &d); err != nil {
 			return err
 		}
 	}
@@ -135,7 +135,7 @@ func (s *Server) persistCatalogPage(ctx context.Context, job workflowJobRecord, 
 		if d.Root != "" {
 			root = d.Root
 		}
-		if err = markCatalogRangeStatusTx(ctx, tx, sourceID, root, availability); err != nil {
+		if err = markCatalogRangeStatusTx(ctx, tx.Tx, sourceID, root, availability); err != nil {
 			return err
 		}
 	}
@@ -203,12 +203,12 @@ func completeCatalogDirectoryTx(ctx context.Context, tx *sql.Tx, sourceID, gener
 // expandCatalogDirectory releases the writer after at most 100 child enqueues.
 // A large directory is not marked complete until its child cursor is exhausted.
 func (s *Server) expandCatalogDirectory(ctx context.Context, job workflowJobRecord, sourceID int64) (bool, error) {
-	tx, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
+	tx, release, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
 	if err != nil {
 		return false, err
 	}
-	defer func() { _ = tx.Rollback() }()
-	if err = verifyCatalogLease(ctx, tx, job); err != nil {
+	defer release()
+	if err = verifyCatalogLease(ctx, tx.Tx, job); err != nil {
 		return false, err
 	}
 	var p, partition, root, cursor string
@@ -245,7 +245,7 @@ func (s *Server) expandCatalogDirectory(ctx context.Context, job workflowJobReco
 		if p == "/" {
 			part = child
 		}
-		if err = enqueueCatalogDirectoryTx(ctx, tx, sourceID, job.RunID, child, part, root); err != nil {
+		if err = enqueueCatalogDirectoryTx(ctx, tx.Tx, sourceID, job.RunID, child, part, root); err != nil {
 			return false, err
 		}
 		cursor = name
@@ -264,12 +264,12 @@ func (s *Server) expandCatalogDirectory(ctx context.Context, job workflowJobReco
 // Publish a bounded number of validated observations. The first playable
 // observation creates a catalog identity; it never registers a library work.
 func (s *Server) publishCatalogBatch(ctx context.Context, job workflowJobRecord, sourceID int64) (int, error) {
-	tx, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
+	tx, release, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
 	if err != nil {
 		return 0, err
 	}
-	defer func() { _ = tx.Rollback() }()
-	if err = verifyCatalogLease(ctx, tx, job); err != nil {
+	defer release()
+	if err = verifyCatalogLease(ctx, tx.Tx, job); err != nil {
 		return 0, err
 	}
 	rows, err := tx.QueryContext(ctx, `SELECT d.path,d.catalog_root,o.name,o.kind,o.size_bytes,o.content_hash FROM source_catalog_directory d JOIN source_catalog_observation o ON o.file_source_id=d.file_source_id AND o.directory_path=d.path AND o.revision=d.revision
@@ -303,7 +303,7 @@ func (s *Server) publishCatalogBatch(ctx context.Context, job workflowJobRecord,
 		if err != nil {
 			return 0, err
 		}
-		if err = attachCatalogSeriesTx(ctx, tx, id); err != nil {
+		if err = attachCatalogSeriesTx(ctx, tx.Tx, id); err != nil {
 			return 0, err
 		}
 		rel := strings.TrimPrefix(path.Join(p.dir, p.name), strings.TrimRight(p.root, "/")+"/")

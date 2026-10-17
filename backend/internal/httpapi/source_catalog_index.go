@@ -138,12 +138,12 @@ func (s *Server) startSourceCatalogIndex(w http.ResponseWriter, r *http.Request)
 // run is joined; interrupted/partial scans resume their completed directory set.
 // A completed run starts a new observation generation without dropping cards.
 func (s *Server) enqueueSourceCatalogIndex(ctx context.Context, sourceID int64, options catalogIndexOptions) (catalogIndexQueued, error) {
-	tx, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
+	tx, release, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
 	if err != nil {
 		return catalogIndexQueued{}, err
 	}
-	defer func() { _ = tx.Rollback() }()
-	result, err := s.enqueueSourceCatalogIndexTx(ctx, tx, sourceID, options, "manual")
+	defer release()
+	result, err := s.enqueueSourceCatalogIndexTx(ctx, tx.Tx, sourceID, options, "manual")
 	if err != nil {
 		return result, err
 	}

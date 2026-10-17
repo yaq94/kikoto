@@ -25,12 +25,12 @@ func catalogFailureStatus(err error) string {
 }
 
 func (s *Server) setCatalogEntryStatus(ctx context.Context, id int64, status string) error {
-	tx, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
+	tx, release, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = tx.Rollback() }()
-	if err = setCatalogEntryStatusTx(ctx, tx, id, status); err != nil {
+	defer release()
+	if err = setCatalogEntryStatusTx(ctx, tx.Tx, id, status); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -66,12 +66,12 @@ func setCatalogEntryStatusTx(ctx context.Context, tx *sql.Tx, id int64, status s
 // Only full successful coverage reaches this bounded final pass. Failure,
 // cancellation and empty directories cannot retire a previous observation.
 func (s *Server) settleCatalogLifecycleBatch(ctx context.Context, job workflowJobRecord, sourceID int64) (bool, error) {
-	tx, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
+	tx, release, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
 	if err != nil {
 		return false, err
 	}
-	defer func() { _ = tx.Rollback() }()
-	if err = verifyCatalogLease(ctx, tx, job); err != nil {
+	defer release()
+	if err = verifyCatalogLease(ctx, tx.Tx, job); err != nil {
 		return false, err
 	}
 	var stage string
@@ -106,7 +106,7 @@ func (s *Server) settleCatalogLifecycleBatch(ctx context.Context, job workflowJo
 	for _, e := range entries {
 		if stage == "reconcile" {
 			if e.generation != job.RunID {
-				if err = reconcileCatalogEntryTx(ctx, tx, sourceID, job.RunID, e.id); err != nil {
+				if err = reconcileCatalogEntryTx(ctx, tx.Tx, sourceID, job.RunID, e.id); err != nil {
 					return false, err
 				}
 			}
@@ -119,7 +119,7 @@ func (s *Server) settleCatalogLifecycleBatch(ctx context.Context, job workflowJo
 			if _, err = tx.ExecContext(ctx, `DELETE FROM source_catalog_relocation_candidate WHERE catalog_entry_id=?`, e.id); err != nil {
 				return false, err
 			}
-			strong, layout, readErr := catalogFingerprintsTx(ctx, tx, e.id, job.RunID)
+			strong, layout, readErr := catalogFingerprintsTx(ctx, tx.Tx, e.id, job.RunID)
 			if readErr != nil {
 				return false, readErr
 			}
@@ -130,7 +130,7 @@ func (s *Server) settleCatalogLifecycleBatch(ctx context.Context, job workflowJo
 				return false, err
 			}
 		}
-		if err = setCatalogEntryStatusTx(ctx, tx, e.id, status); err != nil {
+		if err = setCatalogEntryStatusTx(ctx, tx.Tx, e.id, status); err != nil {
 			return false, err
 		}
 		cursor = e.id

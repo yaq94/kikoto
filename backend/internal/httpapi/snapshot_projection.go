@@ -139,11 +139,11 @@ func (s *Server) syncVoiceCreditsForWorkFromSnapshots(ctx context.Context, workI
 }
 
 func (s *Server) applyVoiceCreditProjections(ctx context.Context, batch []voiceCreditProjection) error {
-	tx, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
+	tx, release, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer release()
 	for _, projection := range batch {
 		actors := voiceCreditActors(projection.Raw)
 		hash, err := snapshotProjectionHash(struct {
@@ -154,7 +154,7 @@ func (s *Server) applyVoiceCreditProjections(ctx context.Context, batch []voiceC
 			return err
 		}
 		if hash != projection.RecordedHash {
-			if err := writeVoiceCredits(ctx, tx, projection.WorkID, projection.ProviderID, actors); err != nil {
+			if err := writeVoiceCredits(ctx, tx.Tx, projection.WorkID, projection.ProviderID, actors); err != nil {
 				return err
 			}
 		}
@@ -309,11 +309,11 @@ func (s *Server) applyDLsitePartyProjections(ctx context.Context, batch []dlsite
 	}
 	// Recorded after every write of the batch, because a relation write drops
 	// the work's earlier record.
-	tx, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
+	tx, release, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer release()
 	for index, projection := range batch {
 		if err := recordSnapshotProjection(ctx, tx, projection.WorkID, snapshotProjectionDLsiteParty, projection.SnapshotID, hashes[index]); err != nil {
 			return nil, err
