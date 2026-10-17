@@ -4,7 +4,7 @@
 **发布状态:** 用户已批准本拆分，17 张独立工单已发布。
 **Implementation:** in-progress；01–06、07、14 已集成并 resolved，08–13、15、16、18、19 已取得本地集成证据并保持 verified-local，17 组合验收与部署回滚进行中。完整发布依赖保留，逐票状态见执行记录。
 **执行授权:** 用户已授权全部功能实现、必要依赖安装、测试、数据库迁移、部署与回滚；[执行记录](execution.md)维护当前状态与证据。
-**依据:** [正式规格](spec.md) · [领域词汇表](../../GLOSSARY.md) · [作品身份与个人记录 ADR](../../docs/adr/0001-work-identity-and-personal-state.md)
+**依据:** [正式规格](spec.md) · [领域词汇表](../../GLOSSARY.md) · [作品身份与个人记录 ADR](../../docs/decisions/ADR-0004-work-identity-and-personal-state.md)
 
 本总览记录用户已批准的 17 个独立交付单元、阻塞关系与验收分工。每张工单已单独成文件，可通过下方编号链接打开；实施按前置工单完成情况推进，规格本身的状态保持不变。
 

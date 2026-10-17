@@ -7,7 +7,7 @@ High-confidence candidate selection and its budgets are described in
 `identity_work_id`; `shared_work_identity` includes unassociated works with equal
 ids. Edition families, source catalog ids, series memberships, media locations,
 listening state, favorites and playback cursors retain their exact references.
-See [the identity decision](../adr/0002-shared-identity-preserves-playback-editions.md).
+See [the identity decision](../decisions/ADR-0005-shared-identity-preserves-playback-editions.md).
 
 ## Preview and confirmation
 

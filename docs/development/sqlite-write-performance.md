@@ -111,7 +111,6 @@ the publish batch bound how long any one writer holds the lock.
 
 ## Raw Data
 
-Local A/B output: `E:/项目/临时/kikoto-final-validation/sqlite-write-ab.log`.
-Production before-state log: `/tmp/kikoto-live-ba9ef02/instance/kikoto.log`
-(catalog index run `ba9ef02`). After-deployment measurements belong with the
+The A/B output and the production before-state log stay outside the repository
+with the release evidence. After-deployment measurements belong with the
 release record.

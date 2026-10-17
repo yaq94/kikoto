@@ -38,7 +38,7 @@ describe presence, locations, or metadata snapshots for that work.
   works are the automatic metadata roots. Stop and discuss before broadening a
   provider crawl.
 - Before changing work identity or source admission, read
-  [the accepted identity decision](docs/adr/0001-work-identity-and-personal-state.md)
+  [the accepted identity decision](docs/decisions/ADR-0004-work-identity-and-personal-state.md)
   and [the reference contract](docs/architecture/core-boundaries.md#unified-work-identity).
   Preserve numeric edition references and compatible numbered lookups. Numberless
   admission must follow the explicitly authorized source scope and must never

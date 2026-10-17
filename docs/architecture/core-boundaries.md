@@ -15,7 +15,7 @@ continues to select its exact edition. The
 and personal-state updates.
 
 A source location, display title or signed media URL is not a permanent identity.
-The [accepted identity decision](../adr/0001-work-identity-and-personal-state.md)
+The [accepted identity decision](../decisions/ADR-0004-work-identity-and-personal-state.md)
 also permits numberless admission within an explicitly scoped source workflow.
 The [finite OpenList catalog](../development/openlist.md) admits numberless
 audio through persistent catalog ids and registers a work only when personal

@@ -23,18 +23,18 @@ func TestSourceCatalogKeepsCodedChildDirectoriesAsWorks(t *testing.T) {
 		items := []map[string]any{}
 		switch in.Path {
 		case "/":
-			items = []map[string]any{{"name": "Uploader", "is_dir": true}}
-		case "/Uploader":
+			items = []map[string]any{{"name": "Example Voice", "is_dir": true}}
+		case "/Example Voice":
 			items = []map[string]any{
-				{"name": "uploader-loose.mp3", "size": 100},
-				{"name": "Numberless Child", "is_dir": true},
+				{"name": "loose.mp3", "size": 100},
+				{"name": "Example Work 2", "is_dir": true},
 			}
 			if !legacy.Load() {
-				items = append(items, map[string]any{"name": "RJ00000041Coded Child", "is_dir": true})
+				items = append(items, map[string]any{"name": "RJ00000041 Example Work 3", "is_dir": true})
 			}
-		case "/Uploader/RJ00000041Coded Child":
+		case "/Example Voice/RJ00000041 Example Work 3":
 			items = []map[string]any{{"name": "coded.mp3", "size": 100}}
-		case "/Uploader/Numberless Child":
+		case "/Example Voice/Example Work 2":
 			items = []map[string]any{{"name": "numberless.mp3", "size": 100}}
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"code": 200, "data": map[string]any{"content": items, "total": len(items)}})
@@ -61,7 +61,7 @@ func TestSourceCatalogKeepsCodedChildDirectoriesAsWorks(t *testing.T) {
 		for _, item := range result["works"].([]any) {
 			titles = append(titles, item.(map[string]any)["title"].(string))
 		}
-		if !containsString(titles, "RJ00000041Coded Child") {
+		if !containsString(titles, "RJ00000041 Example Work 3") {
 			t.Fatalf("search %s titles=%v, want the coded child card", code, titles)
 		}
 	}
@@ -92,13 +92,13 @@ func TestSourceCatalogCategoryDoesNotOwnItsChildren(t *testing.T) {
 		items := []map[string]any{}
 		switch in.Path {
 		case "/":
-			items = []map[string]any{{"name": "未分类", "is_dir": true}}
-		case "/未分类":
+			items = []map[string]any{{"name": "Uncategorized", "is_dir": true}}
+		case "/Uncategorized":
 			items = []map[string]any{
 				{"name": "loose.mp3", "size": 100},
-				{"name": "Album A", "is_dir": true},
+				{"name": "Example Work", "is_dir": true},
 			}
-		case "/未分类/Album A":
+		case "/Uncategorized/Example Work":
 			items = []map[string]any{{"name": "a.mp3", "size": 100}}
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"code": 200, "data": map[string]any{"content": items, "total": len(items)}})
@@ -109,7 +109,7 @@ func TestSourceCatalogCategoryDoesNotOwnItsChildren(t *testing.T) {
 	}
 	cards := f.request(t, http.MethodGet, "/works", "", 200)
 	if cards["total"] != float64(2) {
-		t.Fatalf("cards=%v, want the category's loose files and Album A separately", cards["total"])
+		t.Fatalf("cards=%v, want the category's loose files and Example Work separately", cards["total"])
 	}
 }
 
@@ -127,17 +127,17 @@ func TestSourceCatalogUploaderWithCodedChildrenIsNotAWork(t *testing.T) {
 		items := []map[string]any{}
 		switch in.Path {
 		case "/":
-			items = []map[string]any{{"name": "Voice Actor", "is_dir": true}}
-		case "/Voice Actor":
+			items = []map[string]any{{"name": "Example Voice", "is_dir": true}}
+		case "/Example Voice":
 			items = []map[string]any{{"name": "profile.txt", "size": 100}}
 			if !legacy.Load() {
 				items = append(items,
-					map[string]any{"name": "[RJ00000042]First", "is_dir": true},
-					map[string]any{"name": "[RJ00000043]Second", "is_dir": true})
+					map[string]any{"name": "[RJ00000042]Example Work 4", "is_dir": true},
+					map[string]any{"name": "[RJ00000043]Example Work 5", "is_dir": true})
 			}
-		case "/Voice Actor/[RJ00000042]First":
+		case "/Example Voice/[RJ00000042]Example Work 4":
 			items = []map[string]any{{"name": "first.mp3", "size": 100}}
-		case "/Voice Actor/[RJ00000043]Second":
+		case "/Example Voice/[RJ00000043]Example Work 5":
 			items = []map[string]any{{"name": "second.mp3", "size": 100}}
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"code": 200, "data": map[string]any{"content": items, "total": len(items)}})

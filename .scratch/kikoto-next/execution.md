@@ -3,7 +3,7 @@
 **Status:** ready-for-agent
 **Implementation:** in-progress
 **阶段:** 01–07、14 resolved；08–13、15、16、18、19 已集成并保持 verified-local。双轴审查完成且发现已闭环；部署提交 `7ed73fa06b38686caf4422f5a9cbd090ba53b7a3` 的 Full CI 全绿（run 39049272400）；2026-10-17T16:44:24Z 已部署到现有服务，schema 68→76，备份与回滚演练通过；生产已创建规格指定 OpenList 来源并完成首次索引启动（429 后退避恢复续跑），浏览/搜索/媒体 Range 回读通过；真实来源索引收尾中。证据见 [17 部署证据](evidence/17-deployment.md)。
-**依据:** [正式规格](spec.md) · [工单总览](ticket-proposal.md) · [领域词汇表](../../GLOSSARY.md) · [作品身份与个人记录 ADR](../../docs/adr/0001-work-identity-and-personal-state.md)
+**依据:** [正式规格](spec.md) · [工单总览](ticket-proposal.md) · [领域词汇表](../../GLOSSARY.md) · [作品身份与个人记录 ADR](../../docs/decisions/ADR-0004-work-identity-and-personal-state.md)
 
 ## 当前授权与完成条件
 

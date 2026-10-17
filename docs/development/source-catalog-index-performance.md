@@ -44,10 +44,9 @@ root when a completed directory has audio and removes it when the last such
 directory becomes incomplete, so a rescan that deletes tracks retires the root
 as well.
 
-The worker no longer publishes after every 32-step batch. It drains at most
-four batches of 100 rows per invocation, then returns the job to the workflow
-queue. An exhausted queue returns without another publication query, so the
-worker cannot spin on an empty tail.
+The worker drains at most four batches of 100 rows per invocation, then returns
+the job to the workflow queue. An exhausted queue returns without another
+publication query, so the worker cannot spin on an empty tail.
 
 ## Measured result
 
@@ -58,9 +57,8 @@ worker cannot spin on an empty tail.
 | 3,000-directory synthetic tail | 36.5 s | about 5 ms |
 | Plan | correlated `EXISTS` per complete directory | partial index seek, root join, ordered limit |
 
-The real copy was `/tmp/kikoto-live-ba9ef02/instance/config/kikoto.db`
-(34,234,368 bytes, 3,917 directories, 47,670 observations). The synthetic
-fixture is the regression in
+The measured copy was a 34 MB database with 3,917 directories and 47,670
+observations. The synthetic fixture is the regression in
 `TestSourceCatalogPublishTailStaysBounded`; the opt-in comparison is
 `TestSourceCatalogPublishTailPerformance` and
 `make source-index-tail-performance`.
