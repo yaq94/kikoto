@@ -2,7 +2,7 @@
 
 **Status:** ready-for-agent
 **Implementation:** in-progress
-**阶段:** 01–07、14 resolved；08–13、15、16、18、19 已集成并保持 verified-local。双轴审查完成且发现已闭环；部署提交 `7ed73fa06b38686caf4422f5a9cbd090ba53b7a3` 的 Full CI 全绿（run 39049272400）；2026-10-17T16:44:24Z 已部署到现有服务，schema 68→76，备份与回滚演练通过；生产已创建规格指定 OpenList 来源并完成首次索引启动（429 后退避恢复续跑），浏览/搜索/媒体 Range 回读通过；真实来源索引收尾中。证据见 [17 部署证据](evidence/17-deployment.md)。
+**阶段:** 01–07、14 resolved；08–13、15、16、18、19 已集成并保持 verified-local。双轴审查完成且发现已闭环；部署提交 `7ed73fa06b38686caf4422f5a9cbd090ba53b7a3` 的 Full CI 全绿（run 39049272400）；2026-10-17T16:44:24Z 已部署到现有服务，schema 68→76，备份与回滚演练通过；生产已创建规格指定 OpenList 来源并完成首次索引启动（429 后退避恢复续跑），浏览/搜索/媒体 Range 回读通过。首次全量索引 runId 41 收于 `partial`（14,458/14,491 complete、6 failed、27 未确认空），暴露父卡不释放子作品、失败运行无法重新观察、创作者目录折叠三类准入缺陷；修复后 schema 77 已部署，runId 42 以新 generation 重扫中。证据见 [17 部署证据](evidence/17-deployment.md)。
 **依据:** [正式规格](spec.md) · [工单总览](ticket-proposal.md) · [领域词汇表](../../GLOSSARY.md) · [作品身份与个人记录 ADR](../../docs/decisions/ADR-0004-work-identity-and-personal-state.md)
 
 ## 当前授权与完成条件
@@ -48,7 +48,7 @@
 | [05 多源目录与播放隔离](issues/05-multi-source-directory-playback.md) | 无 | resolved | 已集成；编号/无码逐源刷新、目录故障恢复、内容语言隔离与精确文件播放/游标 H/F 复验通过 | [05 证据](evidence/05-source-playback.md)、[集成复验](evidence/03-05-integration.md) |
 | [06 稳定内部引用与编号兼容](issues/06-stable-identity-compatibility.md) | 无 | resolved | 已集成；数字版本、编号/别名、旧库升级与个人记录保留通过，无新增迁移 | [06 证据](evidence/06-stable-references.md)、[集成复验](evidence/06-integration.md) |
 | [07 OpenList 有限无码链路](issues/07-openlist-first-playable-slice.md) | 04、06 | resolved | 本地链路、069 升级、catalog 翻译与真实媒体 LIVE 均通过；真实入口因出站身份被拒，声明 Kikoto 身份并可由管理员覆盖后取得两段 Range 证据 | [07 证据](evidence/07-openlist.md)、[集成复验](evidence/02-07-integration.md) |
-| [08 完整来源索引与恢复](issues/08-recoverable-full-source-index.md) | 07 | verified-local | 已集成；完整合成树、070 升级/恢复、资源限制、清理与管理进度 H/R/F 通过；真实来源覆盖待补 | [08 证据](evidence/08-source-index.md)、[集成复验](evidence/08-integration.md) |
+| [08 完整来源索引与恢复](issues/08-recoverable-full-source-index.md) | 07 | verified-local | 已集成；完整合成树、070 升级/恢复、资源限制、清理与管理进度 H/R/F 通过；production run 41 收于 partial（6 失败、27 未确认空），准入缺陷已修，run 42 重扫中 | [08 证据](evidence/08-source-index.md)、[集成复验](evidence/08-integration.md) |
 | [09 每日更新与扫描复用](issues/09-daily-index-update.md) | 08 | verified-local | 每日调度、同源复用、真实重启及资源 H/R 已集成；发布前置保留 | [09 证据](evidence/09-daily-index.md)、[集成复验](evidence/09-integration.md) |
 | [10 来源生命周期与记录保留](issues/10-source-lifecycle-retention.md) | 08 | verified-local | 已集成 072、来源状态/改名恢复与个人引用清理保护；07/08 发布前置保留 | [10 证据](evidence/10-source-lifecycle.md)、[集成复验](evidence/10-13-18-integration.md) |
 | [11 系列卡片与单集归组](issues/11-series-and-episode-grouping.md) | 07 | verified-local | 已集成 071、系列/单集发现与手工归组；完整发布前置保留 | [11 证据](evidence/11-series.md)、[集成复验](evidence/11-integration.md) |
@@ -57,7 +57,7 @@
 | [14 高置信唯一候选关联](issues/14-high-confidence-work-matching.md) | 13 | resolved | 已合入集成；自动关联、证据门槛、预算、并发退避、重启恢复及 F/U 全部通过 | [14 证据](evidence/14-work-matching.md) |
 | [15 拆分与本人记录归属](issues/15-split-personal-record-allocation.md) | 13 | verified-local | 原实施任务的 41a3412 已追加集成；本人选择、重启、系列/嵌套关系和来源状态交叉验证通过，完整发布前置保留 | [15 候选证据](evidence/15-shared-split.md)、[集成复验](evidence/15-integration.md) |
 | [16 个人数据导入导出](issues/16-personal-data-transfer-compatibility.md) | 12 | verified-local | 87e0071 已集成；v2 四类对象、空库/重复导入、精确引用、冲突和未匹配进度保留通过；完整发布前置保留 | [16 证据](evidence/16-personal-transfer.md)、[集成复验](evidence/16-19-integration.md) |
-| [17 组合验收与部署回退](issues/17-integrated-acceptance-release-plan.md) | 03、05、09、10、14、15、16、18、19 | in-progress | 组合验收、双轴审查、Full CI、备份回滚演练与生产部署均完成；真实索引收尾与最终交付报告待执行 | [17 部署证据](evidence/17-deployment.md) |
+| [17 组合验收与部署回退](issues/17-integrated-acceptance-release-plan.md) | 03、05、09、10、14、15、16、18、19 | in-progress | 组合验收、双轴审查、Full CI、备份回滚演练与生产部署均完成；schema 77 已部署，run 42 重扫与最终交付报告待执行 | [17 部署证据](evidence/17-deployment.md) |
 | [18 迁移完成与维护状态一致性](issues/18-ci-migration-completion-state.md) | 无 | verified-local | 已集成 924f807；最终状态、失败及取消恢复已本地验证，Full CI 待执行 | [18 证据](evidence/18-ci-migration.md)、[集成复验](evidence/10-13-18-integration.md) |
 | [19 前端 CI 修复](issues/19-ci-browser-reliability.md) | 无 | verified-local | ce5154e 已集成；骨架同步、收藏独立行为、真实移动触摸和旧目录 fixture 契约复验通过，Full/Gate 待执行 | [19 证据](evidence/19-ci-browser.md)、[集成复验](evidence/16-19-integration.md) |
 
