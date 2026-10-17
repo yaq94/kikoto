@@ -80,7 +80,7 @@ export type CatalogGroupingPreview = {
 };
 export type CatalogTrack = RemoteTrack & { path: string; children: CatalogTrack[] };
 export type CatalogDirectory = Omit<CatalogEntry, keyof PersonalReview> & {
-  directoryType: "catalog";
+  directoryType: "catalog" | "remote";
   status: CatalogStatus;
   checkedAt: string;
 };

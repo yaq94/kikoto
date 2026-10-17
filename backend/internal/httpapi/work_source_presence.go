@@ -115,6 +115,17 @@ type sourcePresenceItem struct {
 }
 
 func (s *Server) sourcePresenceForCode(ctx context.Context, code string) []sourcePresenceItem {
+	return s.sourcePresenceForWork(ctx, 0, code)
+}
+
+// sourcePresenceForWork reads one work's presence by id. A code lookup is only
+// a fallback for a work that is not registered yet: an unnumbered work has an
+// empty code, and matching every unnumbered work by code would report another
+// work's sources.
+func (s *Server) sourcePresenceForWork(ctx context.Context, workID int64, code string) []sourcePresenceItem {
+	if workID <= 0 && normalizeWorkCode(code) == "" {
+		return []sourcePresenceItem{}
+	}
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT
 			presence.presence_type,
@@ -130,18 +141,29 @@ func (s *Server) sourcePresenceForCode(ctx context.Context, code string) []sourc
 		FROM work_source_presence AS presence
 		LEFT JOIN file_source AS source ON source.id = presence.file_source_id
 		WHERE presence.work_id IN (
-			SELECT work.id
-			FROM work
-			WHERE UPPER(work.primary_code) = UPPER(?)
+			SELECT id FROM work WHERE id=?
 			UNION
 			SELECT sibling.work_id
 			FROM work AS current_work
 			INNER JOIN work_edition AS current_edition ON current_edition.work_id = current_work.id
 			INNER JOIN work_edition AS sibling ON sibling.logical_work_id = current_edition.logical_work_id
-			WHERE UPPER(current_work.primary_code) = UPPER(?)
+			WHERE current_work.id=?
+			UNION
+			SELECT peer.work_id
+			FROM shared_work_identity AS own
+			INNER JOIN shared_work_identity AS peer ON peer.identity_work_id = own.identity_work_id
+			WHERE own.work_id=?
+			UNION
+			SELECT work.id FROM work WHERE ?<>'' AND UPPER(work.primary_code) = UPPER(?)
+			UNION
+			SELECT sibling.work_id
+			FROM work AS current_work
+			INNER JOIN work_edition AS current_edition ON current_edition.work_id = current_work.id
+			INNER JOIN work_edition AS sibling ON sibling.logical_work_id = current_edition.logical_work_id
+			WHERE ?<>'' AND UPPER(current_work.primary_code) = UPPER(?)
 		)
 		ORDER BY presence.presence_type, source.display_name, presence.file_source_id
-	`, code, code)
+	`, workID, workID, workID, code, code, code, code)
 	if err != nil {
 		return nil
 	}
@@ -153,7 +175,7 @@ func (s *Server) sourcePresenceForCode(ctx context.Context, code string) []sourc
 	if err := rows.Close(); err != nil {
 		return nil
 	}
-	s.enrichTrackedPresenceForkState(ctx, code, items)
+	s.enrichTrackedPresenceForkState(ctx, workID, code, items)
 	// Local source URLs are storage paths, not public metadata. Keep the
 	// persisted value for scans and destructive cleanup, but never expose it
 	// through the response projection.

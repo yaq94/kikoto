@@ -80,21 +80,36 @@ func (s *Server) canonicalWorkForCode(ctx context.Context, code string) (canonic
 }
 
 func (s *Server) familyWorkIDsForCode(ctx context.Context, code string) ([]int64, error) {
+	return s.familyWorkIDs(ctx, 0, code)
+}
+
+// familyWorkIDs resolves the edition siblings of a work. The id is the
+// authoritative input; a code is used only for an object that is not registered
+// yet, because several unnumbered works share the empty code.
+func (s *Server) familyWorkIDs(ctx context.Context, workID int64, code string) ([]int64, error) {
 	code = normalizeWorkCode(code)
-	if code == "" {
+	if code == "" && workID <= 0 {
 		return []int64{}, nil
 	}
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT work.id
 		FROM work
-		WHERE UPPER(work.primary_code) = UPPER(?)
+			WHERE id=?
 		UNION
 		SELECT sibling.work_id
 		FROM work AS current_work
 		INNER JOIN work_edition AS current_edition ON current_edition.work_id = current_work.id
 		INNER JOIN work_edition AS sibling ON sibling.logical_work_id = current_edition.logical_work_id
-		WHERE UPPER(current_work.primary_code) = UPPER(?)
-	`, code, code)
+			WHERE current_work.id=?
+			UNION
+			SELECT work.id FROM work WHERE ?<>'' AND UPPER(work.primary_code) = UPPER(?)
+			UNION
+			SELECT sibling.work_id
+			FROM work AS current_work
+			INNER JOIN work_edition AS current_edition ON current_edition.work_id = current_work.id
+			INNER JOIN work_edition AS sibling ON sibling.logical_work_id = current_edition.logical_work_id
+			WHERE ?<>'' AND UPPER(current_work.primary_code) = UPPER(?)
+		`, workID, workID, code, code, code, code)
 	if err != nil {
 		return nil, err
 	}

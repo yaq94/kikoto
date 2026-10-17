@@ -288,10 +288,15 @@ export function useWorkSourceContext({
     setActiveSourceKey(intendedSource?.key ?? sourceTabs[0].key);
   }, [activeSourceKey, sourceCheckedAt, sourceTabs, work]);
 
-  const availabilityCode = work?.primaryCode ?? "";
-  const supportsLookup = !work || Boolean(work.primaryCode);
+  // An unnumbered work has no release code, but a Kikoeru presence still
+  // carries the code that source knows it by. Lookups use that code so the
+  // source tab is not hidden for every work without a release number.
+  const presenceCode =
+    work?.sourcePresence?.find((presence) => presence.remoteCode)?.remoteCode ?? "";
+  const availabilityCode = work?.primaryCode || presenceCode;
+  const supportsLookup = !work || Boolean(availabilityCode);
   // Before the work loads, remote tabs are seeded with the requested code.
-  const seedCode = work?.primaryCode ?? code;
+  const seedCode = work?.primaryCode || presenceCode || code;
   useEffect(() => {
     setRemoteSources(supportsLookup ? seedRemoteSources(sources, seedCode) : []);
     setSourceCheckedAt("");

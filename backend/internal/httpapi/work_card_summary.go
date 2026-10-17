@@ -174,7 +174,7 @@ func workLyricsStatus(files []workLyricsFile) (hasTracks bool, hasLyrics bool) {
 	return hasTracks, false
 }
 
-func (s *Server) enrichTrackedPresenceForkState(ctx context.Context, code string, items []sourcePresenceItem) {
+func (s *Server) enrichTrackedPresenceForkState(ctx context.Context, workID int64, code string, items []sourcePresenceItem) {
 	sourceIDs := []int64{}
 	for index := range items {
 		if strings.EqualFold(items[index].Type, "tracked") && items[index].FileSourceID > 0 {
@@ -185,7 +185,7 @@ func (s *Server) enrichTrackedPresenceForkState(ctx context.Context, code string
 	if len(sourceIDs) == 0 {
 		return
 	}
-	familyWorkIDs, err := s.familyWorkIDsForCode(ctx, code)
+	familyWorkIDs, err := s.familyWorkIDs(ctx, workID, code)
 	if err != nil || len(familyWorkIDs) == 0 {
 		return
 	}

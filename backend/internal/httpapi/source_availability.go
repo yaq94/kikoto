@@ -283,9 +283,9 @@ func (s *Server) latestSourceAvailabilityCheckedAt(ctx context.Context, code str
 		SELECT MAX(presence.last_checked_at)
 		FROM work_source_presence AS presence
 		INNER JOIN work ON work.id = presence.work_id
-		WHERE work.primary_code = ?
+		WHERE (work.primary_code = ? OR UPPER(presence.remote_code) = UPPER(?))
 			AND presence.presence_type = ?
-	`, code, sourcePresenceTypeRemoteSource).Scan(&checkedAt)
+	`, code, code, sourcePresenceTypeRemoteSource).Scan(&checkedAt)
 	if err != nil {
 		return "", err
 	}
@@ -301,10 +301,10 @@ func (s *Server) attachCachedSourcePresence(ctx context.Context, result *sourceA
 		SELECT presence.availability, presence.remote_id, presence.raw_json, presence.last_checked_at
 		FROM work_source_presence AS presence
 		INNER JOIN work ON work.id = presence.work_id
-		WHERE work.primary_code = ?
+		WHERE (work.primary_code = ? OR UPPER(presence.remote_code) = UPPER(?))
 			AND presence.file_source_id = ?
 			AND presence.presence_type = ?
-	`, workCode, sourceID, sourcePresenceTypeRemoteSource).Scan(&availability, &remoteID, &rawJSON, &checkedAt)
+	`, workCode, workCode, sourceID, sourcePresenceTypeRemoteSource).Scan(&availability, &remoteID, &rawJSON, &checkedAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil
@@ -357,7 +357,10 @@ func (s *Server) attachSourceAvailabilityFlags(ctx context.Context, result *sour
 		return err
 	}
 	result.WorkID = flags.WorkID
-	result.HasRemote = flags.HasRemote
+	// An unnumbered work cannot be found by its release code. Its stored
+	// presence for this source is the directory evidence, so it counts as a
+	// remote result even though the code lookup has no work id.
+	result.HasRemote = flags.HasRemote || result.Status == "available"
 	result.HasTracked = flags.HasTracked
 	result.HasCache = flags.HasCache
 	result.HasLocal = flags.HasLocal

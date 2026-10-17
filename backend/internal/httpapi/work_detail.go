@@ -367,7 +367,7 @@ func (s *Server) loadWorkDetailBase(ctx context.Context, userID int64, id int64)
 	}
 	work.CoverURL = coverURL
 	work.DLsiteURL = s.dlsiteURL(work.PrimaryCode)
-	work.SourcePresence = s.sourcePresenceForCode(ctx, work.PrimaryCode)
+	work.SourcePresence = s.sourcePresenceForWork(ctx, work.ID, work.PrimaryCode)
 	localFolders, err := s.loadWorkFolderLocations(ctx, work.ID)
 	if err != nil {
 		return workDetail{}, err

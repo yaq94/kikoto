@@ -747,8 +747,13 @@ export function PersistedWorkDetailController({
     />
   );
   const displayTranslations = persistedDisplayTranslations(localDirectoryWork, selectedRemoteDetail);
+  // A remote directory is a Kikoeru source for this work. It opens through the
+  // same source tab as any other remote directory; only a catalog entry has a
+  // catalog tree of its own.
   const selectedCatalog = catalogDirectories.find(
-    (entry) => resolvedActiveSourceKey === `catalog:${entry.catalogEntryId}`,
+    (entry) =>
+      entry.directoryType === "catalog" &&
+      resolvedActiveSourceKey === `catalog:${entry.catalogEntryId}`,
   );
   const presentation = persistedWorkDetailPresentation({
     hero,
