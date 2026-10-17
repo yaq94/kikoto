@@ -171,7 +171,7 @@ func completeCatalogDirectoryTx(ctx context.Context, tx *sql.Tx, sourceID, gener
 	}
 	// Only one page of children is held at a time by SQL enqueue below. The
 	// root decision needs counts, not an in-memory copy of the directory.
-	audio, formats, auxiliary, otherDirs := 0, 0, 0, 0
+	audio, formats, auxiliary, tracks, otherDirs := 0, 0, 0, 0, 0
 	for rows.Next() {
 		var name, kind string
 		if err = rows.Scan(&name, &kind); err != nil {
@@ -186,6 +186,8 @@ func completeCatalogDirectoryTx(ctx context.Context, tx *sql.Tx, sourceID, gener
 				formats++
 			case catalogAuxiliaryDirectory(name):
 				auxiliary++
+			case catalogTrackContainerDirectory(name):
+				tracks++
 			default:
 				otherDirs++
 			}
@@ -214,7 +216,7 @@ func completeCatalogDirectoryTx(ctx context.Context, tx *sql.Tx, sourceID, gener
 		// already has its own entry still keeps its children separate, and a
 		// grouping folder that now lists coded works stops owning them.
 		if catalogContainerDirectory(path.Base(d.Path)) {
-			d.Root = catalogAdmissionRoot(d.Path, "", catalogDirectorySummary{audio, formats, auxiliary, otherDirs})
+			d.Root = catalogAdmissionRoot(d.Path, "", catalogDirectorySummary{audio, formats, auxiliary, tracks, otherDirs})
 			return nil
 		}
 		var codedChild int
@@ -236,17 +238,17 @@ func completeCatalogDirectoryTx(ctx context.Context, tx *sql.Tx, sourceID, gener
 		// The exact entry belongs to the grouping folder, not to the coded
 		// works below it. Keep this directory's own loose audio in its card and
 		// let each coded child decide from its own evidence.
-		d.Root = catalogAdmissionRoot(d.Path, "", catalogDirectorySummary{audio, formats, auxiliary, otherDirs})
+		d.Root = catalogAdmissionRoot(d.Path, "", catalogDirectorySummary{audio, formats, auxiliary, tracks, otherDirs})
 		if d.Root == "" && audio == 0 {
 			d.Root = d.Path
 		}
 	}
 	if catalogDirectoryCode(d.Path) != "" {
-		d.Root = catalogAdmissionRoot(d.Path, "", catalogDirectorySummary{audio, formats, auxiliary, otherDirs})
+		d.Root = catalogAdmissionRoot(d.Path, "", catalogDirectorySummary{audio, formats, auxiliary, tracks, otherDirs})
 		return nil
 	}
 	if catalogContainerDirectory(path.Base(d.Path)) {
-		d.Root = catalogAdmissionRoot(d.Path, "", catalogDirectorySummary{audio, formats, auxiliary, otherDirs})
+			d.Root = catalogAdmissionRoot(d.Path, "", catalogDirectorySummary{audio, formats, auxiliary, tracks, otherDirs})
 		return nil
 	}
 	// A published parent is a work container only while it has no coded child
@@ -292,7 +294,7 @@ func completeCatalogDirectoryTx(ctx context.Context, tx *sql.Tx, sourceID, gener
 	if reviewedParent != 0 {
 		return nil
 	}
-	d.Root = catalogAdmissionRoot(d.Path, d.Root, catalogDirectorySummary{audio, formats, auxiliary, otherDirs})
+	d.Root = catalogAdmissionRoot(d.Path, d.Root, catalogDirectorySummary{audio, formats, auxiliary, tracks, otherDirs})
 	return nil
 }
 

@@ -172,22 +172,10 @@ func (s *Server) persistCatalogEpisodeRoots(ctx context.Context, source remoteSo
 			return 0, true, err
 		}
 		if pinned != 0 {
-			direct := make([]openlist.File, 0, len(files))
-			for _, file := range files {
-				inside := false
-				for _, child := range roots {
-					if strings.HasPrefix(file.Path, path.Base(child)+"/") {
-						inside = true
-						break
-					}
-				}
-				if !inside {
-					direct = append(direct, file)
-				}
-			}
-			if first, err = persistOpenListSnapshotTx(ctx, tx, source.ID, root, direct); err != nil {
-				return 0, true, err
-			}
+			// A registered work or series member already owns this root. Its
+			// identity and personal records win over later episode evidence;
+			// splitting it needs explicit review.
+			return 0, false, nil
 		}
 	case errors.Is(err, sql.ErrNoRows):
 		// The common first scan: only the episode roots get identities.

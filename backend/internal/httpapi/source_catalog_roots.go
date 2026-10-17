@@ -8,7 +8,7 @@ import (
 )
 
 type catalogDirectorySummary struct {
-	Audio, FormatDirectories, AuxiliaryDirectories, OtherDirectories int
+	Audio, FormatDirectories, AuxiliaryDirectories, TrackContainers, OtherDirectories int
 }
 
 // catalogContainerDirectory reports a category or collection directory. Its
@@ -57,21 +57,59 @@ func catalogAdmissionRoot(directoryPath, parentRoot string, observed catalogDire
 		}
 	}
 	if parentRoot != "" {
+		// A child with its own audio below an uncoded grouping folder is a
+		// work, not another track of the card above it. A coded parent is one
+		// release, so its discs, bonus folders and per-track directories stay
+		// inside it.
+		if catalogDirectoryCode(parentRoot) == "" && !catalogWorkPartDirectory(path.Base(directoryPath)) {
+			if catalogSelfWorkRoot(directoryPath, observed) {
+				return directoryPath
+			}
+		}
 		return parentRoot
 	}
 	// A work root may carry a format directory next to extras, artwork or
 	// subtitles. Only a directory that is purely format or auxiliary containers
 	// is a helper inside another work; anything else is its own playable root.
-	if catalogDirectoryCode(directoryPath) != "" || observed.Audio > 0 ||
-		(directoryPath != "/" && observed.FormatDirectories > 0 && observed.OtherDirectories == 0) {
+	if catalogSelfWorkRoot(directoryPath, observed) {
 		return directoryPath
 	}
 	return ""
 }
 
+// catalogSelfWorkRoot reports a directory whose own contents make it playable
+// without a parent: a work code, direct audio, or nothing but format copies.
+func catalogSelfWorkRoot(directoryPath string, observed catalogDirectorySummary) bool {
+	return catalogDirectoryCode(directoryPath) != "" || observed.Audio > 0 ||
+		(directoryPath != "/" && observed.FormatDirectories > 0 && observed.OtherDirectories == 0)
+}
+
 func catalogFormatDirectory(name string) bool {
 	switch strings.ToLower(strings.TrimSpace(name)) {
 	case "mp3", "flac", "wav", "ogg", "opus", "m4a", "aac", "aiff":
+		return true
+	}
+	return false
+}
+
+// catalogWorkPartDirectory reports a directory that holds part of a work:
+// a format copy, an auxiliary attachment, or a track/disc container. A child
+// with its own audio that does not match keeps its own card.
+func catalogWorkPartDirectory(name string) bool {
+	return catalogFormatDirectory(name) || catalogAuxiliaryDirectory(name) || catalogTrackContainerDirectory(name)
+}
+
+// catalogTrackContainerDirectory reports a directory that groups the tracks of
+// one work. The names are the ones a release uses for discs, volumes and
+// format copies; they are not work titles.
+func catalogTrackContainerDirectory(name string) bool {
+	lower := strings.ToLower(strings.TrimSpace(name))
+	if catalogNonEpisode.MatchString(lower) {
+		return true
+	}
+	switch lower {
+	case "本編", "本篇", "特典映像", "映像特典", "音声特典", "ボイス", "se", "bgm",
+		"bonus", "bonus track", "bonus tracks", "おまけ", "おまけ音声":
 		return true
 	}
 	return false
