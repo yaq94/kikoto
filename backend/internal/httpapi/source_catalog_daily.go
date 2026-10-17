@@ -95,7 +95,7 @@ func (s *Server) dispatchCatalogUpdate(ctx context.Context, sourceID int64, now 
 	if err = options.validate(); err != nil {
 		return err
 	}
-	if _, err = s.enqueueSourceCatalogIndexTx(ctx, tx.Tx, sourceID, options, "interval"); err != nil {
+	if _, err = s.enqueueSourceCatalogIndexTx(ctx, tx.Tx, sourceID, options, "interval", false); err != nil {
 		return err
 	}
 	if err = setCatalogNextUpdateTx(ctx, tx.Tx, sourceID, now); err != nil {

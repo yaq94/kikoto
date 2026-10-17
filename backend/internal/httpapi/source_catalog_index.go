@@ -117,9 +117,16 @@ func (s *Server) startSourceCatalogIndex(w http.ResponseWriter, r *http.Request)
 		writeError(w, err)
 		return
 	}
+	request := struct {
+		catalogIndexOptions
+		// Force starts a new observation generation after a failed, partial or
+		// paused run. Joining an active run still wins, so one source never
+		// runs two full crawls at once.
+		Force bool `json:"force"`
+	}{catalogIndexOptions: options}
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096))
 	decoder.DisallowUnknownFields()
-	if err = decoder.Decode(&options); err != nil {
+	if err = decoder.Decode(&request); err != nil {
 		writeAPIError(w, 400, "invalid_request", "invalid catalog scan options", false)
 		return
 	}
@@ -127,11 +134,11 @@ func (s *Server) startSourceCatalogIndex(w http.ResponseWriter, r *http.Request)
 		writeAPIError(w, 400, "invalid_request", "request must contain one options object", false)
 		return
 	}
-	if err = options.validate(); err != nil {
+	if err = request.validate(); err != nil {
 		writeAPIError(w, 400, "invalid_request", err.Error(), false)
 		return
 	}
-	result, err := s.enqueueSourceCatalogIndex(r.Context(), id, options)
+	result, err := s.enqueueSourceCatalogIndex(r.Context(), id, request.catalogIndexOptions, request.Force)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -142,20 +149,20 @@ func (s *Server) startSourceCatalogIndex(w http.ResponseWriter, r *http.Request)
 // enqueueSourceCatalogIndex is the single-source dispatch boundary. An active
 // run is joined; interrupted/partial scans resume their completed directory set.
 // A completed run starts a new observation generation without dropping cards.
-func (s *Server) enqueueSourceCatalogIndex(ctx context.Context, sourceID int64, options catalogIndexOptions) (catalogIndexQueued, error) {
+func (s *Server) enqueueSourceCatalogIndex(ctx context.Context, sourceID int64, options catalogIndexOptions, force bool) (catalogIndexQueued, error) {
 	tx, release, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
 	if err != nil {
 		return catalogIndexQueued{}, err
 	}
 	defer release()
-	result, err := s.enqueueSourceCatalogIndexTx(ctx, tx.Tx, sourceID, options, "manual")
+	result, err := s.enqueueSourceCatalogIndexTx(ctx, tx.Tx, sourceID, options, "manual", force)
 	if err != nil {
 		return result, err
 	}
 	return result, tx.Commit()
 }
 
-func (s *Server) enqueueSourceCatalogIndexTx(ctx context.Context, tx *sql.Tx, sourceID int64, options catalogIndexOptions, trigger string) (catalogIndexQueued, error) {
+func (s *Server) enqueueSourceCatalogIndexTx(ctx context.Context, tx *sql.Tx, sourceID int64, options catalogIndexOptions, trigger string, force bool) (catalogIndexQueued, error) {
 	var runID int64
 	var status string
 	err := tx.QueryRowContext(ctx, `SELECT scan.workflow_run_id,run.status FROM source_catalog_scan scan JOIN workflow_run run ON run.id=scan.workflow_run_id WHERE scan.file_source_id=?`, sourceID).Scan(&runID, &status)
@@ -172,7 +179,7 @@ func (s *Server) enqueueSourceCatalogIndexTx(ctx context.Context, tx *sql.Tx, so
 			return catalogIndexQueued{}, err
 		}
 	}
-	if runID > 0 && status != "succeeded" {
+	if runID > 0 && status != "succeeded" && !force {
 		// Resume only unresolved directories. Already published identities and
 		// personal state are independent of this staging/checkpoint data.
 		for _, q := range []string{
@@ -207,7 +214,7 @@ func (s *Server) enqueueSourceCatalogIndexTx(ctx context.Context, tx *sql.Tx, so
 	if err != nil {
 		return catalogIndexQueued{}, err
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO source_catalog_scan(file_source_id,workflow_run_id,options_json) VALUES(?,?,?) ON CONFLICT(file_source_id) DO UPDATE SET workflow_run_id=excluded.workflow_run_id,options_json=excluded.options_json,pause_reason='',requests=0,lifecycle_stage='observe',lifecycle_cursor=0,started_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP`, sourceID, runID, mustJSON(options))
+	_, err = tx.ExecContext(ctx, `INSERT INTO source_catalog_scan(file_source_id,workflow_run_id,options_json) VALUES(?,?,?) ON CONFLICT(file_source_id) DO UPDATE SET workflow_run_id=excluded.workflow_run_id,options_json=excluded.options_json,pause_reason='',requests=0,lifecycle_stage='observe',lifecycle_cursor=0,publish_cleanup_cursor=0,started_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP`, sourceID, runID, mustJSON(options))
 	if err != nil {
 		return catalogIndexQueued{}, err
 	}

@@ -41,6 +41,9 @@ func (s *Server) executeSourceCatalogIndexJob(ctx context.Context, job workflowJ
 	if _, _, err = s.publishCatalogQueue(ctx, job, input.SourceID); err != nil {
 		return err
 	}
+	if _, err = s.cleanupCatalogPublishBatch(ctx, job, input.SourceID); err != nil {
+		return err
+	}
 	for count := 0; count < options.PagesPerBatch; {
 		if err = ctx.Err(); err != nil {
 			return err
@@ -68,6 +71,16 @@ func (s *Server) executeSourceCatalogIndexJob(ctx context.Context, job workflowJ
 			if more {
 				return s.settleCatalogBatch(ctx, job, input.SourceID, "queued", "")
 			}
+				// Retire rows an older generation left on entries this run
+				// republished, before the run can settle as partial.
+				removed, err := s.cleanupCatalogPublishBatch(ctx, job, input.SourceID)
+				if err != nil {
+					return err
+				}
+				if removed > 0 {
+					count++
+					continue
+				}
 			p, err := s.sourceCatalogProgress(ctx, input.SourceID, 1)
 			if err != nil {
 				return err
@@ -134,6 +147,9 @@ func (s *Server) executeSourceCatalogIndexJob(ctx context.Context, job workflowJ
 		count += len(dirs)
 	}
 	if _, _, err = s.publishCatalogQueue(ctx, job, input.SourceID); err != nil {
+		return err
+	}
+	if _, err = s.cleanupCatalogPublishBatch(ctx, job, input.SourceID); err != nil {
 		return err
 	}
 	return s.settleCatalogBatch(ctx, job, input.SourceID, "queued", "")

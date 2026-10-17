@@ -149,20 +149,51 @@ func (s *Server) persistCatalogEpisodeRoots(ctx context.Context, source remoteSo
 		return 0, true, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	var existing int64
-	err = tx.QueryRowContext(ctx, `SELECT id FROM source_catalog_entry WHERE file_source_id=? AND root_path=?`, source.ID, root).Scan(&existing)
-	if err == nil {
-		return 0, false, nil
-	}
-	if !errors.Is(err, sql.ErrNoRows) {
-		return 0, true, err
-	}
 	roots := make([]string, 0, len(split))
 	for child := range split {
 		roots = append(roots, child)
 	}
 	sort.Strings(roots)
 	var first int64
+	var existing int64
+	err = tx.QueryRowContext(ctx, `SELECT id FROM source_catalog_entry WHERE file_source_id=? AND root_path=?`, source.ID, root).Scan(&existing)
+	switch {
+	case err == nil:
+		// A root published before series discovery understood the evidence
+		// still owns every file below it. Splitting it is safe only while no
+		// shared or personal identity points at it; otherwise the root keeps
+		// its own card and only its direct files.
+		var pinned int
+		if err = tx.QueryRowContext(ctx, `SELECT EXISTS(
+			SELECT 1 FROM source_catalog_entry e WHERE e.id=? AND (
+				e.work_id IS NOT NULL
+				OR EXISTS(SELECT 1 FROM catalog_series_member m WHERE m.catalog_entry_id=e.id)
+				OR EXISTS(SELECT 1 FROM source_catalog_entry r WHERE r.relocated_to_id=e.id)))`, existing).Scan(&pinned); err != nil {
+			return 0, true, err
+		}
+		if pinned != 0 {
+			direct := make([]openlist.File, 0, len(files))
+			for _, file := range files {
+				inside := false
+				for _, child := range roots {
+					if strings.HasPrefix(file.Path, path.Base(child)+"/") {
+						inside = true
+						break
+					}
+				}
+				if !inside {
+					direct = append(direct, file)
+				}
+			}
+			if first, err = persistOpenListSnapshotTx(ctx, tx, source.ID, root, direct); err != nil {
+				return 0, true, err
+			}
+		}
+	case errors.Is(err, sql.ErrNoRows):
+		// The common first scan: only the episode roots get identities.
+	default:
+		return 0, true, err
+	}
 	for _, child := range roots {
 		id, err := persistOpenListSnapshotTx(ctx, tx, source.ID, child, split[child])
 		if err != nil {
@@ -170,6 +201,15 @@ func (s *Server) persistCatalogEpisodeRoots(ctx context.Context, source remoteSo
 		}
 		if first == 0 {
 			first = id
+		}
+	}
+	if existing != 0 {
+		// The root had no work, series membership or personal record above, so
+		// retiring it moves no evaluation object. Its files are now owned by
+		// the episode entries; keeping the row would keep a stale card that
+		// still lists every episode as one work.
+		if _, err = tx.ExecContext(ctx, `DELETE FROM source_catalog_entry WHERE id=?`, existing); err != nil {
+			return 0, true, err
 		}
 	}
 	return first, true, tx.Commit()

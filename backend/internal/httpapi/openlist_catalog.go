@@ -192,19 +192,12 @@ func (s *Server) persistOpenListRoot(ctx context.Context, source remoteSourceFor
 }
 
 func persistOpenListSnapshotTx(ctx context.Context, tx *sql.Tx, sourceID int64, root string, files []openlist.File) (int64, error) {
-	code := normalizeWorkCode(path.Base(root))
-	// Product codes may be embedded in an authored work folder name.
-	if code == "" {
-		for _, word := range strings.FieldsFunc(path.Base(root), func(r rune) bool { return r == '[' || r == ']' || r == ' ' || r == '【' || r == '】' }) {
-			if c := normalizeWorkCode(word); c != "" {
-				code = c
-				break
-			}
-		}
-	}
+	// The same parser the resumable index uses: a code may sit in brackets, be
+	// prefixed directly to a title, or be the whole folder name.
+	code := catalogDirectoryCode(root)
 	var id int64
 	err := tx.QueryRowContext(ctx, `INSERT INTO source_catalog_entry(file_source_id,root_path,primary_code,title)
-			VALUES(?,?,?,?) ON CONFLICT(file_source_id,root_path) DO UPDATE SET title=excluded.title,availability_status='available',status_checked_at=CURRENT_TIMESTAMP,content_fingerprint='',layout_fingerprint='',updated_at=CURRENT_TIMESTAMP
+				VALUES(?,?,?,?) ON CONFLICT(file_source_id,root_path) DO UPDATE SET primary_code=excluded.primary_code,title=excluded.title,availability_status='available',status_checked_at=CURRENT_TIMESTAMP,content_fingerprint='',layout_fingerprint='',updated_at=CURRENT_TIMESTAMP
 		RETURNING id`, sourceID, root, code, path.Base(root)).Scan(&id)
 	if err != nil {
 		return 0, err

@@ -221,7 +221,10 @@ func (s *Server) dispatchWorkflowRetry(ctx context.Context, actor currentUser, r
 		if err != nil {
 			return workflowRetryDispatchResult{}, err
 		}
-		result, err := s.enqueueSourceCatalogIndex(ctx, input.SourceID, p.Options)
+			// A manual retry of a failed or partial scan must observe the tree
+			// again; resuming only the unresolved directories would keep the
+			// admission decisions that caused the failure.
+			result, err := s.enqueueSourceCatalogIndex(ctx, input.SourceID, p.Options, true)
 		return workflowRetryDispatchResult{NewRunID: result.RunID, ResumedExistingRun: result.RunID == runID}, err
 	case "metadata_sync":
 		if !userHasPermission(actor, "metadata:sync") {

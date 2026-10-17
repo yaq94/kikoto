@@ -171,7 +171,7 @@ func completeCatalogDirectoryTx(ctx context.Context, tx *sql.Tx, sourceID, gener
 	}
 	// Only one page of children is held at a time by SQL enqueue below. The
 	// root decision needs counts, not an in-memory copy of the directory.
-	audio, formats, otherDirs := 0, 0, 0
+	audio, formats, auxiliary, otherDirs := 0, 0, 0, 0
 	for rows.Next() {
 		var name, kind string
 		if err = rows.Scan(&name, &kind); err != nil {
@@ -181,9 +181,12 @@ func completeCatalogDirectoryTx(ctx context.Context, tx *sql.Tx, sourceID, gener
 			audio++
 		}
 		if kind == "folder" {
-			if catalogFormatDirectory(name) {
+			switch {
+			case catalogFormatDirectory(name):
 				formats++
-			} else {
+			case catalogAuxiliaryDirectory(name):
+				auxiliary++
+			default:
 				otherDirs++
 			}
 		}
@@ -207,16 +210,43 @@ func completeCatalogDirectoryTx(ctx context.Context, tx *sql.Tx, sourceID, gener
 	}
 	if exact != 0 {
 		// An exact entry is this directory's own identity, even when it is
-		// uncoded and lives below a published uploader card.
-		d.Root = d.Path
-		return nil
+		// uncoded and lives below a published uploader card. A container that
+		// already has its own entry still keeps its children separate, and a
+		// grouping folder that now lists coded works stops owning them.
+		if catalogContainerDirectory(path.Base(d.Path)) {
+			d.Root = catalogAdmissionRoot(d.Path, "", catalogDirectorySummary{audio, formats, auxiliary, otherDirs})
+			return nil
+		}
+		var codedChild int
+		if err = tx.QueryRowContext(ctx, `SELECT EXISTS(
+			SELECT 1 FROM source_catalog_observation o
+			JOIN source_catalog_directory pd
+				ON pd.file_source_id=o.file_source_id AND pd.path=o.directory_path
+			WHERE o.file_source_id=? AND o.directory_path=? AND o.revision=pd.revision
+				AND o.kind='folder'
+				AND (UPPER(o.name) LIKE 'RJ%' OR UPPER(o.name) LIKE 'BJ%'
+					OR UPPER(o.name) LIKE 'VJ%' OR UPPER(o.name) LIKE 'CC%'))`,
+			sourceID, d.Path).Scan(&codedChild); err != nil {
+			return err
+		}
+		if codedChild == 0 {
+			d.Root = d.Path
+			return nil
+		}
+		// The exact entry belongs to the grouping folder, not to the coded
+		// works below it. Keep this directory's own loose audio in its card and
+		// let each coded child decide from its own evidence.
+		d.Root = catalogAdmissionRoot(d.Path, "", catalogDirectorySummary{audio, formats, auxiliary, otherDirs})
+		if d.Root == "" && audio == 0 {
+			d.Root = d.Path
+		}
 	}
 	if catalogDirectoryCode(d.Path) != "" {
-		d.Root = catalogAdmissionRoot(d.Path, "", catalogDirectorySummary{audio, formats, otherDirs})
+		d.Root = catalogAdmissionRoot(d.Path, "", catalogDirectorySummary{audio, formats, auxiliary, otherDirs})
 		return nil
 	}
 	if catalogContainerDirectory(path.Base(d.Path)) {
-		d.Root = catalogAdmissionRoot(d.Path, "", catalogDirectorySummary{audio, formats, otherDirs})
+		d.Root = catalogAdmissionRoot(d.Path, "", catalogDirectorySummary{audio, formats, auxiliary, otherDirs})
 		return nil
 	}
 	// A published parent is a work container only while it has no coded child
@@ -262,7 +292,7 @@ func completeCatalogDirectoryTx(ctx context.Context, tx *sql.Tx, sourceID, gener
 	if reviewedParent != 0 {
 		return nil
 	}
-	d.Root = catalogAdmissionRoot(d.Path, d.Root, catalogDirectorySummary{audio, formats, otherDirs})
+	d.Root = catalogAdmissionRoot(d.Path, d.Root, catalogDirectorySummary{audio, formats, auxiliary, otherDirs})
 	return nil
 }
 
@@ -402,7 +432,11 @@ ORDER BY o.directory_path,o.name LIMIT 100`, sourceID, job.RunID, sourceID, job.
 	}
 	for _, p := range items {
 		var id int64
-		err = tx.QueryRowContext(ctx, `INSERT INTO source_catalog_entry(file_source_id,root_path,primary_code,title,last_seen_generation,discovered_generation) VALUES(?,?,?,?,?,?) ON CONFLICT(file_source_id,root_path) DO UPDATE SET title=excluded.title,last_seen_generation=excluded.last_seen_generation,updated_at=CURRENT_TIMESTAMP RETURNING id`, sourceID, p.root, catalogDirectoryCode(p.root), path.Base(p.root), job.RunID, job.RunID).Scan(&id)
+		// The code is derived from the root name on every generation. An
+		// entry published before code parsing understood a prefix keeps its
+		// empty code unless the rescan rewrites it, and then search never
+		// finds the work by its published number.
+		err = tx.QueryRowContext(ctx, `INSERT INTO source_catalog_entry(file_source_id,root_path,primary_code,title,last_seen_generation,discovered_generation) VALUES(?,?,?,?,?,?) ON CONFLICT(file_source_id,root_path) DO UPDATE SET primary_code=excluded.primary_code,title=excluded.title,last_seen_generation=excluded.last_seen_generation,updated_at=CURRENT_TIMESTAMP RETURNING id`, sourceID, p.root, catalogDirectoryCode(p.root), path.Base(p.root), job.RunID, job.RunID).Scan(&id)
 		if err != nil {
 			return 0, err
 		}

@@ -7,7 +7,9 @@ import (
 	"github.com/yexca/kikoto/backend/internal/workcode"
 )
 
-type catalogDirectorySummary struct{ Audio, FormatDirectories, OtherDirectories int }
+type catalogDirectorySummary struct {
+	Audio, FormatDirectories, AuxiliaryDirectories, OtherDirectories int
+}
 
 // catalogContainerDirectory reports a category or collection directory. Its
 // contents are separate works, so the directory itself is never the identity
@@ -57,7 +59,11 @@ func catalogAdmissionRoot(directoryPath, parentRoot string, observed catalogDire
 	if parentRoot != "" {
 		return parentRoot
 	}
-	if catalogDirectoryCode(directoryPath) != "" || observed.Audio > 0 || (directoryPath != "/" && observed.FormatDirectories > 0 && observed.OtherDirectories == 0) {
+	// A work root may carry a format directory next to extras, artwork or
+	// subtitles. Only a directory that is purely format or auxiliary containers
+	// is a helper inside another work; anything else is its own playable root.
+	if catalogDirectoryCode(directoryPath) != "" || observed.Audio > 0 ||
+		(directoryPath != "/" && observed.FormatDirectories > 0 && observed.OtherDirectories == 0) {
 		return directoryPath
 	}
 	return ""
@@ -66,6 +72,21 @@ func catalogAdmissionRoot(directoryPath, parentRoot string, observed catalogDire
 func catalogFormatDirectory(name string) bool {
 	switch strings.ToLower(strings.TrimSpace(name)) {
 	case "mp3", "flac", "wav", "ogg", "opus", "m4a", "aac", "aiff":
+		return true
+	}
+	return false
+}
+
+// catalogAuxiliaryDirectory reports a directory that accompanies a work
+// instead of holding another work. A work root can therefore contain both a
+// format directory and extras without turning each format into its own card.
+func catalogAuxiliaryDirectory(name string) bool {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "extra", "extras", "omake", "特典", "おまけ", "イラスト", "插图", "插圖",
+		"画像", "图片", "圖片", "cover", "covers", "封面", "字幕", "subtitle",
+		"subtitles", "lrc", "ass", "srt", "翻译", "翻譯", "translation", "台本",
+		"script", "scripts", "文本", "text", "txt", "pdf", "视频", "視頻", "video",
+		"pv", "demo", "试听", "試聴", "sample", "wallpaper", "壁纸", "壁紙":
 		return true
 	}
 	return false
