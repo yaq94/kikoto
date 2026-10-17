@@ -97,10 +97,16 @@ func (s *Server) persistCatalogPage(ctx context.Context, job workflowJobRecord, 
 				status, errorCode = "failed", "path_limit"
 				break
 			}
-			_, err = tx.ExecContext(ctx, `INSERT INTO source_catalog_observation(file_source_id,directory_path,name,revision,kind,size_bytes,content_hash) VALUES(?,?,?,?,?,?,?) ON CONFLICT(file_source_id,directory_path,name) DO UPDATE SET revision=excluded.revision,kind=excluded.kind,size_bytes=excluded.size_bytes,content_hash=excluded.content_hash,published_generation=0 WHERE source_catalog_observation.revision<>excluded.revision`, sourceID, d.Path, obj.Name, d.Revision, openlist.Kind(obj.Name, obj.IsDir), obj.Size, obj.ContentHash())
+			_, err = tx.ExecContext(ctx, `INSERT INTO source_catalog_observation(file_source_id,directory_path,name,revision,kind,size_bytes,content_hash,publish_pending) VALUES(?,?,?,?,?,?,?,1) ON CONFLICT(file_source_id,directory_path,name) DO UPDATE SET revision=excluded.revision,kind=excluded.kind,size_bytes=excluded.size_bytes,content_hash=excluded.content_hash,published_generation=0,publish_pending=1 WHERE source_catalog_observation.revision<>excluded.revision`, sourceID, d.Path, obj.Name, d.Revision, openlist.Kind(obj.Name, obj.IsDir), obj.Size, obj.ContentHash())
 			if err != nil {
 				return err
 			}
+		}
+		// A rescan can remove names or replace a page revision. Rows that no
+		// longer belong to the directory revision must not stay in the pending
+		// queue until a later successful cleanup.
+		if _, err = tx.ExecContext(ctx, `UPDATE source_catalog_observation SET publish_pending=0 WHERE file_source_id=? AND directory_path=? AND revision<>? AND publish_pending=1`, sourceID, d.Path, d.Revision); err != nil {
+			return err
 		}
 		var count int
 		if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM source_catalog_observation WHERE file_source_id=? AND directory_path=? AND revision=?`, sourceID, d.Path, d.Revision).Scan(&count); err != nil {
@@ -141,6 +147,9 @@ func (s *Server) persistCatalogPage(ctx context.Context, job workflowJobRecord, 
 	}
 	_, err = tx.ExecContext(ctx, `UPDATE source_catalog_directory SET next_page=?,expected_total=?,status=?,error_code=?,catalog_root=?,completed_at=CASE WHEN ?='complete' THEN CURRENT_TIMESTAMP ELSE NULL END WHERE file_source_id=? AND path=?`, d.Page+1, data.Total, status, errorCode, d.Root, status, sourceID, d.Path)
 	if err != nil {
+		return err
+	}
+	if err = refreshCatalogAudioRootTx(ctx, tx.Tx, sourceID, job.RunID, d.Path); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -258,7 +267,38 @@ func (s *Server) expandCatalogDirectory(ctx context.Context, job workflowJobReco
 	if err != nil {
 		return false, err
 	}
+	if err = refreshCatalogAudioRootTx(ctx, tx.Tx, sourceID, job.RunID, p); err != nil {
+		return false, err
+	}
 	return true, tx.Commit()
+}
+
+// refreshCatalogAudioRootTx keeps the publisher's join set exactly equal to
+// "a complete directory with audio exists for this root". Call it after the
+// directory status changes, so a rescan that removes the last audio row also
+// removes the root from the publish queue.
+func refreshCatalogAudioRootTx(ctx context.Context, tx *sql.Tx, sourceID, generation int64, directoryPath string) error {
+	var root string
+	err := tx.QueryRowContext(ctx, `SELECT catalog_root FROM source_catalog_directory WHERE file_source_id=? AND generation=? AND path=?`, sourceID, generation, directoryPath).Scan(&root)
+	if errors.Is(err, sql.ErrNoRows) || root == "" {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	var present int
+	if err = tx.QueryRowContext(ctx, `SELECT EXISTS(
+		SELECT 1 FROM source_catalog_directory a
+		JOIN source_catalog_observation b ON b.file_source_id=a.file_source_id AND b.directory_path=a.path AND b.revision=a.revision
+		WHERE a.file_source_id=? AND a.generation=? AND a.catalog_root=? AND a.status='complete' AND b.kind='audio')`, sourceID, generation, root).Scan(&present); err != nil {
+		return err
+	}
+	if present == 1 {
+		_, err = tx.ExecContext(ctx, `INSERT INTO source_catalog_audio_root(file_source_id,generation,catalog_root) VALUES(?,?,?) ON CONFLICT DO NOTHING`, sourceID, generation, root)
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `DELETE FROM source_catalog_audio_root WHERE file_source_id=? AND generation=? AND catalog_root=?`, sourceID, generation, root)
+	return err
 }
 
 // Publish a bounded number of validated observations. The first playable
@@ -272,9 +312,15 @@ func (s *Server) publishCatalogBatch(ctx context.Context, job workflowJobRecord,
 	if err = verifyCatalogLease(ctx, tx.Tx, job); err != nil {
 		return 0, err
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT d.path,d.catalog_root,o.name,o.kind,o.size_bytes,o.content_hash FROM source_catalog_directory d JOIN source_catalog_observation o ON o.file_source_id=d.file_source_id AND o.directory_path=d.path AND o.revision=d.revision
-	WHERE d.file_source_id=? AND d.generation=? AND d.status='complete' AND d.catalog_root<>'' AND o.published_generation<>? AND EXISTS(
-	SELECT 1 FROM source_catalog_directory a JOIN source_catalog_observation b ON b.file_source_id=a.file_source_id AND b.directory_path=a.path AND b.revision=a.revision WHERE a.file_source_id=d.file_source_id AND a.generation=d.generation AND a.catalog_root=d.catalog_root AND a.status='complete' AND b.kind='audio') LIMIT 100`, sourceID, job.RunID, job.RunID)
+	rows, err := tx.QueryContext(ctx, `WITH roots AS MATERIALIZED (
+	SELECT catalog_root FROM source_catalog_audio_root WHERE file_source_id=? AND generation=?
+)
+SELECT d.path,d.catalog_root,o.name,o.kind,o.size_bytes,o.content_hash
+FROM source_catalog_observation o
+JOIN source_catalog_directory d ON d.file_source_id=o.file_source_id AND d.path=o.directory_path AND d.revision=o.revision
+JOIN roots r ON r.catalog_root=d.catalog_root
+WHERE o.file_source_id=? AND o.publish_pending=1 AND d.generation=? AND d.status='complete' AND d.catalog_root<>''
+ORDER BY o.directory_path,o.name LIMIT 100`, sourceID, job.RunID, sourceID, job.RunID)
 	if err != nil {
 		return 0, err
 	}
@@ -311,7 +357,7 @@ func (s *Server) publishCatalogBatch(ctx context.Context, job workflowJobRecord,
 		if err != nil {
 			return 0, err
 		}
-		_, err = tx.ExecContext(ctx, `UPDATE source_catalog_observation SET published_generation=? WHERE file_source_id=? AND directory_path=? AND name=?`, job.RunID, sourceID, p.dir, p.name)
+		_, err = tx.ExecContext(ctx, `UPDATE source_catalog_observation SET published_generation=?,publish_pending=0 WHERE file_source_id=? AND directory_path=? AND name=?`, job.RunID, sourceID, p.dir, p.name)
 		if err != nil {
 			return 0, err
 		}

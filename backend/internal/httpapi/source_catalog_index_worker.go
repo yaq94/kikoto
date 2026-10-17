@@ -32,6 +32,14 @@ func (s *Server) executeSourceCatalogIndexJob(ctx context.Context, job workflowJ
 		transport.concurrency = options.Concurrency
 	}
 	client := configuredOpenListClient(source, httpClient).WithResponseLimit(options.MaxResponseBytes)
+	// The publish queue is drained before the next page batch, not on every
+	// step. A working tree always has another directory to expand or page, so a
+	// publish call after each write spends its transaction on rows the next
+	// batch would publish anyway. Checkpoint data remains durable in the same
+	// page transactions as before.
+	if err = s.publishCatalogQueue(ctx, job, input.SourceID); err != nil {
+		return err
+	}
 	for count := 0; count < options.PagesPerBatch; {
 		if err = ctx.Err(); err != nil {
 			return err
@@ -52,13 +60,8 @@ func (s *Server) executeSourceCatalogIndexJob(ctx context.Context, job workflowJ
 			return err
 		}
 		if len(dirs) == 0 {
-			n, err := s.publishCatalogBatch(ctx, job, input.SourceID)
-			if err != nil {
+			if err = s.publishCatalogQueue(ctx, job, input.SourceID); err != nil {
 				return err
-			}
-			if n > 0 {
-				count++
-				continue
 			}
 			p, err := s.sourceCatalogProgress(ctx, input.SourceID, 1)
 			if err != nil {
@@ -124,11 +127,26 @@ func (s *Server) executeSourceCatalogIndexJob(ctx context.Context, job workflowJ
 			return s.settleCatalogBatch(ctx, job, input.SourceID, "partial", pauseReason)
 		}
 		count += len(dirs)
-		if _, err = s.publishCatalogBatch(ctx, job, input.SourceID); err != nil {
-			return err
-		}
+	}
+	if err = s.publishCatalogQueue(ctx, job, input.SourceID); err != nil {
+		return err
 	}
 	return s.settleCatalogBatch(ctx, job, input.SourceID, "queued", "")
+}
+
+// publishCatalogQueue drains the durable pending rows in bounded batches.
+// It stops when a batch publishes nothing, so an exhausted queue no longer
+// costs a scan of every completed directory and the worker cannot spin.
+func (s *Server) publishCatalogQueue(ctx context.Context, job workflowJobRecord, sourceID int64) error {
+	for {
+		n, err := s.publishCatalogBatch(ctx, job, sourceID)
+		if err != nil {
+			return err
+		}
+		if n < 100 {
+			return nil
+		}
+	}
 }
 
 func (s *Server) catalogIndexDiskPause(options catalogIndexOptions) string {
