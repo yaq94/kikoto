@@ -15,6 +15,11 @@ import (
 
 const sourceCatalogIndexWorkerType = "source_catalog_index"
 
+// catalogPublishBatchesPerPass bounds publication work in one workflow
+// invocation. Each batch holds the write lock for at most 100 rows, and the
+// remaining backlog returns to the durable queue.
+const catalogPublishBatchesPerPass = 4
+
 type catalogIndexOptions struct {
 	PageSize             int   `json:"pageSize"`
 	PagesPerBatch        int   `json:"pagesPerBatch"`

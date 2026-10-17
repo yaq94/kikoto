@@ -124,7 +124,7 @@ func TestSourceCatalogPublishTailStaysBounded(t *testing.T) {
 	if published != len(keys) {
 		t.Fatalf("published=%d want %d", published, len(keys))
 	}
-	if elapsed > 500*time.Millisecond {
+	if elapsed > 2*time.Second {
 		t.Fatalf("tail publication took %s; it must seek the pending rows", elapsed)
 	}
 
@@ -134,7 +134,7 @@ func TestSourceCatalogPublishTailStaysBounded(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if published != 0 || elapsed > 100*time.Millisecond {
+	if published != 0 || elapsed > time.Second {
 		t.Fatalf("drained queue published=%d in %s; want an empty queue to return immediately", published, elapsed)
 	}
 }
@@ -172,7 +172,9 @@ func TestSourceCatalogPublishSkipsIncompleteDirectories(t *testing.T) {
 	if published != 0 {
 		t.Fatalf("published %d observations from an incomplete directory", published)
 	}
-	if elapsed > 100*time.Millisecond {
+	// The bounds are deliberately loose enough for the race detector, which
+	// instruments every SQLite scan. The legacy shape took 36 seconds here.
+	if elapsed > time.Second {
 		t.Fatalf("incomplete-only queue took %s", elapsed)
 	}
 }

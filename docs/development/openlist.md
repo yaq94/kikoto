@@ -138,6 +138,10 @@ metadata footprint; the database reuses freed pages under its normal storage pol
 Full indexing uses the existing outbound source policy and a dedicated paced
 metadata lane. Metadata redirects are refused, response size and 30-second
 request deadlines apply, and cancellation releases every in-flight request.
+Publication reads the durable `publish_pending` queue. The worker publishes at
+most four batches of 100 rows per invocation, so a long backlog does not hold
+the single SQLite writer across the whole scan; the remaining rows stay queued
+and the job returns to the workflow queue.
 Routine tests use synthetic complete trees; a real index run must separately
 record its actual ranges, timestamps and unresolved directories.
 

@@ -36,8 +36,9 @@ func (s *Server) executeSourceCatalogIndexJob(ctx context.Context, job workflowJ
 	// step. A working tree always has another directory to expand or page, so a
 	// publish call after each write spends its transaction on rows the next
 	// batch would publish anyway. Checkpoint data remains durable in the same
-	// page transactions as before.
-	if err = s.publishCatalogQueue(ctx, job, input.SourceID); err != nil {
+	// page transactions as before. A bounded pass leaves the next workflow
+	// invocation to fetch pages instead of publishing an unbounded backlog.
+	if _, _, err = s.publishCatalogQueue(ctx, job, input.SourceID); err != nil {
 		return err
 	}
 	for count := 0; count < options.PagesPerBatch; {
@@ -60,8 +61,12 @@ func (s *Server) executeSourceCatalogIndexJob(ctx context.Context, job workflowJ
 			return err
 		}
 		if len(dirs) == 0 {
-			if err = s.publishCatalogQueue(ctx, job, input.SourceID); err != nil {
+			_, more, err := s.publishCatalogQueue(ctx, job, input.SourceID)
+			if err != nil {
 				return err
+			}
+			if more {
+				return s.settleCatalogBatch(ctx, job, input.SourceID, "queued", "")
 			}
 			p, err := s.sourceCatalogProgress(ctx, input.SourceID, 1)
 			if err != nil {
@@ -128,25 +133,29 @@ func (s *Server) executeSourceCatalogIndexJob(ctx context.Context, job workflowJ
 		}
 		count += len(dirs)
 	}
-	if err = s.publishCatalogQueue(ctx, job, input.SourceID); err != nil {
+	if _, _, err = s.publishCatalogQueue(ctx, job, input.SourceID); err != nil {
 		return err
 	}
 	return s.settleCatalogBatch(ctx, job, input.SourceID, "queued", "")
 }
 
-// publishCatalogQueue drains the durable pending rows in bounded batches.
-// It stops when a batch publishes nothing, so an exhausted queue no longer
-// costs a scan of every completed directory and the worker cannot spin.
-func (s *Server) publishCatalogQueue(ctx context.Context, job workflowJobRecord, sourceID int64) error {
-	for {
+// publishCatalogQueue drains at most catalogPublishBatchesPerPass batches. It
+// reports whether a full batch remained, so the caller can defer the backlog
+// to another invocation instead of monopolizing the worker. An exhausted queue
+// no longer costs a scan of every completed directory and cannot spin.
+func (s *Server) publishCatalogQueue(ctx context.Context, job workflowJobRecord, sourceID int64) (int, bool, error) {
+	published := 0
+	for pass := 0; pass < catalogPublishBatchesPerPass; pass++ {
 		n, err := s.publishCatalogBatch(ctx, job, sourceID)
 		if err != nil {
-			return err
+			return published, false, err
 		}
+		published += n
 		if n < 100 {
-			return nil
+			return published, false, nil
 		}
 	}
+	return published, true, nil
 }
 
 func (s *Server) catalogIndexDiskPause(options catalogIndexOptions) string {

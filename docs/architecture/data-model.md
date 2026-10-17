@@ -928,6 +928,19 @@ The deployment measures the result: index throughput, `SQLITE_BUSY` log lines,
 completed pool waits, and metadata projection failures, recorded in
 [SQLite write performance](../development/sqlite-write-performance.md).
 
+### Catalog publication queue
+
+`source_catalog_observation.publish_pending` is the publication queue for the
+recoverable full index. A staged observation is pending until its directory has
+completed and the publisher has written its card and file rows.
+`source_catalog_audio_root` holds the generations and roots that can publish, so
+the publisher joins a small set instead of evaluating a correlated `EXISTS` for
+every complete directory. A partial index over pending rows keeps the tail
+case, where only a few observations remain, independent of how many
+directories are already published. The worker drains at most four batches of
+100 rows per invocation and then returns the job to the queue, which bounds
+write-lock spans while the scan continues.
+
 ## Related Docs
 
 - [Core boundaries](core-boundaries.md)
