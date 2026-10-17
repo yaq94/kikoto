@@ -22,10 +22,10 @@ func TestSourceCatalogKeepsCodedChildDirectoriesAsWorks(t *testing.T) {
 		case "/Uploader":
 			items = []map[string]any{
 				{"name": "uploader-loose.mp3", "size": 100},
-				{"name": "RJ00000041 Coded Child", "is_dir": true},
+				{"name": "RJ00000041Coded Child", "is_dir": true},
 				{"name": "Numberless Child", "is_dir": true},
 			}
-		case "/Uploader/RJ00000041 Coded Child":
+		case "/Uploader/RJ00000041Coded Child":
 			items = []map[string]any{{"name": "coded.mp3", "size": 100}}
 		case "/Uploader/Numberless Child":
 			items = []map[string]any{{"name": "numberless.mp3", "size": 100}}

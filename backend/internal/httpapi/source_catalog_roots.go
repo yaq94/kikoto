@@ -3,6 +3,8 @@ package httpapi
 import (
 	"path"
 	"strings"
+
+	"github.com/yexca/kikoto/backend/internal/workcode"
 )
 
 type catalogDirectorySummary struct{ Audio, FormatDirectories, OtherDirectories int }
@@ -41,10 +43,28 @@ func catalogFormatDirectory(name string) bool {
 }
 
 func catalogDirectoryCode(root string) string {
-	for _, word := range strings.FieldsFunc(path.Base(root), func(r rune) bool { return r == '[' || r == ']' || r == ' ' || r == '【' || r == '】' }) {
+	name := path.Base(root)
+	for _, word := range strings.FieldsFunc(name, func(r rune) bool { return r == '[' || r == ']' || r == ' ' || r == '【' || r == '】' }) {
 		if code := normalizeWorkCode(word); code != "" {
 			return code
 		}
 	}
-	return normalizeWorkCode(path.Base(root))
+	// Sources also prefix a code directly to a title, such as
+	// "RJ01075962妹妹的夜间侍奉". The code ends where the title starts, so a
+	// token split alone would miss every one of those works.
+	upper := strings.ToUpper(name)
+	for _, prefix := range workcode.Prefixes() {
+		if !strings.HasPrefix(upper, prefix) {
+			continue
+		}
+		digits := 0
+		for digits < len(upper)-len(prefix) && upper[len(prefix)+digits] >= '0' && upper[len(prefix)+digits] <= '9' {
+			digits++
+		}
+		if digits < 5 || digits > 8 {
+			return ""
+		}
+		return normalizeWorkCode(upper[:len(prefix)+digits])
+	}
+	return normalizeWorkCode(name)
 }
