@@ -2,7 +2,7 @@
 
 **Status:** ready-for-agent
 **Implementation:** in-progress
-**阶段:** 01–06、14 已集成并 resolved；07 在真实媒体 LIVE 通过后转为 resolved，08–13、15、16、18、19 已集成并保持 verified-local。完整 CI 已在当前集成产物上取得全绿终态；真实索引覆盖、最终审查与部署前置继续推进。
+**阶段:** 01–07、14 resolved；08–13、15、16、18、19 已集成并保持 verified-local。双轴审查完成且发现已闭环；部署提交 `7ed73fa06b38686caf4422f5a9cbd090ba53b7a3` 的 Full CI 全绿（run 39049272400）；2026-10-17T16:44:24Z 已部署到现有服务，schema 68→76，备份与回滚演练通过；真实来源索引按断点续跑中。证据见 [17 部署证据](evidence/17-deployment.md)。
 **依据:** [正式规格](spec.md) · [工单总览](ticket-proposal.md) · [领域词汇表](../../GLOSSARY.md) · [作品身份与个人记录 ADR](../../docs/adr/0001-work-identity-and-personal-state.md)
 
 ## 当前授权与完成条件
@@ -57,7 +57,7 @@
 | [14 高置信唯一候选关联](issues/14-high-confidence-work-matching.md) | 13 | resolved | 已合入集成；自动关联、证据门槛、预算、并发退避、重启恢复及 F/U 全部通过 | [14 证据](evidence/14-work-matching.md) |
 | [15 拆分与本人记录归属](issues/15-split-personal-record-allocation.md) | 13 | verified-local | 原实施任务的 41a3412 已追加集成；本人选择、重启、系列/嵌套关系和来源状态交叉验证通过，完整发布前置保留 | [15 候选证据](evidence/15-shared-split.md)、[集成复验](evidence/15-integration.md) |
 | [16 个人数据导入导出](issues/16-personal-data-transfer-compatibility.md) | 12 | verified-local | 87e0071 已集成；v2 四类对象、空库/重复导入、精确引用、冲突和未匹配进度保留通过；完整发布前置保留 | [16 证据](evidence/16-personal-transfer.md)、[集成复验](evidence/16-19-integration.md) |
-| [17 组合验收与部署回退](issues/17-integrated-acceptance-release-plan.md) | 03、05、09、10、14、15、16、18、19 | in-progress | 全部前置票已合入集成；完整 AC、CI 终态、备份回滚及部署验收进行中 | 待执行 |
+| [17 组合验收与部署回退](issues/17-integrated-acceptance-release-plan.md) | 03、05、09、10、14、15、16、18、19 | in-progress | 组合验收、双轴审查、Full CI、备份回滚演练与生产部署均完成；真实索引收尾与最终交付报告待执行 | [17 部署证据](evidence/17-deployment.md) |
 | [18 迁移完成与维护状态一致性](issues/18-ci-migration-completion-state.md) | 无 | verified-local | 已集成 924f807；最终状态、失败及取消恢复已本地验证，Full CI 待执行 | [18 证据](evidence/18-ci-migration.md)、[集成复验](evidence/10-13-18-integration.md) |
 | [19 前端 CI 修复](issues/19-ci-browser-reliability.md) | 无 | verified-local | ce5154e 已集成；骨架同步、收藏独立行为、真实移动触摸和旧目录 fixture 契约复验通过，Full/Gate 待执行 | [19 证据](evidence/19-ci-browser.md)、[集成复验](evidence/16-19-integration.md) |
 
@@ -108,8 +108,8 @@ catalog 翻译已在集成产物上取得 H/R/F 证据；其剩余缺口是实�
 | 08 本地集成复验 | 已通过 | [本批证据](evidence/08-integration.md)：40 个 H/R、66 个存储、3 个 race 顶层与 3 个非视觉 F，前后端静态/类型/构建/文档检查通过；070 为最高迁移，07/08 仍 verified-local。 |
 | OpenList 单来源代理兼容集成 | 已通过本地复验 | [本批证据](evidence/openlist-proxy-integration.md)：合入 `7d75de59e830312fba90dfad219cf15d751a8ee0`，37 个 H/R 顶层、前端类型/构建及文档检查通过；07/08 的 LIVE/真实覆盖缺口保留。 |
 | 10/13/18 本地集成复验 | 见本批证据 | [本批证据](evidence/10-13-18-integration.md)：固定三个候选顺序合入，072/073、来源生命周期与共享身份、迁移完成一致性组合验证；不代替剩余 LIVE、Full CI、最终审查和部署。 |
-| 生产部署、实际迁移与上线验收 | 待执行 | 同一已验收产物、备份、迁移、重启与功能回读证据。 |
-| 备份恢复与回退 | 待执行 | 恢复演练、适用前提及必要回滚的执行结果。 |
+| 生产部署、实际迁移与上线验收 | 已通过 | [17 部署证据](evidence/17-deployment.md)：停服快照、`docker compose` 切换 `kikoto:next-7ed73fa`、schema 68→76、quick_check/外键 0、健康/登录/作品/翻译配置回读通过。 |
+| 备份恢复与回退 | 已通过 | 同一部署提交两阶段演练：快照+新镜像迁移至 76，还原快照+旧镜像回 68，健康均 200，`drill_exit=0`。 |
 
 ## 17 的整体验收与部署门槛
 
