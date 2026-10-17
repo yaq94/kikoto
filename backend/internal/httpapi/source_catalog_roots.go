@@ -9,6 +9,22 @@ import (
 
 type catalogDirectorySummary struct{ Audio, FormatDirectories, OtherDirectories int }
 
+// catalogContainerDirectory reports a category or collection directory. Its
+// contents are separate works, so the directory itself is never the identity
+// of everything below it. A container may still hold loose playable files;
+// those files keep a card of their own.
+func catalogContainerDirectory(name string) bool {
+	lower := strings.ToLower(strings.TrimSpace(name))
+	switch lower {
+	case "未分类", "uncategorized", "misc", "miscellaneous", "其他", "其它",
+		"合集", "collection", "collections", "部分收集", "大杂烩",
+		"tags", "tag", "标签", "分類", "分类":
+		return true
+	}
+	return strings.Contains(lower, "合集") || strings.Contains(lower, "collection") ||
+		strings.Contains(lower, "大杂烩") || strings.Contains(lower, "部分收集")
+}
+
 // catalogAdmissionRoot chooses the playable container from the already-read
 // directory and its parent's assignment. This does not create series or merge
 // identities; callers retain every real parent/child directory observation.
@@ -19,6 +35,19 @@ func catalogAdmissionRoot(directoryPath, parentRoot string, observed catalogDire
 	// unreachable by the code the source publishes.
 	if catalogDirectoryCode(directoryPath) != "" {
 		return directoryPath
+	}
+	if catalogContainerDirectory(path.Base(directoryPath)) {
+		// The container's own loose files are still playable; its children are
+		// admitted individually because the container is not one work.
+		if observed.Audio > 0 {
+			return directoryPath
+		}
+		return ""
+	}
+	if parentRoot != "" && catalogContainerDirectory(path.Base(parentRoot)) {
+		// A category parent does not lend its identity to an album or format
+		// directory; this directory decides from its own contents.
+		parentRoot = ""
 	}
 	if _, episode := catalogEpisodeEvidence(directoryPath); episode && catalogDirectoryCode(parentRoot) == "" {
 		if _, parentEpisode := catalogEpisodeEvidence(parentRoot); !parentEpisode {

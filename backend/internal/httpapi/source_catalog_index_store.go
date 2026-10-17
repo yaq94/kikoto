@@ -215,6 +215,14 @@ func completeCatalogDirectoryTx(ctx context.Context, tx *sql.Tx, sourceID, gener
 		d.Root = catalogAdmissionRoot(d.Path, "", catalogDirectorySummary{audio, formats, otherDirs})
 		return nil
 	}
+	if catalogContainerDirectory(path.Base(d.Path)) {
+		d.Root = catalogAdmissionRoot(d.Path, "", catalogDirectorySummary{audio, formats, otherDirs})
+		return nil
+	}
+	if d.Root != "" && catalogContainerDirectory(path.Base(d.Root)) {
+		// A category parent never supplies the identity of an album below it.
+		d.Root = ""
+	}
 	// A parent that already holds a reviewed work or a confirmed series is an
 	// intentional container. Its uncoded episode and format children stay in
 	// it, and splitting that needs explicit review. A merely published uploader

@@ -63,3 +63,36 @@ func TestSourceCatalogKeepsCodedChildDirectoriesAsWorks(t *testing.T) {
 		t.Fatalf("rescan search total=%v, want the coded child", result["total"])
 	}
 }
+
+// A category such as 未分类 groups unrelated uploads. Its loose files may keep a
+// card, but an album directory below it is a separate work rather than another
+// track of the category card.
+func TestSourceCatalogCategoryDoesNotOwnItsChildren(t *testing.T) {
+	f := newCatalogIndexFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var in struct {
+			Path string `json:"path"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&in)
+		items := []map[string]any{}
+		switch in.Path {
+		case "/":
+			items = []map[string]any{{"name": "未分类", "is_dir": true}}
+		case "/未分类":
+			items = []map[string]any{
+				{"name": "loose.mp3", "size": 100},
+				{"name": "Album A", "is_dir": true},
+			}
+		case "/未分类/Album A":
+			items = []map[string]any{{"name": "a.mp3", "size": 100}}
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"code": 200, "data": map[string]any{"content": items, "total": len(items)}})
+	}))
+	f.request(t, http.MethodPost, "/catalog/index", `{"intervalMs":100}`, 202)
+	if p := f.drain(t); p["status"] != "complete" {
+		t.Fatalf("scan = %#v", p)
+	}
+	cards := f.request(t, http.MethodGet, "/works", "", 200)
+	if cards["total"] != float64(2) {
+		t.Fatalf("cards=%v, want the category's loose files and Album A separately", cards["total"])
+	}
+}
