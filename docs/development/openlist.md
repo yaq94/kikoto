@@ -78,15 +78,29 @@ success. Manual starts still require `sources:write`.
 
 The defaults are the safe starting point, not a throughput recommendation for
 every host. The pacing options bound how often a metadata request may start and
-how many run at once; they do not bound database work. On a two-processor host
-that also runs the library, the recommendation catalog and metadata tag
-projectors, the single SQLite writer and the connection pool are the limits that
-matter, and lowering the interval below the point where requests stop queueing
-adds contention rather than coverage. `make source-index-performance` measures
-this: it runs the production worker over a synthetic tree and reports completed
-directories per minute, connection-pool waits, refusals and process CPU for each
-option combination. Use it on the deployment host before changing the defaults,
-and prefer a quieter window for the first complete scan of a large source.
+how many run at once; they do not bound database work. `make
+source-index-performance` measures the whole worker over a synthetic tree and
+reports completed directories per minute, connection-pool waits, refusals and
+process CPU for each option combination. Use it on the deployment host before
+changing the defaults.
+
+On a 32-processor development host, a 197-directory tree completed at about 200
+directories per minute with concurrency 2, a 150 ms interval and 32 steps per
+batch; the shipped concurrency 1, 1000 ms and eight steps took 4.4 times as long,
+most of that difference coming from the claim count per batch. Below roughly
+270 ms the interval stopped mattering, and concurrency above 2 bought less than
+10 percent. Two concurrent recommendation and metadata tag writers did not change
+the elapsed time at that size. The same cell slowed from 204 to 136 directories
+per minute between 197 and 965 directories while its CPU cost per directory rose
+from 13 to 166 ms, so total work grows with the published catalog rather than
+with the request rate. That matches a real run of 2,777 directories that spent
+150 minutes on 2,520 of them, far below what its 150 ms interval allowed.
+
+Choose concurrency 2, a 150 ms interval and 32 steps per batch for a first
+complete scan, and keep the defaults elsewhere. Expect the per-directory cost to
+rise with catalog size on a two-processor host; when the process log shows
+`database is locked` or pool waits, reduce concurrency to 1 and postpone
+recommendation and metadata projection rather than shortening the interval.
 
 The worker releases its executor after each batch. Each page commits validated
 names and its next cursor together. Child discovery and catalog publication

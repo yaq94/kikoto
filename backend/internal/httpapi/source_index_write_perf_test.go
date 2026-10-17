@@ -33,15 +33,15 @@ import (
 // It is a measurement, not a latency assertion: it prints its numbers for the
 // ticket evidence and fails only when a mode cannot make progress at all.
 func TestSourceIndexWriteContention(t *testing.T) {
-	if os.Getenv("KIKOTO_SOURCE_INDEX_PERF") != "1" {
-		t.Skip("set KIKOTO_SOURCE_INDEX_PERF=1 to measure index write contention")
+	if os.Getenv("KIKOTO_SOURCE_INDEX_WRITE_PERF") != "1" {
+		t.Skip("set KIKOTO_SOURCE_INDEX_WRITE_PERF=1 to measure index write contention")
 	}
-	mode := os.Getenv("KIKOTO_SOURCE_INDEX_PERF_MODE")
+	mode := os.Getenv("KIKOTO_SOURCE_INDEX_WRITE_PERF_MODE")
 	if mode == "" {
 		mode = "bounded"
 	}
-	holdFor := time.Duration(envInt("KIKOTO_SOURCE_INDEX_PERF_HOLD_MS", 3000)) * time.Millisecond
-	writerCount := envInt("KIKOTO_SOURCE_INDEX_PERF_WRITERS", 4)
+	holdFor := time.Duration(envInt("KIKOTO_SOURCE_INDEX_WRITE_PERF_HOLD_MS", 3000)) * time.Millisecond
+	writerCount := envInt("KIKOTO_SOURCE_INDEX_WRITE_PERF_WRITERS", 4)
 
 	db := openMigratedTestDBWithProductionPool(t)
 	seedIndexWriteFixture(t, db)

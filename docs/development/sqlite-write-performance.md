@@ -69,9 +69,9 @@ Run both modes on an otherwise idle host, in this order, and keep the log:
 
 ```
 cd backend
-KIKOTO_SOURCE_INDEX_PERF=1 KIKOTO_SOURCE_INDEX_PERF_MODE=raw \
+KIKOTO_SOURCE_INDEX_WRITE_PERF=1 KIKOTO_SOURCE_INDEX_WRITE_PERF_MODE=raw \
   go test ./internal/httpapi -run TestSourceIndexWriteContention -count=1 -v
-KIKOTO_SOURCE_INDEX_PERF=1 KIKOTO_SOURCE_INDEX_PERF_MODE=bounded \
+KIKOTO_SOURCE_INDEX_WRITE_PERF=1 KIKOTO_SOURCE_INDEX_WRITE_PERF_MODE=bounded \
   go test ./internal/httpapi -run TestSourceIndexWriteContention -count=1 -v
 ```
 
@@ -79,10 +79,10 @@ Environment:
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `KIKOTO_SOURCE_INDEX_PERF` | unset | `1` enables the experiment |
-| `KIKOTO_SOURCE_INDEX_PERF_MODE` | `bounded` | `raw` uses `database/sql` directly |
-| `KIKOTO_SOURCE_INDEX_PERF_HOLD_MS` | `3000` | how long one transaction holds the write lock |
-| `KIKOTO_SOURCE_INDEX_PERF_WRITERS` | `4` | competing writers, matching the pool size |
+| `KIKOTO_SOURCE_INDEX_WRITE_PERF` | unset | `1` enables the experiment |
+| `KIKOTO_SOURCE_INDEX_WRITE_PERF_MODE` | `bounded` | `raw` uses `database/sql` directly |
+| `KIKOTO_SOURCE_INDEX_WRITE_PERF_HOLD_MS` | `3000` | how long one transaction holds the write lock |
+| `KIKOTO_SOURCE_INDEX_WRITE_PERF_WRITERS` | `4` | competing writers, matching the pool size |
 
 The experiment holds the write lock in one transaction, starts four writers that
 drain a fixed queue, and measures a user-facing read while they wait. `raw`
