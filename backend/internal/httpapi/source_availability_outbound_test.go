@@ -2,6 +2,8 @@ package httpapi
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +14,7 @@ import (
 	"time"
 
 	"github.com/yexca/kikoto/backend/internal/config"
+	"github.com/yexca/kikoto/backend/internal/kikoeru"
 )
 
 func TestSourceAvailabilityOutboundBoundary(t *testing.T) {
@@ -99,3 +102,21 @@ func TestSourceAvailabilityOutboundBoundary(t *testing.T) {
 type zeroReader struct{}
 
 func (zeroReader) Read(p []byte) (int, error) { clear(p); return len(p), nil }
+
+// A refused request is not the source's answer about a work. The transport
+// error quotes the request path, so a message-based check that looks for the
+// words "not found" would classify a policy refusal as a confident absence.
+func TestSourceAvailabilityTreatsOnlyTypedAbsenceAsNotFound(t *testing.T) {
+	if isNotFoundLikeError(errors.New(`Get "http://source.example.invalid/api/workInfo/RJ00000000": outbound URL must not contain credentials`)) {
+		t.Fatal("a policy refusal was classified as a missing work")
+	}
+	if isNotFoundLikeError(kikoeru.StatusError{Code: http.StatusInternalServerError}) {
+		t.Fatal("a source failure was classified as a missing work")
+	}
+	if !isNotFoundLikeError(kikoeru.StatusError{Code: http.StatusNotFound}) {
+		t.Fatal("a source 404 was not classified as a missing work")
+	}
+	if !isNotFoundLikeError(sql.ErrNoRows) {
+		t.Fatal("an empty lookup was not classified as a missing work")
+	}
+}

@@ -476,6 +476,9 @@ func isNotFoundLikeError(err error) bool {
 	if err == nil {
 		return false
 	}
-	message := strings.ToLower(err.Error())
-	return strings.Contains(message, "404") || strings.Contains(message, "not found") || strings.Contains(message, "no rows")
+	// Match the source's typed answers only. A transport or policy failure can
+	// mention a path such as "/api/workInfo/..." that contains the words
+	// "not found"; treating that as the source's missing-work verdict would turn
+	// a refused request into a confident "not found" result.
+	return errors.Is(err, sql.ErrNoRows) || kikoeru.IsNotFound(err)
 }
