@@ -1,6 +1,7 @@
 # 08 完整来源索引与恢复证据
 
-实施基线 `08b14696c76c63d3a75e5fb0c984dbb2e568ad12`；本记录与同次 Git 提交中的产物绑定。
+实施基线 `08b14696c76c63d3a75e5fb0c984dbb2e568ad12`；索引发布队列优化见
+`3f38d27`、`e206761`、`c2487f7`。本记录与同次 Git 提交中的产物绑定。
 本地开发先决条件沿用 execution.md，07 真实媒体 LIVE 和真实全量索引覆盖仍未通过。
 
 ## 已取得的红绿证据
@@ -27,6 +28,40 @@
 复用现有 SQLite、单工作流执行器、出站策略和请求门控，没有新增依赖。
 元数据并发可调 1–4；每批 1–32 步、每次入队/发布最多 100 条；没有全源内存队列。
 扫描仅存验证后的目录元数据，不存临时媒体 URL，不创建作品、不下载音频或封面。
+
+`076_source_catalog_publish_queue.sql` adds the publication queue
+(`publish_pending`), its partial index, and `source_catalog_audio_root`. The
+migration backfills pending rows from `published_generation=0` and rebuilds the
+root set once; it does not change published identities or staging rows.
+
+## 发布尾部性能
+
+The live copy `/tmp/kikoto-live-ba9ef02/instance/config/kikoto.db`
+(34,234,368 bytes, 3,917 directories, 47,670 observations) reproduced the
+pathological tail: with only five unpublished observations left, the
+pre-queue query took **36.1–36.9 s** and its plan applied `LIMIT` only after a
+correlated audio-root subquery for every complete directory. Making all 47,670
+observations unpublished took 0.3 ms because the first 100 rows satisfied the
+limit; that contrast identifies the ordering, not the row count, as the defect.
+
+The queue query uses a materialized root set and the partial pending index.
+On the same copy it returned those five rows in **0.0032–0.0040 s** with the
+plan `source_catalog_observation_pending` → `source_catalog_directory_publish_root`
+→ `source_catalog_audio_root`. An empty queue returns in 0.0 s. The synthetic
+3,000-directory regression fixture takes about 5 ms for the same tail, and the
+legacy query in that fixture still takes 36.5 s.
+
+| Measurement | Legacy | Queue |
+| --- | --- | --- |
+| Five-row tail, real copy | 36.1–36.9 s | 3.2–4.0 ms |
+| Empty queue | 0.3 ms (first 100 unpublished) | 0.0 s |
+| 3,000-directory fixture tail | 36.5 s | ~5 ms |
+| Query plan | correlated `EXISTS` per complete directory | partial index seek + root join |
+
+The worker no longer publishes after every 32-step batch. It drains at most
+four batches of 100 rows before the next page batch and returns the remaining
+backlog to the workflow queue; an exhausted queue returns immediately instead
+of repeating the publication query 32 times.
 
 ## 未完成项
 
