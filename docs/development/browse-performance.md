@@ -61,6 +61,8 @@ make browse-production-performance
 make playback-performance
 make recommendation-performance
 make recommendation-performance RECOMMENDATION_PERF_ARGS="--baseline <git-ref>"
+make source-index-performance
+make source-index-performance SOURCE_INDEX_PERF_ARGS="--cells grid"
 ```
 
 `scripts/run-browse-performance.mjs` implements all three modes.
@@ -71,6 +73,7 @@ make recommendation-performance RECOMMENDATION_PERF_ARGS="--baseline <git-ref>"
 | `make browse-production-performance` | Builds the frontend, starts a production `vite preview` on `127.0.0.1:3102` unless `PLAYWRIGHT_BASE_URL` names an existing preview, and runs `browse-production-performance.spec.ts` on desktop Chromium with one worker. |
 | `make playback-performance` | Builds the frontend and runs `TestPlaybackStartupPerformance` with `KIKOTO_PLAYBACK_PERF=1`. The test serves the built assets itself and starts `playback-production-performance.spec.ts`. |
 | `make recommendation-performance` | Runs the opt-in recommendation scale experiment over 50,000 and 100,000 synthetic works, 100 users, and 20 concurrent cold requests. |
+| `make source-index-performance` | Runs `TestSourceCatalogIndexThroughputCalibration` with `KIKOTO_SOURCE_INDEX_PERF=1` over the full option matrix against a loopback stub. |
 
 The browser and playback targets require installed frontend dependencies and a
 Playwright Chromium. Playback also requires `ffmpeg` and `ffprobe` on `PATH`.
@@ -151,6 +154,39 @@ directly only when a change touches those paths.
 predicate's `EXPLAIN QUERY PLAN` rows and the best of three count times for
 growing fixture sizes, so a change to the shared-identity predicate can be
 compared against the covering-index plan it is expected to use.
+
+### Full source index throughput
+
+`TestSourceCatalogIndexThroughputCalibration` (`internal/httpapi`) is gated by
+`KIKOTO_SOURCE_INDEX_PERF=1`. It drives the production catalog-index worker one
+batch at a time against a loopback stub that serves a synthetic anonymous tree:
+four partitions of work directories, each with one format subdirectory, where
+every work directory qualifies as one published catalog entry. The stub answers
+the directory protocol from memory, can delay each answer, and can refuse every
+nth request the way a rate-limited origin does. Nothing in the experiment
+contacts a real source.
+
+Each cell records what the operator would see on the same host: completed
+directories and documents per minute, pages requested, rate-limit refusals and
+origin backoffs, the connection pool's cumulative and longest wait, the pool's
+peak concurrent use, process CPU seconds, and the count of each protected log
+line the repository already emits for writers that contend
+(`database is locked`, recommendation catalog and metadata tag projection
+failures). Every cell asserts only its functional contract: an unrestricted cell
+must reach complete coverage with exactly one published entry per work
+directory, and a cell whose stub refuses requests must not claim completion.
+
+The default matrix covers concurrency 1, 2 and 4 at intervals of 100, 150, 300
+and 1000 ms with the largest accepted batch, the shipped eight-step batch at two
+batch sizes with and without the background worker's two-second claim latency,
+two cells where the recommendation catalog and metadata tag workers run
+concurrently, one cell with an origin that refuses requests, and one cell pinned
+to two usable processors. `KIKOTO_SOURCE_INDEX_PERF_CELLS` selects cells by name
+prefix, `KIKOTO_SOURCE_INDEX_PERF_DIRS` sets work directories per partition,
+`KIKOTO_SOURCE_INDEX_PERF_RTT_MS` sets the stub's round-trip time, and
+`KIKOTO_SOURCE_INDEX_PERF_BUDGET_MS` bounds one cell. The result is a
+recommendation for the operator, not a gate: no cell asserts a throughput or
+latency budget.
 
 ### Recommendation scaling
 

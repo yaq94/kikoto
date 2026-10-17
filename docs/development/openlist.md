@@ -76,6 +76,18 @@ success. Manual starts still require `sources:write`.
 | `maxPagesPerDirectory` | 10000 | 1–100000; reaching the bound leaves an explicit retryable range |
 | `minFreeBytes` | 2147483648 | 0–1099511627776 |
 
+The defaults are the safe starting point, not a throughput recommendation for
+every host. The pacing options bound how often a metadata request may start and
+how many run at once; they do not bound database work. On a two-processor host
+that also runs the library, the recommendation catalog and metadata tag
+projectors, the single SQLite writer and the connection pool are the limits that
+matter, and lowering the interval below the point where requests stop queueing
+adds contention rather than coverage. `make source-index-performance` measures
+this: it runs the production worker over a synthetic tree and reports completed
+directories per minute, connection-pool waits, refusals and process CPU for each
+option combination. Use it on the deployment host before changing the defaults,
+and prefer a quieter window for the first complete scan of a large source.
+
 The worker releases its executor after each batch. Each page commits validated
 names and its next cursor together. Child discovery and catalog publication
 write at most 100 objects per transaction. Low or unknown free space on the

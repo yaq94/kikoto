@@ -3,7 +3,7 @@
 .PHONY: backend-race-shard go-test-shard-test
 .PHONY: pr-description-check pr-description-test
 .PHONY: actionlint ci-metrics ci-metrics-test
-.PHONY: browse-performance browse-production-performance playback-performance recommendation-performance
+.PHONY: browse-performance browse-production-performance playback-performance recommendation-performance source-index-performance
 
 GO ?= go
 DOCKER_BUILD ?= $(DOCKER) build
@@ -11,6 +11,7 @@ DOCKER_BUILD_ARGS ?=
 E2E_ARGS ?=
 RACE_SHARD ?= 1/1
 RECOMMENDATION_PERF_ARGS ?=
+SOURCE_INDEX_PERF_ARGS ?=
 GOLANGCI_LINT_VERSION ?= v2.13.1
 GOLANGCI_LINT_TIMEOUT ?= 5m
 GOLANGCI_LINT_PACKAGE := github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
@@ -97,6 +98,9 @@ browse-performance:
 
 recommendation-performance:
 	$(NODE) scripts/run-recommendation-performance.mjs $(RECOMMENDATION_PERF_ARGS)
+
+source-index-performance:
+	$(NODE) scripts/run-source-index-performance.mjs $(SOURCE_INDEX_PERF_ARGS)
 
 browse-production-performance: frontend-build
 	$(NODE) scripts/run-browse-performance.mjs browser
