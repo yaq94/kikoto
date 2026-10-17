@@ -76,6 +76,9 @@ make source-index-performance SOURCE_INDEX_PERF_ARGS="--cells grid"
 | `make source-index-performance` | Runs `TestSourceCatalogIndexThroughputCalibration` with `KIKOTO_SOURCE_INDEX_PERF=1` over the full option matrix against a loopback stub. |
 | `make source-index-tail-performance` | Runs `TestSourceCatalogPublishTailPerformance` with `KIKOTO_SOURCE_INDEX_TAIL_PERF=1`. It copies a real indexed database, marks a five-row tail and a fully pending queue, then times the publication query. Set `KIKOTO_SOURCE_INDEX_TAIL_DB` to the database path and `KIKOTO_SOURCE_INDEX_TAIL_QUERY=legacy` to compare the pre-queue query. |
 
+The publication queue and its measurements are described in
+[Source catalog index performance](source-catalog-index-performance.md).
+
 The browser and playback targets require installed frontend dependencies and a
 Playwright Chromium. Playback also requires `ffmpeg` and `ffprobe` on `PATH`.
 
