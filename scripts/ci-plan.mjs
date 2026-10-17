@@ -42,6 +42,7 @@ export const scriptJobs = {
   "run-browse-performance.mjs": [],
   "run-recommendation-performance.mjs": [],
   "run-source-index-performance.mjs": [],
+  "run-source-index-tail-performance.mjs": [],
   "test-kikoto-helper.ps1": [],
 };
 

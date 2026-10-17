@@ -2073,6 +2073,10 @@ CREATE INDEX shared_identity_group ON shared_identity_member(identity_work_id,wo
 
 CREATE INDEX source_catalog_directory_pending ON source_catalog_directory(file_source_id,generation,status,path);
 
+CREATE INDEX source_catalog_directory_publish_root
+    ON source_catalog_directory(file_source_id,generation,catalog_root,revision,path)
+    WHERE status='complete';
+
 CREATE INDEX source_catalog_directory_root ON source_catalog_directory(file_source_id,generation,catalog_root,status);
 
 CREATE INDEX source_catalog_entry_content ON source_catalog_entry(file_source_id,content_fingerprint);

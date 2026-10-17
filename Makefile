@@ -3,7 +3,7 @@
 .PHONY: backend-race-shard go-test-shard-test
 .PHONY: pr-description-check pr-description-test
 .PHONY: actionlint ci-metrics ci-metrics-test
-.PHONY: browse-performance browse-production-performance playback-performance recommendation-performance source-index-performance
+.PHONY: browse-performance browse-production-performance playback-performance recommendation-performance source-index-performance source-index-tail-performance
 
 GO ?= go
 DOCKER_BUILD ?= $(DOCKER) build
@@ -101,6 +101,11 @@ recommendation-performance:
 
 source-index-performance:
 	$(NODE) scripts/run-source-index-performance.mjs $(SOURCE_INDEX_PERF_ARGS)
+
+# Reproduce the publisher's tail cost from a real indexed database. The copy
+# is made with SQLite's backup API and the source is opened read-only.
+source-index-tail-performance:
+	$(NODE) scripts/run-source-index-tail-performance.mjs $(SOURCE_INDEX_TAIL_PERF_ARGS)
 
 browse-production-performance: frontend-build
 	$(NODE) scripts/run-browse-performance.mjs browser

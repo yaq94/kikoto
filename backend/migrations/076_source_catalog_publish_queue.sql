@@ -12,6 +12,12 @@ CREATE INDEX source_catalog_observation_pending
     ON source_catalog_observation(file_source_id,directory_path,name)
     WHERE publish_pending=1;
 
+-- The publisher joins observations to directories by root. Without this
+-- covering index the join is an automatic index built per query.
+CREATE INDEX source_catalog_directory_publish_root
+    ON source_catalog_directory(file_source_id,generation,catalog_root,revision,path)
+    WHERE status='complete';
+
 CREATE TABLE source_catalog_audio_root (
     file_source_id INTEGER NOT NULL REFERENCES file_source(id) ON DELETE CASCADE,
     generation INTEGER NOT NULL,

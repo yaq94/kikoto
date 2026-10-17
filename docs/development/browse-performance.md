@@ -74,6 +74,7 @@ make source-index-performance SOURCE_INDEX_PERF_ARGS="--cells grid"
 | `make playback-performance` | Builds the frontend and runs `TestPlaybackStartupPerformance` with `KIKOTO_PLAYBACK_PERF=1`. The test serves the built assets itself and starts `playback-production-performance.spec.ts`. |
 | `make recommendation-performance` | Runs the opt-in recommendation scale experiment over 50,000 and 100,000 synthetic works, 100 users, and 20 concurrent cold requests. |
 | `make source-index-performance` | Runs `TestSourceCatalogIndexThroughputCalibration` with `KIKOTO_SOURCE_INDEX_PERF=1` over the full option matrix against a loopback stub. |
+| `make source-index-tail-performance` | Runs `TestSourceCatalogPublishTailPerformance` with `KIKOTO_SOURCE_INDEX_TAIL_PERF=1`. It copies a real indexed database, marks a five-row tail and a fully pending queue, then times the publication query. Set `KIKOTO_SOURCE_INDEX_TAIL_DB` to the database path and `KIKOTO_SOURCE_INDEX_TAIL_QUERY=legacy` to compare the pre-queue query. |
 
 The browser and playback targets require installed frontend dependencies and a
 Playwright Chromium. Playback also requires `ffmpeg` and `ffprobe` on `PATH`.
@@ -219,6 +220,19 @@ library size. Structural limits are 2,000 scored recall works, 500 stored prefix
 rows per context, eight contexts per generation, and 100 ordinary page scores.
 Report each measured counter's scope; a logical row counter or cumulative
 allocation is not an SQLite page-read count or peak resident memory.
+
+### Source index tail
+
+The tail experiment answers one question: after a full index has published
+almost everything, does the publisher still find the remaining rows without
+walking every completed directory? It seeds a five-row tail in a fresh migrated
+database by default, and it can instead copy a real database with
+`KIKOTO_SOURCE_INDEX_TAIL_DB=/path/to/kikoto.db`. The copy uses SQLite's backup
+API; the source file is opened read-only and is never modified. The experiment
+does not assert a latency budget outside the regression suite. It prints the
+legacy and queue query plans, row counts, wall time, process CPU, and the
+database pool counters, so the same figures can be compared against the base
+revision on the same host.
 
 ## Reading results
 
