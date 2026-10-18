@@ -76,11 +76,8 @@ func catalogWorkSplitModeNames(names []string) string {
 	}
 	// A creator folder can hold only a few unrelated recordings, so a minimum
 	// file count would fold them into one card. Split when several base titles
-	// remain, but keep a numbered track listing together: 01.mp3/02.mp3/03.mp3
-	// and 01 Opening/02 Ending are one work with ordered tracks, not three.
-	if catalogNumberedTrackRun(names) {
-		return catalogWorkSplitSingle
-	}
+	// remain; the numbered-run check above already kept 01.mp3/02.mp3/03.mp3
+	// and 01 Opening/02 Ending together.
 	distinct := map[string]bool{}
 	for _, name := range names {
 		distinct[catalogBaseTitle(name)] = true
