@@ -86,7 +86,14 @@ func buildImportPlan(ctx context.Context, tx *sql.Tx, user int64, b Backup) (imp
 		p.identities[w.key()] = identity
 		p.preview.MatchedWorks++
 		var exists bool
-		err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM user_work_state WHERE user_id=? AND work_id=?) OR EXISTS(SELECT 1 FROM user_work_tag WHERE user_id=? AND work_id=?) OR EXISTS(SELECT 1 FROM user_work_playback_cursor WHERE user_id=? AND work_id=?) OR EXISTS(SELECT 1 FROM user_listening_session WHERE user_id=? AND work_id=?) OR EXISTS(SELECT 1 FROM user_listening_import WHERE user_id=? AND work_id=?)`, user, id, user, id, user, id, user, id, user, id).Scan(&exists)
+		// A shared identity means several work ids expose one personal record.
+		// Any member's saved data is already this user's record, so an import
+		// with keep must not overwrite it through another member id.
+		err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM user_work_state s WHERE s.user_id=? AND (s.work_id=? OR EXISTS(SELECT 1 FROM shared_identity_member m WHERE m.work_id=s.work_id AND m.identity_work_id=?)))
+			OR EXISTS(SELECT 1 FROM user_work_tag s WHERE s.user_id=? AND (s.work_id=? OR EXISTS(SELECT 1 FROM shared_identity_member m WHERE m.work_id=s.work_id AND m.identity_work_id=?)))
+			OR EXISTS(SELECT 1 FROM user_work_playback_cursor s WHERE s.user_id=? AND (s.work_id=? OR EXISTS(SELECT 1 FROM shared_identity_member m WHERE m.work_id=s.work_id AND m.identity_work_id=?)))
+			OR EXISTS(SELECT 1 FROM user_listening_session s WHERE s.user_id=? AND (s.work_id=? OR EXISTS(SELECT 1 FROM shared_identity_member m WHERE m.work_id=s.work_id AND m.identity_work_id=?)))`,
+			user, id, identity, user, id, identity, user, id, identity, user, id, identity).Scan(&exists)
 		if err != nil {
 			return p, err
 		}

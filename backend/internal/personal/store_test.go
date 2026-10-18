@@ -231,6 +231,37 @@ func TestImportSkipsUnknownWorksAndAmbiguousMediaWithoutMaterializing(t *testing
 	}
 }
 
+// A shared identity exposes one personal record through several work ids. A
+// keep import that targets another member must still report the conflict and
+// leave the existing review untouched.
+func TestImportKeepConflictsWithASharedIdentityMemberRecord(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	execFixture(t, s.DB, `INSERT INTO shared_association(id,operation,status,version,fingerprint,snapshot_json) VALUES(91,'link','completed','v1','example','{}');
+		INSERT INTO shared_identity_member(work_id,identity_work_id,operation_id) VALUES(1,1,91),(2,1,91);
+		INSERT INTO user_work_state(user_id,work_id,rating,note) VALUES(2,1,5,'Existing shared note');`)
+	var identity int64
+	if err := s.DB.QueryRow(`SELECT identity_work_id FROM shared_work_identity WHERE work_id=2`).Scan(&identity); err != nil || identity != 1 {
+		t.Fatalf("fixture identity = %d, %v", identity, err)
+	}
+	b := Backup{Format: "kikoto-user-data", Version: 1, Works: []BackupWork{
+		{PrimaryCode: testfixture.WorkCode(testfixture.PrefixRJ, 1), Rating: func() *int { v := 2; return &v }(), Note: "Incoming note"},
+	}}
+	preview, err := s.PreviewImport(ctx, 2, b)
+	if err != nil || preview.Conflicts != 1 {
+		t.Fatalf("preview = %+v, %v; want the shared identity conflict", preview, err)
+	}
+	result, err := s.Import(ctx, 2, b, false)
+	if err != nil || result.SkippedWorks != 1 {
+		t.Fatalf("keep import = %+v, %v; want the existing review kept", result, err)
+	}
+	var rating int
+	var note string
+	if err = s.DB.QueryRow(`SELECT rating,note FROM user_work_state WHERE user_id=2 AND work_id=1`).Scan(&rating, &note); err != nil || rating != 5 || note != "Existing shared note" {
+		t.Fatalf("existing shared review = %d/%q, %v", rating, note, err)
+	}
+}
+
 func TestKikoeruStatusesAndStrictImportValidation(t *testing.T) {
 	// Explicit zero-prefixed literals exercise the catalog's supported widths.
 	for _, code := range []string{"RJ00000", "RJ000000", "RJ0000000", "RJ00000000"} {
