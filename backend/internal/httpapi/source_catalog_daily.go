@@ -34,10 +34,14 @@ func (s *Server) dispatchDueCatalogUpdates(ctx context.Context) error {
 		JOIN workflow_run run ON run.id=scan.workflow_run_id
 		LEFT JOIN app_setting setting ON setting.key=? || scan.file_source_id
 		WHERE source.enabled=1 AND source.source_type=? AND
-			-- A failed or cancelled run also owns a finished_at. Without that
-			-- fallback it has no due date and never retries, while its
-			-- incomplete range keeps matching paused.
-			COALESCE(CAST(setting.value_json AS INTEGER),CASE WHEN run.status IN ('succeeded','partial','failed','cancelled') AND scan.pause_reason='' THEN unixepoch(run.finished_at)+86400 END)<=?
+			-- A failed or cancelled run also owns a finished_at and a pause
+			-- reason. It must still retry: its incomplete range otherwise
+			-- keeps matching paused forever. A low-disk pause is different:
+			-- it is not finished coverage and waits for the operator.
+			COALESCE(CAST(setting.value_json AS INTEGER),CASE
+				WHEN scan.pause_reason='' AND run.status IN ('succeeded','partial') THEN unixepoch(run.finished_at)+86400
+				WHEN run.status IN ('failed','cancelled') THEN unixepoch(run.finished_at)+86400
+			END)<=?
 		ORDER BY scan.file_source_id LIMIT 16`, catalogDailySettingPrefix, sourceTypeOpenList, now.Unix())
 	if err != nil {
 		return err
@@ -77,7 +81,10 @@ func (s *Server) dispatchCatalogUpdate(ctx context.Context, sourceID int64, now 
 	var saved string
 	var due sql.NullInt64
 	err = tx.QueryRowContext(ctx, `SELECT scan.options_json,
-			COALESCE(CAST(setting.value_json AS INTEGER),CASE WHEN run.status IN ('succeeded','partial','failed','cancelled') AND scan.pause_reason='' THEN unixepoch(run.finished_at)+86400 END)
+			COALESCE(CAST(setting.value_json AS INTEGER),CASE
+				WHEN scan.pause_reason='' AND run.status IN ('succeeded','partial') THEN unixepoch(run.finished_at)+86400
+				WHEN run.status IN ('failed','cancelled') THEN unixepoch(run.finished_at)+86400
+			END)
 		FROM source_catalog_scan scan JOIN workflow_run run ON run.id=scan.workflow_run_id
 		JOIN file_source source ON source.id=scan.file_source_id
 		LEFT JOIN app_setting setting ON setting.key=? || scan.file_source_id

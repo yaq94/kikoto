@@ -302,10 +302,10 @@ func TestSourceCatalogDailyDoesNotRetryIncompleteFirstCoverage(t *testing.T) {
 	}
 }
 
-// A failed run also has a finished_at. It must get a due date, otherwise the
-// failed directories are never retried and matching stays paused for that
-// source forever. The job-level failure is set directly: a per-directory
-// failure leaves the run partial and already had a due date.
+// A failed run also has a finished_at and a pause reason. It must get a due
+// date, otherwise the failed directories are never retried and matching stays
+// paused for that source forever. A low-disk pause must still wait for the
+// operator, so this fixture marks the pause as a source failure.
 func TestSourceCatalogDailyRetriesAFailedRun(t *testing.T) {
 	var now atomic.Int64
 	now.Store(time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC).Unix())
@@ -315,6 +315,9 @@ func TestSourceCatalogDailyRetriesAFailedRun(t *testing.T) {
 	p := f.drain(t)
 	runID := p["runId"]
 	if _, err := f.server.db.Exec(`UPDATE workflow_run SET status='failed',finished_at=CURRENT_TIMESTAMP WHERE id=?`, runID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.server.db.Exec(`UPDATE source_catalog_scan SET pause_reason='source_unavailable' WHERE file_source_id=1`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := f.server.db.Exec(`DELETE FROM app_setting WHERE key=?`, catalogDailySettingPrefix+"1"); err != nil {
@@ -334,5 +337,37 @@ func TestSourceCatalogDailyRetriesAFailedRun(t *testing.T) {
 	}
 	if nextRun == int64(runID.(float64)) && jobStatus != "queued" {
 		t.Fatal("failed run was not scheduled for a retry")
+	}
+}
+
+// A low-disk pause is not a source failure. The operator has to free space;
+// retrying it every day would keep creating paused generations and would hide
+// the real cause.
+func TestSourceCatalogDailyDoesNotRetryALowDiskPause(t *testing.T) {
+	var now atomic.Int64
+	now.Store(time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC).Unix())
+	f := newCatalogIndexFixture(t, emptyCatalogUpstream(t))
+	f.server.catalogNow = func() time.Time { return time.Unix(now.Load(), 0).UTC() }
+	f.request(t, http.MethodPost, "/catalog/index", `{}`, 202)
+	runID := f.drain(t)["runId"]
+	if _, err := f.server.db.Exec(`UPDATE workflow_run SET status='partial',finished_at=CURRENT_TIMESTAMP WHERE id=?`, runID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.server.db.Exec(`UPDATE source_catalog_scan SET pause_reason='low_disk_space' WHERE file_source_id=1`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.server.db.Exec(`DELETE FROM app_setting WHERE key=?`, catalogDailySettingPrefix+"1"); err != nil {
+		t.Fatal(err)
+	}
+	now.Add(int64(48 * time.Hour / time.Second))
+	if err := f.server.dispatchDueCatalogUpdates(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	var current int64
+	if err := f.server.db.QueryRow(`SELECT workflow_run_id FROM source_catalog_scan WHERE file_source_id=1`).Scan(&current); err != nil {
+		t.Fatal(err)
+	}
+	if current != int64(runID.(float64)) {
+		t.Fatal("low-disk pause was retried without operator action")
 	}
 }
