@@ -20,12 +20,16 @@ import (
 // source_catalog_index_calibration_test.go; this file owns the correctness
 // contract and a wall-clock budget that a regression cannot hide behind.
 const (
-	contractPartitions        = 4
-	contractWorksPerPartition = 124
+	contractPartitions        = 3
+	contractWorksPerPartition = 166
 	contractPageSize          = 500
 	contractPagesPerBatch     = 32
 	contractConcurrency       = 4
 	contractIntervalMS        = 100
+	// contractDirectories is the source size the suite is calibrated to. It
+	// follows from the uniform tree: one root, the partitions, one directory
+	// per work and one format directory per work.
+	contractDirectories = 1 + contractPartitions + 2*contractPartitions*contractWorksPerPartition
 	// contractBudget is the wall-clock ceiling for the correctness contract.
 	// The suite disables upstream pacing because that policy has its own test;
 	// keeping the pacing delay here would make a 1,000-directory tree cost at
@@ -40,16 +44,14 @@ type contractTree struct {
 	files       int
 }
 
-// buildContractTree builds four partitions, each holding work directories with
+// buildContractTree builds the partitions, each holding work directories with
 // one format subdirectory. Every work directory publishes exactly one entry,
-// and the format subdirectory attaches to it. Three works carry a second format
-// copy so the fixed shape is exactly 1,000 directories: one root, four
-// partitions, 496 work directories and 499 format directories.
+// and the format subdirectory attaches to it. The shape is uniform, so the
+// expected counts are derived from the same constants the tree is built from.
 func buildContractTree() contractTree {
 	dir := func(name string) map[string]any { return map[string]any{"name": name, "is_dir": true} }
 	audio := func(name string) map[string]any { return map[string]any{"name": name, "size": 1024} }
 	tree := map[string][]map[string]any{}
-	files := 0
 	directories := 1
 	root := []map[string]any{}
 	for partition := range contractPartitions {
@@ -66,15 +68,6 @@ func buildContractTree() contractTree {
 			tree[workPath] = []map[string]any{audio("01.mp3"), audio("02.flac"), dir("MP3")}
 			tree[workPath+"/MP3"] = []map[string]any{audio("01.mp3"), audio("02.mp3")}
 			directories++
-			files += 5
-			if partition < contractPartitions-1 && work == 0 {
-				// Second format copy: keeps the directory total at 1,000
-				// without changing how many works the tree publishes.
-				tree[workPath] = append(tree[workPath], dir("FLAC"))
-				tree[workPath+"/FLAC"] = []map[string]any{audio("01.flac")}
-				directories++
-				files += 2
-			}
 		}
 		tree[partitionPath] = entries
 	}
@@ -83,7 +76,8 @@ func buildContractTree() contractTree {
 		tree:        tree,
 		directories: directories,
 		entries:     contractPartitions * contractWorksPerPartition,
-		files:       files,
+		// Two direct audio, the format folder and its two audio per entry.
+		files: contractPartitions * contractWorksPerPartition * 5,
 	}
 }
 
@@ -156,6 +150,9 @@ func (f catalogIndexFixture) drainIndex(t *testing.T) map[string]any {
 
 func TestSourceCatalogIndexContract(t *testing.T) {
 	built := buildContractTree()
+	if built.directories != contractDirectories {
+		t.Fatalf("contract tree has %d directories, want %d", built.directories, contractDirectories)
+	}
 	fixture, closeStub := newContractIndexFixture(t, built.tree)
 	defer closeStub()
 
