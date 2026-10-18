@@ -411,7 +411,11 @@ func (s *Server) publishCatalogBatch(ctx context.Context, job workflowJobRecord,
 	SELECT catalog_root FROM source_catalog_audio_root WHERE file_source_id=? AND generation=?
 )
 	SELECT d.path,d.catalog_root,o.name,o.kind,o.size_bytes,o.content_hash,
-		CASE WHEN d.path=d.catalog_root THEN COALESCE(rd.work_split,'') ELSE '' END
+		-- The split decision belongs to the catalog root, so every row below
+		-- it must see the plan. A format child that read an empty mode used to
+		-- publish its own folder row into the creator card, which then could
+		-- never be retired.
+		COALESCE(rd.work_split,'')
 FROM source_catalog_observation o
 JOIN source_catalog_directory d ON d.file_source_id=o.file_source_id AND d.path=o.directory_path AND d.revision=o.revision
 LEFT JOIN source_catalog_directory rd ON rd.file_source_id=d.file_source_id AND rd.path=d.catalog_root AND rd.generation=d.generation
@@ -458,7 +462,11 @@ ORDER BY o.directory_path,o.name LIMIT 100`, sourceID, job.RunID, sourceID, job.
 	firstSplit := map[string]int64{}
 	for _, p := range items {
 		root, sourceRoot, title := p.root, "", path.Base(p.root)
-		if targets, ok := splitPlans[p.root]; ok && p.dir == p.root && p.kind == "audio" && !strings.Contains(p.name, "/") {
+		if targets, ok := splitPlans[p.root]; ok && p.kind == "audio" {
+			// Direct audio and its format copy carry the same work prefix, so
+			// both belong to the split card. Keying by name lets an MP3/FLAC
+			// folder below the creator folder attach its copy to that work
+			// instead of recreating the container card the split retired.
 			if target, ok := targets[p.name]; ok {
 				root, sourceRoot, title = target.Root, target.SourceRoot, target.Title
 			}
@@ -576,7 +584,15 @@ func (s *Server) sourceCatalogProgress(ctx context.Context, sourceID int64, page
 	if err != nil {
 		return p, err
 	}
-	err = s.db.QueryRowContext(ctx, `SELECT count(*),count(DISTINCT CASE WHEN o.published_generation=? THEN d.catalog_root END) FROM source_catalog_directory d JOIN source_catalog_observation o ON o.file_source_id=d.file_source_id AND o.directory_path=d.path AND o.revision=d.revision WHERE d.file_source_id=? AND d.generation=?`, p.RunID, sourceID, p.RunID).Scan(&p.Observed, &p.Indexed)
+	// Indexed counts published cards, not distinct catalog roots. A creator
+	// folder split into many works shares one root, so counting roots would
+	// report one entry for a folder that published hundreds.
+	err = s.db.QueryRowContext(ctx, `SELECT
+		(SELECT count(*) FROM source_catalog_directory d JOIN source_catalog_observation o
+			ON o.file_source_id=d.file_source_id AND o.directory_path=d.path AND o.revision=d.revision
+			WHERE d.file_source_id=? AND d.generation=?),
+		(SELECT count(*) FROM source_catalog_entry WHERE file_source_id=? AND last_seen_generation=?)`,
+		sourceID, p.RunID, sourceID, p.RunID).Scan(&p.Observed, &p.Indexed)
 	if err != nil {
 		return p, err
 	}

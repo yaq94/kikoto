@@ -9,6 +9,12 @@ import (
 	"github.com/yexca/kikoto/backend/internal/openlist"
 )
 
+// catalogIndexNoPacingKey lets the contract suite exercise the real worker,
+// HTTP client and database without waiting on the upstream pacing delay. The
+// delay is a source-protection policy, not the subject of that suite; the
+// configured-rate tests own it.
+type catalogIndexNoPacingKey struct{}
+
 func (s *Server) executeSourceCatalogIndexJob(ctx context.Context, job workflowJobRecord) error {
 	var input catalogIndexInput
 	if err := json.Unmarshal([]byte(job.PayloadJSON), &input); err != nil {
@@ -29,6 +35,9 @@ func (s *Server) executeSourceCatalogIndexJob(ctx context.Context, job workflowJ
 	httpClient := s.sourceClient(source, 30*time.Second, sourceRequestCatalogIndex)
 	if transport, ok := httpClient.Transport.(*sourceGateTransport); ok {
 		transport.minimumInterval = time.Duration(options.IntervalMS) * time.Millisecond
+		if ctx.Value(catalogIndexNoPacingKey{}) != nil {
+			transport.minimumInterval = 0
+		}
 		transport.concurrency = options.Concurrency
 	}
 	client := configuredOpenListClient(source, httpClient).WithResponseLimit(options.MaxResponseBytes)
