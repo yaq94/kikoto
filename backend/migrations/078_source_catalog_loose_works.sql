@@ -7,5 +7,6 @@ ALTER TABLE source_catalog_entry ADD COLUMN source_root TEXT NOT NULL DEFAULT ''
 
 -- The split decision is taken once per directory, when its listing completes.
 -- single keeps one card, prefix groups files that share a work code such as
--- N006, and file gives each loose file its own work.
+-- N006, and file groups the loose files by base title, so 亦弟亦妹1..6 stays one
+-- work while unrelated titles become separate cards.
 ALTER TABLE source_catalog_directory ADD COLUMN work_split TEXT NOT NULL DEFAULT '';
