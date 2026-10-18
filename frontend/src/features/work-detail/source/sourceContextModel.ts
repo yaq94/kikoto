@@ -1,6 +1,13 @@
 import { remoteSourceVisibilityKey, type SourceVisibilityKey } from "@/components/source-visibility/sourceVisibility";
 import i18n from "@/i18n";
-import type { CatalogDirectory, LibrarySource, MediaItem, RemoteWorkDetail, SourceAvailabilitySource, WorkDetail } from "@/lib/api";
+import type {
+  CatalogDirectory,
+  LibrarySource,
+  MediaItem,
+  RemoteWorkDetail,
+  SourceAvailabilitySource,
+  WorkDetail,
+} from "@/lib/api";
 
 export type DetailSourceIntent = "local" | "tracked" | `remote-source:${number}`;
 
@@ -278,10 +285,7 @@ export function currentRemoteSourceWorkCode(
  * as catalog:0 would collapse every such source into one tab that opens the
  * local directory.
  */
-export function buildCatalogTabs(
-  directories: CatalogDirectory[],
-  removedSourceLabel: string,
-): SourceTabInfo[] {
+export function buildCatalogTabs(directories: CatalogDirectory[], removedSourceLabel: string): SourceTabInfo[] {
   return directories
     .filter((entry) => entry.directoryType === "catalog")
     .map((entry) => ({
