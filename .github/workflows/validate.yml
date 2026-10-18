@@ -78,6 +78,14 @@ jobs:
             target: ci-backend-coverage
             cache: coverage
             save-cache: true
+          # The 1,000-directory index contract owns a 60 s wall-clock ceiling.
+          # It runs outside the race build and outside the full-suite run, so
+          # the ceiling measures the writer instead of instrumentation or a
+          # shared runner's load.
+          - check: source-index contract
+            target: source-index-contract
+            cache: contract
+            save-cache: true
           - check: race 1/4
             target: RACE_SHARD=1/4 backend-race-shard
             cache: race
