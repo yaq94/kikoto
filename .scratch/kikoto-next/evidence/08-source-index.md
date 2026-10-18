@@ -162,3 +162,68 @@ complete、27 未确认空、6 failed、0 pending；14,890 次请求、3,897 个
 包含真实 HTTP + 迁移 SQLite 的行为测试、`force` 新 generation 与逐条清理。
 修复后的生产 runId 42 正在运行，其终态与覆盖数字以收尾后的记录为准；在
 该轮结束前，本票维持 `verified-local`，不把 run 41 的 `partial` 当作完整覆盖。
+
+## 创作者目录拆分（schema 78，2026-10-18）
+
+`078_source_catalog_loose_works.sql` 增加两列，不改已有行语义：
+
+- `source_catalog_entry.source_root`：非空时是真实来源目录，`root_path` 只是卡片身份。
+- `source_catalog_directory.work_split`：一次性记录的拆分决定，取值 `single` / `prefix` / `file`。
+
+判定只看目录的**直接音频**（相对路径不含 `/`），顺序固定：
+
+| 条件 | 结果 |
+| --- | --- |
+| 无直接音频 | `single` |
+| 全部 stem 为纯数字（`001.mp3`..`225.mp3`） | `single`，一部有声书 |
+| 至少两个作品前缀且其中一个出现两次以上 | `prefix`，每个前缀一张卡 |
+| 直接音频 ≥12 且 `distinct(baseTitle)/count > 0.5` | `file`，按 base title 分组 |
+| 其余 | `single` |
+
+作品前缀为 `(?i)^(?:RJ|BJ|VJ|CC)[0-9]{5,8}(?:[^0-9A-Za-z]|$)|^[NSAB][0-9]{1,6}(?:[^0-9A-Za-z]|$)`。
+`file` 模式不是一文件一卡：`亦弟亦妹1..6`、`Ending1..3` 这类同 base title 的分集留在同一张卡，
+组内按字典序取第一个文件作标题。
+
+保护条件：已登记作品、已是系列成员、被其他条目 relocated 指向的卡强制 `single`；
+带自身作品码的目录强制 `single`；`/` 根不判定；拆分卡不参与系列归组。
+
+父卡退役：只有在该根下全部 observation 已发布、全部子目录 complete，且父卡无 work / series /
+relocated 依赖时，才写 `file_source_id=NULL, relocated_to_id=第一张拆分子卡` 并删除旧文件行。
+旧 id 仍可解析，个人记录不会因退役丢失。
+
+### 真实数据校准
+
+用生产库（只读）中 run 42 已完成的观察，按同一规则复算：
+
+| 目录 | 直接音频 | 判定 | 卡片数 |
+| --- | ---: | --- | ---: |
+| `/asmr/中文音声/有声小说/金麟岂是池中物--叶倩彤` | 225 | `single` | 1 |
+| `/asmr/中文音声/小野猫/小野猫-N` | 429 | `prefix` | 344 |
+| `/asmr/中文音声/南征` | 823 | `file` | 744（`亦弟亦妹` 6 轨一张、`抖s医生` 5 轨一张） |
+| `/asmr/中文音声/岁岁` | 666 | `file` | 632 |
+| `/asmr/英语音声/Tags/Harem` | 267 | `file` | 254（`Roommate Roulette - Ending1..3` 一张） |
+| `/asmr/中文音声/杏吧骚麦/骚麦` | 225 | `file` | 225 |
+| `/asmr/中文音声/骚麦俱乐部` | 6 | `single` | 1 |
+
+`岁岁/CV岁岁林三岁林三小岁z 279部14G` 是父目录音频的整包副本：280 个文件里 271 个与父目录
+同大小（±0.1%），文件名加 `林三歲 ` 前缀或转成繁体。按 `file` 规则会重复发布 280 张卡，
+因此在判定前增加副本检测：子目录 ≥20 个音频且 ≥90% 与父目录音频大小差在 0.1% 以内时，
+强制 `single`。测试 `TestSourceCatalogLooseWorksPackageCopyStaysOneCard` 覆盖该路径；
+`岁岁` 下 3–7 个文件的专栏子目录低于 20 条门槛，保持各自卡片。
+
+### 验证
+
+| 命令 | 结果 |
+| --- | --- |
+| `go build ./...` | 退出 0 |
+| `go test ./internal/httpapi -run '^TestSourceCatalogLooseWorks' -count=1 -timeout=15m` | 退出 0，7 项（含副本检测） |
+| `go test ./internal/httpapi ./internal/storage -count=1 -timeout=25m` | 退出 0；httpapi 187.841 s，storage 16.409 s |
+
+提交：`41549499`（拆分与浏览器用例拆分）、`f295f8af`（副本检测）。
+
+### 已知边界
+
+- `prefix` 规则要求同目录重复出现，`A1/A2` 这类各出现一次的两部分不会被当成两部作品。
+- 副本检测只比较文件大小，没有内容哈希；同大小不同内容会被当成副本，目前生产 `content_hash` 全为空。
+- 有限扫描（`/catalog/scan`）与全量索引共用判定函数，但不写 `work_split`，重复扫描仍幂等。
+- 父卡退役后原评分备注解析到第一张拆分子卡，其余子卡不继承；拆分归属规则见 ADR-0004。
