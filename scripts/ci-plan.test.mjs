@@ -83,6 +83,7 @@ test("dependency manifests and image definitions select only the jobs that consu
 
 test("a validation script selects the jobs that run it, and every script has a decision", () => {
   assert.deepEqual(selected("scripts/go-test-shard.mjs"), ["backend"]);
+  assert.deepEqual(selected("scripts/run-e2e-fixtures.mjs"), ["e2e"]);
   assert.deepEqual(selected("scripts/golangci-lint.yml"), ["backend"]);
   assert.deepEqual(selected("scripts/production-smoke.mjs"), ["production"]);
   assert.deepEqual(selected("scripts/smoke.mjs"), ["dev_smoke"]);

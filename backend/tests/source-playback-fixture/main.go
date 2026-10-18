@@ -192,7 +192,10 @@ func run() error {
 			return err
 		}
 	}
-	origin := os.Getenv("PLAYWRIGHT_BASE_URL")
+	origin := strings.TrimSpace(os.Getenv("SOURCE_PLAYBACK_FIXTURE_ORIGIN"))
+	if origin == "" {
+		origin = os.Getenv("PLAYWRIGHT_BASE_URL")
+	}
 	if origin == "" {
 		origin = "http://127.0.0.1:3115"
 	}
@@ -248,7 +251,11 @@ func run() error {
 		mu.Unlock()
 		w.WriteHeader(204)
 	})
-	listener, err := net.Listen("tcp", "127.0.0.1:17615")
+	addr := strings.TrimSpace(os.Getenv("SOURCE_PLAYBACK_FIXTURE_ADDR"))
+	if addr == "" {
+		addr = "127.0.0.1:17615"
+	}
+	listener, err := net.Listen("tcp", addr)
 	if err != nil {
 		return err
 	}

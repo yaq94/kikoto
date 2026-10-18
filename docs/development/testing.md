@@ -208,9 +208,13 @@ Browser fixtures belong to each test's page and context. Tests run with
 `fullyParallel` enabled; do not introduce shared mutable state, a shared page,
 or dependencies on another test's execution order. The player/library suite is
 split by workflow, with common fixtures in `tests/e2e/fixtures/player-library.ts`.
-CI runs four independent shards with separate failure artifacts. Run one shard
-locally with `make E2E_ARGS="--shard=1/4" frontend-e2e`; `make frontend-e2e`
-still runs every test.
+CI runs four independent shards of the mocked-API suite plus one job per
+fixture group, with separate failure artifacts. Run one shard locally with
+`make E2E_ARGS="--shard=1/4" frontend-e2e`; `make frontend-e2e` still runs
+every test. The live-backend suites run through `make frontend-e2e-fixtures`,
+which gives each spec file its own fixture process, database, Vite server and
+port pair. Use `E2E_FIXTURE_ARGS="--group=series"` (or `--list`) to select a
+group locally.
 
 Queue parsing, legacy-state migration, and timer normalization are unit tests
 of `playerPersistence`; Playwright retains real owner/server isolation and

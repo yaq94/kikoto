@@ -1,4 +1,4 @@
-.PHONY: backend-format backend-lint backend-lint-full backend-verify backend-vuln backend-test backend-test-container backend-coverage backend-vet backend-race backend-build backend-run frontend-install frontend-dev frontend-build frontend-coverage frontend-format frontend-lint frontend-docs frontend-i18n frontend-audit frontend-audit-signatures frontend-playwright-install frontend-e2e-smoke frontend-e2e android-sync android-test android-build ios-sync ios-build docker-build docker-up docker-down docker-status docker-logs smoke smoke-api smoke-up smoke-down smoke-status smoke-logs sensitive-check sensitive-check-test privacy-check ci-style ci-backend ci-frontend ci-local ci
+.PHONY: backend-format backend-lint backend-lint-full backend-verify backend-vuln backend-test backend-test-container backend-coverage backend-vet backend-race backend-build backend-run frontend-install frontend-dev frontend-build frontend-coverage frontend-format frontend-lint frontend-docs frontend-i18n frontend-audit frontend-audit-signatures frontend-playwright-install frontend-e2e-smoke frontend-e2e frontend-e2e-fixtures android-sync android-test android-build ios-sync ios-build docker-build docker-up docker-down docker-status docker-logs smoke smoke-api smoke-up smoke-down smoke-status smoke-logs sensitive-check sensitive-check-test privacy-check ci-style ci-backend ci-frontend ci-local ci
 .PHONY: ci-plan ci-plan-test ci-results ci-backend-static ci-backend-coverage ci-backend-race ci-production production-smoke production-e2e
 .PHONY: backend-race-shard go-test-shard-test
 .PHONY: pr-description-check pr-description-test
@@ -9,6 +9,7 @@ GO ?= go
 DOCKER_BUILD ?= $(DOCKER) build
 DOCKER_BUILD_ARGS ?=
 E2E_ARGS ?=
+E2E_FIXTURE_ARGS ?=
 RACE_SHARD ?= 1/1
 RECOMMENDATION_PERF_ARGS ?=
 SOURCE_INDEX_PERF_ARGS ?=
@@ -179,6 +180,11 @@ frontend-e2e-smoke: frontend-playwright-install
 
 frontend-e2e: frontend-playwright-install
 	cd frontend && $(NPM) run test:e2e -- $(E2E_ARGS)
+
+# Fixture-backed suites need a Go toolchain and their own Vite instance per
+# spec file; E2E_FIXTURE_ARGS forwards --group=, --shard= and --log-dir=.
+frontend-e2e-fixtures: frontend-playwright-install
+	$(NODE) scripts/run-e2e-fixtures.mjs $(E2E_FIXTURE_ARGS)
 
 android-sync: frontend-build
 	cd frontend && $(NPX) cap sync android

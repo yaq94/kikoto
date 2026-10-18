@@ -39,11 +39,15 @@ test("administrator configures, cancels and resumes the full source index throug
   expect(completed).toMatchObject({
     runId: cancelled.runId,
     status: "complete",
-    indexedEntries: 3,
+    // /Translation Example and its audio-bearing child directory are separate
+    // uncertain cards; the fixture's direct intro.wav is another one.
+    indexedEntries: 4,
     failedDirectories: 0,
     restrictedDirectories: 0,
   });
   await expect(region).toContainText("/Example Work");
   await expect(page.getByRole("heading", { name: "Example Work", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Translation Example", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Example folder", exact: true })).toBeVisible();
   expect(await (await page.request.get(`${backend}/api/works`)).json()).toMatchObject({ total: 0 });
 });
