@@ -194,9 +194,12 @@ func (s *Server) persistCatalogEpisodeRoots(ctx context.Context, source remoteSo
 	if existing != 0 {
 		// The root had no work, series membership or personal record above, so
 		// retiring it moves no evaluation object. Its files are now owned by
-		// the episode entries; keeping the row would keep a stale card that
-		// still lists every episode as one work.
-		if _, err = tx.ExecContext(ctx, `DELETE FROM source_catalog_entry WHERE id=?`, existing); err != nil {
+		// the episode entries. Keep the id as an alias of the first episode so
+		// an older /catalog/<id> link still resolves instead of returning 404.
+		if _, err = tx.ExecContext(ctx, `UPDATE source_catalog_entry SET file_source_id=NULL,relocated_to_id=?,updated_at=CURRENT_TIMESTAMP WHERE id=?`, first, existing); err != nil {
+			return 0, true, err
+		}
+		if _, err = tx.ExecContext(ctx, `DELETE FROM source_catalog_file WHERE catalog_entry_id=?`, existing); err != nil {
 			return 0, true, err
 		}
 	}
