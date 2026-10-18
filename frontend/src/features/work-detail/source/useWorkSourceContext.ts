@@ -71,19 +71,24 @@ export function useWorkSourceContext({
   const sourceTabs = useMemo(
     () => [
       ...buildSourceTabs(work?.mediaItems ?? [], remoteSources, work?.sourcePresence ?? [], selectedTrackedOption),
-      ...catalogDirectories.map((entry) => ({
-        key: `catalog:${entry.catalogEntryId}`,
-        label:
-          catalogDirectories.filter((item) => item.sourceId === entry.sourceId).length > 1
-            ? `${entry.sourceName} · ${entry.title}`
-            : entry.sourceName || i18n.t("sourceLifecycle.removedSource"),
-        sourceName: entry.sourceName || i18n.t("sourceLifecycle.removedSource"),
-        kind: "catalog" as const,
-        fileSourceId: null,
-        status: entry.status === "available" ? ("available" as const) : ("unavailable" as const),
-        statusLabel: i18n.t(`sourceLifecycle.${entry.status}`),
-        autoVisible: entry.status !== "disabled",
-      })),
+      // A remote row is a Kikoeru presence without a catalog entry. It already
+      // has a remote-source tab, and catalog:0 would collapse every such source
+      // into one tab that opens the local directory.
+      ...catalogDirectories
+        .filter((entry) => entry.directoryType === "catalog")
+        .map((entry) => ({
+          key: `catalog:${entry.catalogEntryId}`,
+          label:
+            catalogDirectories.filter((item) => item.sourceId === entry.sourceId).length > 1
+              ? `${entry.sourceName} · ${entry.title}`
+              : entry.sourceName || i18n.t("sourceLifecycle.removedSource"),
+          sourceName: entry.sourceName || i18n.t("sourceLifecycle.removedSource"),
+          kind: "catalog" as const,
+          fileSourceId: null,
+          status: entry.status === "available" ? ("available" as const) : ("unavailable" as const),
+          statusLabel: i18n.t(`sourceLifecycle.${entry.status}`),
+          autoVisible: entry.status !== "disabled",
+        })),
     ],
     [remoteSources, selectedTrackedOption, work?.mediaItems, work?.sourcePresence, catalogDirectories],
   );
@@ -347,7 +352,9 @@ export function useWorkSourceContext({
   }, [applyAvailability, availabilityCode, canCheckSources, seedCode, sources, supportsLookup]);
 
   useEffect(() => {
-    const preferredCatalog = catalogDirectories.find((entry) => entry.status === "available") ?? catalogDirectories[0];
+    const preferredCatalog =
+      catalogDirectories.find((entry) => entry.directoryType === "catalog" && entry.status === "available") ??
+      catalogDirectories.find((entry) => entry.directoryType === "catalog");
     if (
       work &&
       !work.primaryCode &&

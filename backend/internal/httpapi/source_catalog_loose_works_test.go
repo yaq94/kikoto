@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"path"
 	"slices"
 	"strconv"
 	"strings"
@@ -41,7 +42,7 @@ func newLooseWorkFixture(t *testing.T, tree map[string][]map[string]any) *looseW
 			f.gets = append(f.gets, input.Path)
 			f.mu.Unlock()
 			_ = json.NewEncoder(w).Encode(map[string]any{"code": 200, "data": map[string]any{
-				"name": pathBase(input.Path), "size": 4, "raw_url": "http://" + r.Host + "/audio",
+				"name": path.Base(input.Path), "size": 4, "raw_url": "http://" + r.Host + "/audio",
 			}})
 		case "/audio":
 			w.Header().Set("Content-Type", "audio/mpeg")
@@ -63,13 +64,6 @@ func newLooseWorkFixture(t *testing.T, tree map[string][]map[string]any) *looseW
 	}))
 	f.catalogIndexFixture = fixture
 	return f
-}
-
-func pathBase(value string) string {
-	if index := strings.LastIndex(value, "/"); index >= 0 {
-		return value[index+1:]
-	}
-	return value
 }
 
 func looseAudio(name string) map[string]any {
@@ -105,13 +99,13 @@ func (f *looseWorkFixture) tracks(t *testing.T, card map[string]any) []any {
 // A pure numeric run is one audiobook with many episodes, not many works.
 func TestSourceCatalogLooseWorksNumericRunStaysOneCard(t *testing.T) {
 	tree := map[string][]map[string]any{
-		"/": {looseDir("金麟岂是池中物--叶倩彤")},
+		"/": {looseDir("Example Audiobook")},
 	}
 	items := []map[string]any{}
 	for i := 1; i <= 12; i++ {
 		items = append(items, looseAudio(fmt.Sprintf("%03d.mp3", i)))
 	}
-	tree["/金麟岂是池中物--叶倩彤"] = items
+	tree["/Example Audiobook"] = items
 	f := newLooseWorkFixture(t, tree)
 	f.request(t, http.MethodPost, "/catalog/index", `{"intervalMs":100}`, 202)
 	if p := f.drain(t); p["status"] != "complete" {
@@ -121,7 +115,7 @@ func TestSourceCatalogLooseWorksNumericRunStaysOneCard(t *testing.T) {
 	if len(cards) != 1 {
 		t.Fatalf("cards=%v, want one audiobook card", cards)
 	}
-	card := cards["金麟岂是池中物--叶倩彤"]
+	card := cards["Example Audiobook"]
 	if card == nil {
 		t.Fatalf("cards=%v, want the directory title", cards)
 	}
@@ -224,15 +218,16 @@ func TestSourceCatalogLooseWorksFileCardsAndPlayback(t *testing.T) {
 }
 
 // A creator folder can mix independent works with multi-episode works whose
-// episodes have different titles. Grouping by base title keeps 亦弟亦妹1..6 and
-// Ending1..3 on one card each instead of splitting every episode into a work.
+// episodes have different titles. Grouping by base title keeps Example
+// Episode1..6 and Ending1..3 on one card each instead of splitting every
+// episode into a work.
 func TestSourceCatalogLooseWorksGroupsEpisodesByBaseTitle(t *testing.T) {
 	names := []string{
 		"Alpha Rain.mp3", "Beta Wind.mp3", "Cobalt Night.mp3", "Delta Snow.mp3",
 		"Ember Sky.mp3", "Frost Garden.mp3", "Golden Tide.mp3", "Harbor Light.mp3",
 		"Ivory Road.mp3", "Jade River.mp3",
-		"亦弟亦妹1.mp3", "亦弟亦妹2.mp3", "亦弟亦妹3.mp3", "亦弟亦妹4.mp3",
-		"亦弟亦妹5.mp3", "亦弟亦妹6.mp3",
+		"Example Episode1.mp3", "Example Episode2.mp3", "Example Episode3.mp3",
+		"Example Episode4.mp3", "Example Episode5.mp3", "Example Episode6.mp3",
 		"Ending1.mp3", "Ending2.mp3", "Ending3.mp3",
 	}
 	items := []map[string]any{}
@@ -252,7 +247,7 @@ func TestSourceCatalogLooseWorksGroupsEpisodesByBaseTitle(t *testing.T) {
 	if len(cards) != 12 {
 		t.Fatalf("cards=%d, want 12: %v", len(cards), cards)
 	}
-	for title, want := range map[string]int{"亦弟亦妹1": 6, "Ending1": 3} {
+	for title, want := range map[string]int{"Example Episode1": 6, "Ending1": 3} {
 		card := cards[title]
 		if card == nil {
 			t.Fatalf("cards=%v, want %q as the group title", cards, title)
@@ -261,7 +256,7 @@ func TestSourceCatalogLooseWorksGroupsEpisodesByBaseTitle(t *testing.T) {
 			t.Fatalf("%s tracks=%d, want %d", title, got, want)
 		}
 	}
-	if _, ok := cards["亦弟亦妹2"]; ok {
+	if _, ok := cards["Example Episode2"]; ok {
 		t.Fatal("episode 2 became its own work")
 	}
 }

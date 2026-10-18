@@ -646,17 +646,17 @@ test("Back to favorites restores the scroll position of the selected work", asyn
 
 test("mobile footer Library and Favorites return to the favorites page", async ({ page }) => {
   await returnToFavoritesFromDetail(page);
-  await page.locator("footer").getByRole("button", { name: "Library", exact: true }).click();
+  await page.getByRole("contentinfo").getByRole("button", { name: "Library", exact: true }).click();
   await expect(page).toHaveURL((url) => url.pathname === "/");
-  await page.locator("footer").getByRole("button", { name: "Favorites", exact: true }).click();
+  await page.getByRole("contentinfo").getByRole("button", { name: "Favorites", exact: true }).click();
   await expect(page).toHaveURL(/\/favorites$/);
 });
 
 test("returning through the mobile footer keeps the Sales sort and selected work", async ({ page }) => {
   await returnToFavoritesFromDetail(page);
-  await page.locator("footer").getByRole("button", { name: "Library", exact: true }).click();
+  await page.getByRole("contentinfo").getByRole("button", { name: "Library", exact: true }).click();
   await expect(page).toHaveURL((url) => url.pathname === "/");
-  await page.locator("footer").getByRole("button", { name: "Favorites", exact: true }).click();
+  await page.getByRole("contentinfo").getByRole("button", { name: "Favorites", exact: true }).click();
   await expect(page).toHaveURL(/\/favorites$/);
   await expect(page.getByRole("button", { name: "Sort: Sales" })).toBeVisible();
   await expect(page.getByText("1 selected", { exact: true })).toBeVisible();

@@ -11,6 +11,12 @@ Numberless works have empty `work.primary_code`,
 and canonical codes have partial unique indexes. `source_catalog_entry` has a
 persistent integer id and an optional work reference. `source_catalog_file`
 stores its observed directory tree without persisting signed media URLs.
+`source_catalog_entry.root_path` is the card identity; when a creator folder is
+split into several works, `root_path` carries a `::<group>` suffix and
+`source_root` keeps the real source directory that playback and refresh read.
+An empty `source_root` keeps the original meaning, where `root_path` is also the
+directory. `source_catalog_directory.work_split` records the one-time split
+decision (`single`, `prefix`, `file`) taken when a directory listing completes.
 See [OpenList catalog boundary](../development/openlist.md) for admission,
 registration, and the separation between identity and source location.
 

@@ -165,6 +165,18 @@ entry carries `directoryType: "catalog"`, `catalogEntryId`, source id/name,
 work id, title, product code, status and UTC `checkedAt`. Reading this projection,
 tracks or translations does not register works or media.
 
+A creator or tag folder that holds many independent works as loose audio is
+published as several cards. When a directory listing completes, the index stores
+one split decision in `source_catalog_directory.work_split`: `single` keeps one
+card, `prefix` groups files by a repeated work code such as `N006`, and `file`
+groups direct audio by base title so `Example Episode1..6` stays one work.
+Split cards store the real directory in `source_catalog_entry.source_root` and a
+`::<group>` identity suffix in `root_path`; playback and refresh resolve files
+through `source_root`. A folder whose audio is almost entirely a size-identical
+copy of its parent's files keeps one card instead of republishing every work.
+The old folder card is retired to the first split card only after every row
+below it has been published, so existing personal references still resolve.
+
 `POST /api/source-catalog/{id}/refresh` requires `sources:write`. It scans only
 that entry's observed root with the same per-root limits and a five-minute
 overall deadline. It publishes a complete playable snapshot atomically. An

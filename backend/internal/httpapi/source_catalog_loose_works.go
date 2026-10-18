@@ -99,8 +99,8 @@ func catalogBaseTitle(name string) string {
 	stem = catalogLooseLeadingTrack.ReplaceAllString(stem, "")
 	trimmed := strings.TrimSpace(catalogLooseTrailingTrack.ReplaceAllString(stem, ""))
 	if trimmed == stem {
-		// Titles such as 亦弟亦妹1 and 亦弟亦妹2 are episodes of one work even
-		// without a separator before the number.
+		// Titles such as Example Episode1 and Example Episode2 are episodes of
+		// one work even without a separator before the number.
 		trimmed = strings.TrimSpace(catalogLooseTrailingNumber.ReplaceAllString(stem, ""))
 	}
 	trimmed = strings.TrimRight(trimmed, " ._-（(【[")
@@ -133,7 +133,7 @@ func catalogWorkPrefix(name string) string {
 
 // catalogGroupKey is the identity of one work inside a creator folder. A work
 // prefix such as N006 wins; otherwise files that share a base title belong to
-// one work, so 亦弟亦妹1..6 or Ending1/2/3 stay together instead of becoming
+// one work, so Example Episode1..6 or Ending1/2/3 stay together instead of becoming
 // separate cards.
 func catalogGroupKey(name, mode string) string {
 	if mode == catalogWorkSplitPrefix {
@@ -477,21 +477,47 @@ func catalogDuplicateDirectoryTx(ctx context.Context, tx *sql.Tx, sourceID int64
 	if directoryPath == "/" || parent == "." || parent == directoryPath || parent == "/" {
 		return false, nil
 	}
-	var child, matched int
-	err := tx.QueryRowContext(ctx, `SELECT count(*),COALESCE(sum(matched),0) FROM (
-		SELECT EXISTS(
-			SELECT 1 FROM source_catalog_observation p
-			JOIN source_catalog_directory pd ON pd.file_source_id=p.file_source_id AND pd.path=p.directory_path
-			WHERE p.file_source_id=? AND p.directory_path=? AND p.kind='audio' AND p.revision=pd.revision
-				AND abs(p.size_bytes-o.size_bytes)<=max(1024,o.size_bytes/1000)) AS matched
-		FROM source_catalog_observation o
-		JOIN source_catalog_directory d ON d.file_source_id=o.file_source_id AND d.path=o.directory_path
-		WHERE o.file_source_id=? AND o.directory_path=? AND o.kind='audio' AND o.revision=d.revision)`,
-		sourceID, parent, sourceID, directoryPath).Scan(&child, &matched)
+	child, err := catalogAudioSizesTx(ctx, tx, sourceID, directoryPath)
+	if err != nil || len(child) < 20 {
+		return false, err
+	}
+	parentSizes, err := catalogAudioSizesTx(ctx, tx, sourceID, parent)
 	if err != nil {
 		return false, err
 	}
+	if len(parentSizes) < 20 {
+		return false, nil
+	}
+	sort.Slice(parentSizes, func(i, j int) bool { return parentSizes[i] < parentSizes[j] })
+	matched := 0
+	for _, size := range child {
+		tolerance := max(int64(1024), size/1000)
+		index := sort.Search(len(parentSizes), func(i int) bool { return parentSizes[i] >= size-tolerance })
+		if index < len(parentSizes) && parentSizes[index] <= size+tolerance {
+			matched++
+		}
+	}
 	// A folder with a handful of shared tracks is a real work with a reused
 	// intro; a package copy repeats nearly all of its audio.
-	return child >= 20 && matched*10 >= child*9, nil
+	return matched*10 >= len(child)*9, nil
+}
+
+func catalogAudioSizesTx(ctx context.Context, tx *sql.Tx, sourceID int64, directoryPath string) ([]int64, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT o.size_bytes FROM source_catalog_observation o
+		JOIN source_catalog_directory d ON d.file_source_id=o.file_source_id AND d.path=o.directory_path
+		WHERE o.file_source_id=? AND o.directory_path=? AND o.kind='audio' AND o.revision=d.revision`,
+		sourceID, directoryPath)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	sizes := []int64{}
+	for rows.Next() {
+		var size int64
+		if err = rows.Scan(&size); err != nil {
+			return nil, err
+		}
+		sizes = append(sizes, size)
+	}
+	return sizes, rows.Err()
 }

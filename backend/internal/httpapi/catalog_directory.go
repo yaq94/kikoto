@@ -59,13 +59,14 @@ func (s *Server) refreshCatalogDirectory(w http.ResponseWriter, r *http.Request)
 	if entry.SourceRoot != "" {
 		// A split card refreshes only its own files; the directory scan above
 		// read the real creator folder to resolve them.
-		tx, txErr := s.db.BeginTx(ctx, nil)
+		tx, release, txErr := beginTxWithDatabaseBusyRetry(ctx, s.db)
 		if txErr != nil {
 			writeError(w, txErr)
 			return
 		}
+		defer release()
 		defer func() { _ = tx.Rollback() }()
-		if _, txErr = persistOpenListSnapshotTx(ctx, tx, source.ID, entry.RootPath, entry.SourceRoot, entry.Title, cardFiles); txErr != nil {
+		if _, txErr = persistOpenListSnapshotTx(ctx, tx.Tx, source.ID, entry.RootPath, entry.SourceRoot, entry.Title, cardFiles); txErr != nil {
 			writeError(w, txErr)
 			return
 		}
