@@ -227,17 +227,22 @@ func catalogSplitCardFiles(rootPath, sourceRoot string, files []openlist.File) [
 	}
 	suffix := strings.TrimPrefix(rootPath, sourceRoot+"::")
 	// The suffix itself says how the card was grouped: a work prefix such as
-	// N006, or a shared base title.
+	// N006, or a shared base title. A title can look like a prefix ("n006"),
+	// so the group key has to match a real file before choosing that mode.
 	mode := catalogWorkSplitFile
-	if catalogLooseWorkPrefix.MatchString(suffix) {
-		mode = catalogWorkSplitPrefix
+	upperSuffix := strings.ToUpper(suffix)
+	for _, file := range files {
+		if file.Kind == "audio" && !strings.Contains(file.Path, "/") && catalogWorkPrefix(file.Path) == upperSuffix {
+			mode = catalogWorkSplitPrefix
+			break
+		}
 	}
 	result := []openlist.File{}
 	for _, file := range files {
 		if file.Kind != "audio" || strings.Contains(file.Path, "/") {
 			continue
 		}
-		if catalogGroupKey(file.Path, mode) == suffix {
+		if strings.EqualFold(catalogGroupKey(file.Path, mode), suffix) {
 			result = append(result, file)
 		}
 	}
@@ -287,6 +292,17 @@ func decideCatalogWorkSplitTx(ctx context.Context, tx *sql.Tx, sourceID int64, d
 		if catalogDirectoryCode(directoryPath) != "" {
 			mode = catalogWorkSplitSingle
 		} else {
+			// A package copy of the parent's audio is one version, not one
+			// work per file. Keep it on a single card so the same recordings
+			// do not reappear as hundreds of split cards.
+			duplicate, dupErr := catalogDuplicateDirectoryTx(ctx, tx, sourceID, directoryPath)
+			if dupErr != nil {
+				return dupErr
+			}
+			if duplicate {
+				_, err = tx.ExecContext(ctx, `UPDATE source_catalog_directory SET work_split=? WHERE file_source_id=? AND path=?`, catalogWorkSplitSingle, sourceID, directoryPath)
+				return err
+			}
 			rows, err := tx.QueryContext(ctx, `SELECT name FROM source_catalog_observation WHERE file_source_id=? AND directory_path=? AND revision=? AND kind='audio' ORDER BY name`, sourceID, directoryPath, revision)
 			if err != nil {
 				return err
@@ -445,4 +461,37 @@ func (s *Server) catalogSplitTargetsForRoot(ctx context.Context, tx *sql.Tx, sou
 		}
 	}
 	return targets, parentNeeded != 0, nil
+}
+
+// catalogDuplicateDirectoryTx reports a child folder that repeats the parent's
+// own audio, such as a "279 works 14G" package placed beside the loose files it
+// copies. Publishing it would create a second card for every work inside it,
+// while the parent already carries the same recordings.
+//
+// The check needs a large, almost entirely size-identical subset, so a real
+// disc, a differently mastered edition or a partial bonus folder keeps its own
+// card. Duplicates stay unpublished rather than being merged into the parent,
+// because the parent already holds the original files.
+func catalogDuplicateDirectoryTx(ctx context.Context, tx *sql.Tx, sourceID int64, directoryPath string) (bool, error) {
+	parent := path.Dir(directoryPath)
+	if directoryPath == "/" || parent == "." || parent == directoryPath || parent == "/" {
+		return false, nil
+	}
+	var child, matched int
+	err := tx.QueryRowContext(ctx, `SELECT count(*),COALESCE(sum(matched),0) FROM (
+		SELECT EXISTS(
+			SELECT 1 FROM source_catalog_observation p
+			JOIN source_catalog_directory pd ON pd.file_source_id=p.file_source_id AND pd.path=p.directory_path
+			WHERE p.file_source_id=? AND p.directory_path=? AND p.kind='audio' AND p.revision=pd.revision
+				AND abs(p.size_bytes-o.size_bytes)<=max(1024,o.size_bytes/1000)) AS matched
+		FROM source_catalog_observation o
+		JOIN source_catalog_directory d ON d.file_source_id=o.file_source_id AND d.path=o.directory_path
+		WHERE o.file_source_id=? AND o.directory_path=? AND o.kind='audio' AND o.revision=d.revision)`,
+		sourceID, parent, sourceID, directoryPath).Scan(&child, &matched)
+	if err != nil {
+		return false, err
+	}
+	// A folder with a handful of shared tracks is a real work with a reused
+	// intro; a package copy repeats nearly all of its audio.
+	return child >= 20 && matched*10 >= child*9, nil
 }

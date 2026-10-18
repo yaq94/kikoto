@@ -76,6 +76,10 @@ func looseAudio(name string) map[string]any {
 	return map[string]any{"name": name, "size": 100}
 }
 
+func looseAudioSized(name string, size int) map[string]any {
+	return map[string]any{"name": name, "size": size}
+}
+
 func looseDir(name string) map[string]any {
 	return map[string]any{"name": name, "is_dir": true}
 }
@@ -315,5 +319,39 @@ func TestSourceCatalogLooseWorksRegisteredCardIsNotSplit(t *testing.T) {
 	cards := f.cards(t)
 	if len(cards) != 1 || cards["Registered"] == nil {
 		t.Fatalf("cards=%v, want the registered card unchanged", cards)
+	}
+}
+
+// A package copy of the parent's loose audio is one version of that folder.
+// Splitting it would publish every recording a second time under a new card.
+func TestSourceCatalogLooseWorksPackageCopyStaysOneCard(t *testing.T) {
+	parent := []map[string]any{}
+	copyItems := []map[string]any{}
+	for i := 1; i <= 24; i++ {
+		size := 1_000_000 + i*7
+		parent = append(parent, looseAudioSized(fmt.Sprintf("Work %02d.mp3", i), size))
+		copyItems = append(copyItems, looseAudioSized(fmt.Sprintf("Creator %02d.mp3", i), size+3))
+	}
+	f := newLooseWorkFixture(t, map[string][]map[string]any{
+		"/":                             {looseDir("Creator")},
+		"/Creator":                      append(parent, looseDir("Creator 24 works 14G")),
+		"/Creator/Creator 24 works 14G": copyItems,
+	})
+	f.request(t, http.MethodPost, "/catalog/index", `{"intervalMs":100}`, 202)
+	if p := f.drain(t); p["status"] != "complete" {
+		t.Fatalf("scan = %#v", p)
+	}
+	cards := f.cards(t)
+	copied := cards["Creator 24 works 14G"]
+	if copied == nil {
+		t.Fatalf("cards=%v, want the package copy card", cards)
+	}
+	if got := len(f.tracks(t, copied)); got != len(copyItems) {
+		t.Fatalf("package copy tracks=%d, want %d on one card", got, len(copyItems))
+	}
+	for title := range cards {
+		if strings.HasPrefix(title, "Creator ") && title != "Creator 24 works 14G" {
+			t.Fatalf("package copy split into card %q: %v", title, cards)
+		}
 	}
 }
