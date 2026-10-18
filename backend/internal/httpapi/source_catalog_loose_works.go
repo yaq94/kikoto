@@ -29,6 +29,7 @@ var catalogLooseLeadingTrack = regexp.MustCompile(`^[0-9]{1,4}(?:[\s._\-、]+|$)
 var catalogLooseTrailingTrack = regexp.MustCompile(`[\s._\-（(【\[]+[0-9]{1,4}[\s._\-）)】\]]*$`)
 var catalogLooseTrailingNumber = regexp.MustCompile(`[0-9]{1,4}[\s._\-）)】\]]*$`)
 var catalogNumberedTrackPrefix = regexp.MustCompile(`^([0-9]{1,4})(?:[\s._\-、]|$)`)
+var catalogPrefixedTrack = regexp.MustCompile(`^[\s._\-、]*([0-9]{1,3})(?:[\s._\-、]|$)`)
 
 // catalogWorkSplitMode decides how one directory's direct audio is published.
 // The decision is taken once, when the directory listing first completes.
@@ -111,14 +112,20 @@ func catalogNumberedTrackRun(names []string) bool {
 			return false
 		}
 		position, err := strconv.Atoi(match[1])
-		if err != nil || position <= 0 {
+		if err != nil || position <= 0 || position > 999 {
 			return false
 		}
 		positions = append(positions, position)
 	}
 	sort.Ints(positions)
+	if positions[0] != 1 {
+		// A year or a high counter is not a track listing. A genuine run
+		// starts at the first track; a missing start means the number is
+		// part of the title, not the only discriminator.
+		return false
+	}
 	for i, position := range positions {
-		if position != positions[0]+i {
+		if position != i+1 {
 			return false
 		}
 	}
@@ -179,13 +186,93 @@ func catalogWorkPrefix(name string) string {
 	return strings.ToUpper(match[:end])
 }
 
-// catalogGroupKey is the identity of one work inside a creator folder. A work
-// prefix such as N006 wins; otherwise files that share a base title belong to
-// one work, so Example Episode1..6 or Ending1/2/3 stay together instead of becoming
-// separate cards.
-func catalogGroupKey(name, mode string) string {
+// catalogLooseGrouping is the work partition of one directory listing. It is
+// built once from the direct audio names so refresh and publish see the same
+// groups.
+type catalogLooseGrouping struct {
+	mode          string
+	splitPrefixes map[string]bool
+}
+
+// newCatalogLooseGrouping decides whether a repeated work prefix names one
+// work or several. A prefix such as N006 usually identifies one release, but
+// creator folders also reuse B011 for unrelated recordings. Within one prefix,
+// files stay together when they share a base title (B20 ...01/02) or when the
+// prefix is followed by a track run starting at 1 (N006-1/2/3). Different
+// titles without that evidence stay separate.
+func newCatalogLooseGrouping(names []string, mode string) catalogLooseGrouping {
+	grouping := catalogLooseGrouping{
+		mode:          mode,
+		splitPrefixes: map[string]bool{},
+	}
 	if mode == catalogWorkSplitPrefix {
-		return catalogWorkPrefix(name)
+		byPrefix := map[string][]string{}
+		for _, name := range names {
+			if prefix := catalogWorkPrefix(name); prefix != "" {
+				byPrefix[prefix] = append(byPrefix[prefix], name)
+			}
+		}
+		for prefix, group := range byPrefix {
+			if !catalogPrefixFilesStayTogether(prefix, group) {
+				grouping.splitPrefixes[prefix] = true
+			}
+		}
+	}
+	return grouping
+}
+
+func catalogPrefixFilesStayTogether(prefix string, names []string) bool {
+	bases := map[string]bool{}
+	for _, name := range names {
+		bases[catalogBaseTitle(name)] = true
+	}
+	if len(bases) == 1 {
+		return true
+	}
+	positions := make([]int, 0, len(names))
+	for _, name := range names {
+		stem := strings.TrimSpace(catalogFileStem(name))
+		if !strings.HasPrefix(strings.ToUpper(stem), prefix) {
+			return false
+		}
+		remainder := stem[len(prefix):]
+		match := catalogPrefixedTrack.FindStringSubmatch(remainder)
+		if match == nil {
+			return false
+		}
+		position, err := strconv.Atoi(match[1])
+		if err != nil || position <= 0 {
+			return false
+		}
+		positions = append(positions, position)
+	}
+	sort.Ints(positions)
+	if positions[0] != 1 {
+		return false
+	}
+	for i, position := range positions {
+		if position != i+1 {
+			return false
+		}
+	}
+	return true
+}
+
+func (g catalogLooseGrouping) keyFor(name string) string {
+	if g.mode == catalogWorkSplitPrefix {
+		prefix := catalogWorkPrefix(name)
+		if prefix == "" {
+			// Direct audio without a work prefix keeps the parent card.
+			return ""
+		}
+		if g.splitPrefixes[prefix] {
+			if base := catalogBaseTitle(name); base != "" {
+				// Keep the prefix in the identity so B011 and B012 with the
+				// same title cannot collapse onto one card.
+				return prefix + " " + base
+			}
+		}
+		return prefix
 	}
 	if base := catalogBaseTitle(name); base != "" {
 		return base
@@ -195,12 +282,12 @@ func catalogGroupKey(name, mode string) string {
 
 // catalogGroupTitles returns the display title of each group from the
 // lexicographically first file in that group.
-func catalogGroupTitles(names []string, mode string) map[string]string {
+func catalogGroupTitles(grouping catalogLooseGrouping, names []string) map[string]string {
 	sorted := append([]string(nil), names...)
 	sort.Strings(sorted)
 	titles := map[string]string{}
 	for _, name := range sorted {
-		key := catalogGroupKey(name, mode)
+		key := grouping.keyFor(name)
 		if key == "" {
 			continue
 		}
@@ -220,11 +307,11 @@ type catalogSplitTarget struct {
 
 // catalogSplitTargetFor maps one direct audio file to its card. A file with no
 // group key stays on the directory card.
-func catalogSplitTargetFor(root, name, mode string, titles map[string]string) catalogSplitTarget {
-	if mode != catalogWorkSplitPrefix && mode != catalogWorkSplitFile {
+func catalogSplitTargetFor(root, name string, grouping catalogLooseGrouping, titles map[string]string) catalogSplitTarget {
+	if grouping.mode != catalogWorkSplitPrefix && grouping.mode != catalogWorkSplitFile {
 		return catalogSplitTarget{Root: root, Title: path.Base(root)}
 	}
-	key := catalogGroupKey(name, mode)
+	key := grouping.keyFor(name)
 	if key == "" {
 		return catalogSplitTarget{Root: root, Title: path.Base(root)}
 	}
@@ -238,13 +325,9 @@ func catalogSplitSnapshot(root string, files []openlist.File, mode string) (map[
 	if mode == catalogWorkSplitSingle {
 		return nil, files
 	}
-	names := []string{}
-	for _, file := range files {
-		if file.Kind == "audio" && !strings.Contains(file.Path, "/") {
-			names = append(names, file.Path)
-		}
-	}
-	titles := catalogGroupTitles(names, mode)
+	names := catalogDirectAudioNames(files)
+	grouping := newCatalogLooseGrouping(names, mode)
+	titles := catalogGroupTitles(grouping, names)
 	groups := map[string][]openlist.File{}
 	parent := []openlist.File{}
 	for _, file := range files {
@@ -255,7 +338,7 @@ func catalogSplitSnapshot(root string, files []openlist.File, mode string) (map[
 			parent = append(parent, file)
 			continue
 		}
-		target := catalogSplitTargetFor(root, file.Path, mode, titles)
+		target := catalogSplitTargetFor(root, file.Path, grouping, titles)
 		if target.Root == root {
 			parent = append(parent, file)
 			continue
@@ -274,23 +357,17 @@ func catalogSplitCardFiles(rootPath, sourceRoot string, files []openlist.File) [
 		return files
 	}
 	suffix := strings.TrimPrefix(rootPath, sourceRoot+"::")
-	// The suffix itself says how the card was grouped: a work prefix such as
-	// N006, or a shared base title. A title can look like a prefix ("n006"),
-	// so the group key has to match a real file before choosing that mode.
-	mode := catalogWorkSplitFile
-	upperSuffix := strings.ToUpper(suffix)
-	for _, file := range files {
-		if file.Kind == "audio" && !strings.Contains(file.Path, "/") && catalogWorkPrefix(file.Path) == upperSuffix {
-			mode = catalogWorkSplitPrefix
-			break
-		}
-	}
+	names := catalogDirectAudioNames(files)
+	// Recompute the same partition an index would publish from this listing.
+	// The card suffix is only an identity; a title that looks like a prefix
+	// ("n006") must not choose the grouping by itself.
+	grouping := newCatalogLooseGrouping(names, catalogWorkSplitModeNames(names))
 	result := []openlist.File{}
 	for _, file := range files {
 		if file.Kind != "audio" || strings.Contains(file.Path, "/") {
 			continue
 		}
-		if strings.EqualFold(catalogGroupKey(file.Path, mode), suffix) {
+		if strings.EqualFold(grouping.keyFor(file.Path), suffix) {
 			result = append(result, file)
 		}
 	}
@@ -485,7 +562,7 @@ func (s *Server) catalogSnapshotSplitMode(ctx context.Context, sourceID int64, r
 // change a group title. Targets are keyed twice: by exact file name for direct
 // audio, and by group key so a nested format copy with another extension still
 // reaches its work card.
-func (s *Server) catalogSplitTargetsForRoot(ctx context.Context, tx *sql.Tx, sourceID, generation int64, root string) (map[string]catalogSplitTarget, map[string]catalogSplitTarget, bool, error) {
+func (s *Server) catalogSplitTargetsForRoot(ctx context.Context, tx *sql.Tx, sourceID, generation int64, root string) (map[string]catalogSplitTarget, map[string]catalogSplitTarget, catalogLooseGrouping, bool, error) {
 	var pinned int
 	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
 		SELECT 1 FROM source_catalog_entry e
@@ -494,28 +571,28 @@ func (s *Server) catalogSplitTargetsForRoot(ctx context.Context, tx *sql.Tx, sou
 			OR EXISTS(SELECT 1 FROM catalog_series_member m WHERE m.catalog_entry_id=e.id)
 			OR EXISTS(SELECT 1 FROM source_catalog_entry r WHERE r.relocated_to_id=e.id)))`,
 		sourceID, root).Scan(&pinned); err != nil {
-		return nil, nil, false, err
+		return nil, nil, catalogLooseGrouping{}, false, err
 	}
 	if pinned != 0 {
-		return nil, nil, false, nil
+		return nil, nil, catalogLooseGrouping{}, false, nil
 	}
 	var mode string
 	err := tx.QueryRowContext(ctx, `SELECT work_split FROM source_catalog_directory WHERE file_source_id=? AND generation=? AND path=?`, sourceID, generation, root).Scan(&mode)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil, false, nil
+		return nil, nil, catalogLooseGrouping{}, false, nil
 	}
 	if err != nil {
-		return nil, nil, false, err
+		return nil, nil, catalogLooseGrouping{}, false, err
 	}
 	if mode != catalogWorkSplitPrefix && mode != catalogWorkSplitFile {
-		return nil, nil, false, nil
+		return nil, nil, catalogLooseGrouping{}, false, nil
 	}
 	rows, err := tx.QueryContext(ctx, `SELECT o.name FROM source_catalog_observation o
 		JOIN source_catalog_directory d ON d.file_source_id=o.file_source_id AND d.path=o.directory_path
 		WHERE o.file_source_id=? AND o.directory_path=? AND o.revision=d.revision AND d.generation=? AND o.kind='audio'
 		ORDER BY o.name`, sourceID, root, generation)
 	if err != nil {
-		return nil, nil, false, err
+		return nil, nil, catalogLooseGrouping{}, false, err
 	}
 	names := []string{}
 	for rows.Next() {
@@ -528,16 +605,17 @@ func (s *Server) catalogSplitTargetsForRoot(ctx context.Context, tx *sql.Tx, sou
 	readErr := rows.Err()
 	_ = rows.Close()
 	if err != nil {
-		return nil, nil, false, err
+		return nil, nil, catalogLooseGrouping{}, false, err
 	}
 	if readErr != nil {
-		return nil, nil, false, readErr
+		return nil, nil, catalogLooseGrouping{}, false, readErr
 	}
-	titles := catalogGroupTitles(names, mode)
+	grouping := newCatalogLooseGrouping(names, mode)
+	titles := catalogGroupTitles(grouping, names)
 	targets := map[string]catalogSplitTarget{}
 	targetsByKey := map[string]catalogSplitTarget{}
 	for _, name := range names {
-		target := catalogSplitTargetFor(root, name, mode, titles)
+		target := catalogSplitTargetFor(root, name, grouping, titles)
 		if target.Root != root {
 			targets[name] = target
 			key := strings.TrimPrefix(target.Root, root+"::")
@@ -556,7 +634,7 @@ func (s *Server) catalogSplitTargetsForRoot(ctx context.Context, tx *sql.Tx, sou
 		WHERE d.file_source_id=? AND d.generation=? AND d.catalog_root=? AND o.kind='audio'
 		ORDER BY o.directory_path,o.name`, sourceID, generation, root)
 	if err != nil {
-		return nil, nil, false, err
+		return nil, nil, catalogLooseGrouping{}, false, err
 	}
 	parentNeeded := 0
 	for rows.Next() {
@@ -564,7 +642,7 @@ func (s *Server) catalogSplitTargetsForRoot(ctx context.Context, tx *sql.Tx, sou
 		if err = rows.Scan(&name); err != nil {
 			break
 		}
-		key := catalogGroupKey(name, mode)
+		key := grouping.keyFor(name)
 		if _, split := targets[name]; split {
 			continue
 		}
@@ -577,12 +655,12 @@ func (s *Server) catalogSplitTargetsForRoot(ctx context.Context, tx *sql.Tx, sou
 	readErr = rows.Err()
 	_ = rows.Close()
 	if err != nil {
-		return nil, nil, false, err
+		return nil, nil, catalogLooseGrouping{}, false, err
 	}
 	if readErr != nil {
-		return nil, nil, false, readErr
+		return nil, nil, catalogLooseGrouping{}, false, readErr
 	}
-	return targets, targetsByKey, parentNeeded != 0, nil
+	return targets, targetsByKey, grouping, parentNeeded != 0, nil
 }
 
 // catalogDuplicateDirectoryTx reports a child folder that repeats the parent's

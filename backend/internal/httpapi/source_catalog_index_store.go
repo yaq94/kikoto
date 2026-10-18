@@ -446,6 +446,7 @@ ORDER BY o.directory_path,o.name LIMIT 100`, sourceID, job.RunID, sourceID, job.
 	}
 	splitPlans := map[string]map[string]catalogSplitTarget{}
 	splitPlansByKey := map[string]map[string]catalogSplitTarget{}
+	splitGroupings := map[string]catalogLooseGrouping{}
 	parentNeeded := map[string]bool{}
 	splitRoots := map[string]bool{}
 	for _, p := range items {
@@ -453,12 +454,13 @@ ORDER BY o.directory_path,o.name LIMIT 100`, sourceID, job.RunID, sourceID, job.
 			if _, ok := splitPlans[p.root]; ok {
 				continue
 			}
-			targets, targetsByKey, needed, planErr := s.catalogSplitTargetsForRoot(ctx, tx.Tx, sourceID, job.RunID, p.root)
+			targets, targetsByKey, grouping, needed, planErr := s.catalogSplitTargetsForRoot(ctx, tx.Tx, sourceID, job.RunID, p.root)
 			if planErr != nil {
 				return 0, planErr
 			}
 			splitPlans[p.root] = targets
 			splitPlansByKey[p.root] = targetsByKey
+			splitGroupings[p.root] = grouping
 			parentNeeded[p.root] = needed
 			splitRoots[p.root] = true
 		}
@@ -473,7 +475,7 @@ ORDER BY o.directory_path,o.name LIMIT 100`, sourceID, job.RunID, sourceID, job.
 			// instead of recreating the container card the split retired.
 			if target, ok := targets[p.name]; ok {
 				root, sourceRoot, title = target.Root, target.SourceRoot, target.Title
-			} else if target, ok := splitPlansByKey[p.root][catalogGroupKey(p.name, p.split)]; ok {
+			} else if target, ok := splitPlansByKey[p.root][splitGroupings[p.root].keyFor(p.name)]; ok {
 				// A nested format copy can change its extension. Match the
 				// work group so 01.flac still lands on the 01.mp3 card.
 				root, sourceRoot, title = target.Root, target.SourceRoot, target.Title

@@ -220,7 +220,8 @@ func (s *Server) persistCatalogLooseWorkRoots(ctx context.Context, source remote
 	for _, groupRoot := range roots {
 		title := strings.TrimPrefix(groupRoot, root+"::")
 		files := groups[groupRoot]
-		titles := catalogGroupTitles(catalogDirectAudioNames(files), mode)
+		names := catalogDirectAudioNames(files)
+		titles := catalogGroupTitles(newCatalogLooseGrouping(names, mode), names)
 		if titles[title] != "" {
 			title = titles[title]
 		} else if len(files) > 0 {

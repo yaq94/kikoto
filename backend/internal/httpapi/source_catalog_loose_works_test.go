@@ -414,3 +414,118 @@ func TestSourceCatalogLooseWorksKeepsNumberOnlyNamesDistinct(t *testing.T) {
 		t.Fatalf("cards=%d, want 4 date cards, eight singles and one session card: %v", len(cards), cards)
 	}
 }
+
+// A repeated work number is not enough to make two files one work. Creator
+// folders reuse a number for unrelated releases, so titles that share neither
+// a base title nor a numbered track shape stay on separate cards. A second
+// scan must publish the same cards instead of folding them back together.
+func TestSourceCatalogLooseWorksPrefixWithDifferentTitlesStaysSeparate(t *testing.T) {
+	names := []string{
+		"B011 性感女销售 第一话.mp3",
+		"B011 粗口空姐 第二话.mp3",
+		"B012 温柔护士 上.mp3",
+		"B012 冷艳医生 下.mp3",
+	}
+	items := make([]map[string]any, 0, len(names))
+	for _, name := range names {
+		items = append(items, looseAudio(name))
+	}
+	f := newLooseWorkFixture(t, map[string][]map[string]any{
+		"/":        {looseDir("Creator")},
+		"/Creator": items,
+	})
+	for pass := 0; pass < 2; pass++ {
+		body := `{"intervalMs":100}`
+		if pass > 0 {
+			body = `{"intervalMs":100,"force":true}`
+		}
+		f.request(t, http.MethodPost, "/catalog/index", body, 202)
+		if p := f.drain(t); p["status"] != "complete" {
+			t.Fatalf("scan %d = %#v", pass, p)
+		}
+		cards := f.cards(t)
+		if len(cards) != len(names) {
+			t.Fatalf("scan %d cards=%d, want %d separate works: %v", pass, len(cards), len(names), cards)
+		}
+		for _, name := range names {
+			title := strings.TrimSuffix(name, ".mp3")
+			card := cards[title]
+			if card == nil {
+				t.Fatalf("scan %d missing %q: %v", pass, title, cards)
+			}
+			if got := len(f.tracks(t, card)); got != 1 {
+				t.Fatalf("scan %d %s tracks=%d, want 1", pass, title, got)
+			}
+		}
+	}
+}
+
+// The same prefix and the same title with different episode numbers is one
+// work with ordered tracks, not one work per episode.
+func TestSourceCatalogLooseWorksPrefixSameTitleNumbersStayTogether(t *testing.T) {
+	f := newLooseWorkFixture(t, map[string][]map[string]any{
+		"/": {looseDir("Creator")},
+		"/Creator": {
+			looseAudio("B20 妻子的绿帽地狱01.mp3"),
+			looseAudio("B20 妻子的绿帽地狱02.mp3"),
+			looseAudio("B21 另一部作品01.mp3"),
+			looseAudio("B21 另一部作品02.mp3"),
+		},
+	})
+	f.request(t, http.MethodPost, "/catalog/index", `{"intervalMs":100}`, 202)
+	if p := f.drain(t); p["status"] != "complete" {
+		t.Fatalf("scan = %#v", p)
+	}
+	cards := f.cards(t)
+	if len(cards) != 2 {
+		t.Fatalf("cards=%d, want two numbered works: %v", len(cards), cards)
+	}
+	card := cards["B20 妻子的绿帽地狱01"]
+	if card == nil {
+		t.Fatalf("missing numbered work card: %v", cards)
+	}
+	if got := len(f.tracks(t, card)); got != 2 {
+		t.Fatalf("tracks=%d, want 2", got)
+	}
+}
+
+// A four-digit year is not a track position. Three dated recordings with
+// different titles must remain three cards instead of forming a numbered run.
+func TestSourceCatalogLooseWorksFourDigitYearsAreNotTrackRuns(t *testing.T) {
+	f := newLooseWorkFixture(t, map[string][]map[string]any{
+		"/": {looseDir("Creator")},
+		"/Creator": {
+			looseAudio("2021 Opening.mp3"),
+			looseAudio("2022 Confession.mp3"),
+			looseAudio("2023 Ending.mp3"),
+		},
+	})
+	f.request(t, http.MethodPost, "/catalog/index", `{"intervalMs":100}`, 202)
+	if p := f.drain(t); p["status"] != "complete" {
+		t.Fatalf("scan = %#v", p)
+	}
+	cards := f.cards(t)
+	if len(cards) != 3 {
+		t.Fatalf("cards=%d, want three dated works: %v", len(cards), cards)
+	}
+	for _, title := range []string{"2021 Opening", "2022 Confession", "2023 Ending"} {
+		if cards[title] == nil {
+			t.Fatalf("missing dated work %q: %v", title, cards)
+		}
+	}
+}
+
+func TestCatalogNumberedTrackRunRejectsFourDigitNumbers(t *testing.T) {
+	for _, names := range [][]string{
+		{"2021 Opening.mp3", "2022 Confession.mp3", "2023 Ending.mp3"},
+		{"2020-12-16.mp3", "2021-01-03.mp3"},
+		{"1000 Opening.mp3", "1001 Ending.mp3"},
+	} {
+		if catalogNumberedTrackRun(names) {
+			t.Fatalf("catalogNumberedTrackRun(%v) = true, want false", names)
+		}
+	}
+	if !catalogNumberedTrackRun([]string{"01 Opening.mp3", "02 Confession.mp3", "03 Ending.mp3"}) {
+		t.Fatal("a 01..03 track run must stay one work")
+	}
+}
