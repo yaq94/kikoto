@@ -9,11 +9,6 @@ export default defineConfig({
   },
   test: {
     include: ["src/**/*.test.ts", "src/**/*.test.tsx"],
-    // The first run of a file also pays for its module graph. On a cold
-    // transform cache that easily exceeds the Vitest default, and the
-    // assertion itself is instantaneous. Keep a finite ceiling that still
-    // fails a real hang.
-    testTimeout: 20_000,
     coverage: {
       provider: "v8",
       reporter: ["text", "json", "html"],
