@@ -144,7 +144,12 @@ request deadlines apply, and cancellation releases every in-flight request.
 Publication reads the durable `publish_pending` queue. The worker publishes at
 most four batches of 100 rows per invocation, so a long backlog does not hold
 the single SQLite writer across the whole scan; the remaining rows stay queued
-and the job returns to the workflow queue.
+and the job returns to the workflow queue. When no directory and no publish row
+remain, the cleanup pass visits only entries this generation republished and
+deletes file rows an older generation left there. It records progress in
+`source_catalog_scan.publish_cleanup_cursor`; a resumed generation resets that
+cursor once before its final pass because publication order differs from entry
+id order.
 Routine tests use synthetic complete trees; a real index run must separately
 record its actual ranges, timestamps and unresolved directories.
 
@@ -169,8 +174,8 @@ work id, title, product code, status and UTC `checkedAt`. Reading this projectio
 tracks or translations does not register works or media.
 
 A creator or tag folder that holds many independent works as loose audio is
-published as several cards. When a directory listing completes, the index stores
-one split decision in `source_catalog_directory.work_split`: `single` keeps one
+published as several cards. Each completed directory revision recomputes the
+split decision in `source_catalog_directory.work_split`: `single` keeps one
 card, `prefix` groups files by a repeated work code such as `N006`, and `file`
 groups direct audio by base title so `Example Episode1..6` stays one work.
 Split cards store the real directory in `source_catalog_entry.source_root` and a
@@ -179,6 +184,9 @@ through `source_root`. A folder whose audio is almost entirely a size-identical
 copy of its parent's files keeps one card instead of republishing every work.
 The old folder card is retired to the first split card only after every row
 below it has been published, so existing personal references still resolve.
+Split cards from an older generation that the current generation did not
+republish are retired with their file rows; a card with a work, a series
+membership, or an incoming relocation keeps its identity for explicit review.
 
 `POST /api/source-catalog/{id}/refresh` requires `sources:write`. It scans only
 that entry's observed root with the same per-root limits and a five-minute

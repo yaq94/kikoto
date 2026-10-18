@@ -282,6 +282,20 @@ cannot create an unchecked outbound path.
 - Bound archive extraction, media probing, transcoding, and file-copy resource
   use.
 
+## Deployment Health And Rollback
+
+- The bundled Compose files probe `GET /health` over the container's own HTTP
+  port with a bounded timeout. A deployment gate waits for the container health
+  state and treats a missing or failing check as a failed deployment; it does
+  not proceed on a process that is merely running.
+- A rollback restores a database snapshot and starts a binary whose migration
+  catalog ends at that snapshot's schema. Numbered migrations cannot be
+  reverted, so do not point an older image at a newer database or edit
+  `schema_migration`/`schema_state` to force a start.
+- Keep the pre-migration backup and the prior image reference on durable
+  storage. The procedure and the schema 78 compatibility matrix are in
+  [Release rollback](release-rollback.md).
+
 ## Errors, Logs, and Diagnostics
 
 Public API errors use a stable code, a retryability decision, and a short
