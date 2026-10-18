@@ -185,6 +185,9 @@ type RemoteOnlyDirectoryPanelProps = {
   routeStateKey?: string;
   remoteAvailability: RemoteSourceAvailability[];
   hasMaterializedWork: boolean;
+  checkingSources?: boolean;
+  checkedAt?: string;
+  onCheckSources?: () => void;
   selectionModal: ReactNode;
   onActiveKeyChange: (key: string) => void;
   onRetry: () => void;
@@ -313,6 +316,9 @@ function RemoteOnlyDirectoryPanel(props: RemoteOnlyDirectoryPanelProps) {
       loadingMessage={
         loading ? i18n.t("libraryDetail.remoteDirectoryLoading", { code: props.displayRemoteCode }) : undefined
       }
+      checkingSources={props.checkingSources}
+      checkedAt={props.checkedAt}
+      onCheckSources={props.onCheckSources}
       selectionModal={props.selectionModal}
       onPreview={props.onPreview}
       {...playback}
@@ -637,6 +643,7 @@ export function RemoteOnlyWorkDetailController({
   const toast = useToast();
   const requireTrack = usePermissionGate(REMOTE_TRACK_PERMISSIONS, { deferDemo: true });
   const auth = useAuth();
+  const canCheckSources = !auth.demoMode && auth.hasPermission("remote:track");
   const { t } = useTranslation();
   const [detail, setDetail] = useState<RemoteWorkDetail | null>(null);
   const [identityDetail, setIdentityDetail] = useState<RemoteWorkDetail | null>(null);
@@ -674,6 +681,8 @@ export function RemoteOnlyWorkDetailController({
       })),
   );
   const [availabilityLoading, setAvailabilityLoading] = useState(true);
+  const [checkingSources, setCheckingSources] = useState(false);
+  const [checkedAt, setCheckedAt] = useState("");
   const [isFetching, setIsFetching] = useState(false);
   const [isManageOpen, setIsManageOpen] = useState(false);
   const [mobileDetailTab, setMobileDetailTab] = useState<"info" | "directory">("directory");
@@ -1113,6 +1122,31 @@ export function RemoteOnlyWorkDetailController({
     canUntrack: requireTrack,
     onFetch: openSaveWorkspace,
   };
+  const checkSources = async () => {
+    // A remote-only page has no persisted source context to refresh. Ask the
+    // same availability endpoint the work detail uses, then adopt the result
+    // for the tabs. The guard accepts the page's code: it is the source
+    // identity the user opened, and an unnumbered work still has one.
+    if (!code || auth.demoMode) return;
+    if (!requireTrack()) return;
+    setCheckingSources(true);
+    try {
+      const result = await api.checkSourceAvailability(displayPrimaryCode || code, 0, undefined, true);
+      setCheckedAt(result.checkedAt);
+      setRemoteAvailability((current) =>
+        current.map((item) => {
+          const summary = result.sources.find((candidate) => candidate.sourceId === item.source.id);
+          return summary ? { ...item, summary } : item;
+        }),
+      );
+      setRemoteRetryToken((value) => value + 1);
+      toast.success(t("libraryDetail.sourceAvailabilityUpdated"));
+    } catch (error) {
+      toast.notify(toastFromError(error, t("libraryDetail.sourceCheckFailed")));
+    } finally {
+      setCheckingSources(false);
+    }
+  };
   const heroActions = <RemoteOnlyIdentityActions {...detailActionProps} />;
   const renderSourceActions = (layout: SourceActionLayout) => (
     <RemoteOnlySourceActions {...detailActionProps} layout={layout} />
@@ -1142,6 +1176,9 @@ export function RemoteOnlyWorkDetailController({
       routeStateKey={playbackRouting.routeStateKey}
       remoteAvailability={remoteAvailability}
       hasMaterializedWork={Boolean(trackedWork)}
+      checkingSources={checkingSources}
+      checkedAt={checkedAt}
+      onCheckSources={canCheckSources ? () => void checkSources() : undefined}
       selectionModal={<LazyRemoteFetchWorkspaceDialog workspace={fetchWorkspace} />}
       onActiveKeyChange={selectRemoteSourceTab}
       onRetry={() => setRemoteRetryToken((value) => value + 1)}
