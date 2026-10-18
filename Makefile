@@ -3,7 +3,7 @@
 .PHONY: backend-race-shard go-test-shard-test
 .PHONY: pr-description-check pr-description-test
 .PHONY: actionlint ci-metrics ci-metrics-test
-.PHONY: browse-performance browse-production-performance playback-performance recommendation-performance source-index-performance source-index-tail-performance
+.PHONY: browse-performance browse-production-performance playback-performance recommendation-performance source-index-contract source-index-performance source-index-tail-performance
 
 GO ?= go
 DOCKER_BUILD ?= $(DOCKER) build
@@ -101,6 +101,13 @@ recommendation-performance:
 
 source-index-performance:
 	$(NODE) scripts/run-source-index-performance.mjs $(SOURCE_INDEX_PERF_ARGS)
+
+# Correctness contract for the recoverable full index: a 1,000-directory tree
+# through the real HTTP routes, worker and migrated SQLite, with a 60 s ceiling.
+# It disables upstream pacing, which has its own configured-rate test, so the
+# ceiling measures indexing work rather than the source-protection delay.
+source-index-contract:
+	cd backend && $(GO) test ./internal/httpapi -run '^TestSourceCatalogIndexContract' -count=1 -timeout=10m
 
 # Reproduce the publisher's tail cost from a real indexed database. The copy
 # is made with SQLite's backup API and the source is opened read-only.

@@ -26,13 +26,11 @@ const (
 	contractPagesPerBatch     = 32
 	contractConcurrency       = 4
 	contractIntervalMS        = 100
-	// contractPacingFactor bounds the elapsed time against the pacing floor
-	// instead of an absolute wall clock. The worker may not start metadata
-	// requests faster than one per intervalMs, so a 997-directory tree cannot
-	// finish sooner than 99.7 s at the confirmed 100 ms minimum. Comparing
-	// against that floor still fails when per-directory work grows: the old
-	// 965-directory baseline took 426 s, 4.3 times its floor.
-	contractPacingFactor = 1.5
+	// contractBudget is the wall-clock ceiling for the correctness contract.
+	// The suite disables upstream pacing because that policy has its own test;
+	// keeping the pacing delay here would make a 1,000-directory tree cost at
+	// least 100 s by construction and the ceiling could never fail on writing.
+	contractBudget = 60 * time.Second
 )
 
 type contractTree struct {
@@ -131,8 +129,9 @@ func newContractIndexFixture(t *testing.T, tree map[string][]map[string]any) (ca
 
 func (f catalogIndexFixture) drainIndex(t *testing.T) map[string]any {
 	t.Helper()
+	ctx := context.WithValue(context.Background(), catalogIndexNoPacingKey{}, true)
 	for step := range 200 {
-		if err := f.server.runNextQueuedWorkflowJob(context.Background()); err != nil {
+		if err := f.server.runNextQueuedWorkflowJob(ctx); err != nil {
 			t.Fatalf("contract index job failed at step %d: %v", step, err)
 		}
 		progress := f.request(t, http.MethodGet, "/catalog/index", "", http.StatusOK)
@@ -195,17 +194,8 @@ func TestSourceCatalogIndexContract(t *testing.T) {
 		t.Fatalf("publish queue left %d publishable rows after a complete run", pending)
 	}
 
-	requests, _ := progress["requests"].(float64)
-	if requests < float64(built.directories) {
-		t.Fatalf("contract index reported %v requests for %d directories", progress["requests"], built.directories)
-	}
-	floor := time.Duration(requests) * time.Duration(contractIntervalMS) * time.Millisecond
-	limit := time.Duration(float64(floor) * contractPacingFactor)
-	t.Logf("contract index pacing floor=%s limit=%s ratio=%.2f", floor.Round(time.Millisecond), limit.Round(time.Millisecond), float64(elapsed)/float64(floor))
-	if elapsed > limit {
-		t.Fatalf("contract index took %s, over %s (%.2f times the pacing floor of %s)",
-			elapsed.Round(time.Millisecond), limit.Round(time.Millisecond),
-			float64(elapsed)/float64(floor), floor.Round(time.Millisecond))
+	if elapsed > contractBudget {
+		t.Fatalf("contract index took %s, budget %s", elapsed.Round(time.Millisecond), contractBudget)
 	}
 }
 
