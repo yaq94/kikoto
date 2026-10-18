@@ -64,3 +64,26 @@ func TestWorkMatchingSeriesPauseFollowsMemberSources(t *testing.T) {
 		t.Fatalf("series from an unfinished source was not paused: %#v", seriesB)
 	}
 }
+
+// A registered work can be present in a source before its catalog entry was
+// published. An unfinished scan of that source could still add evidence, so it
+// must pause the decision just like an existing catalog entry does.
+func TestWorkMatchingPausesAWorkPresentOnlyAsSourcePresence(t *testing.T) {
+	db := openMigratedTestDB(t)
+	s := NewServer(db, config.Config{Mode: config.ModeProduction, RootUsername: "synthetic-editor", DataRoot: t.TempDir(), CacheRoot: t.TempDir()})
+	defer func() { _ = s.Shutdown(context.Background()) }()
+	createTestAdministrator(t, s, "synthetic-editor", "synthetic-password")
+	metadataReviewExec(t, db, `INSERT INTO work(id,primary_code,title) VALUES(11,'','Example Work');
+	INSERT INTO file_source(id,code,display_name,source_type) VALUES(7,'example_remote_a','Example Remote A','openlist');
+	INSERT INTO file_source_endpoint(file_source_id,api_url,base_url) VALUES(7,'https://source.example.invalid','https://source.example.invalid');
+	INSERT INTO work_source_presence(work_id,file_source_id,presence_type,availability) VALUES(11,7,'source','available');`)
+	app := httptest.NewServer(s.Routes())
+	defer app.Close()
+	cookie := workReferenceLogin(t, app, "synthetic-editor")
+	workReferenceRequest(t, app, cookie, "POST", "/api/remote-sources/7/catalog/index", `{}`, 202, nil)
+	var result map[string]any
+	workReferenceRequest(t, app, cookie, "POST", "/api/work-matching", `{"kind":"work","id":11}`, 200, &result)
+	if result["status"] != "paused" || result["rule"] != "source_index_incomplete" {
+		t.Fatalf("presence-only work was matched while its source was incomplete: %#v", result)
+	}
+}

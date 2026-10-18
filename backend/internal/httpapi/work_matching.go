@@ -284,9 +284,12 @@ func evaluateWorkMatchTx(ctx context.Context, tx *sql.Tx, subject associationSub
 		SELECT 1 FROM source_catalog_scan scan JOIN workflow_run run ON run.id=scan.workflow_run_id
 		WHERE run.status<>'succeeded' AND (
 			?='catalog' AND scan.file_source_id=(SELECT file_source_id FROM source_catalog_entry WHERE id=?)
-			OR ?='work' AND EXISTS(SELECT 1 FROM source_catalog_entry e WHERE e.work_id=? AND e.file_source_id=scan.file_source_id)
+			OR ?='work' AND (
+				EXISTS(SELECT 1 FROM source_catalog_entry e WHERE e.work_id=? AND e.file_source_id=scan.file_source_id)
+				OR EXISTS(SELECT 1 FROM work_source_presence p WHERE p.work_id=? AND p.file_source_id=scan.file_source_id AND p.presence_type='source')
+			)
 			OR ?='series' AND EXISTS(SELECT 1 FROM catalog_series_member m JOIN source_catalog_entry e ON e.id=m.catalog_entry_id WHERE m.series_id=? AND e.file_source_id=scan.file_source_id)
-		))`, subject.Kind, subject.ID, subject.Kind, subject.ID, subject.Kind, subject.ID).Scan(&incomplete); err != nil {
+		))`, subject.Kind, subject.ID, subject.Kind, subject.ID, subject.ID, subject.Kind, subject.ID).Scan(&incomplete); err != nil {
 		return result, err
 	}
 	if incomplete != 0 {
