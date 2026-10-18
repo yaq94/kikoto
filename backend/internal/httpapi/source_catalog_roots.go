@@ -31,6 +31,14 @@ func catalogContainerDirectory(name string) bool {
 // directory and its parent's assignment. This does not create series or merge
 // identities; callers retain every real parent/child directory observation.
 func catalogAdmissionRoot(directoryPath, parentRoot string, observed catalogDirectorySummary) string {
+	// A child directory that repeats its parent's release code is a format or
+	// packaging copy of the same work (RJ147133/…/RJ147133 MP3+lrc). It must
+	// not become a second card with the same number.
+	if parent := path.Dir(directoryPath); parent != directoryPath {
+		if code := catalogDirectoryCode(directoryPath); code != "" && code == catalogDirectoryCode(parent) {
+			return parent
+		}
+	}
 	// A directory named with its own product code is an authored work, not a
 	// format or auxiliary directory inside the parent work. Keeping the parent
 	// root here would fold several coded works into one card and make each one

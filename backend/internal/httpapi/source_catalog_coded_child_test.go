@@ -301,3 +301,40 @@ func TestSourceCatalogPublishedGroupingFolderReleasesCodedChildren(t *testing.T)
 		}
 	}
 }
+
+// A format copy that repeats the parent's release code is the same work, not a
+// second card with the same number. The parent keeps one card and owns the
+// nested audio.
+func TestSourceCatalogFormatCopyWithSameCodeStaysInParentCard(t *testing.T) {
+	f := newCatalogIndexFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var in struct {
+			Path string `json:"path"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&in)
+		items := []map[string]any{}
+		switch in.Path {
+		case "/":
+			items = []map[string]any{{"name": "RJ00000045 Example Work", "is_dir": true}}
+		case "/RJ00000045 Example Work":
+			items = []map[string]any{
+				{"name": "track.mp3", "size": 100},
+				{"name": "RJ00000045 MP3+lrc", "is_dir": true},
+			}
+		case "/RJ00000045 Example Work/RJ00000045 MP3+lrc":
+			items = []map[string]any{{"name": "track.mp3", "size": 100}}
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"code": 200, "data": map[string]any{"content": items, "total": len(items)}})
+	}))
+	f.request(t, http.MethodPost, "/catalog/index", `{"intervalMs":100}`, 202)
+	if p := f.drain(t); p["status"] != "complete" {
+		t.Fatalf("scan = %#v", p)
+	}
+	result := f.request(t, http.MethodGet, "/works?q=RJ00000045", "", 200)
+	if result["total"] != float64(1) {
+		t.Fatalf("search RJ00000045 total=%v, want one card: %s", result["total"], mustJSON(result))
+	}
+	title := result["works"].([]any)[0].(map[string]any)["title"].(string)
+	if title != "RJ00000045 Example Work" {
+		t.Fatalf("card title=%q, want the work directory", title)
+	}
+}
