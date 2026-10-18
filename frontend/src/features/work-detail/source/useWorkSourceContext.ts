@@ -105,7 +105,14 @@ export function useWorkSourceContext({
   // An unnumbered work has no release code, but a Kikoeru presence still
   // carries the code that source knows it by. Lookups use that code so the
   // source tab is not hidden for every work without a release number.
-  const presenceCode = work?.sourcePresence?.find((presence) => presence.remoteCode)?.remoteCode ?? "";
+  // Presence rows also carry local and stale locations. A lookup must use a
+  // code from an available source row; picking the first remoteCode can query
+  // a source that no longer holds the work.
+  const presenceCode =
+    work?.sourcePresence?.find(
+      (presence) =>
+        presence.type === "source" && presence.availability === "available" && Boolean(presence.remoteCode),
+    )?.remoteCode ?? "";
   const availabilityCode = work?.primaryCode || presenceCode;
 
   const applyAvailability = useCallback(

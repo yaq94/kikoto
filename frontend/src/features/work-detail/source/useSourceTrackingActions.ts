@@ -206,7 +206,12 @@ export function useSourceTrackingActions({
     if (!requireTrack()) return;
     try {
       const result = await refreshAvailability();
-      if (!result) return;
+      if (!result) {
+        // No release code and no available source presence means there is
+        // nothing to ask. Report it instead of turning the click into a no-op.
+        toast.notify(toastFromError(new Error("source lookup code is unavailable"), t("libraryDetail.sourceCheckFailed")));
+        return;
+      }
       toast.success(t("libraryDetail.sourceAvailabilityUpdated"));
     } catch (error) {
       toast.notify(toastFromError(error, t("libraryDetail.sourceCheckFailed")));
