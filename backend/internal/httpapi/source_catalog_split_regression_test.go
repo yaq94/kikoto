@@ -186,6 +186,47 @@ func TestSourceCatalogLooseWorksKeepsDateOnlyDirectoryDistinct(t *testing.T) {
 	}
 }
 
+// A directory can move between split and single shapes across generations.
+// The intermediate single card must not survive next to the new split cards.
+func TestSourceCatalogSplitSingleSplitDoesNotReviveParent(t *testing.T) {
+	split := []map[string]any{
+		looseAudio("Alpha Rain.mp3"), looseAudio("Beta Wind.mp3"), looseAudio("Cobalt Night.mp3"),
+		looseAudio("Delta Snow.mp3"), looseAudio("Ember Sky.mp3"), looseAudio("Frost Garden.mp3"),
+		looseAudio("Golden Tide.mp3"), looseAudio("Harbor Light.mp3"), looseAudio("Ivory Road.mp3"),
+		looseAudio("Jade River.mp3"), looseAudio("Kindled Star.mp3"), looseAudio("Lunar Field.mp3"),
+	}
+	f := newLooseWorkFixture(t, map[string][]map[string]any{
+		"/": {looseDir("Creator")}, "/Creator": split,
+	})
+	f.request(t, http.MethodPost, "/catalog/index", `{"intervalMs":100}`, 202)
+	if p := f.drain(t); p["status"] != "complete" {
+		t.Fatalf("first scan = %#v", p)
+	}
+	if cards := f.cards(t); len(cards) != 12 {
+		t.Fatalf("first cards=%d, want 12: %v", len(cards), cards)
+	}
+	single := make([]map[string]any, 0, 12)
+	for i := 1; i <= 12; i++ {
+		single = append(single, looseAudio(fmt.Sprintf("%03d.mp3", i)))
+	}
+	f.updates(map[string][]map[string]any{"/": {looseDir("Creator")}, "/Creator": single})
+	f.request(t, http.MethodPost, "/catalog/index", `{"intervalMs":100,"force":true}`, 202)
+	if p := f.drain(t); p["status"] != "complete" {
+		t.Fatalf("second scan = %#v", p)
+	}
+	if cards := f.cards(t); len(cards) != 1 {
+		t.Fatalf("second cards=%d, want one audiobook: %v", len(cards), cards)
+	}
+	f.updates(map[string][]map[string]any{"/": {looseDir("Creator")}, "/Creator": split})
+	f.request(t, http.MethodPost, "/catalog/index", `{"intervalMs":100,"force":true}`, 202)
+	if p := f.drain(t); p["status"] != "complete" {
+		t.Fatalf("third scan = %#v", p)
+	}
+	if cards := f.cards(t); len(cards) != 12 {
+		t.Fatalf("third cards=%d, want 12 split works without the parent: %v", len(cards), cards)
+	}
+}
+
 // countAudioTracks counts audio leaves under the returned track tree.
 func countAudioTracks(rows []any) int {
 	total := 0

@@ -492,9 +492,12 @@ func retireCatalogSplitParentTx(ctx context.Context, tx *sql.Tx, sourceID int64,
 // retired row keeps file_source_id NULL and no target: the old card is gone,
 // but its id stays resolvable for personal records.
 func retireStaleSplitCardsTx(ctx context.Context, tx *sql.Tx, sourceID, generation int64, parentRoot string, keep map[int64]bool) error {
+	// The parent card of a former split has source_root='' while its split
+	// cards carry the real directory. Include both shapes so a split -> single
+	// -> split sequence cannot leave the intermediate parent visible.
 	rows, err := tx.QueryContext(ctx, `SELECT id FROM source_catalog_entry
-		WHERE file_source_id=? AND source_root=? AND relocated_to_id IS NULL AND last_seen_generation<>?`,
-		sourceID, parentRoot, generation)
+		WHERE file_source_id=? AND (source_root=? OR root_path=?) AND relocated_to_id IS NULL AND last_seen_generation<>?`,
+		sourceID, parentRoot, parentRoot, generation)
 	if err != nil {
 		return err
 	}
