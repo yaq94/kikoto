@@ -416,26 +416,46 @@ test("@desktop favorites switches to followed circles after closing the list edi
   await expect(page.getByRole("button", { name: /^Resource:/ })).toHaveCount(0);
 });
 
-test("continue listening starts collapsed and stays through quick mark filters", async ({ page }) => {
+async function openContinueListeningFavorites(page: Page) {
   await mockFavorites(page);
   await page.goto("/favorites");
+  return {
+    toggle: page.getByRole("button", { name: /^Continue listening/ }),
+    strip: page.getByRole("region", { name: /^Continue listening/ }),
+  };
+}
 
-  const toggle = page.getByRole("button", { name: /^Continue listening/ });
-  await expect(toggle).toHaveAttribute("aria-expanded", "false");
-  const strip = page.getByRole("region", { name: /^Continue listening/ });
-  await expect(strip.getByRole("listitem")).toHaveCount(0);
-
+async function expandContinueListening(page: Page) {
+  const { toggle, strip } = await openContinueListeningFavorites(page);
   await toggle.click();
   await expect(toggle).toHaveAttribute("aria-expanded", "true");
+  return { toggle, strip };
+}
+
+test("continue listening starts collapsed with an empty strip", async ({ page }) => {
+  const { toggle, strip } = await openContinueListeningFavorites(page);
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  await expect(strip.getByRole("listitem")).toHaveCount(0);
+});
+
+test("expanding continue listening shows every saved work", async ({ page }) => {
+  const { strip } = await expandContinueListening(page);
   await expect(strip.getByRole("listitem")).toHaveCount(24);
+});
+
+test("continue listening stays expanded when a quick mark filter changes", async ({ page }) => {
+  const { toggle } = await expandContinueListening(page);
   await page
     .getByRole("group", { name: "Listening status filters" })
     .getByRole("button", { name: /^Finished/ })
     .click();
   await expect.poll(() => page.evaluate(() => window.history.state?.favoritesBrowseState?.status)).toBe("finished");
   await expect(toggle).toHaveAttribute("aria-expanded", "true");
+});
 
+test("continue listening expansion survives a reload", async ({ page }) => {
   // The open strip is a per-device preference.
+  await expandContinueListening(page);
   await page.reload();
   await expect(page.getByRole("button", { name: /^Continue listening/ })).toHaveAttribute("aria-expanded", "true");
 });
@@ -529,26 +549,38 @@ test("mobile favorites shows shelves as one row above search and icon controls",
   await expect(circleSearch).toHaveValue("Example");
 });
 
-test("favorites detail Back and mobile tab switches preserve filters, selection, and scroll", async ({ page }) => {
+const filteredFavoritesUrl =
+  "/favorites?entity=works&status=listening&availability=local&list=2&page=2&pageSize=24&sort=sales&direction=asc&seed=314159";
+
+async function openFilteredFavorites(page: Page) {
   await mockFavorites(page);
-  await page.goto(
-    "/favorites?entity=works&status=listening&availability=local&list=2&page=2&pageSize=24&sort=sales&direction=asc&seed=314159",
-  );
-  await expect(page.getByRole("button", { name: /Study/ })).toHaveAttribute("aria-pressed", "true");
-  await page.getByRole("button", { name: "Sort: Sales" }).click();
-  await expect(page.getByRole("menuitemradio", { name: "Sales" })).toBeVisible();
-  await page.keyboard.press("Escape");
-  await expect(page.getByRole("menuitemradio", { name: "Sales" })).toHaveCount(0);
+  await page.goto(filteredFavoritesUrl);
+}
+
+async function selectWorkAndScroll(page: Page) {
+  await openFilteredFavorites(page);
   await page.getByRole("button", { name: "Select works", exact: true }).click();
   await page.locator('[aria-label="Select work"]').nth(17).click();
   const target = page.getByText("Favorite work 18", { exact: true });
   await target.scrollIntoViewIfNeeded();
   const savedScroll = await page.evaluate(() => window.scrollY);
-  expect(savedScroll).toBeGreaterThan(500);
-  await target.click();
+  return { target, savedScroll };
+}
 
-  await expect(page).toHaveURL(/RJ00000017/);
-  // Personal tags are edited from the hero tag row, without opening Info.
+async function openSelectedWorkDetail(page: Page) {
+  const { target, savedScroll } = await selectWorkAndScroll(page);
+  await target.click();
+  return { savedScroll };
+}
+
+async function returnToFavoritesFromDetail(page: Page) {
+  const { savedScroll } = await openSelectedWorkDetail(page);
+  await page.getByRole("main").getByRole("button", { name: "Back to favorites", exact: true }).click();
+  return { savedScroll };
+}
+
+async function openTagEditorWithBulkEntry(page: Page) {
+  await openSelectedWorkDetail(page);
   await expect(page.getByRole("list", { name: "My tags", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Edit tags" }).click();
   const tagEditor = page.getByRole("dialog", { name: "Edit tags" });
@@ -558,11 +590,42 @@ test("favorites detail Back and mobile tab switches preserve filters, selection,
   // A typed list adds every tag at once, keeps tags already selected, reuses an existing spelling,
   // and leaves the unfinished name in the field.
   await tagSearch.fill("quiet, focus，Rain, Dra");
+  return { tagEditor, tagSearch };
+}
+
+test("filters from the favorites URL mark the Study shelf active", async ({ page }) => {
+  await openFilteredFavorites(page);
+  await expect(page.getByRole("button", { name: /Study/ })).toHaveAttribute("aria-pressed", "true");
+});
+
+test("the favorites sort menu opens on Sales and closes with Escape", async ({ page }) => {
+  await openFilteredFavorites(page);
+  await page.getByRole("button", { name: "Sort: Sales" }).click();
+  await expect(page.getByRole("menuitemradio", { name: "Sales" })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("menuitemradio", { name: "Sales" })).toHaveCount(0);
+});
+
+test("selecting a favorite work from a scrolled list opens its detail page", async ({ page }) => {
+  const { target, savedScroll } = await selectWorkAndScroll(page);
+  expect(savedScroll).toBeGreaterThan(500);
+  await target.click();
+  await expect(page).toHaveURL(/RJ00000017/);
+});
+
+test("typing a comma-separated tag list selects every tag and keeps the unfinished name", async ({ page }) => {
+  // Personal tags are edited from the hero tag row, without opening Info.
+  const { tagEditor, tagSearch } = await openTagEditorWithBulkEntry(page);
   await expect(tagSearch).toHaveValue("Dra");
   await tagSearch.fill("");
   for (const name of [/Quiet/, /Night/, /Focus/, /Rain/]) {
     await expect(tagEditor.getByRole("option", { name })).toHaveAttribute("aria-selected", "true");
   }
+});
+
+test("toggling edited tags removes Night and Rain but keeps Quiet and Focus", async ({ page }) => {
+  const { tagEditor, tagSearch } = await openTagEditorWithBulkEntry(page);
+  await tagSearch.fill("");
   await tagEditor.getByRole("option", { name: /Night/ }).click();
   await tagEditor.getByRole("option", { name: /Rain/ }).click();
   await expect(tagEditor.getByRole("option", { name: /Night/ })).toHaveAttribute("aria-selected", "false");
@@ -572,16 +635,39 @@ test("favorites detail Back and mobile tab switches preserve filters, selection,
     "Quiet",
     "Focus",
   ]);
+});
 
+test("Back to favorites restores the scroll position of the selected work", async ({ page }) => {
+  const { savedScroll } = await openSelectedWorkDetail(page);
   await page.getByRole("main").getByRole("button", { name: "Back to favorites", exact: true }).click();
   await expect(page).toHaveURL(/\/favorites$/);
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(savedScroll - 100);
+});
+
+test("mobile footer Library and Favorites return to the favorites page", async ({ page }) => {
+  await returnToFavoritesFromDetail(page);
+  await page.locator("footer").getByRole("button", { name: "Library", exact: true }).click();
+  await expect(page).toHaveURL((url) => url.pathname === "/");
+  await page.locator("footer").getByRole("button", { name: "Favorites", exact: true }).click();
+  await expect(page).toHaveURL(/\/favorites$/);
+});
+
+test("returning through the mobile footer keeps the Sales sort and selected work", async ({ page }) => {
+  await returnToFavoritesFromDetail(page);
   await page.locator("footer").getByRole("button", { name: "Library", exact: true }).click();
   await expect(page).toHaveURL((url) => url.pathname === "/");
   await page.locator("footer").getByRole("button", { name: "Favorites", exact: true }).click();
   await expect(page).toHaveURL(/\/favorites$/);
   await expect(page.getByRole("button", { name: "Sort: Sales" })).toBeVisible();
   await expect(page.getByText("1 selected", { exact: true })).toBeVisible();
+});
+
+test("returning through the mobile footer restores scroll and browse state without URL params", async ({ page }) => {
+  const { savedScroll } = await returnToFavoritesFromDetail(page);
+  await page.locator("footer").getByRole("button", { name: "Library", exact: true }).click();
+  await expect(page).toHaveURL((url) => url.pathname === "/");
+  await page.locator("footer").getByRole("button", { name: "Favorites", exact: true }).click();
+  await expect(page).toHaveURL(/\/favorites$/);
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(savedScroll - 100);
   const params = new URL(page.url()).searchParams;
   expect(params.size).toBe(0);

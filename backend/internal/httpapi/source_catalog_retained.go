@@ -14,7 +14,7 @@ func resolveCatalogEntry(ctx context.Context, q catalogEntryQueryer, id int64) (
 	for range 8 {
 		var e catalogEntry
 		var target sql.NullInt64
-		err := q.QueryRowContext(ctx, `SELECT id,COALESCE(file_source_id,0),primary_code,title,root_path,work_id,availability_status,relocated_to_id FROM source_catalog_entry WHERE id=?`, id).Scan(&e.ID, &e.SourceID, &e.PrimaryCode, &e.Title, &e.RootPath, &e.WorkID, &e.Status, &target)
+		err := q.QueryRowContext(ctx, `SELECT id,COALESCE(file_source_id,0),primary_code,title,root_path,source_root,work_id,availability_status,relocated_to_id FROM source_catalog_entry WHERE id=?`, id).Scan(&e.ID, &e.SourceID, &e.PrimaryCode, &e.Title, &e.RootPath, &e.SourceRoot, &e.WorkID, &e.Status, &target)
 		if err != nil {
 			return e, err
 		}

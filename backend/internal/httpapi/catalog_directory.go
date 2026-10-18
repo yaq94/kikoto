@@ -25,7 +25,11 @@ func (s *Server) refreshCatalogDirectory(w http.ResponseWriter, r *http.Request)
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
 	defer cancel()
-	files, err := s.openListClient(source).ScanRoot(ctx, entry.RootPath)
+	sourceRoot := entry.SourceRoot
+	if sourceRoot == "" {
+		sourceRoot = entry.RootPath
+	}
+	files, err := s.openListClient(source).ScanRoot(ctx, sourceRoot)
 	if err != nil {
 		if ctx.Err() == nil {
 			if statusErr := s.setCatalogEntryStatus(ctx, entry.ID, catalogFailureStatus(err)); statusErr != nil {
@@ -36,8 +40,9 @@ func (s *Server) refreshCatalogDirectory(w http.ResponseWriter, r *http.Request)
 		writeUpstreamError(w, err)
 		return
 	}
+	cardFiles := catalogSplitCardFiles(entry.RootPath, entry.SourceRoot, files)
 	playable := false
-	for _, file := range files {
+	for _, file := range cardFiles {
 		if file.Kind == "audio" {
 			playable = true
 			break
@@ -51,7 +56,24 @@ func (s *Server) refreshCatalogDirectory(w http.ResponseWriter, r *http.Request)
 		writeAPIError(w, 502, "upstream_error", "catalog directory has no playable files", true)
 		return
 	}
-	if _, err = s.persistOpenListRoot(ctx, source, entry.RootPath, files); err != nil {
+	if entry.SourceRoot != "" {
+		// A split card refreshes only its own files; the directory scan above
+		// read the real creator folder to resolve them.
+		tx, txErr := s.db.BeginTx(ctx, nil)
+		if txErr != nil {
+			writeError(w, txErr)
+			return
+		}
+		defer func() { _ = tx.Rollback() }()
+		if _, txErr = persistOpenListSnapshotTx(ctx, tx, source.ID, entry.RootPath, entry.SourceRoot, entry.Title, cardFiles); txErr != nil {
+			writeError(w, txErr)
+			return
+		}
+		if txErr = tx.Commit(); txErr != nil {
+			writeError(w, txErr)
+			return
+		}
+	} else if _, err = s.persistOpenListRoot(ctx, source, entry.RootPath, files); err != nil {
 		writeError(w, err)
 		return
 	}
@@ -122,11 +144,11 @@ func (s *Server) getWorkCatalogDirectories(w http.ResponseWriter, r *http.Reques
 		if exactWorkID.Valid {
 			directoryWorkID = exactWorkID.Int64
 		}
-			directoryType := "catalog"
-			if entryID == 0 {
-				directoryType = "remote"
-			}
-			directories = append(directories, map[string]any{"catalogEntryId": entryID, "sourceId": sourceID, "sourceName": sourceName, "title": title, "primaryCode": primaryCode, "workId": directoryWorkID, "directoryType": directoryType, "status": status, "checkedAt": checkedAt})
+		directoryType := "catalog"
+		if entryID == 0 {
+			directoryType = "remote"
+		}
+		directories = append(directories, map[string]any{"catalogEntryId": entryID, "sourceId": sourceID, "sourceName": sourceName, "title": title, "primaryCode": primaryCode, "workId": directoryWorkID, "directoryType": directoryType, "status": status, "checkedAt": checkedAt})
 	}
 	if err = rows.Err(); err != nil {
 		writeError(w, err)

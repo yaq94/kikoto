@@ -38,7 +38,7 @@ func (s *Server) setCatalogEntryStatus(ctx context.Context, id int64, status str
 
 func markCatalogRangeStatusTx(ctx context.Context, tx *sql.Tx, sourceID int64, root, status string) error {
 	_, err := tx.ExecContext(ctx, `UPDATE source_catalog_entry SET availability_status=?,status_checked_at=CURRENT_TIMESTAMP
-		WHERE file_source_id=? AND relocated_to_id IS NULL AND (?='/' OR root_path=? OR instr(root_path,?)=1)`, status, sourceID, root, root, strings.TrimRight(root, "/")+"/")
+		WHERE file_source_id=? AND relocated_to_id IS NULL AND (?='/' OR root_path=? OR instr(root_path,?)=1 OR instr(root_path,?)=1)`, status, sourceID, root, root, strings.TrimRight(root, "/")+"/", strings.TrimRight(root, "/")+"::")
 	return err
 }
 

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -23,6 +24,7 @@ type catalogEntry struct {
 	PrimaryCode string `json:"primaryCode"`
 	Title       string `json:"title"`
 	RootPath    string `json:"-"`
+	SourceRoot  string `json:"-"`
 	WorkID      *int64 `json:"workId"`
 	Status      string `json:"status"`
 }
@@ -179,29 +181,106 @@ func (s *Server) persistOpenListRoot(ctx context.Context, source remoteSourceFor
 	if id, split, err := s.persistCatalogEpisodeRoots(ctx, source, root, files); split || err != nil {
 		return id, err
 	}
+	mode, err := s.catalogSnapshotSplitMode(ctx, source.ID, root, files)
+	if err != nil {
+		return 0, err
+	}
+	groups, parent := catalogSplitSnapshot(root, files, mode)
+	if len(groups) > 0 {
+		return s.persistCatalogLooseWorkRoots(ctx, source, root, mode, groups, parent)
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	id, err := persistOpenListSnapshotTx(ctx, tx, source.ID, root, files)
+	id, err := persistOpenListSnapshotTx(ctx, tx, source.ID, root, "", path.Base(root), files)
 	if err != nil {
 		return 0, err
 	}
 	return id, tx.Commit()
 }
 
-func persistOpenListSnapshotTx(ctx context.Context, tx *sql.Tx, sourceID int64, root string, files []openlist.File) (int64, error) {
-	// The same parser the resumable index uses: a code may sit in brackets, be
-	// prefixed directly to a title, or be the whole folder name.
-	code := catalogDirectoryCode(root)
-	var id int64
-	err := tx.QueryRowContext(ctx, `INSERT INTO source_catalog_entry(file_source_id,root_path,primary_code,title)
-				VALUES(?,?,?,?) ON CONFLICT(file_source_id,root_path) DO UPDATE SET primary_code=excluded.primary_code,title=excluded.title,availability_status='available',status_checked_at=CURRENT_TIMESTAMP,content_fingerprint='',layout_fingerprint='',updated_at=CURRENT_TIMESTAMP
-		RETURNING id`, sourceID, root, code, path.Base(root)).Scan(&id)
+// persistCatalogLooseWorkRoots writes one card per prefix group or per file.
+// The real directory stays in source_root so playback and refresh keep reading
+// the source tree, while root_path becomes the card identity.
+func (s *Server) persistCatalogLooseWorkRoots(ctx context.Context, source remoteSourceForUse, root, mode string, groups map[string][]openlist.File, parent []openlist.File) (int64, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, err
 	}
+	defer func() { _ = tx.Rollback() }()
+	roots := make([]string, 0, len(groups))
+	for groupRoot := range groups {
+		roots = append(roots, groupRoot)
+	}
+	sort.Strings(roots)
+	var first, firstSplit int64
+	parentKept := false
+	for _, groupRoot := range roots {
+		title := strings.TrimPrefix(groupRoot, root+"::")
+		files := groups[groupRoot]
+		titles := catalogGroupTitles(catalogDirectAudioNames(files), mode)
+		if titles[title] != "" {
+			title = titles[title]
+		} else if len(files) > 0 {
+			title = catalogFileStem(files[0].Path)
+		}
+		id, err := persistOpenListSnapshotTx(ctx, tx, source.ID, groupRoot, root, title, files)
+		if err != nil {
+			return 0, err
+		}
+		if firstSplit == 0 {
+			firstSplit = id
+		}
+	}
+	if len(parent) > 0 {
+		var id int64
+		if id, err = persistOpenListSnapshotTx(ctx, tx, source.ID, root, "", path.Base(root), parent); err != nil {
+			return 0, err
+		}
+		if first == 0 {
+			first = id
+		}
+		parentKept = true
+	}
+	if firstSplit != 0 && !parentKept {
+		if err = retireCatalogSplitParentTx(ctx, tx, source.ID, root, firstSplit); err != nil {
+			return 0, err
+		}
+	}
+	if first == 0 {
+		first = firstSplit
+	}
+	return first, tx.Commit()
+}
+
+func catalogDirectAudioNames(files []openlist.File) []string {
+	names := []string{}
+	for _, file := range files {
+		if file.Kind == "audio" && !strings.Contains(file.Path, "/") {
+			names = append(names, file.Path)
+		}
+	}
+	return names
+}
+
+func persistOpenListSnapshotTx(ctx context.Context, tx *sql.Tx, sourceID int64, root, sourceRoot, title string, files []openlist.File) (int64, error) {
+	// The same parser the resumable index uses: a code may sit in brackets, be
+	// prefixed directly to a title, or be the whole folder name.
+	code := catalogEntryCode(root)
+	if title == "" {
+		title = path.Base(root)
+	}
+	var id int64
+	err := tx.QueryRowContext(ctx, `INSERT INTO source_catalog_entry(file_source_id,root_path,source_root,primary_code,title)
+				VALUES(?,?,?,?,?) ON CONFLICT(file_source_id,root_path) DO UPDATE SET source_root=excluded.source_root,primary_code=excluded.primary_code,title=excluded.title,availability_status='available',status_checked_at=CURRENT_TIMESTAMP,content_fingerprint='',layout_fingerprint='',updated_at=CURRENT_TIMESTAMP
+		RETURNING id`, sourceID, root, sourceRoot, code, title).Scan(&id)
+	if err != nil {
+		return 0, err
+	}
+	// Files for a split card are replaced wholesale. The caller passes only the
+	// rows that belong to this card, never the whole creator directory.
 	if _, err = tx.ExecContext(ctx, "DELETE FROM source_catalog_file WHERE catalog_entry_id=?", id); err != nil {
 		return 0, err
 	}
@@ -210,8 +289,12 @@ func persistOpenListSnapshotTx(ctx context.Context, tx *sql.Tx, sourceID int64, 
 			return 0, err
 		}
 	}
-	if err = attachCatalogSeriesTx(ctx, tx, id); err != nil {
-		return 0, err
+	if sourceRoot == "" {
+		// A split card is already one work; do not let a file title become
+		// episode evidence for a new series.
+		if err = attachCatalogSeriesTx(ctx, tx, id); err != nil {
+			return 0, err
+		}
 	}
 	if err = setCatalogEntryStatusTx(ctx, tx, id, "available"); err != nil {
 		return 0, err

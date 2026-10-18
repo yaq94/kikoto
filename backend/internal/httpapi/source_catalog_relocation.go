@@ -44,22 +44,22 @@ func catalogFingerprintsTx(ctx context.Context, tx *sql.Tx, id, generation int64
 }
 
 type catalogRelocationEntry struct {
-	id                                int64
-	root, title, code, strong, layout string
-	workID                            sql.NullInt64
-	discovered                        int64
+	id                                            int64
+	root, sourceRoot, title, code, strong, layout string
+	workID                                        sql.NullInt64
+	discovered                                    int64
 }
 
 func reconcileCatalogEntryTx(ctx context.Context, tx *sql.Tx, sourceID, generation, id int64) error {
 	var old catalogRelocationEntry
-	err := tx.QueryRowContext(ctx, `SELECT id,root_path,title,primary_code,content_fingerprint,layout_fingerprint,work_id,discovered_generation FROM source_catalog_entry WHERE id=?`, id).Scan(&old.id, &old.root, &old.title, &old.code, &old.strong, &old.layout, &old.workID, &old.discovered)
+	err := tx.QueryRowContext(ctx, `SELECT id,root_path,source_root,title,primary_code,content_fingerprint,layout_fingerprint,work_id,discovered_generation FROM source_catalog_entry WHERE id=?`, id).Scan(&old.id, &old.root, &old.sourceRoot, &old.title, &old.code, &old.strong, &old.layout, &old.workID, &old.discovered)
 	if err != nil {
 		return err
 	}
 	if _, err = tx.ExecContext(ctx, `DELETE FROM source_catalog_relocation_candidate WHERE catalog_entry_id=?`, id); err != nil {
 		return err
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT id,root_path,title,primary_code,content_fingerprint,layout_fingerprint,work_id,discovered_generation FROM source_catalog_entry
+	rows, err := tx.QueryContext(ctx, `SELECT id,root_path,source_root,title,primary_code,content_fingerprint,layout_fingerprint,work_id,discovered_generation FROM source_catalog_entry
 		WHERE file_source_id=? AND relocated_to_id IS NULL AND last_seen_generation=? AND id<>?
 		AND ((?<>'' AND content_fingerprint=?) OR (?<>'' AND layout_fingerprint=?) OR title=?) ORDER BY id LIMIT 9`, sourceID, generation, id, old.strong, old.strong, old.layout, old.layout, old.title)
 	if err != nil {
@@ -68,7 +68,7 @@ func reconcileCatalogEntryTx(ctx context.Context, tx *sql.Tx, sourceID, generati
 	var candidates []catalogRelocationEntry
 	for rows.Next() {
 		var item catalogRelocationEntry
-		if err = rows.Scan(&item.id, &item.root, &item.title, &item.code, &item.strong, &item.layout, &item.workID, &item.discovered); err != nil {
+		if err = rows.Scan(&item.id, &item.root, &item.sourceRoot, &item.title, &item.code, &item.strong, &item.layout, &item.workID, &item.discovered); err != nil {
 			break
 		}
 		candidates = append(candidates, item)
@@ -121,7 +121,7 @@ func relocateCatalogEntryTx(ctx context.Context, tx *sql.Tx, old, target catalog
 	if _, err := tx.ExecContext(ctx, `UPDATE source_catalog_entry SET file_source_id=NULL,relocated_to_id=? WHERE id=?`, old.id, target.id); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE source_catalog_entry SET root_path=?,title=?,last_seen_generation=?,content_fingerprint=?,layout_fingerprint=? WHERE id=?`, target.root, target.title, generation, target.strong, target.layout, old.id); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE source_catalog_entry SET root_path=?,source_root=?,title=?,last_seen_generation=?,content_fingerprint=?,layout_fingerprint=? WHERE id=?`, target.root, target.sourceRoot, target.title, generation, target.strong, target.layout, old.id); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes,content_hash,observed_generation)

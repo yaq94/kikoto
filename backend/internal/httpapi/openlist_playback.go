@@ -28,8 +28,12 @@ func (s *Server) streamSourceCatalogMedia(w http.ResponseWriter, r *http.Request
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), remotePlaybackTimeout)
 	defer cancel()
+	sourceRoot := entry.SourceRoot
+	if sourceRoot == "" {
+		sourceRoot = entry.RootPath
+	}
 	for attempt := 0; attempt < 2; attempt++ {
-		object, err := s.openListClient(source).Get(ctx, path.Join(entry.RootPath, relative))
+		object, err := s.openListClient(source).Get(ctx, path.Join(sourceRoot, relative))
 		if err != nil {
 			writeUpstreamError(w, err)
 			return

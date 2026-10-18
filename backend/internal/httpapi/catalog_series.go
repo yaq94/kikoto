@@ -27,6 +27,7 @@ type catalogSeriesEpisode struct {
 	Position       int    `json:"position"`
 	SeriesID       *int64 `json:"seriesId,omitempty"`
 	RootPath       string `json:"-"`
+	SourceRoot     string `json:"-"`
 	UpdatedAt      string `json:"-"`
 }
 
@@ -112,10 +113,10 @@ func loadGroupingMembers(ctx context.Context, tx *sql.Tx, input catalogGroupingI
 		}
 		seen[id] = true
 		member := catalogSeriesEpisode{Position: i + 1}
-		err := tx.QueryRowContext(ctx, `SELECT e.id,e.title,e.file_source_id,fs.display_name,e.primary_code,e.work_id,e.root_path,e.updated_at,m.series_id
+		err := tx.QueryRowContext(ctx, `SELECT e.id,e.title,e.file_source_id,fs.display_name,e.primary_code,e.work_id,e.root_path,e.source_root,e.updated_at,m.series_id
 			FROM source_catalog_entry e JOIN file_source fs ON fs.id=e.file_source_id
 			LEFT JOIN catalog_series_member m ON m.catalog_entry_id=e.id
-			WHERE e.id=? AND fs.enabled=1 AND fs.source_type='openlist'`, id).Scan(&member.CatalogEntryID, &member.Title, &member.SourceID, &member.SourceName, &member.PrimaryCode, &member.WorkID, &member.RootPath, &member.UpdatedAt, &member.SeriesID)
+			WHERE e.id=? AND fs.enabled=1 AND fs.source_type='openlist'`, id).Scan(&member.CatalogEntryID, &member.Title, &member.SourceID, &member.SourceName, &member.PrimaryCode, &member.WorkID, &member.RootPath, &member.SourceRoot, &member.UpdatedAt, &member.SeriesID)
 		if errors.Is(err, sql.ErrNoRows) || member.SeriesID != nil {
 			return nil, "", errCatalogGroupingConflict
 		}
@@ -125,7 +126,7 @@ func loadGroupingMembers(ctx context.Context, tx *sql.Tx, input catalogGroupingI
 		// A numbered edition or existing work stays exact; grouping never resolves
 		// it onto another member's work or copies a user's evaluation.
 		_ = encoder.Encode(member)
-		_ = encoder.Encode([]string{member.RootPath, member.UpdatedAt})
+		_ = encoder.Encode([]string{member.RootPath, member.SourceRoot, member.UpdatedAt})
 		if member.WorkID != nil {
 			if seenWorks[*member.WorkID] {
 				return nil, "", errCatalogGroupingConflict

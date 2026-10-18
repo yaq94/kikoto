@@ -200,6 +200,12 @@ func completeCatalogDirectoryTx(ctx context.Context, tx *sql.Tx, sourceID, gener
 	if err != nil {
 		return err
 	}
+	finish := func() error {
+		if d.Root == d.Path {
+			return decideCatalogWorkSplitTx(ctx, tx, sourceID, d.Path, d.Revision)
+		}
+		return nil
+	}
 	// A published container keeps its identity even if a later scan discovers
 	// episode markers below it; splitting that needs explicit review. An exact
 	// entry for this directory always wins, and a coded child never inherits a
@@ -217,7 +223,7 @@ func completeCatalogDirectoryTx(ctx context.Context, tx *sql.Tx, sourceID, gener
 		// grouping folder that now lists coded works stops owning them.
 		if catalogContainerDirectory(path.Base(d.Path)) {
 			d.Root = catalogAdmissionRoot(d.Path, "", catalogDirectorySummary{audio, formats, auxiliary, tracks, otherDirs})
-			return nil
+			return finish()
 		}
 		var codedChild int
 		if err = tx.QueryRowContext(ctx, `SELECT EXISTS(
@@ -233,7 +239,7 @@ func completeCatalogDirectoryTx(ctx context.Context, tx *sql.Tx, sourceID, gener
 		}
 		if codedChild == 0 {
 			d.Root = d.Path
-			return nil
+			return finish()
 		}
 		// The exact entry belongs to the grouping folder, not to the coded
 		// works below it. Keep this directory's own loose audio in its card and
@@ -245,11 +251,11 @@ func completeCatalogDirectoryTx(ctx context.Context, tx *sql.Tx, sourceID, gener
 	}
 	if catalogDirectoryCode(d.Path) != "" {
 		d.Root = catalogAdmissionRoot(d.Path, "", catalogDirectorySummary{audio, formats, auxiliary, tracks, otherDirs})
-		return nil
+		return finish()
 	}
 	if catalogContainerDirectory(path.Base(d.Path)) {
-			d.Root = catalogAdmissionRoot(d.Path, "", catalogDirectorySummary{audio, formats, auxiliary, tracks, otherDirs})
-		return nil
+		d.Root = catalogAdmissionRoot(d.Path, "", catalogDirectorySummary{audio, formats, auxiliary, tracks, otherDirs})
+		return finish()
 	}
 	// A published parent is a work container only while it has no coded child
 	// directly below it. An uploader or voice-actor folder that lists coded works
@@ -295,7 +301,7 @@ func completeCatalogDirectoryTx(ctx context.Context, tx *sql.Tx, sourceID, gener
 		return nil
 	}
 	d.Root = catalogAdmissionRoot(d.Path, d.Root, catalogDirectorySummary{audio, formats, auxiliary, tracks, otherDirs})
-	return nil
+	return finish()
 }
 
 // expandCatalogDirectory releases the writer after at most 100 child enqueues.
@@ -404,9 +410,11 @@ func (s *Server) publishCatalogBatch(ctx context.Context, job workflowJobRecord,
 	rows, err := tx.QueryContext(ctx, `WITH roots AS MATERIALIZED (
 	SELECT catalog_root FROM source_catalog_audio_root WHERE file_source_id=? AND generation=?
 )
-SELECT d.path,d.catalog_root,o.name,o.kind,o.size_bytes,o.content_hash
+	SELECT d.path,d.catalog_root,o.name,o.kind,o.size_bytes,o.content_hash,
+		CASE WHEN d.path=d.catalog_root THEN COALESCE(rd.work_split,'') ELSE '' END
 FROM source_catalog_observation o
 JOIN source_catalog_directory d ON d.file_source_id=o.file_source_id AND d.path=o.directory_path AND d.revision=o.revision
+LEFT JOIN source_catalog_directory rd ON rd.file_source_id=d.file_source_id AND rd.path=d.catalog_root AND rd.generation=d.generation
 JOIN roots r ON r.catalog_root=d.catalog_root
 WHERE o.file_source_id=? AND o.publish_pending=1 AND d.generation=? AND d.status='complete' AND d.catalog_root<>''
 ORDER BY o.directory_path,o.name LIMIT 100`, sourceID, job.RunID, sourceID, job.RunID)
@@ -414,13 +422,13 @@ ORDER BY o.directory_path,o.name LIMIT 100`, sourceID, job.RunID, sourceID, job.
 		return 0, err
 	}
 	type publication struct {
-		dir, root, name, kind, hash string
-		size                        int64
+		dir, root, name, kind, hash, split string
+		size                               int64
 	}
 	items := []publication{}
 	for rows.Next() {
 		var p publication
-		if err = rows.Scan(&p.dir, &p.root, &p.name, &p.kind, &p.size, &p.hash); err != nil {
+		if err = rows.Scan(&p.dir, &p.root, &p.name, &p.kind, &p.size, &p.hash, &p.split); err != nil {
 			break
 		}
 		items = append(items, p)
@@ -432,26 +440,112 @@ ORDER BY o.directory_path,o.name LIMIT 100`, sourceID, job.RunID, sourceID, job.
 	if err != nil {
 		return 0, err
 	}
+	splitPlans := map[string]map[string]catalogSplitTarget{}
+	parentNeeded := map[string]bool{}
 	for _, p := range items {
+		if p.split == catalogWorkSplitPrefix || p.split == catalogWorkSplitFile {
+			if _, ok := splitPlans[p.root]; ok {
+				continue
+			}
+			targets, needed, planErr := s.catalogSplitTargetsForRoot(ctx, tx.Tx, sourceID, job.RunID, p.root)
+			if planErr != nil {
+				return 0, planErr
+			}
+			splitPlans[p.root] = targets
+			parentNeeded[p.root] = needed
+		}
+	}
+	firstSplit := map[string]int64{}
+	for _, p := range items {
+		root, sourceRoot, title := p.root, "", path.Base(p.root)
+		if targets, ok := splitPlans[p.root]; ok && p.dir == p.root && p.kind == "audio" && !strings.Contains(p.name, "/") {
+			if target, ok := targets[p.name]; ok {
+				root, sourceRoot, title = target.Root, target.SourceRoot, target.Title
+			}
+		}
+		if _, split := splitPlans[p.root]; split && !parentNeeded[p.root] && root == p.root {
+			// The creator card was retired in favour of split cards. A folder
+			// or other row still points at it; mark it published without
+			// recreating the card (its file_source_id is now NULL, so the
+			// unique key would not match the retired row).
+			_, err = tx.ExecContext(ctx, `UPDATE source_catalog_observation SET published_generation=?,publish_pending=0 WHERE file_source_id=? AND directory_path=? AND name=?`, job.RunID, sourceID, p.dir, p.name)
+			if err != nil {
+				return 0, err
+			}
+			continue
+		}
 		var id int64
 		// The code is derived from the root name on every generation. An
 		// entry published before code parsing understood a prefix keeps its
 		// empty code unless the rescan rewrites it, and then search never
 		// finds the work by its published number.
-		err = tx.QueryRowContext(ctx, `INSERT INTO source_catalog_entry(file_source_id,root_path,primary_code,title,last_seen_generation,discovered_generation) VALUES(?,?,?,?,?,?) ON CONFLICT(file_source_id,root_path) DO UPDATE SET primary_code=excluded.primary_code,title=excluded.title,last_seen_generation=excluded.last_seen_generation,updated_at=CURRENT_TIMESTAMP RETURNING id`, sourceID, p.root, catalogDirectoryCode(p.root), path.Base(p.root), job.RunID, job.RunID).Scan(&id)
+		err = tx.QueryRowContext(ctx, `INSERT INTO source_catalog_entry(file_source_id,root_path,source_root,primary_code,title,last_seen_generation,discovered_generation) VALUES(?,?,?,?,?,?,?) ON CONFLICT(file_source_id,root_path) DO UPDATE SET source_root=excluded.source_root,primary_code=excluded.primary_code,title=excluded.title,last_seen_generation=excluded.last_seen_generation,updated_at=CURRENT_TIMESTAMP RETURNING id`, sourceID, root, sourceRoot, catalogEntryCode(root), title, job.RunID, job.RunID).Scan(&id)
 		if err != nil {
 			return 0, err
 		}
-		if err = attachCatalogSeriesTx(ctx, tx.Tx, id); err != nil {
-			return 0, err
+		if root != p.root && firstSplit[p.root] == 0 {
+			firstSplit[p.root] = id
 		}
-		rel := strings.TrimPrefix(path.Join(p.dir, p.name), strings.TrimRight(p.root, "/")+"/")
+		if sourceRoot == "" {
+			// A split card is already one work. Its title or file name is not
+			// episode evidence, so it must not create or join a series.
+			if err = attachCatalogSeriesTx(ctx, tx.Tx, id); err != nil {
+				return 0, err
+			}
+		}
+		// relative_path is relative to the real directory (source_root). The
+		// card identity may carry a ::split suffix, so rebase on source_root.
+		baseRoot := p.root
+		if sourceRoot != "" {
+			baseRoot = sourceRoot
+		}
+		rel := strings.TrimPrefix(path.Join(p.dir, p.name), strings.TrimRight(baseRoot, "/")+"/")
 		_, err = tx.ExecContext(ctx, `INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes,content_hash,observed_generation) VALUES(?,?,?,?,?,?,?) ON CONFLICT(catalog_entry_id,relative_path) DO UPDATE SET title=excluded.title,kind=excluded.kind,size_bytes=excluded.size_bytes,content_hash=excluded.content_hash,observed_generation=excluded.observed_generation`, id, rel, p.name, p.kind, p.size, p.hash, job.RunID)
 		if err != nil {
 			return 0, err
 		}
 		_, err = tx.ExecContext(ctx, `UPDATE source_catalog_observation SET published_generation=?,publish_pending=0 WHERE file_source_id=? AND directory_path=? AND name=?`, job.RunID, sourceID, p.dir, p.name)
 		if err != nil {
+			return 0, err
+		}
+	}
+	for root, targets := range splitPlans {
+		if parentNeeded[root] || len(targets) == 0 {
+			continue
+		}
+		// Retire the creator card only after every observation below this
+		// root has been published. Otherwise a later batch could add nested
+		// audio to a row that is already an alias.
+		var pending int
+		if err = tx.QueryRowContext(ctx, `SELECT EXISTS(
+			SELECT 1 FROM source_catalog_observation o
+			JOIN source_catalog_directory d ON d.file_source_id=o.file_source_id AND d.path=o.directory_path
+			WHERE d.file_source_id=? AND d.generation=? AND d.catalog_root=? AND o.publish_pending=1)`,
+			sourceID, job.RunID, root).Scan(&pending); err != nil {
+			return 0, err
+		}
+		if pending != 0 {
+			continue
+		}
+		var incomplete int
+		if err = tx.QueryRowContext(ctx, `SELECT EXISTS(
+			SELECT 1 FROM source_catalog_directory
+			WHERE file_source_id=? AND generation=? AND catalog_root=? AND status<>'complete')`,
+			sourceID, job.RunID, root).Scan(&incomplete); err != nil {
+			return 0, err
+		}
+		if incomplete != 0 {
+			continue
+		}
+		targetID := firstSplit[root]
+		if targetID == 0 {
+			if err = tx.QueryRowContext(ctx, `SELECT id FROM source_catalog_entry WHERE file_source_id=? AND root_path=? AND source_root<>'' ORDER BY id LIMIT 1`, sourceID, root).Scan(&targetID); errors.Is(err, sql.ErrNoRows) {
+				continue
+			} else if err != nil {
+				return 0, err
+			}
+		}
+		if err = retireCatalogSplitParentTx(ctx, tx.Tx, sourceID, root, targetID); err != nil {
 			return 0, err
 		}
 	}

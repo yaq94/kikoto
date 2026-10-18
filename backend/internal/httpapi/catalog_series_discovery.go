@@ -183,7 +183,7 @@ func (s *Server) persistCatalogEpisodeRoots(ctx context.Context, source remoteSo
 		return 0, true, err
 	}
 	for _, child := range roots {
-		id, err := persistOpenListSnapshotTx(ctx, tx, source.ID, child, split[child])
+		id, err := persistOpenListSnapshotTx(ctx, tx, source.ID, child, "", path.Base(child), split[child])
 		if err != nil {
 			return 0, true, err
 		}
