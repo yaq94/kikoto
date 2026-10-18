@@ -83,11 +83,13 @@ func TestSharedAssociationSeriesEpisodesAndRegistration(t *testing.T) {
 	workReferenceRequest(t, app, listener, "PATCH", "/api/catalog-series/2/user-state", `{"rating":1,"note":"Different user"}`, 200, nil)
 	var op map[string]any
 	input := `{"left":{"kind":"series","id":1},"right":{"kind":"series","id":2}}`
-	// Browsing a preview does not grant permission to start it.
-	workReferenceRequest(t, app, listener, "POST", "/api/shared-associations/previews", input, 201, &op)
-	url := "/api/shared-associations/" + strconv.Itoa(int(op["id"].(float64)))
-	workReferenceRequest(t, app, listener, "POST", url+"/start", mustJSON(map[string]any{"version": op["version"]}), 403, nil)
+	// Only a data editor may create or start a shared association; an affected
+	// listener still sees a preview already created by that editor.
+	workReferenceRequest(t, app, listener, "POST", "/api/shared-associations/previews", input, 403, nil)
 	workReferenceRequest(t, app, admin, "POST", "/api/shared-associations/previews", input, 201, &op)
+	url := "/api/shared-associations/" + strconv.Itoa(int(op["id"].(float64)))
+	workReferenceRequest(t, app, admin, "POST", url+"/start", mustJSON(map[string]any{"version": op["version"]}), 200, nil)
+	workReferenceRequest(t, app, admin, "POST", "/api/shared-associations/previews", input, 409, nil)
 	url = "/api/shared-associations/" + strconv.Itoa(int(op["id"].(float64)))
 	workReferenceRequest(t, app, admin, "POST", url+"/start", mustJSON(map[string]any{"version": op["version"]}), 200, &op)
 	if op["status"] != "completed" {

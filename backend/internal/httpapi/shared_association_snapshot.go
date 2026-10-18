@@ -248,13 +248,23 @@ func loadAssociationSnapshot(ctx context.Context, tx *sql.Tx, left, right associ
 	if len(snapshot.Left.Members)+len(snapshot.Right.Members) > 100 {
 		return snapshot, "", errAssociationLimit
 	}
-	return snapshot, associationFingerprint(snapshot), nil
+	fingerprint, err := associationFingerprint(snapshot)
+	if err != nil {
+		return snapshot, "", err
+	}
+	return snapshot, fingerprint, nil
 }
 
-func associationFingerprint(value any) string {
-	raw, _ := json.Marshal(value)
+// associationFingerprint encodes the exact snapshot bytes. A marshal failure
+// must abort the operation: hashing a partial buffer would make two different
+// snapshots look identical and could let a stale preview pass validation.
+func associationFingerprint(value any) (string, error) {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return "", err
+	}
 	sum := sha256.Sum256(raw)
-	return hex.EncodeToString(sum[:])
+	return hex.EncodeToString(sum[:]), nil
 }
 
 func associationConflicts(a, b associationReview) []string {

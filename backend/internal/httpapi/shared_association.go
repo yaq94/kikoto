@@ -54,7 +54,10 @@ func writeAssociationError(w http.ResponseWriter, err error) {
 }
 
 func (s *Server) createSharedAssociationPreview(w http.ResponseWriter, r *http.Request) {
-	actor, ok := s.requirePermission(w, r, "library:read")
+	// A preview is a shared-library change: it persists a retained snapshot and
+	// reserves an operation. Only a data editor may create one; affected users
+	// still decide their own records through the read decision endpoint.
+	actor, ok := s.requirePermission(w, r, "library:write")
 	if !ok {
 		return
 	}
@@ -93,7 +96,11 @@ func (s *Server) createSharedAssociationPreview(w http.ResponseWriter, r *http.R
 		return
 	}
 	a := storedAssociation{ActorID: sql.NullInt64{Int64: actor.ID, Valid: true}, Status: "preview", Version: hex.EncodeToString(nonce[:]), Fingerprint: fingerprint, Snapshot: snapshot}
-	raw, _ := json.Marshal(snapshot)
+	raw, err := json.Marshal(snapshot)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
 	err = tx.QueryRowContext(r.Context(), `INSERT INTO shared_association(actor_id,version,fingerprint,snapshot_json) VALUES(?,?,?,?) RETURNING id`, actor.ID, a.Version, fingerprint, string(raw)).Scan(&a.ID)
 	if err == nil {
 		err = tx.Commit()
@@ -419,7 +426,10 @@ func commitReadyAssociationTx(ctx context.Context, tx *sql.Tx, a *storedAssociat
 		return err
 	}
 	result := associationResult{associationSnapshot: associationSnapshot{Left: left, Right: right}, AppliedReviews: applied.Reviews}
-	raw, _ := json.Marshal(result)
+	raw, err := json.Marshal(result)
+	if err != nil {
+		return err
+	}
 	_, err = tx.ExecContext(ctx, `UPDATE shared_association SET status='completed',result_json=?,updated_at=CURRENT_TIMESTAMP WHERE id=?`, string(raw), a.ID)
 	if err == nil {
 		a.Status = "completed"

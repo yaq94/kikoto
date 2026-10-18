@@ -55,7 +55,11 @@ func loadSplitSnapshot(ctx context.Context, tx *sql.Tx, associationID int64) (sp
 			return snapshot, "", errAssociationStale
 		}
 	}
-	return snapshot, associationFingerprint(snapshot), nil
+	fingerprint, err := associationFingerprint(snapshot)
+	if err != nil {
+		return snapshot, "", err
+	}
+	return snapshot, fingerprint, nil
 }
 
 func loadStoredSplit(ctx context.Context, tx *sql.Tx, id int64) (storedSplit, error) {
@@ -74,7 +78,14 @@ func splitRecordChange(snapshot splitSnapshot, user int64) string {
 	if !hadApplied && hasCurrent {
 		return "added"
 	}
-	if hasCurrent != hadApplied || associationFingerprint(current) != associationFingerprint(applied) {
+	currentPrint, currentErr := associationFingerprint(current)
+	appliedPrint, appliedErr := associationFingerprint(applied)
+	if currentErr != nil || appliedErr != nil {
+		// A record that cannot be serialized is treated as changed: keeping it
+		// visible for the owner is safer than silently calling it unchanged.
+		return "modified"
+	}
+	if hasCurrent != hadApplied || currentPrint != appliedPrint {
 		return "modified"
 	}
 	return "unchanged"
@@ -121,7 +132,9 @@ func (s *Server) splitView(ctx context.Context, split storedSplit, user int64) (
 }
 
 func (s *Server) createSharedSplitPreview(w http.ResponseWriter, r *http.Request) {
-	actor, ok := s.requirePermission(w, r, "library:read")
+	// Splitting a shared association is a data-editor operation, like creating
+	// the association it reverses. Affected owners only choose their records.
+	actor, ok := s.requirePermission(w, r, "library:write")
 	if !ok {
 		return
 	}
@@ -164,7 +177,11 @@ func (s *Server) createSharedSplitPreview(w http.ResponseWriter, r *http.Request
 		return
 	}
 	split := storedSplit{ActorID: sql.NullInt64{Int64: actor.ID, Valid: true}, Status: "preview", Version: hex.EncodeToString(nonce[:]), Fingerprint: fingerprint, Snapshot: snapshot}
-	raw, _ := json.Marshal(snapshot)
+	raw, err := json.Marshal(snapshot)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
 	err = tx.QueryRowContext(r.Context(), `INSERT INTO shared_association(actor_id,operation,split_of,version,fingerprint,snapshot_json) VALUES(?,'split',?,?,?,?) RETURNING id`, actor.ID, id, split.Version, fingerprint, string(raw)).Scan(&split.ID)
 	if err == nil {
 		err = tx.Commit()

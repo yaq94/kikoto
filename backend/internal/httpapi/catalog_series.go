@@ -200,7 +200,11 @@ func (s *Server) createCatalogGroupingPreview(w http.ResponseWriter, r *http.Req
 		writeError(w, err)
 		return
 	}
-	payload, _ := json.Marshal(input)
+	payload, err := json.Marshal(input)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
 	var id int64
 	err = tx.QueryRowContext(r.Context(), `INSERT INTO catalog_series_preview(actor_id,payload_json,fingerprint) VALUES(?,?,?) RETURNING id`, actor.ID, string(payload), fingerprint).Scan(&id)
 	if err == nil {

@@ -28,6 +28,7 @@ func TestSharedSplitStaleChoicesAndFailedCommitPreserveRecords(t *testing.T) {
 	workReferenceRequest(t, app, admin, "POST", linkURL+"/start", mustJSON(map[string]any{"version": link["version"]}), 200, &link)
 	workReferenceRequest(t, app, admin, "PATCH", "/api/works/12/user-state", `{"note":"Admin after"}`, 200, nil)
 	workReferenceRequest(t, app, listener, "PATCH", "/api/works/11/user-state", `{"note":"Listener after"}`, 200, nil)
+	workReferenceRequest(t, app, listener, "POST", linkURL+"/split-preview", "{}", 403, nil)
 	workReferenceRequest(t, app, admin, "POST", linkURL+"/split-preview", "{}", 201, &split)
 	url := "/api/shared-splits/" + strconv.Itoa(int(split["id"].(float64)))
 	workReferenceRequest(t, app, admin, "POST", url+"/start", mustJSON(map[string]any{"version": split["version"]}), 200, &split)
