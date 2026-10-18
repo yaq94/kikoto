@@ -45,7 +45,11 @@ func (s *Server) workMatchingSettings(w http.ResponseWriter, r *http.Request) {
 			writeAPIError(w, 400, "invalid_request", "invalid matching resource limits", false)
 			return
 		}
-		raw, _ := json.Marshal(o)
+		raw, marshalErr := json.Marshal(o)
+		if marshalErr != nil {
+			writeError(w, marshalErr)
+			return
+		}
 		tx, release, e := beginTxWithDatabaseBusyRetry(r.Context(), s.db)
 		if e != nil {
 			writeError(w, e)

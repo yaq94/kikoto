@@ -258,12 +258,17 @@ func evaluateWorkMatchTx(ctx context.Context, tx *sql.Tx, subject associationSub
 		return result, err
 	}
 	if subject.Kind == "catalog" && normalizeWorkCode(a.Code) != "" {
-		var known int
-		if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM work WHERE primary_code=? UNION ALL SELECT 1 FROM work_code_alias alias JOIN logical_work logical ON logical.id=alias.logical_work_id WHERE alias.primary_code=? AND logical.canonical_work_id IS NOT NULL)`, a.Code, a.Code).Scan(&known); err != nil {
+		var knownID int64
+		err = tx.QueryRowContext(ctx, `SELECT w.id FROM work w WHERE w.primary_code=?
+			UNION ALL SELECT COALESCE(l.canonical_work_id,alias.source_work_id) FROM work_code_alias alias
+				LEFT JOIN logical_work l ON l.id=alias.logical_work_id
+				WHERE alias.primary_code=? AND COALESCE(l.canonical_work_id,alias.source_work_id) IS NOT NULL LIMIT 1`, a.Code, a.Code).Scan(&knownID)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return result, err
 		}
-		if known != 0 {
+		if knownID != 0 {
 			result.Status, result.Rule = "existing", "product_code"
+			result.Target = associationSubject{Kind: "work", ID: knownID}
 			return result, nil
 		}
 	}
@@ -271,8 +276,17 @@ func evaluateWorkMatchTx(ctx context.Context, tx *sql.Tx, subject associationSub
 	if err != nil {
 		return result, err
 	}
+	// An unfinished scan only withholds automatic association for the subjects
+	// it could still publish. A failed or partial source must not freeze every
+	// unrelated work and catalog entry forever.
 	var incomplete int
-	if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM source_catalog_scan scan JOIN workflow_run run ON run.id=scan.workflow_run_id WHERE run.status<>'succeeded')`).Scan(&incomplete); err != nil {
+	if err = tx.QueryRowContext(ctx, `SELECT EXISTS(
+		SELECT 1 FROM source_catalog_scan scan JOIN workflow_run run ON run.id=scan.workflow_run_id
+		WHERE run.status<>'succeeded' AND (
+			?='catalog' AND scan.file_source_id=(SELECT file_source_id FROM source_catalog_entry WHERE id=?)
+			OR ?='work' AND EXISTS(SELECT 1 FROM source_catalog_entry e WHERE e.work_id=? AND e.file_source_id=scan.file_source_id)
+			OR ?='series' AND EXISTS(SELECT 1 FROM catalog_series_member m JOIN source_catalog_entry e ON e.id=m.catalog_entry_id WHERE m.series_id=?)
+		))`, subject.Kind, subject.ID, subject.Kind, subject.ID, subject.Kind, subject.ID).Scan(&incomplete); err != nil {
 		return result, err
 	}
 	if incomplete != 0 {
@@ -309,9 +323,16 @@ func evaluateWorkMatchTx(ctx context.Context, tx *sql.Tx, subject associationSub
 		result.Rule = "candidate_limit"
 		return result, nil
 	}
-	rawEvidence, _ := json.Marshal(a)
+	rawEvidence, err := json.Marshal(a)
+	if err != nil {
+		return result, err
+	}
 	evidenceBytes := len(rawEvidence)
-	evidence := []string{associationFingerprint(a)}
+	aPrint, err := associationFingerprint(a)
+	if err != nil {
+		return result, err
+	}
+	evidence := []string{aPrint}
 	seen := map[int64]bool{}
 	best, count := 0, 0
 	for _, candidate := range subjects {
@@ -319,13 +340,20 @@ func evaluateWorkMatchTx(ctx context.Context, tx *sql.Tx, subject associationSub
 		if e != nil {
 			return result, e
 		}
-		rawEvidence, _ = json.Marshal(b)
+		rawEvidence, err = json.Marshal(b)
+		if err != nil {
+			return result, err
+		}
 		evidenceBytes += len(rawEvidence)
 		if evidenceBytes > 2<<20 {
 			result.Status, result.Rule = "paused", "metadata_limit"
 			return result, nil
 		}
-		evidence = append(evidence, associationFingerprint(b))
+		bPrint, printErr := associationFingerprint(b)
+		if printErr != nil {
+			return result, printErr
+		}
+		evidence = append(evidence, bPrint)
 		if a.Identity > 0 && a.Identity == b.Identity {
 			continue
 		}
@@ -376,11 +404,14 @@ func evaluateWorkMatchTx(ctx context.Context, tx *sql.Tx, subject associationSub
 	if err = tx.QueryRowContext(ctx, `SELECT revision FROM work_matching_control WHERE id=1`).Scan(&revision); err != nil {
 		return result, err
 	}
-	result.Fingerprint = associationFingerprint(struct {
+	result.Fingerprint, err = associationFingerprint(struct {
 		RuleVersion string
 		Revision    int64
 		Evidence    []string
 	}{"1", revision, evidence})
+	if err != nil {
+		return result, err
+	}
 	if len(result.Candidates) > 0 {
 		result.Status = "review"
 	}
@@ -429,6 +460,14 @@ func (s *Server) matchWork(ctx context.Context, subject associationSubject, acto
 	if err != nil {
 		return result, err
 	}
+	if result.Status == "existing" && result.Target.Kind == "work" && result.Target.ID > 0 && subject.Kind == "catalog" {
+		// A published product code is authoritative evidence. Persist the link
+		// so the catalog card joins the registered work in lists and searches;
+		// reading through the code alone left a duplicate card behind.
+		if _, err = tx.ExecContext(ctx, `UPDATE source_catalog_entry SET work_id=? WHERE id=? AND work_id IS NULL`, result.Target.ID, subject.ID); err != nil {
+			return result, err
+		}
+	}
 	if result.Status == "eligible" {
 		var pending int64
 		err = tx.QueryRowContext(ctx, `SELECT o.operation_id FROM work_matching_operation o JOIN shared_association a ON a.id=o.operation_id WHERE o.subject_kind=? AND o.subject_id=? AND o.evidence_fingerprint=? AND a.status='pending' ORDER BY o.operation_id DESC LIMIT 1`, subject.Kind, subject.ID, result.Fingerprint).Scan(&pending)
@@ -476,7 +515,10 @@ func (s *Server) matchWork(ctx context.Context, subject associationSubject, acto
 					return result, e
 				}
 				a := storedAssociation{Status: "preview", Version: hex.EncodeToString(nonce[:]), Fingerprint: fingerprint, Snapshot: snapshot}
-				raw, _ := json.Marshal(snapshot)
+				raw, e := json.Marshal(snapshot)
+				if e != nil {
+					return result, e
+				}
 				if e = tx.QueryRowContext(ctx, `INSERT INTO shared_association(actor_id,version,fingerprint,snapshot_json) VALUES(?,?,?,?) RETURNING id`, actor, a.Version, fingerprint, string(raw)).Scan(&a.ID); e != nil {
 					return result, e
 				}
@@ -493,7 +535,10 @@ func (s *Server) matchWork(ctx context.Context, subject associationSubject, acto
 	if err = tx.QueryRowContext(ctx, `SELECT revision FROM work_matching_control WHERE id=1`).Scan(&result.Revision); err != nil {
 		return result, err
 	}
-	raw, _ := json.Marshal(result)
+	raw, err := json.Marshal(result)
+	if err != nil {
+		return result, err
+	}
 	if _, err = tx.ExecContext(ctx, `INSERT INTO work_matching_result(kind,entity_id,result_json,revision) VALUES(?,?,?,?) ON CONFLICT(kind,entity_id) DO UPDATE SET result_json=excluded.result_json,revision=excluded.revision,updated_at=CURRENT_TIMESTAMP`, subject.Kind, subject.ID, string(raw), result.Revision); err != nil {
 		return result, err
 	}

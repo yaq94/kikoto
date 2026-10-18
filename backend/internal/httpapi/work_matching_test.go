@@ -151,6 +151,13 @@ func TestWorkMatchingNumberedCatalogUsesExistingCodeBeforeTitleCandidates(t *tes
 	var entry map[string]any
 	workReferenceRequest(t, app, cookie, "GET", "/api/source-catalog/1", "", 200, &entry)
 	assertReview(t, entry, float64(4), "Example review")
+	var linked int
+	if err := db.QueryRow(`SELECT EXISTS(SELECT 1 FROM source_catalog_entry WHERE id=1 AND work_id=11)`).Scan(&linked); err != nil {
+		t.Fatal(err)
+	}
+	if linked == 0 {
+		t.Fatal("existing code match did not link the catalog entry to the registered work")
+	}
 }
 
 func TestWorkMatchingDeclaredRelationOutranksHeuristicsAndKeepsExactEditions(t *testing.T) {
