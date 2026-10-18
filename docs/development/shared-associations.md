@@ -11,7 +11,7 @@ See [the identity decision](../decisions/ADR-0005-shared-identity-preserves-play
 
 ## Preview and confirmation
 
-`POST /api/shared-associations/previews` requires `library:read` and accepts
+`POST /api/shared-associations/previews` requires `library:write` and accepts
 `left` and `right`, each `{kind: "work" | "catalog" | "series", id}`. It stores
 a durable preview without registering works or changing shared identity.
 Different evaluation levels are rejected. A preview contains titles, retained
@@ -83,7 +83,7 @@ Cross-feature SQL consumers use these stable contracts:
 
 ## Splitting an association
 
-`POST /api/shared-associations/{id}/split-preview` requires `library:read` and
+`POST /api/shared-associations/{id}/split-preview` requires `library:write` and
 captures the original two sides, their source ownership and the current shared
 review state. `GET /api/shared-associations/{id}/splits` lists pending or completed
 splits and the viewer's drafts. `GET /api/shared-splits/{id}` returns only that

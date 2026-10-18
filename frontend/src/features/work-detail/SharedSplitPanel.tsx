@@ -67,7 +67,7 @@ export function SharedSplitPanel({
     <section aria-label={t("sharedSplit.title")} className="space-y-3 border-t pt-3">
       <h3 className="font-semibold">{t("sharedSplit.title")}</h3>
       <p className="text-sm text-muted-foreground">{t("sharedSplit.hint")}</p>
-      {auth.user && !alreadySplit && (
+      {auth.user && auth.hasPermission("library:write") && !alreadySplit && (
         <Button variant="outline" disabled={busy} onClick={() => void run(() => api.previewSharedSplit(associationId))}>
           {t("sharedSplit.preview")}
         </Button>

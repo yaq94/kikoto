@@ -90,10 +90,14 @@ export function SharedAssociationPanel({
       <p className="text-sm text-muted-foreground">{t("sharedAssociation.hint")}</p>
       <WorkMatchingPanel
         subject={subject}
-        onCandidate={(candidate) => void run(() => api.previewSharedAssociation(subject, candidate))}
+        onCandidate={
+          auth.hasPermission("library:write")
+            ? (candidate) => void run(() => api.previewSharedAssociation(subject, candidate))
+            : undefined
+        }
         onOperation={(operationId) => void run(() => api.getSharedAssociation(operationId))}
       />
-      {auth.user && (
+      {auth.user && auth.hasPermission("library:write") && (
         <div className="space-y-2">
           <label htmlFor={`${id}-target`}>{t("sharedAssociation.target")}</label>
           <Input id={`${id}-target`} value={target} onChange={(event) => setTarget(event.target.value)} />
@@ -215,7 +219,7 @@ export function SharedAssociationPanel({
           >
             {t("sharedAssociation.refresh")}
           </Button>
-          {operation.status === "stale" && auth.user && (
+          {operation.status === "stale" && auth.user && auth.hasPermission("library:write") && (
             <Button
               disabled={busy}
               onClick={() =>
