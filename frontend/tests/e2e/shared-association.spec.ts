@@ -127,6 +127,16 @@ test("shared association requires each owner's UI confirmation through the real 
     .click();
   await expect(page).toHaveURL(new RegExp(`/catalog/${second.catalogEntryId}$`));
   await expect(page.getByLabel("Personal note", { exact: true })).toHaveValue("B chosen note");
+  // B is an ordinary reader: the preview entry is gated behind library:write,
+  // even though B could confirm their own review of an existing operation.
+  await expect(panel.getByLabel("Link to the other entry", { exact: true })).toHaveCount(0);
+  await login("synthetic-user");
+  await page.reload();
+  await panel
+    .getByRole("button", { name: /Open association/ })
+    .first()
+    .click();
+  await expect(panel.getByRole("status")).toHaveText("Association completed");
   await panel.getByLabel("Link to the other entry", { exact: true }).fill("/RJ00000001");
   const submitted = page.waitForRequest(
     (request) => request.url().endsWith("/api/shared-associations/previews") && request.method() === "POST",

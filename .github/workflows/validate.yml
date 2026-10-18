@@ -177,15 +177,41 @@ jobs:
           if-no-files-found: ignore
 
   e2e:
-    name: E2E (${{ matrix.shard }}/4)
+    name: E2E (${{ matrix.group }})
     needs: style
     if: needs.style.outputs.e2e == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        include:
+          # Mocked-API browser tests keep the four-way Playwright shard.
+          - group: mocked-1/4
+            args: --group=mocked --shard=1/4
+          - group: mocked-2/4
+            args: --group=mocked --shard=2/4
+          - group: mocked-3/4
+            args: --group=mocked --shard=3/4
+          - group: mocked-4/4
+            args: --group=mocked --shard=4/4
+          # Fixture groups run in parallel; each owns its ports and database.
+          - group: openlist
+            args: --group=openlist
+          - group: series
+            args: --group=series
+          - group: matching-shared
+            args: --group=matching
+          - group: personal
+            args: --group=personal
+          - group: source-playback
+            args: --group=source-playback
+          - group: content-translation
+            args: --group=content-translation
+          - group: integrated-acceptance
+            args: --group=integrated-acceptance
+          - group: translation-settings
+            args: --group=translation-settings
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -193,13 +219,15 @@ jobs:
           persist-credentials: false
       - name: Set up Node
         uses: ./.github/actions/setup-node
-      - name: Run browser regression shard
-        run: make E2E_ARGS="--shard=${{ matrix.shard }}/4" frontend-e2e
+      - name: Set up Go
+        uses: ./.github/actions/setup-go
+      - name: Run browser regression group
+        run: make E2E_FIXTURE_ARGS="${{ matrix.args }}" frontend-e2e-fixtures
       - name: Upload E2E artifacts
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: playwright-e2e-artifacts-${{ matrix.shard }}
+          name: playwright-e2e-artifacts-${{ strategy.job-index }}
           path: |
             frontend/test-results
             frontend/playwright-report

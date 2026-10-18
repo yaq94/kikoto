@@ -28,6 +28,7 @@ export const scriptJobs = {
   "check-go-format.go": ["backend"],
   "golangci-lint.yml": ["backend"],
   "go-test-shard.mjs": ["backend"],
+  "run-e2e-fixtures.mjs": ["e2e"],
   "production-smoke.mjs": ["production"],
   "production-browser-smoke.mjs": ["production"],
   "smoke.mjs": ["dev_smoke"],
