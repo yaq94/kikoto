@@ -40,13 +40,16 @@ type contractTree struct {
 	files       int
 }
 
-// contractTree builds four partitions, each holding work directories with one
-// format subdirectory. Every work directory publishes exactly one entry, and
-// the format subdirectory attaches to it.
+// buildContractTree builds four partitions, each holding work directories with
+// one format subdirectory. Every work directory publishes exactly one entry,
+// and the format subdirectory attaches to it. Three works carry a second format
+// copy so the fixed shape is exactly 1,000 directories: one root, four
+// partitions, 496 work directories and 499 format directories.
 func buildContractTree() contractTree {
 	dir := func(name string) map[string]any { return map[string]any{"name": name, "is_dir": true} }
 	audio := func(name string) map[string]any { return map[string]any{"name": name, "size": 1024} }
 	tree := map[string][]map[string]any{}
+	files := 0
 	directories := 1
 	root := []map[string]any{}
 	for partition := range contractPartitions {
@@ -63,6 +66,15 @@ func buildContractTree() contractTree {
 			tree[workPath] = []map[string]any{audio("01.mp3"), audio("02.flac"), dir("MP3")}
 			tree[workPath+"/MP3"] = []map[string]any{audio("01.mp3"), audio("02.mp3")}
 			directories++
+			files += 5
+			if partition < contractPartitions-1 && work == 0 {
+				// Second format copy: keeps the directory total at 1,000
+				// without changing how many works the tree publishes.
+				tree[workPath] = append(tree[workPath], dir("FLAC"))
+				tree[workPath+"/FLAC"] = []map[string]any{audio("01.flac")}
+				directories++
+				files += 2
+			}
 		}
 		tree[partitionPath] = entries
 	}
@@ -71,8 +83,7 @@ func buildContractTree() contractTree {
 		tree:        tree,
 		directories: directories,
 		entries:     contractPartitions * contractWorksPerPartition,
-		// Two direct audio, the format folder and its two audio per entry.
-		files: contractPartitions * contractWorksPerPartition * 5,
+		files:       files,
 	}
 }
 

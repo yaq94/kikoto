@@ -102,6 +102,12 @@ export function useWorkSourceContext({
       )
     : work?.primaryCode || code;
 
+  // An unnumbered work has no release code, but a Kikoeru presence still
+  // carries the code that source knows it by. Lookups use that code so the
+  // source tab is not hidden for every work without a release number.
+  const presenceCode = work?.sourcePresence?.find((presence) => presence.remoteCode)?.remoteCode ?? "";
+  const availabilityCode = work?.primaryCode || presenceCode;
+
   const applyAvailability = useCallback(
     (result: SourceAvailabilityResponse) => {
       const knownSources = sources.filter(sourceProvidesDirectory).map((source) => ({
@@ -134,14 +140,17 @@ export function useWorkSourceContext({
   );
 
   const refreshAvailability = useCallback(async () => {
-    if (!work?.primaryCode) return null;
+    // An unnumbered work has no release code, but its source presence still
+    // carries one. The automatic path already resolves availabilityCode; the
+    // manual check must use the same identifier or it silently does nothing.
+    if (!availabilityCode) return null;
     availabilityRequest.current?.abort();
     const controller = new AbortController();
     availabilityRequest.current = controller;
     setIsCheckingSources(true);
     try {
       const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(60_000)]);
-      const result = await api.checkSourceAvailability(work.primaryCode, 0, signal, true);
+      const result = await api.checkSourceAvailability(availabilityCode, 0, signal, true);
       signal.throwIfAborted();
       applyAvailability(result);
       setRemoteSources((items) =>
@@ -155,7 +164,7 @@ export function useWorkSourceContext({
     } finally {
       if (!controller.signal.aborted) setIsCheckingSources(false);
     }
-  }, [applyAvailability, work?.primaryCode]);
+  }, [applyAvailability, availabilityCode]);
 
   const selectSource = useCallback((key: string) => {
     setActiveSourceKey(key);
@@ -277,11 +286,6 @@ export function useWorkSourceContext({
     setActiveSourceKey(intendedSource?.key ?? sourceTabs[0].key);
   }, [activeSourceKey, sourceCheckedAt, sourceTabs, work]);
 
-  // An unnumbered work has no release code, but a Kikoeru presence still
-  // carries the code that source knows it by. Lookups use that code so the
-  // source tab is not hidden for every work without a release number.
-  const presenceCode = work?.sourcePresence?.find((presence) => presence.remoteCode)?.remoteCode ?? "";
-  const availabilityCode = work?.primaryCode || presenceCode;
   const supportsLookup = !work || Boolean(availabilityCode);
   // Before the work loads, remote tabs are seeded with the requested code.
   const seedCode = work?.primaryCode || presenceCode || code;

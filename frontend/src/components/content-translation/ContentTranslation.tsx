@@ -162,7 +162,7 @@ export function TranslatedText({
     return () => observer.disconnect();
   }, [element]);
   useEffect(() => {
-    if (!readable || !visible) return;
+    if (!enabled || !visible) return;
     const controller = new AbortController();
     void contentTranslationApi
       .translate(input, controller.signal)
@@ -183,7 +183,7 @@ export function TranslatedText({
           });
       });
     return () => controller.abort();
-  }, [readable, visible, key, input, text, language]);
+  }, [enabled, visible, key, input, text, language]);
   const result = settled?.key === key ? settled.result : null;
   const success = enabled && result && (result.status === "translated" || result.status === "existing");
   const status = !enabled ? "original" : (result?.status ?? "pending");

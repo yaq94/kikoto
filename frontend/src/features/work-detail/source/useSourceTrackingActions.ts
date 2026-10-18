@@ -195,7 +195,9 @@ export function useSourceTrackingActions({
   };
 
   const checkSources = async () => {
-    if (!work?.primaryCode) return;
+    // refreshAvailability resolves an unnumbered work's presence code, so the
+    // guard must not require a release code here.
+    if (!work) return;
     // Checking sources probes remotes and persists availability, so Demo answers locally instead.
     if (auth.demoMode) {
       toast.warning(t("permissions.demoReadOnly"));
