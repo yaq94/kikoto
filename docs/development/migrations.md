@@ -262,5 +262,31 @@ matches the backup.
 | v0.8.0 | `059` | `059_v0.8.0.sql` |
 | v0.8.1, v0.8.2 | `066` | `066_v0.8.1.sql` |
 | v0.8.3 | `068` | `068_v0.8.3.sql` |
+| unreleased (Kikoto next) | `078` | Development baseline only; `compat/078_dev.sql` |
 
 Per-release upgrade steps are in the [release notes](../history/index.md).
+
+## Unreleased Kikoto-next Migrations
+
+Migrations `069` through `078` are part of the unreleased next release. They
+extend the source catalog, shared associations, personal transfer, and the
+recoverable index; no released baseline replaces them yet.
+
+| Migration | Change | Recovery and read behaviour |
+| --- | --- | --- |
+| `069_openlist_catalog.sql` | Catalog entries and files | Published rows survive a failed or repeated scan |
+| `070_source_catalog_scan.sql` | Persistent scan and directory checkpoint | A run resumes from stored pages and cursors |
+| `071_catalog_series.sql` | Series and members | Series membership does not change an entry's work |
+| `072_source_catalog_lifecycle.sql` | Availability, relocation, retained entries | Missing evidence keeps the card and personal records |
+| `073_shared_association.sql` | Shared identity, snapshot, decisions | A split restores its pre-merge groups |
+| `074_work_matching.sql` | Matching evidence and durable cursor | One subject per transaction; no partial batch is lost |
+| `075_personal_transfer.sql` | Portable references and progress | Export/import remain user scoped |
+| `076_source_catalog_publish_queue.sql` | Publish queue and cleanup staging | A published run drains its queue before completing |
+| `077_source_catalog_publish_cleanup.sql` | `source_catalog_scan.publish_cleanup_cursor` and `source_catalog_file_title` | The cursor retires only files the current generation republished; a later run continues from it |
+| `078_source_catalog_loose_works.sql` | `source_catalog_entry.source_root` and `source_catalog_directory.work_split` | An empty `source_root` keeps the old `root_path` meaning; a rescan re-evaluates the split decision |
+
+`077` does not change entry identity. It lets a generation remove stale file
+rows left by an older generation without touching an entry that the current
+run did not publish. `078` adds identity and layout columns with defaults, so
+upgrading an existing database keeps every row readable; the split decision is
+derived again when a directory listing completes.
