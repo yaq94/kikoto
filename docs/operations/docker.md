@@ -29,6 +29,27 @@ cache, and the `latest` tag is always pulled.
 To upgrade a fixed version, change `KIKOTO_IMAGE` to the new tag or digest,
 then run `docker compose up -d`.
 
+The Kikoto service in `deploy/compose/dev.yml` (`backend`) and
+`deploy/compose/demo.yml` (`kikoto`) has a health check that sends `GET /health`
+to the container's own `KIKOTO_HTTP_ADDR` port. It runs every 30 seconds, fails
+after a 5-second timeout, and requires three consecutive failures; the first
+check starts 120 seconds after the container starts so startup migrations and
+recovery can finish. A deployment that uses either file gates on
+`docker compose ... up -d --wait` (or an equivalent poll of `docker inspect`
+health) and proceeds only when the service reports `healthy`. The check uses
+the `bash` and `/dev/tcp` support in the image's Debian base; it needs no
+extra package, socket, or port mapping. The image runs as root and the check
+reads only the unauthenticated `/health` response, so it does not weaken the
+read-only root filesystem, dropped capabilities, or authentication defaults.
+The handler returns `{"status":"ok","version":"<build version>"}` with HTTP
+200.
+
+The health check belongs to the container, not to the Compose command: an
+automatic restart or `docker compose restart` starts a fresh `starting`
+period, while `docker compose up -d --wait` waits for that state to become
+`healthy`. A deployment that stops at `starting` or `unhealthy` has not passed
+the gate even when the process is listening on port `7659`.
+
 It defaults to `yexca/kikoto:latest`, which is updated by the public release
 workflow. The install and upgrade command above therefore selects the
 latest public release. Override `KIKOTO_IMAGE` with a reviewed version or digest
@@ -132,6 +153,14 @@ Then refresh the configured image and recreate the service:
 ```sh
 docker compose up -d
 ```
+
+The production Compose file has no container health check, so `up -d` returns
+after the container starts. Gate the deployment on `GET /health` returning
+HTTP 200 (for example, poll `http://127.0.0.1:7655/health`) before treating the
+upgrade as complete. A failed poll means the gate did not pass; inspect the
+logs and use the rollback procedure in
+[Release rollback](../development/release-rollback.md) rather than repeatedly
+restarting the same container.
 
 For a fixed version, update `KIKOTO_IMAGE` before running `up`. If you
 intentionally reuse a mutable non-`latest` tag, pull and recreate as separate

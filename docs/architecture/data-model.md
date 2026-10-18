@@ -15,8 +15,14 @@ stores its observed directory tree without persisting signed media URLs.
 split into several works, `root_path` carries a `::<group>` suffix and
 `source_root` keeps the real source directory that playback and refresh read.
 An empty `source_root` keeps the original meaning, where `root_path` is also the
-directory. `source_catalog_directory.work_split` records the one-time split
-decision (`single`, `prefix`, `file`) taken when a directory listing completes.
+directory. `source_catalog_directory.work_split` records the split decision
+(`single`, `prefix`, `file`) for the current completed revision of a directory
+listing; it is recomputed for each completed revision rather than frozen at the
+first observation. A new generation retires split cards it did not republish:
+their file rows are deleted and `file_source_id` and `relocated_to_id` are
+cleared, while the entry id stays resolvable for personal records. A card with
+a `work_id`, a `catalog_series_member` row, or another entry's
+`relocated_to_id` target keeps its identity and is left for explicit review.
 See [OpenList catalog boundary](../development/openlist.md) for admission,
 registration, and the separation between identity and source location.
 
@@ -946,6 +952,18 @@ case, where only a few observations remain, independent of how many
 directories are already published. The worker drains at most four batches of
 100 rows per invocation and then returns the job to the queue, which bounds
 write-lock spans while the scan continues.
+
+`source_catalog_scan.publish_cleanup_cursor` (migration
+[`077_source_catalog_publish_cleanup.sql`](../../backend/migrations/077_source_catalog_publish_cleanup.sql))
+tracks how far the final cleanup pass has retired file rows left by an older
+generation. Cleanup visits only entries with
+`last_seen_generation = <current run>` and `id > cursor`, so an entry the
+current generation did not republish keeps its files. A resumed generation
+resets the cursor to zero once, after no directory and no publish row remains,
+because publication order differs from entry-id order. `source_catalog_file_title`
+is an index on `source_catalog_file(catalog_entry_id, title)`: file-title
+search tests one candidate at a time, and the covered entry id lets the lookup
+answer from the index instead of reading the table row.
 
 ## Related Docs
 

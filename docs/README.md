@@ -55,6 +55,7 @@ Developers should read:
 - [Browsing performance validation](development/browse-performance.md)
 - [Secure development](development/security.md)
 - [Commit and release](development/commit-and-release.md)
+- [Release rollback](development/release-rollback.md)
 
 Security reporters should read:
 
