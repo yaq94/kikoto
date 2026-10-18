@@ -83,6 +83,84 @@ func TestSourceCatalogSplitDecisionFollowsANewGeneration(t *testing.T) {
 	}
 }
 
+// Small creator folders are common: two or three unrelated recordings must be
+// separate cards even though they are below the old file-count heuristic.
+func TestSourceCatalogLooseWorksSplitSmallFolders(t *testing.T) {
+	f := newLooseWorkFixture(t, map[string][]map[string]any{
+		"/": {looseDir("Creator")},
+		"/Creator": {
+			looseAudio("First Recording.mp3"),
+			looseAudio("Second Recording.mp3"),
+			looseAudio("Third Recording.mp3"),
+		},
+	})
+	f.request(t, http.MethodPost, "/catalog/index", `{"intervalMs":100}`, 202)
+	if p := f.drain(t); p["status"] != "complete" {
+		t.Fatalf("scan = %#v", p)
+	}
+	cards := f.cards(t)
+	if len(cards) != 3 {
+		t.Fatalf("cards=%d, want one per independent recording: %v", len(cards), cards)
+	}
+	for _, title := range []string{"First Recording", "Second Recording", "Third Recording"} {
+		card := cards[title]
+		if card == nil {
+			t.Fatalf("missing %q: %v", title, cards)
+		}
+		if tracks := f.tracks(t, card); len(tracks) != 1 {
+			t.Fatalf("%s tracks=%d, want 1", title, len(tracks))
+		}
+	}
+}
+
+// A numbered track listing is one work even when every track has its own
+// descriptive title. Two or three ordered parts are common in a single
+// recording, so they must not become separate cards.
+func TestSourceCatalogLooseWorksKeepsNumberedTrackRunTogether(t *testing.T) {
+	f := newLooseWorkFixture(t, map[string][]map[string]any{
+		"/": {looseDir("Creator")},
+		"/Creator": {
+			looseAudio("01 Opening.mp3"),
+			looseAudio("02 Confession.mp3"),
+			looseAudio("03 Ending.mp3"),
+		},
+	})
+	f.request(t, http.MethodPost, "/catalog/index", `{"intervalMs":100}`, 202)
+	if p := f.drain(t); p["status"] != "complete" {
+		t.Fatalf("scan = %#v", p)
+	}
+	cards := f.cards(t)
+	if len(cards) != 1 {
+		t.Fatalf("cards=%d, want one ordered work: %v", len(cards), cards)
+	}
+	card := cards["Creator"]
+	if card == nil {
+		t.Fatalf("missing ordered work card: %v", cards)
+	}
+	if tracks := f.tracks(t, card); len(tracks) != 3 {
+		t.Fatalf("ordered tracks=%d, want 3", len(tracks))
+	}
+}
+
+// Missing positions are not a reliable track sequence, so the ordinary
+// base-title rule still separates unrelated recordings.
+func TestSourceCatalogLooseWorksBreaksNonContiguousNumbers(t *testing.T) {
+	f := newLooseWorkFixture(t, map[string][]map[string]any{
+		"/": {looseDir("Creator")},
+		"/Creator": {
+			looseAudio("01 First Recording.mp3"),
+			looseAudio("03 Second Recording.mp3"),
+		},
+	})
+	f.request(t, http.MethodPost, "/catalog/index", `{"intervalMs":100}`, 202)
+	if p := f.drain(t); p["status"] != "complete" {
+		t.Fatalf("scan = %#v", p)
+	}
+	if cards := f.cards(t); len(cards) != 2 {
+		t.Fatalf("cards=%d, want separate works for a broken sequence: %v", len(cards), cards)
+	}
+}
+
 // countAudioTracks counts audio leaves under the returned track tree.
 func countAudioTracks(rows []any) int {
 	total := 0

@@ -7,6 +7,7 @@ import (
 	"path"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"unicode"
 
@@ -27,6 +28,7 @@ var catalogLooseNumericStem = regexp.MustCompile(`^[0-9]+$`)
 var catalogLooseLeadingTrack = regexp.MustCompile(`^[0-9]{1,4}(?:[\s._\-、]+|$)`)
 var catalogLooseTrailingTrack = regexp.MustCompile(`[\s._\-（(【\[]+[0-9]{1,4}[\s._\-）)】\]]*$`)
 var catalogLooseTrailingNumber = regexp.MustCompile(`[0-9]{1,4}[\s._\-）)】\]]*$`)
+var catalogNumberedTrackPrefix = regexp.MustCompile(`^([0-9]{1,4})(?:[\s._\-、]|$)`)
 
 // catalogWorkSplitMode decides how one directory's direct audio is published.
 // The decision is taken once, when the directory listing first completes.
@@ -76,16 +78,51 @@ func catalogWorkSplitModeNames(names []string) string {
 			return catalogWorkSplitPrefix
 		}
 	}
-	if len(names) >= 12 {
-		distinct := map[string]bool{}
-		for _, name := range names {
-			distinct[catalogBaseTitle(name)] = true
-		}
-		if float64(len(distinct))/float64(len(names)) > 0.5 {
-			return catalogWorkSplitFile
-		}
+	// A creator folder can hold only a few unrelated recordings, so a minimum
+	// file count would fold them into one card. Split when several base titles
+	// remain, but keep a numbered track listing together: 01.mp3/02.mp3/03.mp3
+	// and 01 Opening/02 Ending are one work with ordered tracks, not three.
+	if catalogNumberedTrackRun(names) {
+		return catalogWorkSplitSingle
+	}
+	distinct := map[string]bool{}
+	for _, name := range names {
+		distinct[catalogBaseTitle(name)] = true
+	}
+	if len(distinct) > 1 {
+		return catalogWorkSplitFile
 	}
 	return catalogWorkSplitSingle
+}
+
+// catalogNumberedTrackRun reports a directory whose every file starts with an
+// ordered track number. The sequence must be the only discriminator: the
+// remaining titles may differ. Missing or duplicate positions keep the caller
+// on the ordinary base-title rule so a broken listing is not silently merged.
+func catalogNumberedTrackRun(names []string) bool {
+	if len(names) < 2 {
+		return false
+	}
+	positions := make([]int, 0, len(names))
+	for _, name := range names {
+		stem := strings.TrimSpace(catalogFileStem(name))
+		match := catalogNumberedTrackPrefix.FindStringSubmatch(stem)
+		if match == nil {
+			return false
+		}
+		position, err := strconv.Atoi(match[1])
+		if err != nil || position <= 0 {
+			return false
+		}
+		positions = append(positions, position)
+	}
+	sort.Ints(positions)
+	for i, position := range positions {
+		if position != positions[0]+i {
+			return false
+		}
+	}
+	return true
 }
 
 func catalogFileStem(name string) string {
