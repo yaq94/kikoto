@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 )
 
@@ -21,7 +22,13 @@ func (s *Server) updateRemoteWorkUserState(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	var patch workUserStatePatch
-	if err := json.NewDecoder(r.Body).Decode(&patch); err != nil {
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&patch); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
+		return
+	}
+	if decoder.Decode(new(any)) != io.EOF {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
 		return
 	}

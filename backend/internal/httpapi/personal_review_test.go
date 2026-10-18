@@ -170,6 +170,12 @@ func TestPersonalReviewValidationAndPermissions(t *testing.T) {
 	for _, body := range []string{`{"rating":-1}`, `{"rating":6}`, `{"rating":1.5}`, `{"rating":"4"}`, `{"note":null}`, `{"note":1}`, `{"favorite":true}`} {
 		reviewRequest(t, handler, cookie, http.MethodPatch, "/api/works/1/user-state", body, http.StatusBadRequest)
 	}
+	// A client must not smuggle an owner id or any other field past the patch.
+	// The server always writes the session user, and an unknown field is an
+	// invalid request rather than a silent no-op.
+	for _, body := range []string{`{"userId":999,"rating":1}`, `{"workId":2,"rating":1}`, `{"rating":1,"unknown":true}`} {
+		reviewRequest(t, handler, cookie, http.MethodPatch, "/api/works/1/user-state", body, http.StatusBadRequest)
+	}
 	assertReview(t, reviewRequest(t, handler, cookie, http.MethodGet, "/api/works/1?includeMedia=false", "", http.StatusOK), nil, "")
 	reviewRequest(t, handler, cookie, http.MethodPatch, "/api/remote-sources/1/works/RJ00000001/user-state", `{"rating":2}`, http.StatusForbidden)
 	// A regular user may review an already registered object without the shared

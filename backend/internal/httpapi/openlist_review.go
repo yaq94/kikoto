@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strconv"
 
@@ -21,7 +22,13 @@ func (s *Server) updateSourceCatalogUserState(w http.ResponseWriter, r *http.Req
 		return
 	}
 	var patch workUserStatePatch
-	if err = json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&patch); err != nil {
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10))
+	decoder.DisallowUnknownFields()
+	if err = decoder.Decode(&patch); err != nil {
+		writeAPIError(w, 400, "invalid_request", "invalid JSON body", false)
+		return
+	}
+	if decoder.Decode(new(any)) != io.EOF {
 		writeAPIError(w, 400, "invalid_request", "invalid JSON body", false)
 		return
 	}
