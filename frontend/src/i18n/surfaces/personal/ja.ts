@@ -423,6 +423,8 @@ export const personalJapanese = {
       incomingReview: "取り込む評価",
       transferReasons: {
         existing_record: "上書きを選ぶまで現在の個人記録を保持します。",
+        existing_status: "現在の視聴状態を保持します。",
+        existing_progress: "現在の再生位置を保持します。",
         incoming_review_conflict:
           "同じ共有作品への入力評価が一致しません。このグループをスキップします。ファイルを修正してください。",
         identity_conflict: "識別情報が矛盾するため、この項目をスキップします。",

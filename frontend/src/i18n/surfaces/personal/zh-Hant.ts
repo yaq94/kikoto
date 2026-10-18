@@ -409,6 +409,8 @@ export const personalHant = {
       incomingReview: "匯入評價",
       transferReasons: {
         existing_record: "保留本人現有記錄；選擇覆寫後才替換。",
+        existing_status: "保留本人現有收聽狀態。",
+        existing_progress: "保留本人現有播放位置。",
         incoming_review_conflict: "同一共用評價物件的匯入記錄不一致。本組已略過，請整理檔案後重新匯入。",
         identity_conflict: "身分引用存在矛盾，本物件已略過。",
         unregistered_source: "已知來源尚未登記，請先登記後匯入此記錄。",

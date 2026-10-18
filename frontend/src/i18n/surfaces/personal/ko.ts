@@ -421,6 +421,8 @@ export const personalKorean = {
       incomingReview: "가져올 평가",
       transferReasons: {
         existing_record: "덮어쓰기를 선택할 때까지 기존 개인 기록을 유지합니다.",
+        existing_status: "기존 청취 상태를 유지합니다.",
+        existing_progress: "기존 재생 위치를 유지합니다.",
         incoming_review_conflict:
           "같은 공유 작품의 입력 평가가 일치하지 않습니다. 이 그룹을 건너뜁니다. 파일을 수정한 후 다시 가져오세요.",
         identity_conflict: "식별 참조가 충돌하여 이 항목을 건너뜁니다.",

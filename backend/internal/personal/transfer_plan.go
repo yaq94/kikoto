@@ -3,11 +3,12 @@ package personal
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"sort"
 )
 
 func buildImportPlan(ctx context.Context, tx *sql.Tx, user int64, b Backup) (importPlan, error) {
-	p := importPlan{preview: ImportPreview{Works: len(b.Works), Playlists: len(b.Playlists), Tags: len(b.Tags), MissingCodes: []string{}}, works: map[string]int64{}, conflicts: map[int64]bool{}, media: map[string]int64{}, blocked: map[string]bool{}, identities: map[string]int64{}, reviews: map[int64]TransferReview{}}
+	p := importPlan{preview: ImportPreview{Works: len(b.Works), Playlists: len(b.Playlists), Tags: len(b.Tags), MissingCodes: []string{}}, works: map[string]int64{}, conflicts: map[int64]bool{}, reviewConflicts: map[int64]bool{}, progressConflict: map[int64]bool{}, statusConflict: map[int64]bool{}, media: map[string]int64{}, blocked: map[string]bool{}, identities: map[string]int64{}, reviews: map[int64]TransferReview{}}
 	codes := map[string]bool{}
 	for _, w := range b.Works {
 		if w.Identity == nil {
@@ -85,33 +86,50 @@ func buildImportPlan(ctx context.Context, tx *sql.Tx, user int64, b Backup) (imp
 		}
 		p.identities[w.key()] = identity
 		p.preview.MatchedWorks++
-		var exists bool
-		// A shared identity means several work ids expose one personal record.
-		// Any member's saved data is already this user's record, so an import
-		// with keep must not overwrite it through another member id.
-		// One list keeps every personal table in scope: a table added to the
-		// export must also be able to raise a conflict here.
-		err = tx.QueryRowContext(ctx, `WITH personal_work AS (
-				SELECT work_id FROM user_work_state WHERE user_id=?
-				UNION SELECT work_id FROM user_work_tag WHERE user_id=?
-				UNION SELECT work_id FROM user_work_playback_cursor WHERE user_id=?
-				UNION SELECT work_id FROM user_listening_session WHERE user_id=?
-				UNION SELECT work_id FROM user_listening_import WHERE user_id=?
-			)
-			SELECT EXISTS(SELECT 1 FROM personal_work p WHERE p.work_id=?
-				OR EXISTS(SELECT 1 FROM shared_identity_member m WHERE m.work_id=p.work_id AND m.identity_work_id=?))`,
-			user, user, user, user, user, id, identity).Scan(&exists)
+		// Conflicts are per field, not per work. A user's listening status,
+		// tag or cursor must not block importing a rating and note they do
+		// not have yet. Rating and note are shared through a confirmed
+		// identity, so they are compared on the identity member that exposes
+		// this user's record.
+		var current TransferReview
+		err = tx.QueryRowContext(ctx, `SELECT s.rating,COALESCE(s.note,'') FROM work w LEFT JOIN user_work_state s ON s.work_id=w.id AND s.user_id=? WHERE w.id=?`, user, identity).Scan(&current.Rating, &current.Note)
 		if err != nil {
 			return p, err
 		}
-		p.conflicts[id] = exists
-		if exists {
-			conflictingGroups[identity] = true
-			var current TransferReview
-			if err = tx.QueryRowContext(ctx, `SELECT s.rating,COALESCE(s.note,'') FROM work w LEFT JOIN user_work_state s ON s.work_id=w.id AND s.user_id=? WHERE w.id=?`, user, identity).Scan(&current.Rating, &current.Note); err != nil {
+		reviewConflict := w.Rating != nil && current.Rating != nil && *w.Rating != *current.Rating ||
+			w.Note != "" && current.Note != "" && w.Note != current.Note
+		var status string
+		err = tx.QueryRowContext(ctx, `SELECT listening_status FROM user_work_state WHERE user_id=? AND work_id=?`, user, id).Scan(&status)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return p, err
+		}
+		incomingStatus := w.ListeningStatus != "" && w.ListeningStatus != "none"
+		statusConflict := incomingStatus && status != "" && status != "none" && status != w.ListeningStatus
+		var progressExists bool
+		if w.Progress != nil {
+			if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM user_work_playback_cursor WHERE user_id=? AND work_id=?)`, user, id).Scan(&progressExists); err != nil {
 				return p, err
 			}
+		}
+		p.reviewConflicts[id] = reviewConflict
+		p.statusConflict[id] = statusConflict
+		p.progressConflict[id] = progressExists
+		p.conflicts[id] = reviewConflict || statusConflict || progressExists
+		if reviewConflict {
+			conflictingGroups[identity] = true
 			if err := p.preview.addIssue(ImportIssue{Ref: w.key(), Title: w.label(), Reason: "existing_record", Incoming: &TransferReview{Rating: w.Rating, Note: w.Note}, Existing: &current}); err != nil {
+				return p, err
+			}
+		}
+		if statusConflict {
+			conflictingGroups[identity] = true
+			if err := p.preview.addIssue(ImportIssue{Ref: w.key(), Title: w.label(), Reason: "existing_status"}); err != nil {
+				return p, err
+			}
+		}
+		if progressExists {
+			conflictingGroups[identity] = true
+			if err := p.preview.addIssue(ImportIssue{Ref: w.key(), Title: w.label(), Reason: "existing_progress"}); err != nil {
 				return p, err
 			}
 		}

@@ -106,7 +106,10 @@ func TestPersonalTransferEmptyLibraryRoundTripAndRestart(t *testing.T) {
 				t.Fatalf("restore=%+v", result)
 			}
 			workReferenceRequest(t, app, admin, "POST", "/api/user-data/import", body, 200, &result)
-			if result.SkippedWorks != 4 || result.ImportedWorks != 0 {
+			// A repeated identical import is idempotent. It re-applies equal
+			// values instead of reporting a conflict, and must not create a
+			// second object.
+			if result.ImportedWorks != 4 || result.SkippedWorks != 0 {
 				t.Fatalf("duplicate=%+v", result)
 			}
 		}

@@ -409,6 +409,8 @@ export const personalHans = {
       incomingReview: "导入评价",
       transferReasons: {
         existing_record: "保留本人现有记录；选择覆盖后才替换。",
+        existing_status: "保留本人现有收听状态。",
+        existing_progress: "保留本人现有播放位置。",
         incoming_review_conflict: "同一共享评价对象的导入记录不一致。本组已跳过，请整理文件后重新导入。",
         identity_conflict: "身份引用存在矛盾，本对象已跳过。",
         unregistered_source: "已知来源尚未登记，请先登记后导入此记录。",

@@ -424,6 +424,8 @@ export const personalEnglish = {
       incomingReview: "Incoming review",
       transferReasons: {
         existing_record: "Your existing record is kept unless you choose Overwrite.",
+        existing_status: "Your existing listening status is kept.",
+        existing_progress: "Your existing playback position is kept.",
         incoming_review_conflict:
           "Incoming reviews disagree for one shared identity. This group is skipped; reconcile the file before importing again.",
         identity_conflict: "Identity evidence disagrees. This object is skipped.",

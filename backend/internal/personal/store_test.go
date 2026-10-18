@@ -184,8 +184,8 @@ func TestPersonalDataRoundTripConflictPolicyAndPortableProgress(t *testing.T) {
 	}
 	execFixture(t, s.DB, `UPDATE user_work_state SET listening_status='finished' WHERE user_id=2`)
 	result, err = s.Import(ctx, 2, b, false)
-	if err != nil || result.SkippedWorks != 1 {
-		t.Fatalf("keep existing = %+v, %v", result, err)
+	if err != nil || result.ImportedWorks != 1 || result.SkippedWorks != 0 {
+		t.Fatalf("keep existing = %+v, %v; want a per-field keep", result, err)
 	}
 	for range 2 {
 		if _, err = s.Import(ctx, 2, b, true); err != nil {
@@ -232,8 +232,8 @@ func TestImportSkipsUnknownWorksAndAmbiguousMediaWithoutMaterializing(t *testing
 }
 
 // A shared identity exposes one personal record through several work ids. A
-// keep import that targets another member must still report the conflict and
-// leave the existing review untouched.
+// keep import that targets another member must keep the existing review and
+// still finish the import instead of skipping the whole work.
 func TestImportKeepConflictsWithASharedIdentityMemberRecord(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
@@ -252,8 +252,8 @@ func TestImportKeepConflictsWithASharedIdentityMemberRecord(t *testing.T) {
 		t.Fatalf("preview = %+v, %v; want the shared identity conflict", preview, err)
 	}
 	result, err := s.Import(ctx, 2, b, false)
-	if err != nil || result.SkippedWorks != 1 {
-		t.Fatalf("keep import = %+v, %v; want the existing review kept", result, err)
+	if err != nil || result.ImportedWorks != 1 || result.SkippedWorks != 0 {
+		t.Fatalf("keep import = %+v, %v; want the work processed with its review kept", result, err)
 	}
 	var rating int
 	var note string
@@ -262,21 +262,23 @@ func TestImportKeepConflictsWithASharedIdentityMemberRecord(t *testing.T) {
 	}
 }
 
-// Keep-import conflict detection must cover every table that can hold the
-// user's own record. Listening imports arrive without a review, tag or cursor,
-// so a narrower check would silently overwrite them through another member id.
+// Keep-import conflict detection is per field. A stored listening import or
+// tag must not be reported as a review conflict, and it must not stop the
+// review from being imported. A stored cursor conflicts only with incoming
+// progress.
 func TestImportKeepConflictsWithAnyPersonalRecordOnASharedIdentity(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
 	for _, table := range []struct {
-		name   string
-		insert string
+		name     string
+		insert   string
+		conflict bool
 	}{
-		{"listening import", `INSERT INTO user_listening_import(user_id,work_id,listened_seconds,listen_count) VALUES(2,1,90,2)`},
+		{"listening import", `INSERT INTO user_listening_import(user_id,work_id,listened_seconds,listen_count) VALUES(2,1,90,2)`, false},
 		{"playback cursor", `INSERT INTO media_item(id,work_id,kind,title) VALUES(5,1,'audio','Example Track');
-			INSERT INTO user_work_playback_cursor(user_id,work_id,media_item_id,position_seconds,duration_seconds) VALUES(2,1,5,30,60)`},
+			INSERT INTO user_work_playback_cursor(user_id,work_id,media_item_id,position_seconds,duration_seconds) VALUES(2,1,5,30,60)`, false},
 		{"work tag", `INSERT INTO user_tag(id,user_id,name) VALUES(5,2,'Example Tag');
-			INSERT INTO user_work_tag(user_id,work_id,user_tag_id) VALUES(2,1,5)`},
+			INSERT INTO user_work_tag(user_id,work_id,user_tag_id) VALUES(2,1,5)`, false},
 	} {
 		t.Run(table.name, func(t *testing.T) {
 			execFixture(t, s.DB, `INSERT INTO shared_association(id,operation,status,version,fingerprint,snapshot_json) VALUES(91,'link','completed','v1','example','{}');
@@ -285,19 +287,72 @@ func TestImportKeepConflictsWithAnyPersonalRecordOnASharedIdentity(t *testing.T)
 			defer execFixture(t, s.DB, `DELETE FROM shared_identity_member; DELETE FROM shared_association WHERE id=91;
 				DELETE FROM user_listening_import; DELETE FROM user_work_playback_cursor; DELETE FROM user_work_tag; DELETE FROM user_tag WHERE id=5; DELETE FROM media_item WHERE id=5`)
 			b := Backup{Format: "kikoto-user-data", Version: 1, Works: []BackupWork{
-				{PrimaryCode: testfixture.WorkCode(testfixture.PrefixRJ, 1), Rating: func() *int { v := 2; return &v }(), Note: "Incoming note"},
+				{PrimaryCode: testfixture.WorkCode(testfixture.PrefixRJ, 1), ListeningStatus: "none", Rating: func() *int { v := 2; return &v }(), Note: "Incoming note"},
 			}}
 			preview, err := s.PreviewImport(ctx, 2, b)
-			if err != nil || preview.Conflicts != 1 {
-				t.Fatalf("preview = %+v, %v; want the existing record conflict", preview, err)
+			if err != nil || (preview.Conflicts == 1) != table.conflict {
+				t.Fatalf("preview = %+v, %v; conflict want %v", preview, err, table.conflict)
 			}
 			result, err := s.Import(ctx, 2, b, false)
-			if err != nil || result.SkippedWorks != 1 {
-				t.Fatalf("keep import = %+v, %v; want the existing record kept", result, err)
+			if err != nil || result.ImportedWorks != 1 || result.SkippedWorks != 0 {
+				t.Fatalf("keep import = %+v, %v; want the review imported", result, err)
 			}
-			var incoming int
-			if err = s.DB.QueryRow(`SELECT COUNT(*) FROM user_work_state WHERE user_id=2 AND work_id=2 AND note='Incoming note'`).Scan(&incoming); err != nil || incoming != 0 {
-				t.Fatalf("incoming review written = %d, %v", incoming, err)
+			var rating int
+			var note string
+			if err = s.DB.QueryRow(`SELECT COALESCE(rating,0),note FROM user_work_state WHERE user_id=2 AND work_id=2`).Scan(&rating, &note); err != nil || rating != 2 || note != "Incoming note" {
+				t.Fatalf("incoming review = %d/%q, %v; want it imported", rating, note, err)
+			}
+		})
+	}
+}
+
+// A tag, a playback cursor or a listening status is not a review. A keep
+// import must still add the rating and note the user does not have yet, while
+// leaving the stored field untouched.
+func TestImportKeepPreservesUnrelatedPersonalFieldsAndAddsReview(t *testing.T) {
+	for _, table := range []struct {
+		name     string
+		insert   string
+		column   string
+		conflict int
+		progress bool
+	}{
+		{"work tag", `INSERT INTO user_tag(id,user_id,name) VALUES(5,2,'Example Tag');
+			INSERT INTO user_work_tag(user_id,work_id,user_tag_id) VALUES(2,1,5)`, "tag", 0, false},
+		{"listening status", `INSERT INTO user_work_state(user_id,work_id,listening_status) VALUES(2,1,'finished')`, "status", 1, false},
+		{"playback cursor", `INSERT INTO media_item(id,work_id,kind,title) VALUES(5,1,'audio','Example Track');
+			INSERT INTO user_work_playback_cursor(user_id,work_id,media_item_id,position_seconds,duration_seconds) VALUES(2,1,5,30,60)`, "cursor", 1, true},
+	} {
+		t.Run(table.name, func(t *testing.T) {
+			s := testStore(t)
+			ctx := context.Background()
+			execFixture(t, s.DB, table.insert)
+			work := BackupWork{PrimaryCode: testfixture.WorkCode(testfixture.PrefixRJ, 0), ListeningStatus: "listening", Rating: func() *int { v := 2; return &v }(), Note: "Incoming note"}
+			if table.progress {
+				work.Progress = &BackupProgress{MediaWorkCode: work.PrimaryCode, MediaTitle: "Example Track", PositionSeconds: 90, LastPlayedAt: "2026-01-01 00:00:00"}
+			}
+			b := Backup{Format: "kikoto-user-data", Version: 1, Works: []BackupWork{work}}
+			preview, err := s.PreviewImport(ctx, 2, b)
+			if err != nil || preview.Conflicts != table.conflict {
+				t.Fatalf("preview = %+v, %v; want %d kept field(s) reported", preview, err, table.conflict)
+			}
+			result, err := s.Import(ctx, 2, b, false)
+			if err != nil || result.ImportedWorks != 1 || result.SkippedWorks != 0 {
+				t.Fatalf("keep import = %+v, %v; want the review imported", result, err)
+			}
+			var rating int
+			var note, status string
+			if err = s.DB.QueryRow(`SELECT COALESCE(rating,0),note,listening_status FROM user_work_state WHERE user_id=2 AND work_id=1`).Scan(&rating, &note, &status); err != nil || rating != 2 || note != "Incoming note" {
+				t.Fatalf("review = %d/%q, %v; want the imported review", rating, note, err)
+			}
+			if table.column == "status" && status != "finished" {
+				t.Fatalf("status = %q, want the stored value kept", status)
+			}
+			var cursor int
+			if table.column == "cursor" {
+				if err = s.DB.QueryRow(`SELECT position_seconds FROM user_work_playback_cursor WHERE user_id=2 AND work_id=1`).Scan(&cursor); err != nil || cursor != 30 {
+					t.Fatalf("cursor = %d, %v; want the stored position kept", cursor, err)
+				}
 			}
 		})
 	}

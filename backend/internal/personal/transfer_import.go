@@ -59,13 +59,16 @@ type ImportResult struct {
 }
 
 type importPlan struct {
-	preview    ImportPreview
-	works      map[string]int64
-	conflicts  map[int64]bool
-	media      map[string]int64
-	blocked    map[string]bool
-	identities map[string]int64
-	reviews    map[int64]TransferReview
+	preview          ImportPreview
+	works            map[string]int64
+	conflicts        map[int64]bool
+	reviewConflicts  map[int64]bool
+	progressConflict map[int64]bool
+	statusConflict   map[int64]bool
+	media            map[string]int64
+	blocked          map[string]bool
+	identities       map[string]int64
+	reviews          map[int64]TransferReview
 }
 
 func resolveCode(ctx context.Context, tx *sql.Tx, code string) (int64, error) {
@@ -166,7 +169,7 @@ func (s Store) ImportWithRegistration(ctx context.Context, user int64, b Backup,
 	appliedReviews := map[int64]TransferReview{}
 	for _, w := range b.Works {
 		id := plan.works[w.key()]
-		if plan.blocked[w.key()] || (plan.conflicts[id] && !overwrite) {
+		if plan.blocked[w.key()] {
 			result.SkippedWorks++
 			continue
 		}
@@ -188,11 +191,14 @@ func (s Store) ImportWithRegistration(ctx context.Context, user int64, b Backup,
 				return result, err
 			}
 		}
-		if err = importWork(ctx, tx, user, id, plan.media[w.key()], w, overwrite); err != nil {
+		keep := importKeep{review: !overwrite && plan.reviewConflicts[id], status: !overwrite && plan.statusConflict[id], progress: !overwrite && plan.progressConflict[id]}
+		if err = importWork(ctx, tx, user, id, plan.media[w.key()], w, overwrite, keep); err != nil {
 			return result, err
 		}
 		identity := plan.identities[w.key()]
-		appliedReviews[identity] = plan.reviews[identity]
+		if !keep.review {
+			appliedReviews[identity] = plan.reviews[identity]
+		}
 		result.ImportedWorks++
 		if w.Progress != nil && plan.media[w.key()] == 0 {
 			result.SkippedProgress++
@@ -250,13 +256,27 @@ func importTag(ctx context.Context, tx *sql.Tx, user int64, tag BackupTag, overw
 	return id, err
 }
 
-func importWork(ctx context.Context, tx *sql.Tx, user, id, media int64, w BackupWork, overwrite bool) error {
-	_, err := tx.ExecContext(ctx, `INSERT INTO user_work_state (user_id,work_id,listening_status) VALUES (?,?,?) ON CONFLICT(user_id,work_id) DO UPDATE SET listening_status=excluded.listening_status,updated_at=CURRENT_TIMESTAMP`, user, id, w.ListeningStatus)
-	if err != nil {
-		return err
+// importKeep names the fields whose existing value must survive a keep
+// import. Each field is decided independently so a stored tag or cursor does
+// not suppress a review the user does not have yet.
+type importKeep struct {
+	review, status, progress bool
+}
+
+func importWork(ctx context.Context, tx *sql.Tx, user, id, media int64, w BackupWork, overwrite bool, keep importKeep) error {
+	if keep.status || w.ListeningStatus == "" {
+		_, err := tx.ExecContext(ctx, `INSERT INTO user_work_state (user_id,work_id) VALUES (?,?) ON CONFLICT(user_id,work_id) DO NOTHING`, user, id)
+		if err != nil {
+			return err
+		}
+	} else {
+		_, err := tx.ExecContext(ctx, `INSERT INTO user_work_state (user_id,work_id,listening_status) VALUES (?,?,?) ON CONFLICT(user_id,work_id) DO UPDATE SET listening_status=excluded.listening_status,updated_at=CURRENT_TIMESTAMP`, user, id, w.ListeningStatus)
+		if err != nil {
+			return err
+		}
 	}
 	if overwrite {
-		if _, err = tx.ExecContext(ctx, `DELETE FROM user_work_tag WHERE user_id=? AND work_id=?`, user, id); err != nil {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM user_work_tag WHERE user_id=? AND work_id=?`, user, id); err != nil {
 			return err
 		}
 	}
@@ -269,36 +289,37 @@ func importWork(ctx context.Context, tx *sql.Tx, user, id, media int64, w Backup
 			return err
 		}
 	}
-	if p := w.Progress; p != nil && media > 0 {
+	if p := w.Progress; p != nil && media > 0 && !keep.progress {
 		// Import is a new explicit edit, regardless of the backup's historical date.
 		// The marker sorts after valid client ids so tied offline reports stay stale.
-		_, err = tx.ExecContext(ctx, `INSERT INTO user_work_playback_cursor (user_id,work_id,media_item_id,position_seconds,duration_seconds,completed,last_played_at,report_order,report_id) VALUES (?,?,?,?,?,?,NULLIF(?,''),?,'~import') ON CONFLICT(user_id,work_id) DO UPDATE SET media_item_id=excluded.media_item_id,file_source_id=NULL,location_id=NULL,location_type='',position_seconds=excluded.position_seconds,duration_seconds=excluded.duration_seconds,completed=excluded.completed,last_played_at=excluded.last_played_at,updated_at=CURRENT_TIMESTAMP,report_order=MAX(report_order+1,excluded.report_order),report_id=excluded.report_id`, user, id, media, p.PositionSeconds, p.DurationSeconds, p.Completed, p.LastPlayedAt, time.Now().UnixMilli())
+		_, err := tx.ExecContext(ctx, `INSERT INTO user_work_playback_cursor (user_id,work_id,media_item_id,position_seconds,duration_seconds,completed,last_played_at,report_order,report_id) VALUES (?,?,?,?,?,?,NULLIF(?,''),?,'~import') ON CONFLICT(user_id,work_id) DO UPDATE SET media_item_id=excluded.media_item_id,file_source_id=NULL,location_id=NULL,location_type='',position_seconds=excluded.position_seconds,duration_seconds=excluded.duration_seconds,completed=excluded.completed,last_played_at=excluded.last_played_at,updated_at=CURRENT_TIMESTAMP,report_order=MAX(report_order+1,excluded.report_order),report_id=excluded.report_id`, user, id, media, p.PositionSeconds, p.DurationSeconds, p.Completed, p.LastPlayedAt, time.Now().UnixMilli())
 		if err != nil {
 			return err
 		}
 	}
 	if w.Identity != nil && w.Progress != nil {
 		if media > 0 {
-			_, err = tx.ExecContext(ctx, `DELETE FROM personal_transfer_progress WHERE user_id=? AND work_id=?`, user, id)
+			_, err := tx.ExecContext(ctx, `DELETE FROM personal_transfer_progress WHERE user_id=? AND work_id=?`, user, id)
+			if err != nil {
+				return err
+			}
 		} else {
 			raw, marshalErr := json.Marshal(w.Progress)
 			if marshalErr != nil {
 				return marshalErr
 			}
-			_, err = tx.ExecContext(ctx, `INSERT INTO personal_transfer_progress(user_id,work_id,progress_json) VALUES(?,?,?) ON CONFLICT(user_id,work_id) DO UPDATE SET progress_json=excluded.progress_json`, user, id, string(raw))
-		}
-		if err != nil {
-			return err
+			if _, err := tx.ExecContext(ctx, `INSERT INTO personal_transfer_progress(user_id,work_id,progress_json) VALUES(?,?,?) ON CONFLICT(user_id,work_id) DO UPDATE SET progress_json=excluded.progress_json`, user, id, string(raw)); err != nil {
+				return err
+			}
 		}
 	}
 	if stats := w.Statistics; stats != nil {
 		var seconds float64
 		var count int64
-		if err = tx.QueryRowContext(ctx, `SELECT COALESCE(SUM(listened_seconds),0),COUNT(*) FROM user_listening_session WHERE user_id=? AND work_id=?`, user, id).Scan(&seconds, &count); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT COALESCE(SUM(listened_seconds),0),COUNT(*) FROM user_listening_session WHERE user_id=? AND work_id=?`, user, id).Scan(&seconds, &count); err != nil {
 			return err
 		}
-		_, err = tx.ExecContext(ctx, `INSERT INTO user_listening_import (user_id,work_id,listened_seconds,listen_count,last_played_at) VALUES (?,?,?,?,?) ON CONFLICT(user_id,work_id) DO UPDATE SET listened_seconds=MAX(listened_seconds,excluded.listened_seconds),listen_count=MAX(listen_count,excluded.listen_count),last_played_at=MAX(last_played_at,excluded.last_played_at)`, user, id, math.Max(0, stats.ListenedSeconds-seconds), max(int64(0), stats.ListenCount-count), stats.LastPlayedAt)
-		if err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO user_listening_import (user_id,work_id,listened_seconds,listen_count,last_played_at) VALUES (?,?,?,?,?) ON CONFLICT(user_id,work_id) DO UPDATE SET listened_seconds=MAX(listened_seconds,excluded.listened_seconds),listen_count=MAX(listen_count,excluded.listen_count),last_played_at=MAX(last_played_at,excluded.last_played_at)`, user, id, math.Max(0, stats.ListenedSeconds-seconds), max(int64(0), stats.ListenCount-count), stats.LastPlayedAt); err != nil {
 			return err
 		}
 	}
