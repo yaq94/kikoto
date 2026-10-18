@@ -291,7 +291,13 @@ func TestSourceCatalogDailyDoesNotRetryIncompleteFirstCoverage(t *testing.T) {
 	f.server.Go(f.server.StartJobRunner)
 	time.Sleep(2200 * time.Millisecond)
 	p = f.request(t, http.MethodGet, "/catalog/index", "", 200)
-	if p["runId"] != first || p["status"] != "partial" || p["requests"] != float64(1) {
-		t.Fatal("daily timer retried or replaced incomplete initial coverage")
+	if p["runId"] != first || p["status"] != "partial" {
+		t.Fatal("daily timer replaced the first generation")
+	}
+	// The run reached the end of the tree. Its only gap is an unconfirmed empty
+	// root, so the next day must observe the source again in the same
+	// generation; otherwise new content could never be discovered.
+	if p["requests"] == float64(1) {
+		t.Fatal("daily update did not re-observe a finished partial generation")
 	}
 }

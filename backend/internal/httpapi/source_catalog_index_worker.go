@@ -200,6 +200,19 @@ func (s *Server) catalogIndexDiskPause(options catalogIndexOptions) string {
 	return ""
 }
 
+// catalogScanSchedulesDaily decides whether a settled generation owns the
+// first daily update. A paused low-disk run is not finished coverage and must
+// not start the schedule; an upstream failure does not either. A generation
+// that reached the end of the tree with only unconfirmed empty or unreadable
+// directories does schedule, otherwise new content added later would never be
+// observed because a partial run is only ever resumed.
+func catalogScanSchedulesDaily(status, reason string, progress catalogIndexProgress) bool {
+	if reason != "" || progress.Pending > 0 || progress.Completed == 0 {
+		return false
+	}
+	return status == "succeeded" || status == "partial"
+}
+
 func (s *Server) settleCatalogBatch(ctx context.Context, job workflowJobRecord, sourceID int64, status, reason string) error {
 	progress, err := s.sourceCatalogProgress(ctx, sourceID, 1)
 	if err != nil {
@@ -215,7 +228,7 @@ func (s *Server) settleCatalogBatch(ctx context.Context, job workflowJobRecord, 
 	if err = verifyCatalogLease(ctx, tx.Tx, job); err != nil {
 		return err
 	}
-	if status == "succeeded" {
+	if catalogScanSchedulesDaily(status, reason, progress) {
 		if err = setCatalogNextUpdateTx(ctx, tx.Tx, sourceID, s.catalogTime()); err != nil {
 			return err
 		}
