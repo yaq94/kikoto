@@ -109,6 +109,41 @@ func TestSourceCatalogSplitKeepsUngroupedNestedAudioOnParent(t *testing.T) {
 	}
 }
 
+// Format directories are not limited to bare extensions. A quality marker or
+// a lossless label still names a copy of the same work, so it must not become
+// a separate card with a duplicate track.
+func TestSourceCatalogSplitRecognizesQualityFormatDirectories(t *testing.T) {
+	for _, folder := range []string{"lossless", "FLAC 24bit", "MP3 320kbps", "Hi-Res"} {
+		t.Run(folder, func(t *testing.T) {
+			f := newLooseWorkFixture(t, map[string][]map[string]any{
+				"/": {looseDir("Creator")},
+				"/Creator": {
+					looseAudio("N001 Example Work-1.mp3"),
+					looseAudio("N001 Example Work-2.mp3"),
+					looseAudio("N002 Another Work-1.mp3"),
+					looseAudio("N002 Another Work-2.mp3"),
+					looseDir(folder),
+				},
+				"/Creator/" + folder: {
+					looseAudio("N001 Example Work-1.flac"),
+					looseAudio("N002 Another Work-1.flac"),
+				},
+			})
+			f.request(t, http.MethodPost, "/catalog/index", `{"intervalMs":100}`, 202)
+			if p := f.drain(t); p["status"] != "complete" {
+				t.Fatalf("scan = %#v", p)
+			}
+			cards := f.cards(t)
+			if len(cards) != 2 {
+				t.Fatalf("cards=%d, want the two works without a format card: %v", len(cards), cards)
+			}
+			if got := countAudioTracks(f.tracks(t, cards["N001 Example Work-1"])); got != 3 {
+				t.Fatalf("tracks=%d, want the direct files plus the format copy", got)
+			}
+		})
+	}
+}
+
 // A later complete generation must recompute the split when the same creator
 // directory now holds a numeric audiobook run instead of separate works.
 func TestSourceCatalogSplitDecisionFollowsANewGeneration(t *testing.T) {

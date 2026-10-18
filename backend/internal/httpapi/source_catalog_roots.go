@@ -93,9 +93,26 @@ func catalogSelfWorkRoot(directoryPath string, observed catalogDirectorySummary)
 }
 
 func catalogFormatDirectory(name string) bool {
-	switch strings.ToLower(strings.TrimSpace(name)) {
-	case "mp3", "flac", "wav", "ogg", "opus", "m4a", "aac", "aiff":
+	lower := strings.ToLower(strings.TrimSpace(name))
+	// A format directory often carries a quality marker, such as
+	// "FLAC 24bit" or "MP3 320kbps". Match the leading format token so those
+	// copies stay part of the work instead of becoming a second card.
+	token := lower
+	if index := strings.IndexFunc(lower, func(r rune) bool {
+		return r == ' ' || r == '_' || r == '-' || r == '(' || r == ')' || r == '['
+	}); index > 0 {
+		token = lower[:index]
+	}
+	switch token {
+	case "mp3", "flac", "wav", "ogg", "opus", "m4a", "aac", "aiff", "aif",
+		"wma", "dsd", "dsf", "dff", "ape", "alac", "wv", "tta":
 		return true
+	}
+	// "hi-res" contains a dash, so the token split above would only see "hi".
+	for _, prefix := range []string{"lossless", "hires", "hi-res", "无损", "無損"} {
+		if strings.HasPrefix(lower, prefix) {
+			return true
+		}
 	}
 	return false
 }
