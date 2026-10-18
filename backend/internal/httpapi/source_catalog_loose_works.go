@@ -24,7 +24,6 @@ const (
 // These patterns identify the numbering schemes those sources use. A code at
 // the start of a file name is a work number, not a track number.
 var catalogLooseWorkPrefix = regexp.MustCompile(`(?i)^(?:RJ|BJ|VJ|CC)[0-9]{5,8}(?:[^0-9A-Za-z]|$)|^[NSAB][0-9]{1,6}(?:[^0-9A-Za-z]|$)`)
-var catalogLooseNumericStem = regexp.MustCompile(`^[0-9]+$`)
 var catalogLooseLeadingTrack = regexp.MustCompile(`^[0-9]{1,4}(?:[\s._\-、]+|$)`)
 var catalogLooseTrailingTrack = regexp.MustCompile(`[\s._\-（(【\[]+[0-9]{1,4}[\s._\-）)】\]]*$`)
 var catalogLooseTrailingNumber = regexp.MustCompile(`[0-9]{1,4}[\s._\-）)】\]]*$`)
@@ -46,15 +45,11 @@ func catalogWorkSplitModeNames(names []string) string {
 	if len(names) == 0 {
 		return catalogWorkSplitSingle
 	}
-	allNumeric := true
-	for _, name := range names {
-		if !catalogLooseNumericStem.MatchString(catalogFileStem(name)) {
-			allNumeric = false
-			break
-		}
-	}
-	if allNumeric {
-		// 001.mp3..225.mp3 is one audiobook with many episodes, not 225 works.
+	// 001.mp3..225.mp3 is one audiobook with many episodes, not 225 works. A
+	// set of date-only names is also all digits but is not a sequence: 20210104
+	// and 20210110 are separate recordings, so require an ordered run rather
+	// than testing the stem shape alone.
+	if catalogNumberedTrackRun(names) {
 		return catalogWorkSplitSingle
 	}
 	prefixes := map[string]int{}

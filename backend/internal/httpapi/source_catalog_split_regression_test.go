@@ -161,6 +161,31 @@ func TestSourceCatalogLooseWorksBreaksNonContiguousNumbers(t *testing.T) {
 	}
 }
 
+// A directory of date-named recordings is all digits but not a track sequence.
+// It must keep one card per recording even when no alphabetic title exists.
+func TestSourceCatalogLooseWorksKeepsDateOnlyDirectoryDistinct(t *testing.T) {
+	f := newLooseWorkFixture(t, map[string][]map[string]any{
+		"/": {looseDir("Creator")},
+		"/Creator": {
+			looseAudio("20210104.mp3"),
+			looseAudio("20210110.mp3"),
+		},
+	})
+	f.request(t, http.MethodPost, "/catalog/index", `{"intervalMs":100}`, 202)
+	if p := f.drain(t); p["status"] != "complete" {
+		t.Fatalf("scan = %#v", p)
+	}
+	cards := f.cards(t)
+	if len(cards) != 2 {
+		t.Fatalf("cards=%d, want one per dated recording: %v", len(cards), cards)
+	}
+	for _, title := range []string{"20210104", "20210110"} {
+		if cards[title] == nil {
+			t.Fatalf("missing dated card %q: %v", title, cards)
+		}
+	}
+}
+
 // countAudioTracks counts audio leaves under the returned track tree.
 func countAudioTracks(rows []any) int {
 	total := 0
