@@ -443,22 +443,42 @@ func (s *Server) catalogSplitTargetsForRoot(ctx context.Context, tx *sql.Tx, sou
 			targets[name] = target
 		}
 	}
-	var parentNeeded int
-	if err = tx.QueryRowContext(ctx, `SELECT EXISTS(
-		SELECT 1 FROM source_catalog_observation o
+	// Nested audio under a format or track directory belongs to the split card
+	// whose work prefix its name carries, just like the direct copy. Counting
+	// those files as "parent audio" would leave an empty creator card behind
+	// after every split work that also has an MP3/FLAC copy. Only audio that
+	// has no split card of its own keeps the parent.
+	rows, err = tx.QueryContext(ctx, `SELECT o.name FROM source_catalog_observation o
 		JOIN source_catalog_directory d ON d.file_source_id=o.file_source_id AND d.path=o.directory_path
-		WHERE d.file_source_id=? AND d.generation=? AND d.catalog_root=?
-			AND o.kind='audio' AND o.directory_path<>?)`,
-		sourceID, generation, root, root).Scan(&parentNeeded); err != nil {
+		WHERE d.file_source_id=? AND d.generation=? AND d.catalog_root=? AND o.kind='audio'
+		ORDER BY o.directory_path,o.name`, sourceID, generation, root)
+	if err != nil {
 		return nil, false, err
 	}
-	if parentNeeded == 0 {
-		for _, name := range names {
-			if _, ok := targets[name]; !ok {
-				parentNeeded = 1
-				break
-			}
+	parentNeeded := 0
+	splitKeys := map[string]bool{}
+	for _, target := range targets {
+		splitKeys[strings.TrimPrefix(target.Root, root+"::")] = true
+	}
+	for rows.Next() {
+		var name string
+		if err = rows.Scan(&name); err != nil {
+			break
 		}
+		key := catalogGroupKey(name, mode)
+		if splitKeys[key] || key == "" {
+			continue
+		}
+		parentNeeded = 1
+		break
+	}
+	readErr = rows.Err()
+	_ = rows.Close()
+	if err != nil {
+		return nil, false, err
+	}
+	if readErr != nil {
+		return nil, false, readErr
 	}
 	return targets, parentNeeded != 0, nil
 }
