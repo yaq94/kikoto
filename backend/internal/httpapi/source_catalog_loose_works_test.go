@@ -350,3 +350,67 @@ func TestSourceCatalogLooseWorksPackageCopyStaysOneCard(t *testing.T) {
 		}
 	}
 }
+
+// A suffix digit is a track number only when a real title remains. Dates and
+// bare counters keep their full stem, so unrelated recordings do not collapse
+// onto a fragment such as 2021 or 12.
+func TestCatalogBaseTitleKeepsNumberOnlyNames(t *testing.T) {
+	for name, want := range map[string]string{
+		"20210104.mp3":          "20210104",
+		"2020-12-16.mp3":        "2020-12-16",
+		"2021.01.03.m4a":        "2021.01.03",
+		"61 .mp3":               "61",
+		"Example Session 1.mp3": "example session",
+		"01 Example Work.mp3":   "example work",
+	} {
+		if got := catalogBaseTitle(name); got != want {
+			t.Fatalf("catalogBaseTitle(%q) = %q, want %q", name, got, want)
+		}
+	}
+}
+
+// The same rule must hold through a complete index: date-only recordings keep
+// their own cards, while a title with a track number still shares one card.
+func TestSourceCatalogLooseWorksKeepsNumberOnlyNamesDistinct(t *testing.T) {
+	f := newLooseWorkFixture(t, map[string][]map[string]any{
+		"/": {looseDir("Creator")},
+		"/Creator": {
+			looseAudio("20210104.mp3"),
+			looseAudio("20210110.mp3"),
+			looseAudio("2020-12-16.mp3"),
+			looseAudio("2021-01-03.mp3"),
+			looseAudio("Alpha Recording.mp3"),
+			looseAudio("Beta Recording.mp3"),
+			looseAudio("Gamma Recording.mp3"),
+			looseAudio("Delta Recording.mp3"),
+			looseAudio("Epsilon Recording.mp3"),
+			looseAudio("Zeta Recording.mp3"),
+			looseAudio("Eta Recording.mp3"),
+			looseAudio("Theta Recording.mp3"),
+			looseAudio("Example Session 1.mp3"),
+			looseAudio("Example Session 2.mp3"),
+			looseAudio("Example Session 3.mp3"),
+			looseAudio("Example Session 4.mp3"),
+		},
+	})
+	f.request(t, http.MethodPost, "/catalog/index", `{"intervalMs":100}`, 202)
+	if p := f.drain(t); p["status"] != "complete" {
+		t.Fatalf("scan = %#v", p)
+	}
+	cards := f.cards(t)
+	session := cards["Example Session 1"]
+	if session == nil {
+		t.Fatalf("cards=%v, want one card for the numbered session", cards)
+	}
+	if got := len(f.tracks(t, session)); got != 4 {
+		t.Fatalf("session tracks=%d, want 4 on one card", got)
+	}
+	for _, title := range []string{"20210104", "20210110", "2020-12-16", "2021-01-03"} {
+		if cards[title] == nil {
+			t.Fatalf("date recording %q lost its own card: %v", title, cards)
+		}
+	}
+	if len(cards) != 13 {
+		t.Fatalf("cards=%d, want 4 date cards, eight singles and one session card: %v", len(cards), cards)
+	}
+}

@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"unicode"
 
 	"github.com/yexca/kikoto/backend/internal/openlist"
 )
@@ -95,8 +96,8 @@ func catalogFileStem(name string) string {
 // Title 1 and Title 2 count as the same work. The full title is still kept for
 // display. A title that is only a number has no base and keeps its own name.
 func catalogBaseTitle(name string) string {
-	stem := strings.ToLower(strings.TrimSpace(catalogFileStem(name)))
-	stem = catalogLooseLeadingTrack.ReplaceAllString(stem, "")
+	original := strings.ToLower(strings.TrimSpace(catalogFileStem(name)))
+	stem := catalogLooseLeadingTrack.ReplaceAllString(original, "")
 	trimmed := strings.TrimSpace(catalogLooseTrailingTrack.ReplaceAllString(stem, ""))
 	if trimmed == stem {
 		// Titles such as Example Episode1 and Example Episode2 are episodes of
@@ -104,13 +105,23 @@ func catalogBaseTitle(name string) string {
 		trimmed = strings.TrimSpace(catalogLooseTrailingNumber.ReplaceAllString(stem, ""))
 	}
 	trimmed = strings.TrimRight(trimmed, " ._-（(【[")
-	if trimmed != "" {
-		stem = trimmed
+	// A number is not a title. Without this guard a date or a bare counter is
+	// reduced to a fragment (20210104 -> 2021, 2020-12-16 -> 12), so unrelated
+	// recordings in one creator folder collapse onto the same card. Only strip
+	// a track number when a real title remains; otherwise keep the full stem.
+	if !catalogHasLetter(trimmed) {
+		return strings.Join(strings.Fields(original), " ")
 	}
-	if stem == "" {
-		stem = strings.ToLower(strings.TrimSpace(catalogFileStem(name)))
+	return strings.Join(strings.Fields(trimmed), " ")
+}
+
+func catalogHasLetter(value string) bool {
+	for _, r := range value {
+		if unicode.IsLetter(r) {
+			return true
+		}
 	}
-	return strings.Join(strings.Fields(stem), " ")
+	return false
 }
 
 func catalogWorkPrefix(name string) string {
