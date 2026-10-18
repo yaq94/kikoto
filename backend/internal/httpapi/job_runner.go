@@ -148,8 +148,17 @@ func (s *Server) runWorkflowJobWorker(ctx context.Context) {
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 	for {
-		if err := s.runNextQueuedWorkflowJob(ctx); err != nil && !errors.Is(err, context.Canceled) {
+		continued, err := s.runNextQueuedWorkflowJobStep(ctx)
+		if err != nil && !errors.Is(err, context.Canceled) {
 			slog.Error("run queued workflow job", "error", err)
+		}
+		// The catalog index settles each bounded invocation back to the queue
+		// while it still has pages to observe or cards to publish. Claiming it
+		// again at once removes the coordinator's two-second tick from every
+		// batch; the claim query still prefers any higher-priority job, so
+		// interactive work is not starved.
+		if continued {
+			continue
 		}
 		select {
 		case <-ctx.Done():
@@ -160,13 +169,20 @@ func (s *Server) runWorkflowJobWorker(ctx context.Context) {
 }
 
 func (s *Server) runNextQueuedWorkflowJob(ctx context.Context) error {
+	_, err := s.runNextQueuedWorkflowJobStep(ctx)
+	return err
+}
+
+// runNextQueuedWorkflowJobStep runs at most one queued job and reports whether
+// the worker should claim the next one without waiting for its tick.
+func (s *Server) runNextQueuedWorkflowJobStep(ctx context.Context) (bool, error) {
 	if s.cfg.IsDemo() {
-		return nil
+		return false, nil
 	}
 	s.layoutMigrationMu.Lock()
 	if s.layoutMigrationActive.Load() && !s.layoutMigrationScan.Load() {
 		s.layoutMigrationMu.Unlock()
-		return nil
+		return false, nil
 	}
 	lease := s.workflowLeases.reserve()
 	defer s.workflowLeases.release(lease)
@@ -179,13 +195,38 @@ func (s *Server) runNextQueuedWorkflowJob(ctx context.Context) error {
 	})
 	s.layoutMigrationMu.Unlock()
 	if err != nil || !ok {
-		return err
+		return false, err
 	}
 	jobCtx, stopHeartbeat := s.startWorkflowJobHeartbeat(ctx, job)
 	defer stopHeartbeat()
 	s.workflowLeases.activate(lease, job.RunID, job.ID, stopHeartbeat)
 	runErr := s.executeClaimedWorkflowJob(jobCtx, job)
-	return s.handleWorkflowJobResult(ctx, jobCtx, job, runErr)
+	if err = s.handleWorkflowJobResult(ctx, jobCtx, job, runErr); err != nil {
+		return false, err
+	}
+	return s.workflowJobContinuesImmediately(ctx, job), nil
+}
+
+// workflowJobContinuesImmediately reports a bounded catalog invocation that
+// put itself back on the queue because it still has work. Every other worker
+// keeps the coordinator tick, which also bounds how often a failing source can
+// be retried.
+func (s *Server) workflowJobContinuesImmediately(ctx context.Context, job workflowJobRecord) bool {
+	if job.WorkerType != sourceCatalogIndexWorkerType {
+		return false
+	}
+	// Only a job that is queued and available right now may be claimed again.
+	// A retry delay, a paused source or a terminal run keeps the normal tick,
+	// so a failing run cannot spin on the claim query.
+	var status string
+	var runStatus string
+	if err := s.db.QueryRowContext(context.WithoutCancel(ctx), `SELECT job.status,run.status FROM workflow_job job
+		JOIN workflow_run run ON run.id=job.workflow_run_id
+		WHERE job.id=? AND job.worker_type=? AND (job.available_at IS NULL OR job.available_at<=CURRENT_TIMESTAMP)`,
+		job.ID, sourceCatalogIndexWorkerType).Scan(&status, &runStatus); err != nil {
+		return false
+	}
+	return status == "queued" && runStatus == "queued"
 }
 
 func (s *Server) executeClaimedWorkflowJob(ctx context.Context, job workflowJobRecord) (runErr error) {

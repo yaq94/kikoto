@@ -221,6 +221,33 @@ relocated 依赖时，才写 `file_source_id=NULL, relocated_to_id=第一张拆�
 
 提交：`41549499`（拆分与浏览器用例拆分）、`f295f8af`（副本检测）。
 
+### 索引吞吐（2026-10-18）
+
+工作线程原为每批结束固定等 2 秒 tick。965 目录合成树上共 61 批，等待约
+122 秒；同期数据库查询合计只用 20 秒 CPU、连接池等待为 0。改为：有界索引
+调用在仍有待处理目录、`available_at` 已到且运行仍为 `queued` 时立即续领，
+其余 worker、退避中的任务和终态运行仍按 tick。请求速率、每批上限和写入形状
+未改。
+
+| 配置 | 目录/分钟 | 每目录 CPU | 发布队列 |
+| --- | ---: | ---: | --- |
+| c4 / 150 ms，改前 | 205.6 | 20.0 ms | 0 |
+| c4 / 150 ms，改后 | 352.5 | 20.7 ms | 0 |
+| c4 / 300 ms，改后控制组 | 140.3 | 18.9 ms | 0 |
+
+改后耗时 164.3 秒，较 281.6 秒提升 71%；按每目录 CPU 计的数据库成本没有
+上升。回归用例：
+
+- `TestCatalogIndexContinuationLoopsWithoutTick`：有界调用必须请求立即续领。
+- `TestWorkflowContinuationStaysOffForOtherOutcomes`：其他 worker 与终态
+  运行不得继续。
+- `TestCatalogIndexContinuationHonorsARetryDelay`：退避中的任务不得绕过
+  `available_at`。
+
+`go test ./internal/httpapi -run '^TestSourceCatalog'` 退出 0（77.7 s）；
+三个回归用例在 `-race` 下退出 0（8.6 s）。契约套件保持 60 秒上限，改后
+15.6 秒通过。
+
 ### 已知边界
 
 - `prefix` 规则要求同目录重复出现，`A1/A2` 这类各出现一次的两部分不会被当成两部作品。

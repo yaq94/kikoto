@@ -84,17 +84,16 @@ reports completed directories per minute, connection-pool waits, refusals and
 process CPU for each option combination. Use it on the deployment host before
 changing the defaults.
 
-On a 32-processor development host, a 197-directory tree completed at about 200
-directories per minute with concurrency 2, a 150 ms interval and 32 steps per
-batch; the shipped concurrency 1, 1000 ms and eight steps took 4.4 times as long,
-most of that difference coming from the claim count per batch. Below roughly
-270 ms the interval stopped mattering, and concurrency above 2 bought less than
-10 percent. Two concurrent recommendation and metadata tag writers did not change
-the elapsed time at that size. The same cell slowed from 204 to 136 directories
-per minute between 197 and 965 directories while its CPU cost per directory rose
-from 13 to 166 ms, so total work grows with the published catalog rather than
-with the request rate. That matches a real run of 2,777 directories that spent
-150 minutes on 2,520 of them, far below what its 150 ms interval allowed.
+On a 32-processor development host, a 965-directory tree now completes at about
+352 directories per minute with concurrency 4, a 150 ms interval and 32 steps
+per batch, using about 20 ms of CPU per directory. The same tree took 204
+directories per minute before the coordinator stopped waiting for its
+two-second tick between bounded invocations; that wait was 61 ticks, about
+122 s, and every database query together used 20 s. A slower 300 ms interval
+took 140 directories per minute, which is the request pacing and not the
+writer. Two concurrent recommendation and metadata tag writers did not change
+the elapsed time. Earlier numbers that reported a large rise in cost per
+directory at this size were measuring the tick wait, not catalog work.
 
 Choose concurrency 2, a 150 ms interval and 32 steps per batch for a first
 complete scan, and keep the defaults elsewhere. Expect the per-directory cost to
@@ -102,12 +101,16 @@ rise with catalog size on a two-processor host; when the process log shows
 `database is locked` or pool waits, reduce concurrency to 1 and postpone
 recommendation and metadata projection rather than shortening the interval.
 
-The worker releases its executor after each batch. Each page commits validated
-names and its next cursor together. Child discovery and catalog publication
-write at most 100 objects per transaction. Low or unknown free space on the
-database volume pauses new observations and publication while stored cards
-remain readable. The disk check reserves additional response/WAL headroom;
-the database volume must also be monitored by the operator.
+The worker releases its executor after each batch. A bounded invocation that
+settles back to the queue while directories remain is claimed again at once
+instead of waiting for the coordinator tick; a retry delay, a paused source or a
+terminal run keeps the normal tick, and higher-priority queued work still wins
+the claim query. Each page commits validated names and its next cursor together.
+Child discovery and catalog publication write at most 100 objects per
+transaction. Low or unknown free space on the database volume pauses new
+observations and publication while stored cards remain readable. The disk check
+reserves additional response/WAL headroom; the database volume must also be
+monitored by the operator.
 
 Numbered directories own their descendants. A directory with audio, or with
 only recognized format subdirectories, owns its track/format tree; other
