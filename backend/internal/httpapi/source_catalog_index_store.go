@@ -202,7 +202,7 @@ func completeCatalogDirectoryTx(ctx context.Context, tx *sql.Tx, sourceID, gener
 	}
 	finish := func() error {
 		if d.Root == d.Path {
-			return decideCatalogWorkSplitTx(ctx, tx, sourceID, d.Path, d.Revision)
+			return decideCatalogWorkSplitTx(ctx, tx, sourceID, generation, d.Path, d.Revision)
 		}
 		return nil
 	}
@@ -444,9 +444,7 @@ ORDER BY o.directory_path,o.name LIMIT 100`, sourceID, job.RunID, sourceID, job.
 	if err != nil {
 		return 0, err
 	}
-	splitPlans := map[string]map[string]catalogSplitTarget{}
-	splitPlansByKey := map[string]map[string]catalogSplitTarget{}
-	splitGroupings := map[string]catalogLooseGrouping{}
+	splitPlans := map[string]catalogSplitPlan{}
 	parentNeeded := map[string]bool{}
 	splitRoots := map[string]bool{}
 	for _, p := range items {
@@ -454,13 +452,11 @@ ORDER BY o.directory_path,o.name LIMIT 100`, sourceID, job.RunID, sourceID, job.
 			if _, ok := splitPlans[p.root]; ok {
 				continue
 			}
-			targets, targetsByKey, grouping, needed, planErr := s.catalogSplitTargetsForRoot(ctx, tx.Tx, sourceID, job.RunID, p.root)
+			plan, needed, planErr := s.catalogSplitPlanForRoot(ctx, tx.Tx, sourceID, job.RunID, p.root)
 			if planErr != nil {
 				return 0, planErr
 			}
-			splitPlans[p.root] = targets
-			splitPlansByKey[p.root] = targetsByKey
-			splitGroupings[p.root] = grouping
+			splitPlans[p.root] = plan
 			parentNeeded[p.root] = needed
 			splitRoots[p.root] = true
 		}
@@ -468,16 +464,14 @@ ORDER BY o.directory_path,o.name LIMIT 100`, sourceID, job.RunID, sourceID, job.
 	firstSplit := map[string]int64{}
 	for _, p := range items {
 		root, sourceRoot, title := p.root, "", path.Base(p.root)
-		if targets, ok := splitPlans[p.root]; ok && p.kind == "audio" {
+		if plan, ok := splitPlans[p.root]; ok && p.kind == "audio" {
 			// Direct audio and its format copy carry the same work prefix, so
-			// both belong to the split card. Keying by name lets an MP3/FLAC
-			// folder below the creator folder attach its copy to that work
-			// instead of recreating the container card the split retired.
-			if target, ok := targets[p.name]; ok {
-				root, sourceRoot, title = target.Root, target.SourceRoot, target.Title
-			} else if target, ok := splitPlansByKey[p.root][splitGroupings[p.root].keyFor(p.name)]; ok {
-				// A nested format copy can change its extension. Match the
-				// work group so 01.flac still lands on the 01.mp3 card.
+			// both belong to the split card. The shared plan keeps a nested
+			// file on the parent unless its directory is a format or track
+			// container, so a disc folder with an unrelated name is not
+			// silently dropped.
+			rel := strings.TrimPrefix(path.Join(p.dir, p.name), strings.TrimRight(p.root, "/")+"/")
+			if target, ok := plan.targetFor(rel); ok {
 				root, sourceRoot, title = target.Root, target.SourceRoot, target.Title
 			}
 		}
@@ -527,8 +521,8 @@ ORDER BY o.directory_path,o.name LIMIT 100`, sourceID, job.RunID, sourceID, job.
 			return 0, err
 		}
 	}
-	for root, targets := range splitPlans {
-		if parentNeeded[root] || len(targets) == 0 {
+	for root, plan := range splitPlans {
+		if parentNeeded[root] || len(plan.direct) == 0 {
 			continue
 		}
 		// Retire the creator card only after every observation below this

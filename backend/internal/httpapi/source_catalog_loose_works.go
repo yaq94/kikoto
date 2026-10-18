@@ -307,17 +307,68 @@ type catalogSplitTarget struct {
 	Title      string
 }
 
-// catalogSplitTargetFor maps one direct audio file to its card. A file with no
-// group key stays on the directory card.
-func catalogSplitTargetFor(root, name string, grouping catalogLooseGrouping, titles map[string]string) catalogSplitTarget {
-	if grouping.mode != catalogWorkSplitPrefix && grouping.mode != catalogWorkSplitFile {
-		return catalogSplitTarget{Root: root, Title: path.Base(root)}
+// catalogSplitPlan is the one partition shared by the resumable index, a
+// finite scan and a single-card refresh. Direct audio decides the groups;
+// nested audio joins a group only when it is a format copy or track part of
+// that group. Everything else stays on the parent card so a refresh or a
+// generation change cannot silently drop it.
+type catalogSplitPlan struct {
+	root     string
+	grouping catalogLooseGrouping
+	titles   map[string]string
+	direct   map[string]catalogSplitTarget
+	byKey    map[string]catalogSplitTarget
+}
+
+func newCatalogSplitPlan(root string, names []string, mode string) catalogSplitPlan {
+	grouping := newCatalogLooseGrouping(names, mode)
+	plan := catalogSplitPlan{
+		root:     root,
+		grouping: grouping,
+		titles:   catalogGroupTitles(grouping, names),
+		direct:   map[string]catalogSplitTarget{},
+		byKey:    map[string]catalogSplitTarget{},
 	}
-	key := grouping.keyFor(name)
+	if mode != catalogWorkSplitPrefix && mode != catalogWorkSplitFile {
+		return plan
+	}
+	for _, name := range names {
+		key := plan.grouping.keyFor(name)
+		if key == "" {
+			continue
+		}
+		target := catalogSplitTarget{Root: root + "::" + key, SourceRoot: root, Title: plan.titles[key]}
+		plan.direct[name] = target
+		if _, exists := plan.byKey[key]; !exists {
+			plan.byKey[key] = target
+		}
+	}
+	return plan
+}
+
+// targetFor maps a listing-relative audio path to its card. A nested file is
+// only claimed when its directory is a format copy or track container and its
+// group key names one of this directory's cards. A nested file without that
+// evidence keeps the parent card, which is then not retired.
+func (p catalogSplitPlan) targetFor(relPath string) (catalogSplitTarget, bool) {
+	key := p.grouping.keyFor(relPath)
 	if key == "" {
-		return catalogSplitTarget{Root: root, Title: path.Base(root)}
+		return catalogSplitTarget{}, false
 	}
-	return catalogSplitTarget{Root: root + "::" + key, SourceRoot: root, Title: titles[key]}
+	if target, ok := p.direct[relPath]; ok {
+		return target, true
+	}
+	target, ok := p.byKey[key]
+	if !ok {
+		return catalogSplitTarget{}, false
+	}
+	if !strings.Contains(relPath, "/") {
+		return catalogSplitTarget{}, false
+	}
+	if !catalogWorkPartDirectory(path.Base(path.Dir(relPath))) {
+		return catalogSplitTarget{}, false
+	}
+	return target, true
 }
 
 // catalogSplitSnapshot partitions a finite scan. Only direct audio is split;
@@ -327,21 +378,15 @@ func catalogSplitSnapshot(root string, files []openlist.File, mode string) (map[
 	if mode == catalogWorkSplitSingle {
 		return nil, files
 	}
-	names := catalogDirectAudioNames(files)
-	grouping := newCatalogLooseGrouping(names, mode)
-	titles := catalogGroupTitles(grouping, names)
+	plan := newCatalogSplitPlan(root, catalogDirectAudioNames(files), mode)
 	groups := map[string][]openlist.File{}
 	parent := []openlist.File{}
 	for _, file := range files {
 		if file.Kind != "audio" {
 			continue
 		}
-		if strings.Contains(file.Path, "/") {
-			parent = append(parent, file)
-			continue
-		}
-		target := catalogSplitTargetFor(root, file.Path, grouping, titles)
-		if target.Root == root {
+		target, ok := plan.targetFor(file.Path)
+		if !ok {
 			parent = append(parent, file)
 			continue
 		}
@@ -358,18 +403,17 @@ func catalogSplitCardFiles(rootPath, sourceRoot string, files []openlist.File) [
 	if sourceRoot == "" || !strings.HasPrefix(rootPath, sourceRoot+"::") {
 		return files
 	}
-	suffix := strings.TrimPrefix(rootPath, sourceRoot+"::")
 	names := catalogDirectAudioNames(files)
 	// Recompute the same partition an index would publish from this listing.
 	// The card suffix is only an identity; a title that looks like a prefix
 	// ("n006") must not choose the grouping by itself.
-	grouping := newCatalogLooseGrouping(names, catalogWorkSplitModeNames(names))
+	plan := newCatalogSplitPlan(sourceRoot, names, catalogWorkSplitModeNames(names))
 	result := []openlist.File{}
 	for _, file := range files {
-		if file.Kind != "audio" || strings.Contains(file.Path, "/") {
+		if file.Kind != "audio" {
 			continue
 		}
-		if strings.EqualFold(grouping.keyFor(file.Path), suffix) {
+		if target, ok := plan.targetFor(file.Path); ok && target.Root == rootPath {
 			result = append(result, file)
 		}
 	}
@@ -388,7 +432,7 @@ func catalogEntryCode(root string) string {
 // decideCatalogWorkSplitTx records the one-time decision for a directory that
 // became a card. A card already linked to a work, a series or a relocated
 // child is never split.
-func decideCatalogWorkSplitTx(ctx context.Context, tx *sql.Tx, sourceID int64, directoryPath string, revision int) error {
+func decideCatalogWorkSplitTx(ctx context.Context, tx *sql.Tx, sourceID, generation int64, directoryPath string, revision int) error {
 	if directoryPath == "/" {
 		// The source root is the operator's scan boundary, not a creator
 		// folder. Its loose files keep the root card.
@@ -419,7 +463,7 @@ func decideCatalogWorkSplitTx(ctx context.Context, tx *sql.Tx, sourceID int64, d
 				return dupErr
 			}
 			if duplicate {
-				_, execErr := tx.ExecContext(ctx, `UPDATE source_catalog_directory SET work_split=? WHERE file_source_id=? AND path=?`, catalogWorkSplitSingle, sourceID, directoryPath)
+				_, execErr := tx.ExecContext(ctx, `UPDATE source_catalog_directory SET work_split=? WHERE file_source_id=? AND path=? AND generation=?`, catalogWorkSplitSingle, sourceID, directoryPath, generation)
 				return execErr
 			}
 			rows, err := tx.QueryContext(ctx, `SELECT name FROM source_catalog_observation WHERE file_source_id=? AND directory_path=? AND revision=? AND kind='audio' ORDER BY name`, sourceID, directoryPath, revision)
@@ -448,7 +492,9 @@ func decideCatalogWorkSplitTx(ctx context.Context, tx *sql.Tx, sourceID int64, d
 	// A split decision belongs to the current listing. completeCatalogDirectoryTx
 	// runs once per completed revision, so recompute from that revision's names
 	// instead of freezing the first choice forever.
-	_, err := tx.ExecContext(ctx, `UPDATE source_catalog_directory SET work_split=? WHERE file_source_id=? AND path=?`, mode, sourceID, directoryPath)
+	// A decision computed from one generation must never overwrite the mode
+	// of a newer generation that already completed the same directory.
+	_, err := tx.ExecContext(ctx, `UPDATE source_catalog_directory SET work_split=? WHERE file_source_id=? AND path=? AND generation=?`, mode, sourceID, directoryPath, generation)
 	return err
 }
 
@@ -562,12 +608,11 @@ func (s *Server) catalogSnapshotSplitMode(ctx context.Context, sourceID int64, r
 	return catalogWorkSplitMode(files), nil
 }
 
-// catalogSplitTargetsForRoot loads the split plan for one indexed root. Direct
+// catalogSplitPlanForRoot loads the split plan for one indexed root. Direct
 // audio names are read once per publish batch, so a batch boundary cannot
-// change a group title. Targets are keyed twice: by exact file name for direct
-// audio, and by group key so a nested format copy with another extension still
-// reaches its work card.
-func (s *Server) catalogSplitTargetsForRoot(ctx context.Context, tx *sql.Tx, sourceID, generation int64, root string) (map[string]catalogSplitTarget, map[string]catalogSplitTarget, catalogLooseGrouping, bool, error) {
+// change a group title. The plan is the same one a finite scan and a card
+// refresh use; only its root-specific evidence differs.
+func (s *Server) catalogSplitPlanForRoot(ctx context.Context, tx *sql.Tx, sourceID, generation int64, root string) (catalogSplitPlan, bool, error) {
 	var pinned int
 	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
 		SELECT 1 FROM source_catalog_entry e
@@ -576,28 +621,28 @@ func (s *Server) catalogSplitTargetsForRoot(ctx context.Context, tx *sql.Tx, sou
 			OR EXISTS(SELECT 1 FROM catalog_series_member m WHERE m.catalog_entry_id=e.id)
 			OR EXISTS(SELECT 1 FROM source_catalog_entry r WHERE r.relocated_to_id=e.id)))`,
 		sourceID, root).Scan(&pinned); err != nil {
-		return nil, nil, catalogLooseGrouping{}, false, err
+		return catalogSplitPlan{}, false, err
 	}
 	if pinned != 0 {
-		return nil, nil, catalogLooseGrouping{}, false, nil
+		return catalogSplitPlan{}, false, nil
 	}
 	var mode string
 	err := tx.QueryRowContext(ctx, `SELECT work_split FROM source_catalog_directory WHERE file_source_id=? AND generation=? AND path=?`, sourceID, generation, root).Scan(&mode)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil, catalogLooseGrouping{}, false, nil
+		return catalogSplitPlan{}, false, nil
 	}
 	if err != nil {
-		return nil, nil, catalogLooseGrouping{}, false, err
+		return catalogSplitPlan{}, false, err
 	}
 	if mode != catalogWorkSplitPrefix && mode != catalogWorkSplitFile {
-		return nil, nil, catalogLooseGrouping{}, false, nil
+		return catalogSplitPlan{}, false, nil
 	}
 	rows, err := tx.QueryContext(ctx, `SELECT o.name FROM source_catalog_observation o
 		JOIN source_catalog_directory d ON d.file_source_id=o.file_source_id AND d.path=o.directory_path
 		WHERE o.file_source_id=? AND o.directory_path=? AND o.revision=d.revision AND d.generation=? AND o.kind='audio'
 		ORDER BY o.name`, sourceID, root, generation)
 	if err != nil {
-		return nil, nil, catalogLooseGrouping{}, false, err
+		return catalogSplitPlan{}, false, err
 	}
 	names := []string{}
 	for rows.Next() {
@@ -610,48 +655,30 @@ func (s *Server) catalogSplitTargetsForRoot(ctx context.Context, tx *sql.Tx, sou
 	readErr := rows.Err()
 	_ = rows.Close()
 	if err != nil {
-		return nil, nil, catalogLooseGrouping{}, false, err
+		return catalogSplitPlan{}, false, err
 	}
 	if readErr != nil {
-		return nil, nil, catalogLooseGrouping{}, false, readErr
+		return catalogSplitPlan{}, false, readErr
 	}
-	grouping := newCatalogLooseGrouping(names, mode)
-	titles := catalogGroupTitles(grouping, names)
-	targets := map[string]catalogSplitTarget{}
-	targetsByKey := map[string]catalogSplitTarget{}
-	for _, name := range names {
-		target := catalogSplitTargetFor(root, name, grouping, titles)
-		if target.Root != root {
-			targets[name] = target
-			key := strings.TrimPrefix(target.Root, root+"::")
-			if _, exists := targetsByKey[key]; !exists {
-				targetsByKey[key] = target
-			}
-		}
-	}
-	// Nested audio under a format or track directory belongs to the split card
-	// whose work prefix its name carries, just like the direct copy. Counting
-	// those files as "parent audio" would leave an empty creator card behind
-	// after every split work that also has an MP3/FLAC copy. Only audio that
-	// has no split card of its own keeps the parent.
-	rows, err = tx.QueryContext(ctx, `SELECT o.name FROM source_catalog_observation o
+	plan := newCatalogSplitPlan(root, names, mode)
+	// Only audio with a card of its own can be retired with the parent. A
+	// nested file under an unrelated folder stays on the parent card, so the
+	// parent must remain published.
+	rows, err = tx.QueryContext(ctx, `SELECT o.directory_path,o.name FROM source_catalog_observation o
 		JOIN source_catalog_directory d ON d.file_source_id=o.file_source_id AND d.path=o.directory_path
 		WHERE d.file_source_id=? AND d.generation=? AND d.catalog_root=? AND o.kind='audio'
 		ORDER BY o.directory_path,o.name`, sourceID, generation, root)
 	if err != nil {
-		return nil, nil, catalogLooseGrouping{}, false, err
+		return catalogSplitPlan{}, false, err
 	}
 	parentNeeded := 0
 	for rows.Next() {
-		var name string
-		if err = rows.Scan(&name); err != nil {
+		var dir, name string
+		if err = rows.Scan(&dir, &name); err != nil {
 			break
 		}
-		key := grouping.keyFor(name)
-		if _, split := targets[name]; split {
-			continue
-		}
-		if _, split := targetsByKey[key]; split || key == "" {
+		rel := strings.TrimPrefix(path.Join(dir, name), strings.TrimRight(root, "/")+"/")
+		if _, split := plan.targetFor(rel); split {
 			continue
 		}
 		parentNeeded = 1
@@ -660,12 +687,12 @@ func (s *Server) catalogSplitTargetsForRoot(ctx context.Context, tx *sql.Tx, sou
 	readErr = rows.Err()
 	_ = rows.Close()
 	if err != nil {
-		return nil, nil, catalogLooseGrouping{}, false, err
+		return catalogSplitPlan{}, false, err
 	}
 	if readErr != nil {
-		return nil, nil, catalogLooseGrouping{}, false, readErr
+		return catalogSplitPlan{}, false, readErr
 	}
-	return targets, targetsByKey, grouping, parentNeeded != 0, nil
+	return plan, parentNeeded != 0, nil
 }
 
 // catalogDuplicateDirectoryTx reports a child folder that repeats the parent's

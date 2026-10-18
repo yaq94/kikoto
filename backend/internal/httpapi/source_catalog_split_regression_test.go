@@ -3,6 +3,7 @@ package httpapi
 import (
 	"fmt"
 	"net/http"
+	"strconv"
 	"testing"
 )
 
@@ -40,6 +41,71 @@ func TestSourceCatalogSplitKeepsRenamedFormatCopy(t *testing.T) {
 		if got := countAudioTracks(f.tracks(t, card)); got != want {
 			t.Fatalf("%s audio tracks=%d, want %d (direct + renamed FLAC copy)", title, got, want)
 		}
+	}
+}
+
+// A single-card refresh must keep the same files the index published. Nested
+// format copies are part of the split card, so refreshing it cannot shrink the
+// track list back to the direct files only.
+func TestSourceCatalogSplitCardRefreshKeepsNestedFormatCopy(t *testing.T) {
+	f := newLooseWorkFixture(t, map[string][]map[string]any{
+		"/": {looseDir("Creator")},
+		"/Creator": {
+			looseAudio("N001 Example Work-1.mp3"),
+			looseAudio("N001 Example Work-2.mp3"),
+			looseAudio("N002 Another Work-1.mp3"),
+			looseAudio("N002 Another Work-2.mp3"),
+			looseDir("FLAC"),
+		},
+		"/Creator/FLAC": {
+			looseAudio("N001 Example Work-1.flac"),
+			looseAudio("N002 Another Work-1.flac"),
+		},
+	})
+	f.request(t, http.MethodPost, "/catalog/index", `{"intervalMs":100}`, 202)
+	if p := f.drain(t); p["status"] != "complete" {
+		t.Fatalf("scan = %#v", p)
+	}
+	card := f.cards(t)["N001 Example Work-1"]
+	if card == nil {
+		t.Fatal("missing split card")
+	}
+	id := strconv.Itoa(int(card["catalogEntryId"].(float64)))
+	reviewRequest(t, f.handler, f.cookie, http.MethodPost, "/api/source-catalog/"+id+"/refresh", `{}`, 200)
+	if got := countAudioTracks(f.tracks(t, card)); got != 3 {
+		t.Fatalf("refreshed tracks=%d, want the direct files plus the FLAC copy", got)
+	}
+}
+
+// Nested audio without a split group key has no other card to live on. The
+// parent must stay published and keep that file instead of retiring the card
+// and losing the only reference to it.
+func TestSourceCatalogSplitKeepsUngroupedNestedAudioOnParent(t *testing.T) {
+	f := newLooseWorkFixture(t, map[string][]map[string]any{
+		"/": {looseDir("Creator")},
+		"/Creator": {
+			looseAudio("N001 Example Work-1.mp3"),
+			looseAudio("N001 Example Work-2.mp3"),
+			looseAudio("N002 Another Work-1.mp3"),
+			looseAudio("N002 Another Work-2.mp3"),
+			looseDir("Disc1"),
+		},
+		"/Creator/Disc1": {looseAudio("Extra Recording.mp3")},
+	})
+	f.request(t, http.MethodPost, "/catalog/index", `{"intervalMs":100}`, 202)
+	if p := f.drain(t); p["status"] != "complete" {
+		t.Fatalf("scan = %#v", p)
+	}
+	cards := f.cards(t)
+	if len(cards) != 3 {
+		t.Fatalf("cards=%d, want two split works and the retained parent: %v", len(cards), cards)
+	}
+	parent := cards["Creator"]
+	if parent == nil {
+		t.Fatalf("missing parent card for ungrouped nested audio: %v", cards)
+	}
+	if got := countAudioTracks(f.tracks(t, parent)); got != 1 {
+		t.Fatalf("parent tracks=%d, want only the ungrouped nested file", got)
 	}
 }
 
