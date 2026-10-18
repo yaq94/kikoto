@@ -266,10 +266,20 @@ func (g catalogLooseGrouping) keyFor(name string) string {
 			return ""
 		}
 		if g.splitPrefixes[prefix] {
-			if base := catalogBaseTitle(name); base != "" {
-				// Keep the prefix in the identity so B011 and B012 with the
-				// same title cannot collapse onto one card.
-				return prefix + " " + base
+			// Keep the prefix in the identity so B011 and B012 with the same
+			// title cannot collapse onto one card. The remainder is read from
+			// the file stem, not the lowercased base title, so the prefix is
+			// removed once and the card key stays readable.
+			stem := strings.TrimSpace(catalogFileStem(name))
+			remainder := ""
+			if len(stem) >= len(prefix) && strings.EqualFold(stem[:len(prefix)], prefix) {
+				remainder = strings.TrimSpace(strings.TrimLeft(stem[len(prefix):], " ._-、"))
+			}
+			if base := catalogBaseTitle(name); base != "" && remainder == "" {
+				remainder = base
+			}
+			if remainder != "" {
+				return prefix + " " + remainder
 			}
 		}
 		return prefix
