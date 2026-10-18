@@ -445,18 +445,22 @@ ORDER BY o.directory_path,o.name LIMIT 100`, sourceID, job.RunID, sourceID, job.
 		return 0, err
 	}
 	splitPlans := map[string]map[string]catalogSplitTarget{}
+	splitPlansByKey := map[string]map[string]catalogSplitTarget{}
 	parentNeeded := map[string]bool{}
+	splitRoots := map[string]bool{}
 	for _, p := range items {
 		if p.split == catalogWorkSplitPrefix || p.split == catalogWorkSplitFile {
 			if _, ok := splitPlans[p.root]; ok {
 				continue
 			}
-			targets, needed, planErr := s.catalogSplitTargetsForRoot(ctx, tx.Tx, sourceID, job.RunID, p.root)
+			targets, targetsByKey, needed, planErr := s.catalogSplitTargetsForRoot(ctx, tx.Tx, sourceID, job.RunID, p.root)
 			if planErr != nil {
 				return 0, planErr
 			}
 			splitPlans[p.root] = targets
+			splitPlansByKey[p.root] = targetsByKey
 			parentNeeded[p.root] = needed
+			splitRoots[p.root] = true
 		}
 	}
 	firstSplit := map[string]int64{}
@@ -468,6 +472,10 @@ ORDER BY o.directory_path,o.name LIMIT 100`, sourceID, job.RunID, sourceID, job.
 			// folder below the creator folder attach its copy to that work
 			// instead of recreating the container card the split retired.
 			if target, ok := targets[p.name]; ok {
+				root, sourceRoot, title = target.Root, target.SourceRoot, target.Title
+			} else if target, ok := splitPlansByKey[p.root][catalogGroupKey(p.name, p.split)]; ok {
+				// A nested format copy can change its extension. Match the
+				// work group so 01.flac still lands on the 01.mp3 card.
 				root, sourceRoot, title = target.Root, target.SourceRoot, target.Title
 			}
 		}
@@ -555,6 +563,51 @@ ORDER BY o.directory_path,o.name LIMIT 100`, sourceID, job.RunID, sourceID, job.
 		}
 		if err = retireCatalogSplitParentTx(ctx, tx.Tx, sourceID, root, targetID); err != nil {
 			return 0, err
+		}
+	}
+	for root := range splitRoots {
+		// A root that no longer splits (or now publishes fewer cards) must not
+		// leave the cards of an earlier generation visible. Cards that still
+		// belong to this generation, or carry a work/series/relocation, stay.
+		keep := map[int64]bool{}
+		rows, err := tx.QueryContext(ctx, `SELECT id FROM source_catalog_entry
+			WHERE file_source_id=? AND source_root=? AND last_seen_generation=?`,
+			sourceID, root, job.RunID)
+		if err != nil {
+			return 0, err
+		}
+		for rows.Next() {
+			var id int64
+			if err = rows.Scan(&id); err != nil {
+				break
+			}
+			keep[id] = true
+		}
+		if err == nil {
+			err = rows.Err()
+		}
+		_ = rows.Close()
+		if err != nil {
+			return 0, err
+		}
+		if err = retireStaleSplitCardsTx(ctx, tx.Tx, sourceID, job.RunID, root, keep); err != nil {
+			return 0, err
+		}
+	}
+	// A root that is no longer split has a single card at parentRoot. Retire
+	// split cards from older generations that pointed at the same source root.
+	for _, p := range items {
+		if p.split != "" && p.split != catalogWorkSplitSingle {
+			continue
+		}
+		var exists int
+		if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM source_catalog_entry WHERE file_source_id=? AND source_root=? AND last_seen_generation<>?)`, sourceID, p.root, job.RunID).Scan(&exists); err != nil {
+			return 0, err
+		}
+		if exists != 0 {
+			if err = retireStaleSplitCardsTx(ctx, tx.Tx, sourceID, job.RunID, p.root, map[int64]bool{}); err != nil {
+				return 0, err
+			}
 		}
 	}
 	return len(items), tx.Commit()

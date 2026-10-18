@@ -390,26 +390,69 @@ func (s *Server) getSourceCatalogTracks(w http.ResponseWriter, r *http.Request) 
 }
 
 func catalogTracks(id int64, files []SourceCatalogFile, parent string) []map[string]any {
-	tracks := []map[string]any{}
-	for _, file := range files {
-		dir := path.Dir(file.Path)
-		if dir == "." {
-			dir = ""
+	// A split card owns a work's direct audio and its nested format copies, but
+	// the index only publishes the audio rows for that card. Build the tree
+	// from paths and synthesize a missing intermediate folder, so a copy under
+	// FLAC/ or MP3/ is visible instead of being dropped by the parent filter.
+	type node struct {
+		file     SourceCatalogFile
+		children map[string]*node
+		order    []string
+	}
+	root := &node{children: map[string]*node{}}
+	ensure := func(segments []string) *node {
+		current := root
+		for _, segment := range segments {
+			child, ok := current.children[segment]
+			if !ok {
+				child = &node{file: SourceCatalogFile{Path: segment, Title: segment, Kind: "folder"}, children: map[string]*node{}}
+				if current.file.Path != "" {
+					child.file.Path = current.file.Path + "/" + segment
+				}
+				current.children[segment] = child
+				current.order = append(current.order, segment)
+			}
+			current = child
 		}
-		if dir != parent {
+		return current
+	}
+	for _, file := range files {
+		segments := strings.Split(strings.Trim(file.Path, "/"), "/")
+		if len(segments) == 0 {
 			continue
 		}
-		stream := ""
-		if file.Kind == "audio" {
-			stream = "/api/source-catalog/" + strconv.FormatInt(id, 10) + "/media?path=" + url.QueryEscape(file.Path)
+		parentNode := ensure(segments[:len(segments)-1])
+		name := segments[len(segments)-1]
+		existing, ok := parentNode.children[name]
+		if !ok {
+			existing = &node{children: map[string]*node{}}
+			parentNode.children[name] = existing
+			parentNode.order = append(parentNode.order, name)
 		}
-		children := []map[string]any{}
-		if file.Kind == "folder" {
-			children = catalogTracks(id, files, file.Path)
+		existing.file = file
+		if existing.file.Path == "" {
+			existing.file.Path = strings.Join(segments, "/")
 		}
-		tracks = append(tracks, map[string]any{"type": file.Kind, "title": file.Title, "path": file.Path, "hash": file.Path, "streamUrl": stream, "downloadUrl": "", "sizeBytes": file.Size, "durationSeconds": nil, "children": children})
 	}
-	return tracks
+	var render func(n *node) []map[string]any
+	render = func(n *node) []map[string]any {
+		tracks := make([]map[string]any, 0, len(n.order))
+		for _, name := range n.order {
+			child := n.children[name]
+			file := child.file
+			stream := ""
+			if file.Kind == "audio" {
+				stream = "/api/source-catalog/" + strconv.FormatInt(id, 10) + "/media?path=" + url.QueryEscape(file.Path)
+			}
+			children := []map[string]any{}
+			if len(child.order) > 0 {
+				children = render(child)
+			}
+			tracks = append(tracks, map[string]any{"type": file.Kind, "title": file.Title, "path": file.Path, "hash": file.Path, "streamUrl": stream, "downloadUrl": "", "sizeBytes": file.Size, "durationSeconds": nil, "children": children})
+		}
+		return tracks
+	}
+	return render(root)
 }
 
 func (s *Server) listOpenListWorks(w http.ResponseWriter, r *http.Request, source remoteSourceForUse) {

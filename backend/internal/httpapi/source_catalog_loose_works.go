@@ -267,16 +267,8 @@ func decideCatalogWorkSplitTx(ctx context.Context, tx *sql.Tx, sourceID int64, d
 		// folder. Its loose files keep the root card.
 		return nil
 	}
-	var existing string
-	err := tx.QueryRowContext(ctx, `SELECT work_split FROM source_catalog_directory WHERE file_source_id=? AND path=?`, sourceID, directoryPath).Scan(&existing)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return err
-	}
-	if existing != "" {
-		return nil
-	}
 	var pinned int
-	if err = tx.QueryRowContext(ctx, `SELECT EXISTS(
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
 		SELECT 1 FROM source_catalog_entry e
 		WHERE e.file_source_id=? AND e.root_path=? AND (
 			e.work_id IS NOT NULL
@@ -300,8 +292,8 @@ func decideCatalogWorkSplitTx(ctx context.Context, tx *sql.Tx, sourceID int64, d
 				return dupErr
 			}
 			if duplicate {
-				_, err = tx.ExecContext(ctx, `UPDATE source_catalog_directory SET work_split=? WHERE file_source_id=? AND path=?`, catalogWorkSplitSingle, sourceID, directoryPath)
-				return err
+				_, execErr := tx.ExecContext(ctx, `UPDATE source_catalog_directory SET work_split=? WHERE file_source_id=? AND path=?`, catalogWorkSplitSingle, sourceID, directoryPath)
+				return execErr
 			}
 			rows, err := tx.QueryContext(ctx, `SELECT name FROM source_catalog_observation WHERE file_source_id=? AND directory_path=? AND revision=? AND kind='audio' ORDER BY name`, sourceID, directoryPath, revision)
 			if err != nil {
@@ -326,7 +318,10 @@ func decideCatalogWorkSplitTx(ctx context.Context, tx *sql.Tx, sourceID int64, d
 			mode = catalogWorkSplitModeNames(names)
 		}
 	}
-	_, err = tx.ExecContext(ctx, `UPDATE source_catalog_directory SET work_split=? WHERE file_source_id=? AND path=?`, mode, sourceID, directoryPath)
+	// A split decision belongs to the current listing. completeCatalogDirectoryTx
+	// runs once per completed revision, so recompute from that revision's names
+	// instead of freezing the first choice forever.
+	_, err := tx.ExecContext(ctx, `UPDATE source_catalog_directory SET work_split=? WHERE file_source_id=? AND path=?`, mode, sourceID, directoryPath)
 	return err
 }
 
@@ -359,6 +354,59 @@ func retireCatalogSplitParentTx(ctx context.Context, tx *sql.Tx, sourceID int64,
 	return err
 }
 
+// retireStaleSplitCardsTx hides split cards for this root that the current
+// generation did not publish. A directory that used to hold separate works can
+// become one audiobook (or change its grouping); the old cards would otherwise
+// stay visible beside the new one. A card with a work, a series member, or a
+// relocation target keeps its identity and is left for explicit review. The
+// retired row keeps file_source_id NULL and no target: the old card is gone,
+// but its id stays resolvable for personal records.
+func retireStaleSplitCardsTx(ctx context.Context, tx *sql.Tx, sourceID, generation int64, parentRoot string, keep map[int64]bool) error {
+	rows, err := tx.QueryContext(ctx, `SELECT id FROM source_catalog_entry
+		WHERE file_source_id=? AND source_root=? AND relocated_to_id IS NULL AND last_seen_generation<>?`,
+		sourceID, parentRoot, generation)
+	if err != nil {
+		return err
+	}
+	ids := []int64{}
+	for rows.Next() {
+		var id int64
+		if err = rows.Scan(&id); err != nil {
+			break
+		}
+		ids = append(ids, id)
+	}
+	if err == nil {
+		err = rows.Err()
+	}
+	_ = rows.Close()
+	if err != nil {
+		return err
+	}
+	for _, id := range ids {
+		if keep[id] {
+			continue
+		}
+		var blocked int
+		if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM source_catalog_entry e WHERE e.id=? AND (
+			e.work_id IS NOT NULL
+			OR EXISTS(SELECT 1 FROM catalog_series_member m WHERE m.catalog_entry_id=e.id)
+			OR EXISTS(SELECT 1 FROM source_catalog_entry r WHERE r.relocated_to_id=e.id)))`, id).Scan(&blocked); err != nil {
+			return err
+		}
+		if blocked != 0 {
+			continue
+		}
+		if _, err = tx.ExecContext(ctx, `DELETE FROM source_catalog_file WHERE catalog_entry_id=?`, id); err != nil {
+			return err
+		}
+		if _, err = tx.ExecContext(ctx, `UPDATE source_catalog_entry SET file_source_id=NULL,relocated_to_id=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=?`, id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // catalogSnapshotSplitMode applies the same decision to a finite scan, with
 // the same protection for a card that already owns a work or series.
 func (s *Server) catalogSnapshotSplitMode(ctx context.Context, sourceID int64, root string, files []openlist.File) (string, error) {
@@ -386,8 +434,10 @@ func (s *Server) catalogSnapshotSplitMode(ctx context.Context, sourceID int64, r
 
 // catalogSplitTargetsForRoot loads the split plan for one indexed root. Direct
 // audio names are read once per publish batch, so a batch boundary cannot
-// change a group title.
-func (s *Server) catalogSplitTargetsForRoot(ctx context.Context, tx *sql.Tx, sourceID, generation int64, root string) (map[string]catalogSplitTarget, bool, error) {
+// change a group title. Targets are keyed twice: by exact file name for direct
+// audio, and by group key so a nested format copy with another extension still
+// reaches its work card.
+func (s *Server) catalogSplitTargetsForRoot(ctx context.Context, tx *sql.Tx, sourceID, generation int64, root string) (map[string]catalogSplitTarget, map[string]catalogSplitTarget, bool, error) {
 	var pinned int
 	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
 		SELECT 1 FROM source_catalog_entry e
@@ -396,28 +446,28 @@ func (s *Server) catalogSplitTargetsForRoot(ctx context.Context, tx *sql.Tx, sou
 			OR EXISTS(SELECT 1 FROM catalog_series_member m WHERE m.catalog_entry_id=e.id)
 			OR EXISTS(SELECT 1 FROM source_catalog_entry r WHERE r.relocated_to_id=e.id)))`,
 		sourceID, root).Scan(&pinned); err != nil {
-		return nil, false, err
+		return nil, nil, false, err
 	}
 	if pinned != 0 {
-		return nil, false, nil
+		return nil, nil, false, nil
 	}
 	var mode string
 	err := tx.QueryRowContext(ctx, `SELECT work_split FROM source_catalog_directory WHERE file_source_id=? AND generation=? AND path=?`, sourceID, generation, root).Scan(&mode)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, false, nil
+		return nil, nil, false, nil
 	}
 	if err != nil {
-		return nil, false, err
+		return nil, nil, false, err
 	}
 	if mode != catalogWorkSplitPrefix && mode != catalogWorkSplitFile {
-		return nil, false, nil
+		return nil, nil, false, nil
 	}
 	rows, err := tx.QueryContext(ctx, `SELECT o.name FROM source_catalog_observation o
 		JOIN source_catalog_directory d ON d.file_source_id=o.file_source_id AND d.path=o.directory_path
 		WHERE o.file_source_id=? AND o.directory_path=? AND o.revision=d.revision AND d.generation=? AND o.kind='audio'
 		ORDER BY o.name`, sourceID, root, generation)
 	if err != nil {
-		return nil, false, err
+		return nil, nil, false, err
 	}
 	names := []string{}
 	for rows.Next() {
@@ -430,17 +480,22 @@ func (s *Server) catalogSplitTargetsForRoot(ctx context.Context, tx *sql.Tx, sou
 	readErr := rows.Err()
 	_ = rows.Close()
 	if err != nil {
-		return nil, false, err
+		return nil, nil, false, err
 	}
 	if readErr != nil {
-		return nil, false, readErr
+		return nil, nil, false, readErr
 	}
 	titles := catalogGroupTitles(names, mode)
 	targets := map[string]catalogSplitTarget{}
+	targetsByKey := map[string]catalogSplitTarget{}
 	for _, name := range names {
 		target := catalogSplitTargetFor(root, name, mode, titles)
 		if target.Root != root {
 			targets[name] = target
+			key := strings.TrimPrefix(target.Root, root+"::")
+			if _, exists := targetsByKey[key]; !exists {
+				targetsByKey[key] = target
+			}
 		}
 	}
 	// Nested audio under a format or track directory belongs to the split card
@@ -453,20 +508,19 @@ func (s *Server) catalogSplitTargetsForRoot(ctx context.Context, tx *sql.Tx, sou
 		WHERE d.file_source_id=? AND d.generation=? AND d.catalog_root=? AND o.kind='audio'
 		ORDER BY o.directory_path,o.name`, sourceID, generation, root)
 	if err != nil {
-		return nil, false, err
+		return nil, nil, false, err
 	}
 	parentNeeded := 0
-	splitKeys := map[string]bool{}
-	for _, target := range targets {
-		splitKeys[strings.TrimPrefix(target.Root, root+"::")] = true
-	}
 	for rows.Next() {
 		var name string
 		if err = rows.Scan(&name); err != nil {
 			break
 		}
 		key := catalogGroupKey(name, mode)
-		if splitKeys[key] || key == "" {
+		if _, split := targets[name]; split {
+			continue
+		}
+		if _, split := targetsByKey[key]; split || key == "" {
 			continue
 		}
 		parentNeeded = 1
@@ -475,12 +529,12 @@ func (s *Server) catalogSplitTargetsForRoot(ctx context.Context, tx *sql.Tx, sou
 	readErr = rows.Err()
 	_ = rows.Close()
 	if err != nil {
-		return nil, false, err
+		return nil, nil, false, err
 	}
 	if readErr != nil {
-		return nil, false, readErr
+		return nil, nil, false, readErr
 	}
-	return targets, parentNeeded != 0, nil
+	return targets, targetsByKey, parentNeeded != 0, nil
 }
 
 // catalogDuplicateDirectoryTx reports a child folder that repeats the parent's
