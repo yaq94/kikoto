@@ -262,6 +262,47 @@ func TestImportKeepConflictsWithASharedIdentityMemberRecord(t *testing.T) {
 	}
 }
 
+// Keep-import conflict detection must cover every table that can hold the
+// user's own record. Listening imports arrive without a review, tag or cursor,
+// so a narrower check would silently overwrite them through another member id.
+func TestImportKeepConflictsWithAnyPersonalRecordOnASharedIdentity(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	for _, table := range []struct {
+		name   string
+		insert string
+	}{
+		{"listening import", `INSERT INTO user_listening_import(user_id,work_id,listened_seconds,listen_count) VALUES(2,1,90,2)`},
+		{"playback cursor", `INSERT INTO media_item(id,work_id,kind,title) VALUES(5,1,'audio','Example Track');
+			INSERT INTO user_work_playback_cursor(user_id,work_id,media_item_id,position_seconds,duration_seconds) VALUES(2,1,5,30,60)`},
+		{"work tag", `INSERT INTO user_tag(id,user_id,name) VALUES(5,2,'Example Tag');
+			INSERT INTO user_work_tag(user_id,work_id,user_tag_id) VALUES(2,1,5)`},
+	} {
+		t.Run(table.name, func(t *testing.T) {
+			execFixture(t, s.DB, `INSERT INTO shared_association(id,operation,status,version,fingerprint,snapshot_json) VALUES(91,'link','completed','v1','example','{}');
+				INSERT INTO shared_identity_member(work_id,identity_work_id,operation_id) VALUES(1,1,91),(2,1,91);`)
+			execFixture(t, s.DB, table.insert)
+			defer execFixture(t, s.DB, `DELETE FROM shared_identity_member; DELETE FROM shared_association WHERE id=91;
+				DELETE FROM user_listening_import; DELETE FROM user_work_playback_cursor; DELETE FROM user_work_tag; DELETE FROM user_tag WHERE id=5; DELETE FROM media_item WHERE id=5`)
+			b := Backup{Format: "kikoto-user-data", Version: 1, Works: []BackupWork{
+				{PrimaryCode: testfixture.WorkCode(testfixture.PrefixRJ, 1), Rating: func() *int { v := 2; return &v }(), Note: "Incoming note"},
+			}}
+			preview, err := s.PreviewImport(ctx, 2, b)
+			if err != nil || preview.Conflicts != 1 {
+				t.Fatalf("preview = %+v, %v; want the existing record conflict", preview, err)
+			}
+			result, err := s.Import(ctx, 2, b, false)
+			if err != nil || result.SkippedWorks != 1 {
+				t.Fatalf("keep import = %+v, %v; want the existing record kept", result, err)
+			}
+			var incoming int
+			if err = s.DB.QueryRow(`SELECT COUNT(*) FROM user_work_state WHERE user_id=2 AND work_id=2 AND note='Incoming note'`).Scan(&incoming); err != nil || incoming != 0 {
+				t.Fatalf("incoming review written = %d, %v", incoming, err)
+			}
+		})
+	}
+}
+
 func TestKikoeruStatusesAndStrictImportValidation(t *testing.T) {
 	// Explicit zero-prefixed literals exercise the catalog's supported widths.
 	for _, code := range []string{"RJ00000", "RJ000000", "RJ0000000", "RJ00000000"} {

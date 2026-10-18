@@ -89,11 +89,18 @@ func buildImportPlan(ctx context.Context, tx *sql.Tx, user int64, b Backup) (imp
 		// A shared identity means several work ids expose one personal record.
 		// Any member's saved data is already this user's record, so an import
 		// with keep must not overwrite it through another member id.
-		err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM user_work_state s WHERE s.user_id=? AND (s.work_id=? OR EXISTS(SELECT 1 FROM shared_identity_member m WHERE m.work_id=s.work_id AND m.identity_work_id=?)))
-			OR EXISTS(SELECT 1 FROM user_work_tag s WHERE s.user_id=? AND (s.work_id=? OR EXISTS(SELECT 1 FROM shared_identity_member m WHERE m.work_id=s.work_id AND m.identity_work_id=?)))
-			OR EXISTS(SELECT 1 FROM user_work_playback_cursor s WHERE s.user_id=? AND (s.work_id=? OR EXISTS(SELECT 1 FROM shared_identity_member m WHERE m.work_id=s.work_id AND m.identity_work_id=?)))
-			OR EXISTS(SELECT 1 FROM user_listening_session s WHERE s.user_id=? AND (s.work_id=? OR EXISTS(SELECT 1 FROM shared_identity_member m WHERE m.work_id=s.work_id AND m.identity_work_id=?)))`,
-			user, id, identity, user, id, identity, user, id, identity, user, id, identity).Scan(&exists)
+		// One list keeps every personal table in scope: a table added to the
+		// export must also be able to raise a conflict here.
+		err = tx.QueryRowContext(ctx, `WITH personal_work AS (
+				SELECT work_id FROM user_work_state WHERE user_id=?
+				UNION SELECT work_id FROM user_work_tag WHERE user_id=?
+				UNION SELECT work_id FROM user_work_playback_cursor WHERE user_id=?
+				UNION SELECT work_id FROM user_listening_session WHERE user_id=?
+				UNION SELECT work_id FROM user_listening_import WHERE user_id=?
+			)
+			SELECT EXISTS(SELECT 1 FROM personal_work p WHERE p.work_id=?
+				OR EXISTS(SELECT 1 FROM shared_identity_member m WHERE m.work_id=p.work_id AND m.identity_work_id=?))`,
+			user, user, user, user, user, id, identity).Scan(&exists)
 		if err != nil {
 			return p, err
 		}
