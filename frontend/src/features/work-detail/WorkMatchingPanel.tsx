@@ -10,7 +10,7 @@ export function WorkMatchingPanel({
   onOperation,
 }: {
   subject: AssociationSubject;
-  onCandidate: (candidate: AssociationSubject) => void;
+  onCandidate?: (candidate: AssociationSubject) => void;
   onOperation: (id: number) => void;
 }) {
   const { t } = useTranslation();
@@ -79,7 +79,7 @@ export function WorkMatchingPanel({
                     defaultValue: t("workMatching.rule.insufficient_evidence"),
                   })}
                 </p>
-                {auth.user && (
+                {auth.user && onCandidate && (
                   <Button variant="outline" onClick={() => onCandidate(candidate.subject)}>
                     {t("workMatching.review", { title: candidate.title })}
                   </Button>
