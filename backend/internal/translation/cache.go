@@ -37,10 +37,13 @@ func NewCache(root string, freeBytes func(string) (uint64, error)) *Cache {
 
 // CacheKey includes the original text as well as masked input: two names may
 // produce identical placeholders but must never share another work's text.
-func CacheKey(cfg Config, in Input, original, templateVersion string) string {
-	payload, _ := json.Marshal([]any{original, in.Text, in.TargetLanguage, cfg.BaseURL, cfg.Model, cfg.DisableThinking, templateVersion, "names-v1"})
+func CacheKey(cfg Config, in Input, original, templateVersion string) (string, error) {
+	payload, err := json.Marshal([]any{original, in.Text, in.TargetLanguage, cfg.BaseURL, cfg.Model, cfg.DisableThinking, templateVersion, "names-v1"})
+	if err != nil {
+		return "", err
+	}
 	sum := sha256.Sum256(payload)
-	return hex.EncodeToString(sum[:])
+	return hex.EncodeToString(sum[:]), nil
 }
 
 func cacheCharge(size int64) int64 { return ((size + 4095) / 4096) * 4096 }

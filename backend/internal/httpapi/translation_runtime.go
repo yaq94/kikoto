@@ -27,7 +27,10 @@ func (s *Server) contentTranslationQueue(cfg translation.Config) *translation.Qu
 
 func (s *Server) cachedTranslation(ctx context.Context, cfg translation.Config, input translation.Input, original string, protected translation.ProtectedText) (translation.Result, error) {
 	cache := s.contentTranslationCache()
-	key := translation.CacheKey(cfg, input, original, translation.TemplateVersion)
+	key, err := translation.CacheKey(cfg, input, original, translation.TemplateVersion)
+	if err != nil {
+		return translation.Result{}, err
+	}
 	if result, ok := cache.Get(key, cfg); ok {
 		result.CacheStatus = "hit"
 		return result, nil

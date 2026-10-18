@@ -187,13 +187,17 @@ func (s *Server) loadRemoteTranslationField(ctx context.Context, in contentTrans
 	field := readableTranslationField{Names: append([]string{detail.Circle}, detail.VoiceActors...)}
 	switch in.Field {
 	case "title":
-		field.Original = detail.Title
+		// The Original is the text that is actually being translated. A
+		// language-edition title is its own content; replacing it with the
+		// current title would translate the wrong string and report a 409.
+		field.Original = in.Text
 		if in.Text == detail.Title || in.Text == work.Title {
 			field.Text = in.Text
 		}
 		for _, edition := range work.OtherLanguageEditions {
 			if edition.Title == in.Text {
 				field.Text = in.Text
+				field.Original = in.Text
 			}
 			if normalizeRemotePresentationLanguage(edition.Language) == in.Language {
 				field.Existing = edition.Title
