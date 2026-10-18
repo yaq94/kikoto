@@ -534,12 +534,16 @@ func measureIndexCalibration(t *testing.T, server *Server, handler http.Handler,
 		if indexCalibrationTerminal(progress.Status) {
 			break
 		}
-		if cell.workerTickMS > 0 {
+		// Mirror the production worker: a bounded catalog invocation that kept
+		// itself queued is claimed again at once, so the coordinator tick only
+		// applies to an invocation that stopped or reached a terminal state.
+		continued, err := server.runNextQueuedWorkflowJobStep(ctx)
+		if err != nil && !errors.Is(err, context.Canceled) {
+			t.Logf("calibration cell=%s job error: %v", cell.name, err)
+		}
+		if !continued && cell.workerTickMS > 0 {
 			time.Sleep(time.Duration(cell.workerTickMS) * time.Millisecond)
 			result.ticks++
-		}
-		if err := server.runNextQueuedWorkflowJob(ctx); err != nil && !errors.Is(err, context.Canceled) {
-			t.Logf("calibration cell=%s job error: %v", cell.name, err)
 		}
 	}
 	result.elapsed = time.Since(start)
