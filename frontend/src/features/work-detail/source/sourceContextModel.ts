@@ -1,6 +1,6 @@
 import { remoteSourceVisibilityKey, type SourceVisibilityKey } from "@/components/source-visibility/sourceVisibility";
 import i18n from "@/i18n";
-import type { LibrarySource, MediaItem, RemoteWorkDetail, SourceAvailabilitySource, WorkDetail } from "@/lib/api";
+import type { CatalogDirectory, LibrarySource, MediaItem, RemoteWorkDetail, SourceAvailabilitySource, WorkDetail } from "@/lib/api";
 
 export type DetailSourceIntent = "local" | "tracked" | `remote-source:${number}`;
 
@@ -270,4 +270,31 @@ export function currentRemoteSourceWorkCode(
 ) {
   const detailCode = detail ? detail.remoteCode || detail.primaryCode || detail.remoteId : "";
   return detailCode || routedCode.trim() || remoteAvailabilityRouteCode(summary, fallbackCode);
+}
+
+/**
+ * Catalog entries become their own tabs. A remote row is a Kikoeru presence
+ * without a catalog entry: it already has a remote-source tab, and keying it
+ * as catalog:0 would collapse every such source into one tab that opens the
+ * local directory.
+ */
+export function buildCatalogTabs(
+  directories: CatalogDirectory[],
+  removedSourceLabel: string,
+): SourceTabInfo[] {
+  return directories
+    .filter((entry) => entry.directoryType === "catalog")
+    .map((entry) => ({
+      key: `catalog:${entry.catalogEntryId}`,
+      label:
+        directories.filter((item) => item.sourceId === entry.sourceId).length > 1
+          ? `${entry.sourceName} · ${entry.title}`
+          : entry.sourceName || removedSourceLabel,
+      sourceName: entry.sourceName || removedSourceLabel,
+      kind: "catalog" as const,
+      fileSourceId: null,
+      status: entry.status === "available" ? ("available" as const) : ("unavailable" as const),
+      statusLabel: i18n.t(`sourceLifecycle.${entry.status}`),
+      autoVisible: entry.status !== "disabled",
+    }));
 }

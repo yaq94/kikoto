@@ -12,6 +12,7 @@ import {
   type CatalogDirectory,
 } from "@/lib/api";
 import {
+  buildCatalogTabs,
   buildSourceTabs,
   buildTrackedPresenceOptions,
   currentRemoteSourceWorkCode,
@@ -71,24 +72,7 @@ export function useWorkSourceContext({
   const sourceTabs = useMemo(
     () => [
       ...buildSourceTabs(work?.mediaItems ?? [], remoteSources, work?.sourcePresence ?? [], selectedTrackedOption),
-      // A remote row is a Kikoeru presence without a catalog entry. It already
-      // has a remote-source tab, and catalog:0 would collapse every such source
-      // into one tab that opens the local directory.
-      ...catalogDirectories
-        .filter((entry) => entry.directoryType === "catalog")
-        .map((entry) => ({
-          key: `catalog:${entry.catalogEntryId}`,
-          label:
-            catalogDirectories.filter((item) => item.sourceId === entry.sourceId).length > 1
-              ? `${entry.sourceName} · ${entry.title}`
-              : entry.sourceName || i18n.t("sourceLifecycle.removedSource"),
-          sourceName: entry.sourceName || i18n.t("sourceLifecycle.removedSource"),
-          kind: "catalog" as const,
-          fileSourceId: null,
-          status: entry.status === "available" ? ("available" as const) : ("unavailable" as const),
-          statusLabel: i18n.t(`sourceLifecycle.${entry.status}`),
-          autoVisible: entry.status !== "disabled",
-        })),
+      ...buildCatalogTabs(catalogDirectories, i18n.t("sourceLifecycle.removedSource")),
     ],
     [remoteSources, selectedTrackedOption, work?.mediaItems, work?.sourcePresence, catalogDirectories],
   );

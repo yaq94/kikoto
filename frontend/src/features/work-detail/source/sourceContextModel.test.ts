@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import type { MediaItem, SourceAvailabilitySource, WorkDetail } from "@/lib/api";
+import type { CatalogDirectory, MediaItem, SourceAvailabilitySource, WorkDetail } from "@/lib/api";
 import {
+  buildCatalogTabs,
   buildSourceTabs,
   buildTrackedPresenceOptions,
   currentRemoteSourceWorkCode,
@@ -9,6 +10,37 @@ import {
 } from "./sourceContextModel";
 
 describe("sourceContextModel", () => {
+  it("gives catalog rows their own tab and leaves remote rows to the remote source", () => {
+    const directories = [
+      {
+        catalogEntryId: 41,
+        sourceId: 3,
+        sourceName: "Example Catalog",
+        title: "Example Work",
+        primaryCode: "RJ00000000",
+        workId: 11,
+        directoryType: "catalog",
+        status: "available",
+        checkedAt: "",
+      },
+      {
+        catalogEntryId: 0,
+        sourceId: 2,
+        sourceName: "Example Remote A",
+        title: "Example Work",
+        primaryCode: "RJ00000000",
+        workId: 11,
+        directoryType: "remote",
+        status: "available",
+        checkedAt: "",
+      },
+    ] as CatalogDirectory[];
+
+    const tabs = buildCatalogTabs(directories, "Removed source");
+    expect(tabs.map((tab) => tab.key)).toEqual(["catalog:41"]);
+    expect(tabs[0].kind).toBe("catalog");
+  });
+
   it("aggregates tracked presences into one tab and reflects the selected presence", () => {
     const presences = [
       {

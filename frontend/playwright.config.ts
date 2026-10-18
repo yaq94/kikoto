@@ -2,6 +2,9 @@ import { defineConfig, devices } from "@playwright/test";
 
 const externalBaseURL = process.env.PLAYWRIGHT_BASE_URL;
 const desktopTest = /@desktop/;
+// The non-visual acceptance run sets this to keep failure artifacts off. The
+// default stays unchanged so existing visual suites keep their diagnostics.
+const captureArtifacts = process.env.E2E_NO_ARTIFACTS !== "1";
 
 export default defineConfig({
   testDir: "./tests/e2e",
@@ -13,8 +16,9 @@ export default defineConfig({
   reporter: [["list"]],
   use: {
     baseURL: externalBaseURL ?? "http://127.0.0.1:3100",
-    trace: "retain-on-failure",
-    screenshot: "only-on-failure",
+    trace: captureArtifacts ? "retain-on-failure" : "off",
+    screenshot: captureArtifacts ? "only-on-failure" : "off",
+    video: "off",
   },
   webServer: externalBaseURL
     ? undefined
