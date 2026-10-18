@@ -194,7 +194,10 @@ func TestSourceCatalogIndexContract(t *testing.T) {
 		t.Fatalf("publish queue left %d publishable rows after a complete run", pending)
 	}
 
-	if elapsed > contractBudget {
+	// The race detector multiplies every database call; this suite runs its
+	// budget in the dedicated non-race job. Correctness assertions above still
+	// run under -race.
+	if !raceInstrumentation && elapsed > contractBudget {
 		t.Fatalf("contract index took %s, budget %s", elapsed.Round(time.Millisecond), contractBudget)
 	}
 }
