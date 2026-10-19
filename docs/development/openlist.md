@@ -84,16 +84,10 @@ reports completed directories per minute, connection-pool waits, refusals and
 process CPU for each option combination. Use it on the deployment host before
 changing the defaults.
 
-On a 32-processor development host, a 965-directory tree now completes at about
+On a 32-processor development host, a 965-directory tree completes at about
 352 directories per minute with concurrency 4, a 150 ms interval and 32 steps
-per batch, using about 20 ms of CPU per directory. The same tree took 204
-directories per minute before the coordinator stopped waiting for its
-two-second tick between bounded invocations; that wait was 61 ticks, about
-122 s, and every database query together used 20 s. A slower 300 ms interval
-took 140 directories per minute, which is the request pacing and not the
-writer. Two concurrent recommendation and metadata tag writers did not change
-the elapsed time. Earlier numbers that reported a large rise in cost per
-directory at this size were measuring the tick wait, not catalog work.
+per batch, using about 20 ms of CPU per directory. Throughput is bound by
+request pacing, not by the worker's tick.
 
 Choose concurrency 2, a 150 ms interval and 32 steps per batch for a first
 complete scan, and keep the defaults elsewhere. Expect the per-directory cost to
@@ -141,15 +135,36 @@ metadata footprint; the database reuses freed pages under its normal storage pol
 Full indexing uses the existing outbound source policy and a dedicated paced
 metadata lane. Metadata redirects are refused, response size and 30-second
 request deadlines apply, and cancellation releases every in-flight request.
-Publication reads the durable `publish_pending` queue. The worker publishes at
-most four batches of 100 rows per invocation, so a long backlog does not hold
-the single SQLite writer across the whole scan; the remaining rows stay queued
-and the job returns to the workflow queue. When no directory and no publish row
-remain, the cleanup pass visits only entries this generation republished and
-deletes file rows an older generation left there. It records progress in
-`source_catalog_scan.publish_cleanup_cursor`; a resumed generation resets that
-cursor once before its final pass because publication order differs from entry
-id order.
+Publication reads the durable `publish_pending` queue:
+
+- `source_catalog_observation.publish_pending` is set by page persistence and
+  cleared when a batch publishes the observation;
+- the partial index
+  `source_catalog_observation(file_source_id,directory_path,name) WHERE publish_pending=1`
+  orders pending rows;
+- `source_catalog_directory_publish_root`, a partial covering index over
+  complete directory roots, supplies the revision and path without a table
+  lookup;
+- `source_catalog_audio_root(file_source_id,generation,catalog_root)` holds one
+  row per generation and root with at least one complete directory that has
+  audio.
+
+The publisher materializes the generation's root set, seeks pending rows through
+the partial index and joins complete directories through the covering index,
+ordered by directory and name so a batch stops after rows it can publish.
+`refreshCatalogAudioRootTx` runs after each directory status change: it adds a
+root when a completed directory has audio and removes it when the last such
+directory becomes incomplete, so a rescan that deletes tracks retires the root.
+
+The worker publishes at most four batches of 100 rows per invocation, so a long
+backlog does not hold the single SQLite writer across the whole scan; the
+remaining rows stay queued and the job returns to the workflow queue. An
+exhausted queue returns without another publication query. When no directory and
+no publish row remain, the cleanup pass visits only entries this generation
+republished and deletes file rows an older generation left there. It records
+progress in `source_catalog_scan.publish_cleanup_cursor`; a resumed generation
+resets that cursor once before its final pass because publication order differs
+from entry id order.
 Routine tests use synthetic complete trees; a real index run must separately
 record its actual ranges, timestamps and unresolved directories.
 

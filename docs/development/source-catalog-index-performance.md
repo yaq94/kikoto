@@ -7,61 +7,37 @@ applies to this deployment. The worker contract is in
 general write-lock policy is in
 [SQLite write performance](sqlite-write-performance.md).
 
-## The tail defect
+## Publisher query shape
 
-The original publisher joined `source_catalog_directory` and
-`source_catalog_observation` and added a correlated `EXISTS` over the same two
-tables for every candidate directory. `LIMIT 100` was applied only after that
-filter. On the 2-vCPU deployment a full index reached 3,504 complete
-directories and 47,670 observations; with five unpublished rows left, one
-publisher call took **36.1–36.9 s**. Setting all 47,670 observations back to
-unpublished took 0.3 ms because the first 100 rows then satisfied the limit.
-That contrast rules out row count as the cause: the cost was the per-directory
-audio-root check when few rows matched.
+The publisher reads the durable `publish_pending` queue and joins each pending
+row to a complete directory through the covering root index, ordered by
+directory and name so a batch stops after rows it can publish. The cost then
+follows the rows a batch returns.
 
-## The queue
+A query that filters complete directories with a correlated `EXISTS` over
+`source_catalog_directory` and `source_catalog_observation` costs one probe per
+candidate directory before `LIMIT 100` applies. With few matching rows, that
+probe covers the whole generation, and the audio-root check dominates the call.
+The measurements below compare that shape with the queue query.
 
-`076_source_catalog_publish_queue.sql` adds one column, two indexes and one
-table:
-
-- `source_catalog_observation.publish_pending`, set by page persistence and
-  cleared when a batch publishes the observation;
-- a partial index
-  `source_catalog_observation(file_source_id,directory_path,name) WHERE publish_pending=1`;
-- `source_catalog_directory_publish_root`, a partial covering index over
-  complete directory roots that supplies the revision and path without a table
-  lookup;
-- `source_catalog_audio_root(file_source_id,generation,catalog_root)`, one row
-  per generation and root that has at least one complete directory with audio.
-
-The publisher materializes the root set for the generation, seeks pending rows
-through the partial index, and joins complete directories through
-`source_catalog_directory_publish_root`. It orders by directory and name so a
-batch stops after rows it can publish, not after rows it must reject.
-
-`refreshCatalogAudioRootTx` runs after each directory status change. It adds a
-root when a completed directory has audio and removes it when the last such
-directory becomes incomplete, so a rescan that deletes tracks retires the root
-as well.
-
-The worker drains at most four batches of 100 rows per invocation, then returns
-the job to the workflow queue. An exhausted queue returns without another
-publication query, so the worker cannot spin on an empty tail.
+The root set is materialized per generation so a pending row resolves its
+audio root without re-reading the directory tree. The queue columns, indexes,
+root maintenance and batch drain are specified in
+[OpenList: Recoverable full index](openlist.md#recoverable-full-index).
 
 ## Measured result
 
-| Case | Legacy query | Queue query |
+| Case | Correlated `EXISTS` query | Queue query |
 | --- | --- | --- |
 | Five-row tail, real 34 MB database | 36.1–36.9 s | 3.2–4.0 ms |
 | Empty queue | first 100 unpublished, 0.3 ms | 0.0 s |
 | 3,000-directory synthetic tail | 36.5 s | about 5 ms |
 | Plan | correlated `EXISTS` per complete directory | partial index seek, root join, ordered limit |
 
-The measured copy was a 34 MB database with 3,917 directories and 47,670
-observations. The synthetic fixture is the regression in
-`TestSourceCatalogPublishTailStaysBounded`; the opt-in comparison is
-`TestSourceCatalogPublishTailPerformance` and
-`make source-index-tail-performance`.
+The measured copy is a 34 MB database with 3,917 directories and 47,670
+observations. `TestSourceCatalogPublishTailStaysBounded` asserts the bounded
+tail; `TestSourceCatalogPublishTailPerformance` and
+`make source-index-tail-performance` are the opt-in comparison.
 
 ## Guidance that applies here
 
