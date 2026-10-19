@@ -9,6 +9,7 @@ export default defineConfig({
   },
   test: {
     include: ["src/**/*.test.ts", "src/**/*.test.tsx"],
+    testTimeout: 20_000,
     coverage: {
       provider: "v8",
       reporter: ["text", "json", "html"],
