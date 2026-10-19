@@ -333,8 +333,14 @@ func (s *Server) requireUsableRemoteSource(ctx context.Context, id int64) error 
 }
 
 func sameRemoteCacheSource(a, b remoteSourceForUse) bool {
-	aJSON, _ := json.Marshal(a)
-	bJSON, _ := json.Marshal(b)
+	aJSON, err := json.Marshal(a)
+	if err != nil {
+		return false
+	}
+	bJSON, err := json.Marshal(b)
+	if err != nil {
+		return false
+	}
 	return a.cacheGeneration == b.cacheGeneration && sha256.Sum256(aJSON) == sha256.Sum256(bJSON)
 }
 

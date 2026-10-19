@@ -474,7 +474,10 @@ func (c *Client) findWorkByPages(ctx context.Context, code string) (Work, json.R
 func findWorkInPage(works []Work, code string) (Work, json.RawMessage, bool) {
 	for _, work := range works {
 		if WorkCode(work) == code {
-			raw, _ := json.Marshal(work)
+			raw, err := json.Marshal(work)
+			if err != nil {
+				return Work{}, nil, false
+			}
 			return work, raw, true
 		}
 	}

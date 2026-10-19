@@ -75,9 +75,16 @@ func TestRemoteBrowseCacheBoundsExpiryCancellationAndIsolation(t *testing.T) {
 	}
 	source := remoteSourceForUse{ID: 7, Enabled: true, Endpoint: fileSourceEndpoint{APIURL: "https://source.example.invalid"}}
 	request := remoteSourceWorksRequest{Page: 1, Query: "user_tag:example", Languages: []string{"ja-jp"}, Seed: "example-a"}
-	key := remoteBrowsePageKey(source, 1, request, 1)
+	key, err := remoteBrowsePageKey(source, 1, request, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
 	assertDifferent := func(source remoteSourceForUse, user int64, request remoteSourceWorksRequest, page int) {
-		if remoteBrowsePageKey(source, user, request, page) == key {
+		other, err := remoteBrowsePageKey(source, user, request, page)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if other == key {
 			t.Fatal("cache scopes overlap")
 		}
 	}

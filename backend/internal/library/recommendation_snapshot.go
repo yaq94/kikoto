@@ -49,7 +49,10 @@ func (s *Store) snapshotForRecommendation(ctx context.Context, userID int64, ses
 		if err != nil {
 			return RecommendationSessionSnapshot{}, err
 		}
-		raw, _ := json.Marshal(s.LoadUserRecommendationConfig(ctx, userID))
+		raw, err := json.Marshal(s.LoadUserRecommendationConfig(ctx, userID))
+		if err != nil {
+			return RecommendationSessionSnapshot{}, err
+		}
 		sum := sha256.Sum256(append([]byte(fmt.Sprintf("%d:%d:", epoch, revision)), raw...))
 		sessionID = "legacy:" + hex.EncodeToString(sum[:])[:48]
 	}
@@ -93,7 +96,10 @@ func (s *Store) PrepareRecommendationSession(ctx context.Context, userID int64, 
 			return RecommendationSessionSnapshot{}, err
 		}
 		config := s.LoadUserRecommendationConfig(ctx, userID)
-		raw, _ := json.Marshal(config)
+		raw, err := json.Marshal(config)
+		if err != nil {
+			return RecommendationSessionSnapshot{}, err
+		}
 		key := fmt.Sprintf("%d:%d:%d:%s:%s", userID, epoch, revision, RecommendationAlgorithmVersion, raw)
 		snapshot, err := s.joinRecommendationPreparation(ctx, key, userID, epoch, revision, config, string(raw))
 		if errors.Is(err, errRecommendationInputsChanged) {

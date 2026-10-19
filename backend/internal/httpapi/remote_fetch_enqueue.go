@@ -84,8 +84,14 @@ func (s *Server) prepareRemoteWorkSaveEnqueue(
 		s.notifyFilesystemTriggerConfigChanged()
 	}
 	plan.FetchRoot = claimedRoot
-	rawWork, _ := json.Marshal(remoteWork)
-	rawTracks, _ := json.Marshal(tracks)
+	rawWork, err := json.Marshal(remoteWork)
+	if err != nil {
+		return remoteWorkSavePreparation{}, err
+	}
+	rawTracks, err := json.Marshal(tracks)
+	if err != nil {
+		return remoteWorkSavePreparation{}, err
+	}
 	return remoteWorkSavePreparation{
 		requestedCode: requestedCode(code), requestedSourceID: sourceID, requestedByUserID: requestedByUserID,
 		requestID: requestID, jobPriority: jobPriority, source: source, remoteWork: remoteWork, tracks: tracks,

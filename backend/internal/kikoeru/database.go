@@ -87,10 +87,16 @@ func ReadDatabaseReviews(ctx context.Context, path, userName string, maxItems in
 		if len(reviews) >= maxItems {
 			return nil, ErrAccountLimit
 		}
-		id, _ := json.Marshal(workID.String)
+		id, err := json.Marshal(workID.String)
+		if err != nil {
+			return nil, databaseError(ctx, err)
+		}
 		review := AccountReview{WorkID: id, Progress: progress.String, ReviewText: reviewText.String}
 		if rating.Valid {
-			encoded, _ := json.Marshal(rating.Float64)
+			encoded, err := json.Marshal(rating.Float64)
+			if err != nil {
+				return nil, databaseError(ctx, err)
+			}
 			review.Rating = rawRating(encoded)
 		}
 		reviews = append(reviews, review)

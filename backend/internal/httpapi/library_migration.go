@@ -78,7 +78,13 @@ func (s *Server) previewLibraryMigration(w http.ResponseWriter, r *http.Request)
 }
 
 func migrationPreview(plan layoutMigrationPlan) layoutMigrationPreview {
-	encoded, _ := json.Marshal(plan)
+	encoded, err := json.Marshal(plan)
+	if err != nil {
+		// A plan that cannot be encoded cannot be hashed into a stable preview.
+		// An empty digest would let the UI submit an unverifiable plan, so use a
+		// value that never matches the submitted hash.
+		return layoutMigrationPreview{Hash: "", Mode: plan.Requested.Mode, MoveCount: len(plan.Moves), Bytes: plan.Bytes}
+	}
 	digest := sha256.Sum256(encoded)
 	return layoutMigrationPreview{Hash: hex.EncodeToString(digest[:]), Mode: plan.Requested.Mode, MoveCount: len(plan.Moves), Bytes: plan.Bytes}
 }

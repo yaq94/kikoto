@@ -29,16 +29,19 @@ type remoteBrowsePageCache struct {
 	bytes   int
 }
 
-func remoteBrowsePageKey(source remoteSourceForUse, userID int64, request remoteSourceWorksRequest, upstreamPage int) string {
+func remoteBrowsePageKey(source remoteSourceForUse, userID int64, request remoteSourceWorksRequest, upstreamPage int) (string, error) {
 	request.Page = upstreamPage
 	request.PageSize = 100
-	data, _ := json.Marshal(struct {
+	data, err := json.Marshal(struct {
 		Source     remoteSourceForUse
 		Generation uint64
 		UserID     int64
 		Request    remoteSourceWorksRequest
 	}{source, source.cacheGeneration, userID, request})
-	return fmt.Sprintf("%d:%x", source.ID, sha256.Sum256(data))
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%d:%x", source.ID, sha256.Sum256(data)), nil
 }
 
 func (cache *remoteBrowsePageCache) page(ctx context.Context, key string, load func() (kikoeru.WorksPage, error)) (kikoeru.WorksPage, error) {
@@ -103,7 +106,11 @@ func (s *Server) remoteBrowsePageLoader(ctx context.Context, userID int64, sourc
 		if err := s.validateRemoteCacheResult(ctx, source); err != nil {
 			return kikoeru.WorksPage{}, err
 		}
-		result, err := s.remoteBrowseCache.page(ctx, remoteBrowsePageKey(source, userID, request, page), func() (kikoeru.WorksPage, error) {
+		key, err := remoteBrowsePageKey(source, userID, request, page)
+		if err != nil {
+			return kikoeru.WorksPage{}, err
+		}
+		result, err := s.remoteBrowseCache.page(ctx, key, func() (kikoeru.WorksPage, error) {
 			return client.ListWorksSortedSeeded(ctx, page, 100, request.Plan.PushdownQuery, request.UpstreamOrder, request.Direction, request.Seed)
 		})
 		if err == nil {

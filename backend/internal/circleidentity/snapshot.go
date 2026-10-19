@@ -65,7 +65,7 @@ func capture(ctx context.Context, tx *sql.Tx, target, source int64) (snapshot, e
 	}
 	return result, nil
 }
-func key(spec tableSpec, row []any) string {
+func key(spec tableSpec, row []any) (string, error) {
 	columns := strings.Split(spec.columns, ",")
 	keyValues := []any{}
 	for _, key := range strings.Split(spec.keys, ",") {
@@ -75,8 +75,11 @@ func key(spec tableSpec, row []any) string {
 			}
 		}
 	}
-	raw, _ := json.Marshal(keyValues)
-	return string(raw)
+	raw, err := json.Marshal(keyValues)
+	if err != nil {
+		return "", err
+	}
+	return string(raw), nil
 }
 func rowMap(spec tableSpec, data [][]any) (map[string][]any, error) {
 	result := map[string][]any{}
@@ -84,7 +87,11 @@ func rowMap(spec tableSpec, data [][]any) (map[string][]any, error) {
 		if len(row) != len(strings.Split(spec.columns, ",")) {
 			return nil, ErrConflict
 		}
-		result[key(spec, row)] = row
+		key, err := key(spec, row)
+		if err != nil {
+			return nil, err
+		}
+		result[key] = row
 	}
 	return result, nil
 }

@@ -48,7 +48,7 @@ type recommendationRecallPreparation struct {
 
 // The opaque identifier authenticates a digest of effective ordering inputs.
 // Page size and page number do not change recall or candidate ordering.
-func recommendationContextID(snapshot RecommendationSessionSnapshot, options ListOptions) string {
+func recommendationContextID(snapshot RecommendationSessionSnapshot, options ListOptions) (string, error) {
 	clauses := ParseSearchClauses(options.Query)
 	for index := range clauses {
 		clauses[index].Value = searchtext.Fold(strings.TrimSpace(clauses[index].Value))
@@ -70,17 +70,20 @@ func recommendationContextID(snapshot RecommendationSessionSnapshot, options Lis
 		status = "all"
 	}
 	_, direction := normalizeSort("recommend", options.Direction)
-	raw, _ := json.Marshal(struct {
+	raw, err := json.Marshal(struct {
 		Generation               int64
 		Scope, Status, Direction string
 		Clauses                  []SearchClause
 		Seed                     int64
 		Demo                     bool
 	}{snapshot.GenerationID, scope, status, direction, clauses, options.RandomSeed, options.DemoOnly})
+	if err != nil {
+		return "", err
+	}
 	digest := sha256.Sum256(raw)
 	identifier := append([]byte{}, digest[:16]...)
 	identifier = append(identifier, recommendationContextAuthenticator(snapshot, identifier)...)
-	return hex.EncodeToString(identifier)
+	return hex.EncodeToString(identifier), nil
 }
 
 func recommendationContextAuthenticator(snapshot RecommendationSessionSnapshot, digest []byte) []byte {
@@ -105,7 +108,10 @@ func (s *Store) recommendationContext(ctx context.Context, snapshot Recommendati
 	if snapshot.GenerationID <= 0 {
 		return "", nil, nil
 	}
-	id := recommendationContextID(snapshot, options)
+	id, err := recommendationContextID(snapshot, options)
+	if err != nil {
+		return "", nil, err
+	}
 	prefix, exists, err := s.loadRecommendationPrefix(ctx, id, snapshot.GenerationID)
 	if err != nil || exists {
 		return id, prefix, err

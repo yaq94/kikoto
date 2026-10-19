@@ -387,7 +387,15 @@ func TestRecommendationContextDeterministicConcurrentAndOwnership(t *testing.T) 
 	opts.PageSize = 100
 	opts.Query = `"example work 1"`
 	opts.Direction = "DESC"
-	if recommendationContextID(snapshot, options) != recommendationContextID(snapshot, opts) {
+	firstContext, err := recommendationContextID(snapshot, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondContext, err := recommendationContextID(snapshot, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if firstContext != secondContext {
 		t.Fatal("presentation inputs changed context")
 	}
 	if _, err := store.RecommendationContextBreakdown(ctx, userID+1, snapshot, first.RecommendationContext, first.Works[0].ID); err == nil {

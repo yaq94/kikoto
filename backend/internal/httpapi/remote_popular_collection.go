@@ -478,7 +478,10 @@ func uniqueRemoteCollectionWorks(works []kikoeru.Work, limit int) []kikoeru.Work
 }
 
 func (s *Server) trackRemoteCollectionWork(ctx context.Context, source remoteSourceForUse, remoteWork kikoeru.Work, collectionKind string, runID int64) (int64, error) {
-	rawWork, _ := json.Marshal(remoteWork)
+	rawWork, err := json.Marshal(remoteWork)
+	if err != nil {
+		return 0, err
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, err
