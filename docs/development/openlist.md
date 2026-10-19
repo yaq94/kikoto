@@ -171,19 +171,26 @@ record its actual ranges, timestamps and unresolved directories.
 ## Release sidecars
 
 An indexed card can carry a `readme`, `info`, `credit` or `staff` file beside
-its audio, including `.md`, `.nfo` and saved `.html` pages. The index reads at
-most four such files per card, at most 256 KiB each, through the same source
-client, origin policy and request pacing as metadata. UTF-8, UTF-16 and
-Shift-JIS bodies are decoded before parsing. The file is not a track.
+its audio, including `.md`, `.nfo` and saved `.html` pages. Every text extension
+(`.md`, `.markdown`, `.nfo`, `.txt`, `.html`, `.htm`) also needs one of those
+metadata words in its file name. The extension alone is not enough: the same
+formats hold lyrics, notes and logs, and reading them would spend requests on
+text that cannot carry credits. `readme.md` and `staff.nfo` qualify while
+`lyrics.md` does not. The index reads at most four such files per card, at most
+256 KiB each, through the same source client, origin policy and request pacing
+as metadata. UTF-8, UTF-16 and Shift-JIS bodies are decoded before parsing. The
+file is not a track.
 
 Publication only marks a card `sidecar_pending`. A bounded warm pass runs when
 an index invocation finds no remaining directory or publish work, and the
 independent sidecar worker continues the durable queue. Each pass is bounded by
 12 upstream requests and 20 seconds, and the index job never waits for the
 whole queue. A source that answers no file at all is not continued at once, so
-its normal retry delay applies. A card is retried at most five times; a deleted
-readme clears the old evidence instead of preserving credit text for a file the
-release no longer publishes.
+its normal retry delay applies. A card is retried at most five times; a rescan
+does not reset that budget, so an unreadable release is not retried on every
+daily pass. A deleted readme clears the old evidence instead of preserving
+credit text for a file the release no longer publishes. A changed file is
+queued again only after its evidence is cleared.
 
 Only explicitly labelled lines become evidence. A line such as `配音：…`,
 `声优: …`, `CV：…` or `キャスト: …` names a voice actor; `社团：…`,

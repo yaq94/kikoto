@@ -109,6 +109,7 @@ type Server struct {
 	catalogDiskSpace               func(string) (diskSpaceSnapshot, error)
 	catalogNow                     func() time.Time
 	workMatchingMu                 sync.Mutex
+	catalogSidecarCooldown         *catalogSidecarSourceCooldown
 }
 
 type localMediaIndexCall struct {
@@ -139,6 +140,7 @@ func NewServer(db *sql.DB, cfg config.Config) *Server {
 		filesystemTriggerConfigChanged: make(chan struct{}, 1),
 		appUpdateEndpoints:             defaultAppUpdateEndpoints(),
 		lifetime:                       newServerLifetime(),
+		catalogSidecarCooldown:         newCatalogSidecarSourceCooldown(),
 	}
 	server.proxyConfig = &proxyConfigStore{load: server.loadProxyConfig}
 	server.metadataTransport = newMetadataTransport(dlsiteEndpoints, func(ctx context.Context) (proxyRoute, error) {

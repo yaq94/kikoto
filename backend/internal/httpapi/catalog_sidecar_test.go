@@ -187,6 +187,45 @@ func TestCatalogSidecarWorkerSkipsDisabledSource(t *testing.T) {
 	}
 }
 
+// A source with no usable endpoint cannot be loaded. It must not stay at the
+// head of the queue and hide an enabled source behind it on every pass.
+func TestCatalogSidecarWorkerSkipsUnusableSource(t *testing.T) {
+	f := newCatalogIndexFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/fs/get":
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": 200, "data": map[string]any{
+				"name": "readme.txt", "size": 24, "raw_url": "http://" + r.Host + "/readme",
+			}})
+		case "/readme":
+			_, _ = w.Write([]byte("配音：Example Voice\r\n"))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	metadataReviewExec(t, f.server.db, `INSERT INTO file_source(id,code,display_name,source_type,enabled) VALUES(2,'example_remote_b','Example Remote B','openlist',1);
+		INSERT INTO file_source_endpoint(file_source_id,api_url,base_url) SELECT 2,api_url,base_url FROM file_source_endpoint WHERE file_source_id=1;
+		INSERT INTO source_catalog_entry(id,file_source_id,root_path,title,sidecar_pending) VALUES(1,1,'/Unusable','Unusable card',1);
+		INSERT INTO source_catalog_entry(id,file_source_id,root_path,title,sidecar_pending) VALUES(2,2,'/Usable','Usable card',1);
+		INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes,observed_generation) VALUES(2,'readme.txt','readme.txt','text',24,1);
+		UPDATE file_source_endpoint SET api_url='',base_url='' WHERE file_source_id=1;`)
+	for range 2 {
+		worked, err := f.server.refreshPendingCatalogSidecars(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if worked {
+			t.Fatal("empty sidecar queue requested an immediate continuation")
+		}
+	}
+	var pending int
+	if err := f.server.db.QueryRow(`SELECT sidecar_pending FROM source_catalog_entry WHERE id=2`).Scan(&pending); err != nil {
+		t.Fatal(err)
+	}
+	if pending != 0 {
+		t.Fatalf("usable source stayed queued after an unusable source was selected: pending=%d", pending)
+	}
+}
+
 // The index warm pass and the background worker can run at the same time. One
 // pending card must cost one metadata request and one body request.
 func TestCatalogSidecarConcurrentPassesReadOneCardOnce(t *testing.T) {
@@ -238,10 +277,10 @@ func TestCatalogSidecarRescanKeepsExhaustedAttempts(t *testing.T) {
 		http.NotFound(w, r)
 	}))
 	evidence := `{"sidecars":[{"relativePath":"readme.txt","size":24,"voiceActors":["Example Voice"],"circles":[],"fetchedAt":"2026-01-01T00:00:00Z"}]}`
-	metadataReviewExec(t, f.server.db, `INSERT INTO source_catalog_entry(id,file_source_id,root_path,title,sidecar_json,sidecar_pending,sidecar_attempts)
-		VALUES(20,1,'/Example Work','Example Work','`+evidence+`',0,5);
-		INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes,observed_generation)
-		VALUES(20,'readme.txt','readme.txt','text',24,1);`)
+	metadataReviewExec(t, f.server.db, `INSERT INTO source_catalog_entry(id,file_source_id,root_path,title,sidecar_json,sidecar_pending,sidecar_attempts,sidecar_revision)
+		VALUES(20,1,'/Example Work','Example Work','`+evidence+`',0,5,'readme.txt|24|');
+		INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes,modified_at,observed_generation)
+		VALUES(20,'readme.txt','readme.txt','text',24,'',1);`)
 	tx, err := f.server.db.Begin()
 	if err != nil {
 		t.Fatal(err)
@@ -256,8 +295,39 @@ func TestCatalogSidecarRescanKeepsExhaustedAttempts(t *testing.T) {
 	if err = f.server.db.QueryRow(`SELECT sidecar_pending,sidecar_attempts FROM source_catalog_entry WHERE id=20`).Scan(&pending, &attempts); err != nil {
 		t.Fatal(err)
 	}
-	if pending != 0 || attempts != 5 {
+	if pending != 1 || attempts != 5 {
 		t.Fatalf("rescan reset the exhausted budget: pending=%d attempts=%d", pending, attempts)
+	}
+}
+
+// An unreadable file may become readable without a new release. The stored
+// revision lets a rescan distinguish that change from the same exhausted read.
+func TestCatalogSidecarRescanRetriesAfterFileRevisionChanges(t *testing.T) {
+	f := newCatalogIndexFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.NotFound(w, r)
+	}))
+	evidence := `{"sidecars":[{"relativePath":"readme.txt","size":24,"voiceActors":["Example Voice"],"circles":[],"fetchedAt":"2026-01-01T00:00:00Z"}]}`
+	metadataReviewExec(t, f.server.db, `INSERT INTO source_catalog_entry(id,file_source_id,root_path,title,sidecar_json,sidecar_pending,sidecar_attempts,sidecar_revision)
+		VALUES(30,1,'/Example Work','Example Work','`+evidence+`',0,5,'readme.txt|24|2026-01-01T00:00:00Z');
+		INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes,modified_at,observed_generation)
+		VALUES(30,'readme.txt','readme.txt','text',48,'2026-02-01T00:00:00Z',1);`)
+	tx, err := f.server.db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = markCatalogSidecarCandidatesTx(context.Background(), tx, []int64{30}, 1); err != nil {
+		t.Fatal(err)
+	}
+	if err = tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	var pending, attempts int
+	var revision string
+	if err = f.server.db.QueryRow(`SELECT sidecar_pending,sidecar_attempts,sidecar_revision FROM source_catalog_entry WHERE id=30`).Scan(&pending, &attempts, &revision); err != nil {
+		t.Fatal(err)
+	}
+	if pending != 1 || attempts != 0 {
+		t.Fatalf("changed revision did not reopen the budget: pending=%d attempts=%d revision=%q", pending, attempts, revision)
 	}
 }
 
