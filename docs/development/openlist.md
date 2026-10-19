@@ -270,6 +270,27 @@ repeating the `playback:use` gate: a session is required, or an enabled
 anonymous-read policy for `GET`/`HEAD`. Playback preparation creates media
 identities, so it keeps its own `playback:use` permission.
 
+### Format copies and auxiliary folders
+
+A release often publishes its audio below a copy folder rather than beside the
+readme: `MP3`, `2-mp3`, `01_mp3`, `FLAC 24bit`, `1.音声`, `ボイス`. Those
+folders are part of the release above them and never become a card of their
+own. The admission rule strips a leading order marker (`2-`, `01_`, `[2] `)
+before matching the format word, so a numbered copy is recognized without
+treating a title such as `24.歡迎光臨閃亮銀CV床貓` as a format. A format word
+followed by a quality marker (`MP3 320kbps`, `FLAC 24bit`) still matches; a
+title that merely starts with one (`MP3 Collection`) does not. Artwork and
+script folders (`ART`, `photo`, `3-photo`, `台本`) are auxiliary for the same
+reason: they belong to the release, not to a second playable work.
+
+The rule uses categories, not a list of observed directory names. A directory
+whose only playable audio sits in a nested format copy is published as the
+release card; the format directory itself is not searched as a work. The
+end-to-end regression `TestSourceCatalogFormatCopyDoesNotCreateACard` indexes
+`MP3`, `2-mp3` and `1.音声` releases through the real HTTP route and asserts one
+card with both audio files; `TestSourceCatalogFormatDirectoryOrdinalIsNotSampleSpecific`
+pins the category boundary on both sides.
+
 `GET /api/works/{id}/catalog-directories` projects catalog entries into the saved
 work's source tabs. Numeric references retain the exact edition; numbered
 references and unregistered numbered entries use existing canonical/alias

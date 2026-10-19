@@ -118,6 +118,95 @@ func indexCreator(t *testing.T, names []string) (*looseWorkFixture, map[string]m
 	return f, f.cards(t)
 }
 
+// A release that only publishes its audio below a format directory must not
+// bring that directory back as a second work. The card belongs to the release
+// directory above "MP3"/"2-mp3"/"1.音声". The parent's own files are artwork,
+// a script and a readme, so without this rule every format copy would become
+// a playable card of its own.
+func TestSourceCatalogFormatCopyDoesNotCreateACard(t *testing.T) {
+	cases := []struct {
+		name       string
+		release    string
+		formatName string
+		sibling    string
+	}{
+		{name: "upper case mp3", release: "Example Release", formatName: "MP3", sibling: "ART"},
+		{name: "ordinal mp3", release: "RJ00000001 Example", formatName: "2-mp3", sibling: "3-photo"},
+		{name: "ordinal japanese audio", release: "Example Voice", formatName: "1.音声", sibling: "2.画像"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newLooseWorkFixture(t, map[string][]map[string]any{
+				"/":        {looseDir("Creator")},
+				"/Creator": {looseDir(tc.release)},
+				"/Creator/" + tc.release: {
+					looseDir(tc.formatName), looseDir(tc.sibling), looseAudio("readme.txt"),
+				},
+				"/Creator/" + tc.release + "/" + tc.formatName: {
+					looseAudio("01 first.mp3"), looseAudio("02 second.mp3"),
+				},
+				"/Creator/" + tc.release + "/" + tc.sibling: {looseAudio("cover.jpg")},
+			})
+			f.request(t, http.MethodPost, "/catalog/index", `{"intervalMs":100}`, 202)
+			if p := f.drain(t); p["status"] != "complete" {
+				t.Fatalf("scan = %#v", p)
+			}
+			cards := f.cards(t)
+			if len(cards) != 1 {
+				t.Fatalf("cards=%v, want the release card only", cards)
+			}
+			card := cards[tc.release]
+			if card == nil {
+				t.Fatalf("cards=%v, want title %q", cards, tc.release)
+			}
+			if got := countCatalogAudio(f.tracks(t, card)); got != 2 {
+				t.Fatalf("tracks=%d, want both format-copy files on the release card", got)
+			}
+			// The format directory must not be searchable as its own work.
+			query := url.QueryEscape(tc.formatName)
+			listed := f.request(t, http.MethodGet, "/works?pageSize=100&q="+query, "", 200)
+			for _, raw := range listed["works"].([]any) {
+				if title := raw.(map[string]any)["title"].(string); title == tc.formatName {
+					t.Fatalf("format directory leaked into search: %#v", listed["works"])
+				}
+			}
+		})
+	}
+}
+
+// countCatalogAudio walks the nested track tree the detail route returns.
+func countCatalogAudio(tracks []any) int {
+	count := 0
+	for _, raw := range tracks {
+		track := raw.(map[string]any)
+		if track["type"] == "audio" {
+			count++
+		}
+		if children, ok := track["children"].([]any); ok {
+			count += countCatalogAudio(children)
+		}
+	}
+	return count
+}
+
+// A title that starts with a year or an episode number keeps its number. Only a
+// short ordinal directly attached to a format word is a copy marker.
+func TestSourceCatalogFormatDirectoryOrdinalIsNotSampleSpecific(t *testing.T) {
+	for _, name := range []string{"MP3", "mp3", "2-mp3", "01_mp3", "[2] FLAC", "1.音声", "音声", "ボイス"} {
+		if !catalogFormatDirectory(name) {
+			t.Fatalf("%q is not a format directory", name)
+		}
+	}
+	for _, name := range []string{"2021 Live", "24.歡迎光臨閃亮銀CV床貓", "音声剧", "MP3 Collection", "ART", "3-photo"} {
+		if catalogFormatDirectory(name) {
+			t.Fatalf("%q must not be treated as a format copy", name)
+		}
+	}
+	if !catalogAuxiliaryDirectory("ART") || !catalogAuxiliaryDirectory("3-photo") {
+		t.Fatal("artwork directories must stay inside the release")
+	}
+}
+
 // A pure numeric run is one audiobook with many episodes, not many works.
 func TestSourceCatalogLooseWorksNumericRunStaysOneCard(t *testing.T) {
 	tree := map[string][]map[string]any{

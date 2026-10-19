@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"path"
+	"regexp"
 	"strings"
 
 	"github.com/yexca/kikoto/backend/internal/workcode"
@@ -93,19 +94,31 @@ func catalogSelfWorkRoot(directoryPath string, observed catalogDirectorySummary)
 }
 
 func catalogFormatDirectory(name string) bool {
-	lower := strings.ToLower(strings.TrimSpace(name))
+	lower := catalogDirectoryFormatName(name)
 	// A format directory often carries a quality marker, such as
 	// "FLAC 24bit" or "MP3 320kbps". Match the leading format token so those
 	// copies stay part of the work instead of becoming a second card.
 	token := lower
+	rest := ""
 	if index := strings.IndexFunc(lower, func(r rune) bool {
 		return r == ' ' || r == '_' || r == '-' || r == '(' || r == ')' || r == '['
 	}); index > 0 {
 		token = lower[:index]
+		rest = lower[index:]
 	}
 	switch token {
 	case "mp3", "flac", "wav", "ogg", "opus", "m4a", "aac", "aiff", "aif",
 		"wma", "dsd", "dsf", "dff", "ape", "alac", "wv", "tta":
+		// Only a quality marker may follow the format word. "MP3 Collection"
+		// is a title; "MP3 320kbps" and "FLAC 24bit" are copies.
+		return strings.TrimSpace(rest) == "" || catalogFormatQuality.MatchString(rest)
+	}
+	// A Japanese release names its audio copy "音声" or "ボイス". These words
+	// are also ordinary title words ("Audio Drama", "音声剧"), so only the
+	// complete name counts; an ordinal prefix such as "1.音声" was removed
+	// above.
+	switch lower {
+	case "音声", "音聲", "音频", "音頻", "ボイス", "voice", "audio":
 		return true
 	}
 	// "hi-res" contains a dash, so the token split above would only see "hi".
@@ -115,6 +128,23 @@ func catalogFormatDirectory(name string) bool {
 		}
 	}
 	return false
+}
+
+var catalogFormatQuality = regexp.MustCompile(`[\s._\-()\[\]]*(?:[0-9]{1,3}\s*(?:k|kbps|bps|bit|khz|hz)?[\s._\-()\[\]]*)+$`)
+
+// catalogDirectoryFormatName removes a leading order marker from a directory
+// name. Releases order their copies as "2-mp3", "01_mp3" or "1.音声"; without
+// this step the token split sees the number and the format directory becomes
+// a work of its own. The marker is only removed when it is a short ordinal:
+// a title such as "24.歡迎光臨閃亮銀" keeps its number and is not a format.
+var catalogLeadingOrdinal = regexp.MustCompile(`^\s*(?:[0-9]{1,3}\s*[._\-、:：]+\s*|[\[(（【]\s*[0-9]{1,3}\s*[\])）】]\s*)`)
+
+func catalogDirectoryFormatName(name string) string {
+	lower := strings.ToLower(strings.TrimSpace(name))
+	if stripped := catalogLeadingOrdinal.ReplaceAllString(lower, ""); stripped != "" {
+		lower = stripped
+	}
+	return lower
 }
 
 // catalogWorkPartDirectory reports a directory that holds part of a work:
@@ -128,7 +158,7 @@ func catalogWorkPartDirectory(name string) bool {
 // one work. The names are the ones a release uses for discs, volumes and
 // format copies; they are not work titles.
 func catalogTrackContainerDirectory(name string) bool {
-	lower := strings.ToLower(strings.TrimSpace(name))
+	lower := catalogDirectoryFormatName(name)
 	if catalogNonEpisode.MatchString(lower) {
 		return true
 	}
@@ -144,12 +174,14 @@ func catalogTrackContainerDirectory(name string) bool {
 // instead of holding another work. A work root can therefore contain both a
 // format directory and extras without turning each format into its own card.
 func catalogAuxiliaryDirectory(name string) bool {
-	switch strings.ToLower(strings.TrimSpace(name)) {
+	switch catalogDirectoryFormatName(name) {
 	case "extra", "extras", "omake", "特典", "おまけ", "イラスト", "插图", "插圖",
 		"画像", "图片", "圖片", "cover", "covers", "封面", "字幕", "subtitle",
 		"subtitles", "lrc", "ass", "srt", "翻译", "翻譯", "translation", "台本",
 		"script", "scripts", "文本", "text", "txt", "pdf", "视频", "視頻", "video",
-		"pv", "demo", "试听", "試聴", "sample", "wallpaper", "壁纸", "壁紙":
+		"pv", "demo", "试听", "試聴", "sample", "wallpaper", "壁纸", "壁紙",
+		"art", "arts", "artwork", "photo", "photos", "picture", "pictures",
+		"image", "images", "img", "scans", "scan", "写真", "照片":
 		return true
 	}
 	return false
