@@ -82,11 +82,17 @@ func reconcileCatalogEntryTx(ctx context.Context, tx *sql.Tx, sourceID, generati
 		return readErr
 	}
 	strongCount := 0
+	layoutCount := 0
+	var layoutTarget catalogRelocationEntry
 	var target catalogRelocationEntry
 	for _, candidate := range candidates {
 		if old.strong != "" && candidate.strong == old.strong {
 			strongCount++
 			target = candidate
+		}
+		if old.strong == "" && old.layout != "" && candidate.layout == old.layout {
+			layoutCount++
+			layoutTarget = candidate
 		}
 	}
 	reason := "insufficient_evidence"
@@ -104,6 +110,39 @@ func reconcileCatalogEntryTx(ctx context.Context, tx *sql.Tx, sourceID, generati
 			reason = "conflicting_identity"
 			if !target.workID.Valid && membership == 0 && target.discovered == generation && old.code == target.code {
 				return relocateCatalogEntryTx(ctx, tx, old, target, generation)
+			}
+		}
+	} else if old.layout != "" && layoutCount > 0 {
+		// OpenList often returns no provider hash. A renamed directory still
+		// has one stable manifest: the same relative paths and sizes. Accept
+		// it only for a multi-file release, unique in this scan, with no
+		// older entry carrying the same manifest, so a copied release or a
+		// one-track recording cannot be mistaken for a rename. Provider
+		// hashes remain the stronger evidence above.
+		var files int
+		if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM source_catalog_file WHERE catalog_entry_id=? AND observed_generation=? AND kind='audio'`, layoutTarget.id, generation).Scan(&files); err != nil {
+			return err
+		}
+		var oldCount int
+		if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM source_catalog_entry WHERE file_source_id=? AND relocated_to_id IS NULL AND last_seen_generation<>? AND layout_fingerprint=?`, sourceID, generation, old.layout).Scan(&oldCount); err != nil {
+			return err
+		}
+		switch {
+		case layoutCount > 1 || oldCount > 1:
+			reason = "ambiguous_evidence"
+		case files < 2:
+			// A single same-sized file is not enough to call this a rename.
+			reason = "insufficient_evidence"
+		case len(candidates) >= 9:
+			reason = "ambiguous_evidence"
+		default:
+			var membership int
+			if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM catalog_series_member WHERE catalog_entry_id=?`, layoutTarget.id).Scan(&membership); err != nil {
+				return err
+			}
+			reason = "conflicting_identity"
+			if !layoutTarget.workID.Valid && membership == 0 && layoutTarget.discovered == generation && old.code == layoutTarget.code {
+				return relocateCatalogEntryTx(ctx, tx, old, layoutTarget, generation)
 			}
 		}
 	}
