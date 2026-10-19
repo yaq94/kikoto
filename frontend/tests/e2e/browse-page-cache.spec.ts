@@ -297,6 +297,10 @@ test("@desktop keeps visited browse workspaces mounted for the current user and 
   await page.getByRole("button", { name: "Favorites", exact: true }).click();
   await expect.poll(() => (requests["favorite-works"] ?? 0) > 0).toBe(true);
   await expect(page).toHaveURL(/\/favorites(?:\?|$)/);
+  // The shelf header fetches its own artwork beside the works page. That
+  // request starts after the first page arrives, so sample only once it has
+  // settled; otherwise the later request looks like a revisit request.
+  await expect.poll(() => (requests["favorite-works"] ?? 0) >= 2).toBe(true);
 
   const initialRequests = { ...requests };
 
