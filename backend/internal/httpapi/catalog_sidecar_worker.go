@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"log/slog"
+	"net/http"
 	"sync"
 	"time"
 )
@@ -44,6 +45,38 @@ func (c *catalogSidecarSourceCooldown) succeed(sourceID int64) {
 	delete(c.until, sourceID)
 }
 
+// retrySourceCatalogSidecars reopens the credit queue for one source. It is
+// the operator's recovery path after a solved credential or network problem:
+// neither a permanent attempt budget nor a long transient backoff should
+// require editing the database. Personal records and published evidence are
+// untouched; only the retry bookkeeping is cleared.
+func (s *Server) retrySourceCatalogSidecars(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requirePermission(w, r, "sources:write"); !ok {
+		return
+	}
+	sourceID, err := parseInt64PathValue(r, "id")
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid_request", "invalid source id", false)
+		return
+	}
+	if _, err = s.catalogIndexSource(r.Context(), sourceID); err != nil {
+		writeUpstreamError(w, err)
+		return
+	}
+	result, err := s.db.ExecContext(r.Context(), `UPDATE source_catalog_entry
+		SET sidecar_pending=1,sidecar_attempts=0,sidecar_transient_attempts=0,sidecar_retry_at='',sidecar_failure=''
+		WHERE file_source_id=? AND relocated_to_id IS NULL
+			AND (sidecar_pending=1 OR sidecar_attempts>0 OR sidecar_failure<>'')
+			AND EXISTS(SELECT 1 FROM source_catalog_file f WHERE f.catalog_entry_id=source_catalog_entry.id AND f.kind<>'folder')`,
+		sourceID)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	reopened, _ := result.RowsAffected()
+	writeJSON(w, http.StatusOK, map[string]any{"sourceId": sourceID, "reopened": reopened})
+}
+
 // RunCatalogSidecarWorker drains queued release-credit files outside the index
 // workflow. The index owns directory coverage; credit files are optional
 // matching evidence and must never extend a full scan by the number of
@@ -82,6 +115,7 @@ func (s *Server) refreshPendingCatalogSidecars(ctx context.Context) (bool, error
 	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT entry.file_source_id FROM source_catalog_entry entry
 		JOIN file_source source ON source.id=entry.file_source_id
 		WHERE entry.relocated_to_id IS NULL AND entry.sidecar_pending=1 AND entry.sidecar_attempts<?
+			AND (entry.sidecar_retry_at='' OR entry.sidecar_retry_at<=CURRENT_TIMESTAMP)
 			AND source.enabled=1 AND source.source_type=?
 		ORDER BY entry.file_source_id`, catalogSidecarMaxAttempts, sourceTypeOpenList)
 	if err != nil {

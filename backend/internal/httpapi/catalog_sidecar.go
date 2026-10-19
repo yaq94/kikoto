@@ -41,6 +41,12 @@ const (
 	catalogSidecarPassTimeout   = 20 * time.Second
 	// An unreadable file is retried by later passes, not in a tight loop.
 	catalogSidecarMaxAttempts = 5
+	// A temporary outage must not exhaust the permanent budget, but it also
+	// must not be retried on every pass. The wait doubles per failure and is
+	// capped so a long outage settles into a slow probe.
+	catalogSidecarTransientBase  = 15 * time.Minute
+	catalogSidecarTransientMax   = 24 * time.Hour
+	catalogSidecarTransientTries = 8
 )
 
 // catalogSidecarTextExtensions and catalogSidecarNameHints are the single
@@ -422,6 +428,13 @@ type catalogSidecarReadResult struct {
 	Requests int
 	Failed   bool
 	Deferred bool
+	// Transient marks at least one failure that heals without the release
+	// changing: an outage, refusal, rate limit or timeout. Permanent marks a
+	// failure that will not heal: a missing object or a body above the read
+	// limit. A card that has both waits on the transient backoff, because the
+	// deleted sibling must not turn a recoverable outage into a settled card.
+	Transient bool
+	Permanent bool
 }
 
 func readCatalogSidecars(ctx context.Context, client *openlist.Client, entry catalogEntry, files []SourceCatalogFile, previous catalogSidecarCache, requestBudget int) catalogSidecarReadResult {
@@ -457,6 +470,11 @@ func readCatalogSidecars(ctx context.Context, client *openlist.Client, entry cat
 		result.Requests++
 		if getErr != nil {
 			result.Failed = true
+			if errors.Is(getErr, openlist.ErrNotFound) {
+				result.Permanent = true
+			} else {
+				result.Transient = true
+			}
 			keepCatalogSidecarEvidence(&result.Cache, known, file.Path)
 			continue
 		}
@@ -464,6 +482,12 @@ func readCatalogSidecars(ctx context.Context, client *openlist.Client, entry cat
 		result.Requests++
 		if readErr != nil {
 			result.Failed = true
+			if errors.Is(readErr, openlist.ErrNotFound) || errors.Is(readErr, openlist.ErrLimit) ||
+				errors.Is(readErr, openlist.ErrInvalid) {
+				result.Permanent = true
+			} else {
+				result.Transient = true
+			}
 			keepCatalogSidecarEvidence(&result.Cache, known, file.Path)
 			continue
 		}
@@ -709,19 +733,19 @@ func markCatalogSidecarCandidatesTx(ctx context.Context, tx *sql.Tx, ids []int64
 	// Compare each card's current credit revision with the one stored with its
 	// evidence. Reading inside the transaction keeps the choice consistent with
 	// the publication rows just written.
-	rows, err = tx.QueryContext(ctx, `SELECT id,sidecar_attempts,sidecar_revision FROM source_catalog_entry
+	rows, err = tx.QueryContext(ctx, `SELECT id,sidecar_attempts,sidecar_transient_attempts,sidecar_revision FROM source_catalog_entry
 		WHERE id IN (`+placeholders+`)`, int64Args(ids)...)
 	if err != nil {
 		return err
 	}
 	type queueRow struct {
-		id, attempts int64
-		revision     string
+		id, attempts, transient int64
+		revision                string
 	}
 	queued := []queueRow{}
 	for rows.Next() {
 		var item queueRow
-		if err = rows.Scan(&item.id, &item.attempts, &item.revision); err != nil {
+		if err = rows.Scan(&item.id, &item.attempts, &item.transient, &item.revision); err != nil {
 			_ = rows.Close()
 			return err
 		}
@@ -740,21 +764,33 @@ func markCatalogSidecarCandidatesTx(ctx context.Context, tx *sql.Tx, ids []int64
 		if current == "" {
 			continue
 		}
-		attempts := item.attempts
 		// An empty stored revision means the card never completed a read. It is
 		// not a change: resetting here would make the five-attempt budget
 		// restart on every rescan, so a permanently broken release would be
 		// retried forever. Store the observed revision so the next rescan has a
-		// baseline to compare.
-		if item.revision != "" && item.revision != current {
-			attempts = 0
-		}
-		if item.revision != current {
-			if _, err = tx.ExecContext(ctx, `UPDATE source_catalog_entry SET sidecar_revision=? WHERE id=?`, current, item.id); err != nil {
+		// baseline to compare, but keep the attempts and the backoff.
+		unchanged := item.revision == current || (item.revision == "" && (item.attempts > 0 || item.transient > 0))
+		if unchanged {
+			// A rescan is not a read. A card with remaining permanent budget
+			// stays queued, a permanently exhausted card stays settled, and a
+			// transient card that reached the stop threshold stays stopped
+			// until an operator reopens it.
+			if _, err = tx.ExecContext(ctx, `UPDATE source_catalog_entry
+					SET sidecar_revision=CASE WHEN sidecar_revision='' THEN ? ELSE sidecar_revision END,
+						sidecar_pending=CASE
+							WHEN sidecar_transient_attempts>=? AND sidecar_failure='temporarily_unavailable'
+							THEN sidecar_pending ELSE 1 END,
+						sidecar_attempts=?
+					WHERE id=?`, current, catalogSidecarTransientTries, item.attempts, item.id); err != nil {
 				return err
 			}
+			continue
 		}
-		if _, err = tx.ExecContext(ctx, `UPDATE source_catalog_entry SET sidecar_pending=1,sidecar_attempts=? WHERE id=?`, attempts, item.id); err != nil {
+		// The release published new credit files. Clear the temporary backoff
+		// so the new revision is read now rather than after the old wait.
+		if _, err = tx.ExecContext(ctx, `UPDATE source_catalog_entry
+				SET sidecar_revision=?,sidecar_pending=1,sidecar_attempts=?,sidecar_transient_attempts=0,sidecar_retry_at='',sidecar_failure=''
+				WHERE id=?`, current, 0, item.id); err != nil {
 			return err
 		}
 	}
@@ -803,11 +839,12 @@ func (s *Server) refreshCatalogSidecars(ctx context.Context, sourceID int64) (mo
 	if err != nil {
 		return false
 	}
-	ctx, cancel := context.WithTimeout(ctx, catalogSidecarPassTimeout)
+	passCtx, cancel := context.WithTimeout(ctx, catalogSidecarPassTimeout)
 	defer cancel()
-	rows, err := s.db.QueryContext(ctx, `SELECT id,root_path,COALESCE(source_root,''),title,COALESCE(primary_code,''),availability_status
+	rows, err := s.db.QueryContext(passCtx, `SELECT id,root_path,COALESCE(source_root,''),title,COALESCE(primary_code,''),availability_status
 		FROM source_catalog_entry WHERE file_source_id=? AND relocated_to_id IS NULL
 			AND sidecar_pending=1 AND sidecar_attempts<?
+			AND (sidecar_retry_at='' OR sidecar_retry_at<=CURRENT_TIMESTAMP)
 		ORDER BY id LIMIT ?`, sourceID, catalogSidecarMaxAttempts, catalogSidecarBatchCards)
 	if err != nil {
 		slog.Warn("read catalog sidecar queue", "source_id", sourceID, "error", err)
@@ -833,11 +870,11 @@ func (s *Server) refreshCatalogSidecars(ctx context.Context, sourceID int64) (mo
 	client := s.openListClient(source)
 	reads, failures, deferred := 0, 0, false
 	for _, item := range candidates {
-		if ctx.Err() != nil || budget <= 0 {
+		if passCtx.Err() != nil || budget <= 0 {
 			deferred = true
 			break
 		}
-		result := s.refreshCatalogSidecar(ctx, client, item, budget)
+		result := s.refreshCatalogSidecar(passCtx, client, item, budget)
 		budget -= result.Requests
 		reads += result.Reads
 		if result.Failed {
@@ -858,7 +895,8 @@ func (s *Server) refreshCatalogSidecars(ctx context.Context, sourceID int64) (mo
 	var remaining int
 	if err = s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM source_catalog_entry
 		WHERE file_source_id=? AND relocated_to_id IS NULL
-			AND sidecar_pending=1 AND sidecar_attempts<?)`,
+			AND sidecar_pending=1 AND sidecar_attempts<?
+			AND (sidecar_retry_at='' OR sidecar_retry_at<=CURRENT_TIMESTAMP))`,
 		sourceID, catalogSidecarMaxAttempts).Scan(&remaining); err != nil {
 		return false
 	}
@@ -879,7 +917,9 @@ func (s *Server) refreshCatalogSidecar(ctx context.Context, client *openlist.Cli
 	entry := catalogEntry{ID: item.ID, RootPath: item.RootPath, SourceRoot: item.SourceRoot, Title: item.Title, PrimaryCode: item.Primary, Status: item.Status}
 	files, err := s.loadSourceCatalogFiles(ctx, item.ID)
 	if err != nil {
-		s.finishCatalogSidecar(ctx, item, catalogSidecarStateFailed, catalogSidecarReadResult{Failed: true})
+		// A local read failure says nothing about the release, so it must not
+		// spend the permanent budget.
+		s.finishCatalogSidecar(ctx, item, catalogSidecarStateFailed, catalogSidecarReadResult{Failed: true, Transient: true})
 		return catalogSidecarCardOutcome{Failed: true}
 	}
 	selected := catalogSidecarFiles(files)
@@ -892,7 +932,7 @@ func (s *Server) refreshCatalogSidecar(ctx context.Context, client *openlist.Cli
 	}
 	previous, err := s.loadCatalogSidecars(ctx, entry)
 	if err != nil {
-		s.finishCatalogSidecar(ctx, item, catalogSidecarStateFailed, catalogSidecarReadResult{Failed: true})
+		s.finishCatalogSidecar(ctx, item, catalogSidecarStateFailed, catalogSidecarReadResult{Failed: true, Transient: true})
 		return catalogSidecarCardOutcome{Failed: true}
 	}
 	result := readCatalogSidecars(ctx, client, entry, files, previous, budget)
@@ -914,6 +954,58 @@ const (
 	catalogSidecarStateRetry
 	catalogSidecarStateFailed
 )
+
+// catalogSidecarFailureReason is the stored category shown to an operator. It
+// keeps the distinction that decides retry behaviour, so an administrator can
+// tell an outage from a deleted file without reading the raw error.
+func catalogSidecarFailureReason(result catalogSidecarReadResult) string {
+	switch {
+	case result.Transient:
+		return "temporarily_unavailable"
+	case result.Permanent:
+		return "unreadable"
+	case result.Deferred:
+		return "request_budget"
+	case result.Failed:
+		// An unclassified failure is not evidence of a deleted file. Report it
+		// as temporary so the permanent budget is not spent on it.
+		return "temporarily_unavailable"
+	default:
+		return ""
+	}
+}
+
+// catalogSidecarTransientFailure reports whether the card should wait on the
+// temporary backoff. A mixed result (one deleted file, one outage) is
+// transient: the deleted file is already permanent, but settling the card now
+// would drop the file that can still be read when the source recovers.
+func catalogSidecarTransientFailure(result catalogSidecarReadResult) bool {
+	return result.Failed && (!result.Permanent || result.Transient)
+}
+
+// catalogSidecarTransientDelay grows the wait between temporary retries. The
+// first retry waits 15 minutes, then doubles up to a daily probe. It is a pure
+// function so the policy is testable without sleeping.
+func catalogSidecarTransientDelay(attempts int) time.Duration {
+	if attempts < 1 {
+		attempts = 1
+	}
+	delay := catalogSidecarTransientBase
+	for i := 1; i < attempts && delay < catalogSidecarTransientMax; i++ {
+		delay *= 2
+	}
+	if delay > catalogSidecarTransientMax {
+		return catalogSidecarTransientMax
+	}
+	return delay
+}
+
+// catalogSidecarRetryOffset renders a duration as a SQLite modifier so the
+// retry timestamp is produced by the same clock (CURRENT_TIMESTAMP) that the
+// queue compares against.
+func catalogSidecarRetryOffset(delay time.Duration) string {
+	return fmt.Sprintf("+%d seconds", int64(delay/time.Second))
+}
 
 // finishCatalogSidecar records one bounded outcome. Cards with some read files
 // store the partial evidence; only a fully read card clears the queue. A
@@ -944,10 +1036,36 @@ func (s *Server) finishCatalogSidecar(ctx context.Context, item catalogSidecarCa
 			// evidence instead of requesting the same files again.
 			return
 		}
+		if catalogSidecarTransientFailure(result) {
+			// An outage, credential refusal, rate limit or timeout heals
+			// without the release changing. Wait on a bounded backoff and do
+			// not spend the permanent budget, so a recovered source is read
+			// again instead of staying settled forever.
+			var transient int
+			if err := s.db.QueryRowContext(ctx, `SELECT sidecar_transient_attempts FROM source_catalog_entry WHERE id=?`, item.ID).Scan(&transient); err != nil {
+				slog.Warn("read catalog sidecar retry count", "catalog_entry_id", item.ID, "error", err)
+				return
+			}
+			transient++
+			pending := 1
+			if transient >= catalogSidecarTransientTries {
+				// A source that stays down for a week stops automatic probing;
+				// the operator can reopen it without editing the file.
+				pending = 0
+			}
+			if _, err := s.db.ExecContext(ctx, `UPDATE source_catalog_entry
+					SET sidecar_transient_attempts=?,sidecar_retry_at=datetime('now',?),sidecar_failure=?,sidecar_pending=?
+					WHERE id=?`, transient, catalogSidecarRetryOffset(catalogSidecarTransientDelay(transient)),
+				catalogSidecarFailureReason(result), pending, item.ID); err != nil {
+				slog.Warn("record catalog sidecar retry", "catalog_entry_id", item.ID, "error", err)
+			}
+			return
+		}
 		if _, err := s.db.ExecContext(ctx, `UPDATE source_catalog_entry
-				SET sidecar_attempts=sidecar_attempts+1,
+				SET sidecar_attempts=sidecar_attempts+1,sidecar_failure=?,
+					sidecar_transient_attempts=0,sidecar_retry_at='',
 					sidecar_pending=CASE WHEN sidecar_attempts+1>=? THEN 0 ELSE 1 END
-				WHERE id=?`, catalogSidecarMaxAttempts, item.ID); err != nil {
+				WHERE id=?`, catalogSidecarFailureReason(result), catalogSidecarMaxAttempts, item.ID); err != nil {
 			slog.Warn("record catalog sidecar attempt", "catalog_entry_id", item.ID, "error", err)
 		}
 		return
@@ -961,7 +1079,9 @@ func (s *Server) finishCatalogSidecar(ctx context.Context, item catalogSidecarCa
 		slog.Warn("clear catalog sidecar evidence", "catalog_entry_id", item.ID, "error", err)
 		return
 	}
-	if _, err := s.db.ExecContext(ctx, `UPDATE source_catalog_entry SET sidecar_pending=0 WHERE id=?`, item.ID); err != nil {
+	if _, err := s.db.ExecContext(ctx, `UPDATE source_catalog_entry
+			SET sidecar_pending=0,sidecar_transient_attempts=0,sidecar_retry_at='',sidecar_failure=''
+			WHERE id=?`, item.ID); err != nil {
 		slog.Warn("clear catalog sidecar queue", "catalog_entry_id", item.ID, "error", err)
 	}
 }

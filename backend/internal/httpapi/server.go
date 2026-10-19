@@ -379,6 +379,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/catalog-series/previews/{id}/confirm", s.catalogGroupingPreview)
 	mux.HandleFunc("POST /api/remote-sources/{id}/catalog/index", s.startSourceCatalogIndex)
 	mux.HandleFunc("GET /api/remote-sources/{id}/catalog/index", s.getSourceCatalogIndex)
+	mux.HandleFunc("POST /api/remote-sources/{id}/catalog/sidecars/retry", s.retrySourceCatalogSidecars)
 	mux.HandleFunc("GET /api/source-catalog/{id}", s.getSourceCatalogEntry)
 	mux.HandleFunc("GET /api/works/{id}/catalog-directories", s.getWorkCatalogDirectories)
 	mux.HandleFunc("GET /api/source-catalog/{id}/tracks", s.getSourceCatalogTracks)

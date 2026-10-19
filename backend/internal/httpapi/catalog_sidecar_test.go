@@ -11,6 +11,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/yexca/kikoto/backend/internal/config"
 )
@@ -122,12 +123,15 @@ func TestCatalogSidecarPartiallyReadableKeepsSuccess(t *testing.T) {
 	if len(cache.Sidecars) != 1 || strings.Join(cache.Sidecars[0].VoiceActors, "|") != "Example Voice" {
 		t.Fatalf("readable readme evidence was discarded: %s", raw)
 	}
-	var attempts int
-	if err := f.server.db.QueryRow(`SELECT sidecar_attempts FROM source_catalog_entry WHERE title='Example Work'`).Scan(&attempts); err != nil {
+	// A 503 is a temporary failure: it is recorded as a retry instead of
+	// spending the permanent budget, so the card is read once the source
+	// recovers.
+	var transient int
+	if err := f.server.db.QueryRow(`SELECT sidecar_transient_attempts FROM source_catalog_entry WHERE title='Example Work'`).Scan(&transient); err != nil {
 		t.Fatal(err)
 	}
-	if attempts == 0 {
-		t.Fatal("partially failed read did not record an attempt")
+	if transient == 0 {
+		t.Fatal("partially failed read did not record its retry")
 	}
 }
 
@@ -148,12 +152,14 @@ func TestCatalogSidecarDatabaseReadFailureKeepsEvidence(t *testing.T) {
 		t.Fatalf("database read failure was not reported: %#v", outcome)
 	}
 	var raw string
-	var pending, attempts int
-	if err := db.QueryRow(`SELECT sidecar_json,sidecar_pending,sidecar_attempts FROM source_catalog_entry WHERE id=1`).Scan(&raw, &pending, &attempts); err != nil {
+	var pending, transient int
+	if err := db.QueryRow(`SELECT sidecar_json,sidecar_pending,sidecar_transient_attempts FROM source_catalog_entry WHERE id=1`).Scan(&raw, &pending, &transient); err != nil {
 		t.Fatal(err)
 	}
-	if raw != stored || pending != 1 || attempts != 1 {
-		t.Fatalf("database failure changed the queue or evidence: raw=%s pending=%d attempts=%d", raw, pending, attempts)
+	// A local database read is an infrastructure failure, not a verdict on
+	// the release: the evidence stays and the retry counter moves.
+	if raw != stored || pending != 1 || transient != 1 {
+		t.Fatalf("database failure changed the queue or evidence: raw=%s pending=%d transient=%d", raw, pending, transient)
 	}
 }
 
@@ -433,6 +439,145 @@ func TestCatalogSidecarKeepsTraditionalChineseReadme(t *testing.T) {
 	}
 	if !paths["繁體中文/Readme_TC.txt"] {
 		t.Fatalf("traditional Chinese readme was dropped: %#v", selected)
+	}
+}
+
+// A temporary outage must not spend the permanent budget. The card waits on a
+// bounded backoff and stays pending, so a recovered source is read again.
+func TestCatalogSidecarTransientFailureWaitsWithoutSpendingBudget(t *testing.T) {
+	db := openMigratedTestDB(t)
+	s := NewServer(db, config.Config{Mode: config.ModeProduction, RootUsername: "synthetic-editor", DataRoot: t.TempDir(), CacheRoot: t.TempDir()})
+	defer func() { _ = s.Shutdown(context.Background()) }()
+	metadataReviewExec(t, db, `INSERT INTO source_catalog_entry(id,root_path,title,sidecar_pending,sidecar_attempts)
+		VALUES(70,'/Example Work','Example Work',1,0);`)
+	s.finishCatalogSidecar(context.Background(), catalogSidecarCandidate{ID: 70}, catalogSidecarStateRetry, catalogSidecarReadResult{Failed: true})
+	var pending, attempts, transient int
+	var retryAt, failure string
+	if err := db.QueryRow(`SELECT sidecar_pending,sidecar_attempts,sidecar_transient_attempts,sidecar_retry_at,sidecar_failure FROM source_catalog_entry WHERE id=70`).
+		Scan(&pending, &attempts, &transient, &retryAt, &failure); err != nil {
+		t.Fatal(err)
+	}
+	if pending != 1 || attempts != 0 || transient != 1 {
+		t.Fatalf("temporary failure spent the permanent budget: pending=%d attempts=%d transient=%d", pending, attempts, transient)
+	}
+	if retryAt == "" || failure != "temporarily_unavailable" {
+		t.Fatalf("temporary failure has no visible backoff: retryAt=%q failure=%q", retryAt, failure)
+	}
+	// The timestamp must come from SQLite's clock, the same one the due
+	// queries compare against; a Go clock would drift in either direction.
+	var due int
+	if err := db.QueryRow(`SELECT sidecar_retry_at>datetime('now') FROM source_catalog_entry WHERE id=70`).Scan(&due); err != nil {
+		t.Fatal(err)
+	}
+	if due != 1 {
+		t.Fatalf("temporary failure is already due: %s", retryAt)
+	}
+}
+
+// One deleted sibling must not hide a recoverable outage: the card keeps the
+// transient backoff so the readme is retried when the source returns.
+func TestCatalogSidecarMixedFailureKeepsTransientRetry(t *testing.T) {
+	db := openMigratedTestDB(t)
+	s := NewServer(db, config.Config{Mode: config.ModeProduction, RootUsername: "synthetic-editor", DataRoot: t.TempDir(), CacheRoot: t.TempDir()})
+	defer func() { _ = s.Shutdown(context.Background()) }()
+	metadataReviewExec(t, db, `INSERT INTO source_catalog_entry(id,root_path,title,sidecar_pending,sidecar_attempts)
+		VALUES(73,'/Example Work','Example Work',1,0);`)
+	s.finishCatalogSidecar(context.Background(), catalogSidecarCandidate{ID: 73}, catalogSidecarStateRetry,
+		catalogSidecarReadResult{Failed: true, Permanent: true, Transient: true})
+	var attempts, transient int
+	var failure string
+	if err := db.QueryRow(`SELECT sidecar_attempts,sidecar_transient_attempts,sidecar_failure FROM source_catalog_entry WHERE id=73`).
+		Scan(&attempts, &transient, &failure); err != nil {
+		t.Fatal(err)
+	}
+	if attempts != 0 || transient != 1 || failure != "temporarily_unavailable" {
+		t.Fatalf("mixed failure settled a recoverable card: attempts=%d transient=%d failure=%q", attempts, transient, failure)
+	}
+}
+
+// A daily rescan republishes unchanged cards. It must not turn a stopped
+// transient card back on, because that would probe a dead source every day
+// after the operator-visible stop threshold.
+func TestCatalogSidecarRescanKeepsStoppedTransientCard(t *testing.T) {
+	f := newCatalogIndexFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.NotFound(w, r)
+	}))
+	metadataReviewExec(t, f.server.db, `INSERT INTO source_catalog_entry(id,file_source_id,root_path,title,sidecar_pending,sidecar_attempts,sidecar_transient_attempts,sidecar_retry_at,sidecar_failure,sidecar_revision)
+		VALUES(74,1,'/Example Work','Example Work',0,0,8,'2026-01-01 00:00:00','temporarily_unavailable','readme.txt|24|2026-01-01T00:00:00Z');
+		INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes,modified_at,observed_generation)
+		VALUES(74,'readme.txt','readme.txt','text',24,'2026-01-01T00:00:00Z',1);`)
+	tx, err := f.server.db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = markCatalogSidecarCandidatesTx(context.Background(), tx, []int64{74}, 1); err != nil {
+		t.Fatal(err)
+	}
+	if err = tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	var pending, transient int
+	if err = f.server.db.QueryRow(`SELECT sidecar_pending,sidecar_transient_attempts FROM source_catalog_entry WHERE id=74`).Scan(&pending, &transient); err != nil {
+		t.Fatal(err)
+	}
+	if pending != 0 || transient != 8 {
+		t.Fatalf("rescan restarted a stopped transient card: pending=%d transient=%d", pending, transient)
+	}
+}
+
+// A definitive answer (404/410) spends the permanent budget, so a release that
+// really deleted its readme is not requested on every scan.
+func TestCatalogSidecarPermanentFailureSpendsBudget(t *testing.T) {
+	db := openMigratedTestDB(t)
+	s := NewServer(db, config.Config{Mode: config.ModeProduction, RootUsername: "synthetic-editor", DataRoot: t.TempDir(), CacheRoot: t.TempDir()})
+	defer func() { _ = s.Shutdown(context.Background()) }()
+	metadataReviewExec(t, db, `INSERT INTO source_catalog_entry(id,root_path,title,sidecar_pending,sidecar_attempts)
+		VALUES(71,'/Example Work','Example Work',1,4);`)
+	s.finishCatalogSidecar(context.Background(), catalogSidecarCandidate{ID: 71}, catalogSidecarStateRetry, catalogSidecarReadResult{Failed: true, Permanent: true})
+	var pending, attempts int
+	var failure string
+	if err := db.QueryRow(`SELECT sidecar_pending,sidecar_attempts,sidecar_failure FROM source_catalog_entry WHERE id=71`).Scan(&pending, &attempts, &failure); err != nil {
+		t.Fatal(err)
+	}
+	if pending != 0 || attempts != 5 || failure != "unreadable" {
+		t.Fatalf("permanent failure did not settle: pending=%d attempts=%d failure=%q", pending, attempts, failure)
+	}
+}
+
+// The backoff doubles and is capped; a long outage becomes a slow probe rather
+// than a hot loop or a permanent stop.
+func TestCatalogSidecarTransientDelayIsBounded(t *testing.T) {
+	if got := catalogSidecarTransientDelay(1); got != 15*time.Minute {
+		t.Fatalf("first delay = %v", got)
+	}
+	if got := catalogSidecarTransientDelay(2); got != 30*time.Minute {
+		t.Fatalf("second delay = %v", got)
+	}
+	if got := catalogSidecarTransientDelay(99); got != 24*time.Hour {
+		t.Fatalf("capped delay = %v", got)
+	}
+}
+
+// The operator route reopens settled cards without touching evidence or
+// personal records, and a normal user cannot use it.
+func TestCatalogSidecarRetryRouteReopensSettledCards(t *testing.T) {
+	f := newCatalogIndexFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.NotFound(w, r)
+	}))
+	metadataReviewExec(t, f.server.db, `INSERT INTO source_catalog_entry(id,file_source_id,root_path,title,sidecar_pending,sidecar_attempts,sidecar_failure)
+		VALUES(72,1,'/Settled','Settled card',0,5,'unreadable');
+		INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes,observed_generation)
+		VALUES(72,'readme.txt','readme.txt','text',24,1);`)
+	result := f.request(t, http.MethodPost, "/catalog/sidecars/retry", `{}`, 200)
+	if result["reopened"] != float64(1) {
+		t.Fatalf("retry response = %#v", result)
+	}
+	var pending, attempts int
+	if err := f.server.db.QueryRow(`SELECT sidecar_pending,sidecar_attempts FROM source_catalog_entry WHERE id=72`).Scan(&pending, &attempts); err != nil {
+		t.Fatal(err)
+	}
+	if pending != 1 || attempts != 0 {
+		t.Fatalf("retry route left the card settled: pending=%d attempts=%d", pending, attempts)
 	}
 }
 

@@ -28,6 +28,10 @@ var (
 	ErrLimit       = errors.New("OpenList directory exceeds the finite scan limit")
 	ErrInvalid     = errors.New("OpenList returned invalid directory data")
 	ErrMaintenance = errors.New("OpenList source is under maintenance")
+	// ErrNotFound is a definitive "this object is not there" answer. It is
+	// separate from ErrUnavailable so a caller can stop retrying a file that
+	// the release deleted instead of treating it like a temporary outage.
+	ErrNotFound = errors.New("OpenList object was not found")
 )
 
 type Client struct {
@@ -266,6 +270,9 @@ func (c *Client) request(ctx context.Context, operation string, input, output an
 	if resp.StatusCode == http.StatusServiceUnavailable {
 		return errors.Join(ErrUnavailable, ErrMaintenance)
 	}
+	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusGone {
+		return ErrNotFound
+	}
 	if resp.StatusCode != http.StatusOK {
 		return ErrUnavailable
 	}
@@ -334,6 +341,9 @@ func (c *Client) GetText(ctx context.Context, rawURL string, limit int64) (strin
 		return "", err
 	}
 	defer func() { _ = response.Body.Close() }()
+	if response.StatusCode == http.StatusNotFound || response.StatusCode == http.StatusGone {
+		return "", ErrNotFound
+	}
 	if response.StatusCode != http.StatusOK {
 		return "", ErrUnavailable
 	}
