@@ -10,8 +10,13 @@ RUN npm run build
 FROM golang:1.26.9@sha256:f1f0bcc2c524a3ced375fcb4d1ecb7aa371aa7070e112599aaca45cc02d0101b AS backend-build
 
 WORKDIR /src/backend
+# The module proxy is an environment concern, not a property of the source:
+# a build host that cannot reach the default proxy passes another one instead
+# of patching this file. The default keeps CI and a plain `docker build` on the
+# canonical Go proxy.
+ARG GOPROXY=https://proxy.golang.org,direct
 COPY backend/go.mod backend/go.sum ./
-RUN go mod download
+RUN GOPROXY=$GOPROXY go mod download
 COPY VERSION /src/VERSION
 COPY backend/ ./
 RUN VERSION="$(cat /src/VERSION)" \
