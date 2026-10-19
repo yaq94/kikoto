@@ -529,3 +529,22 @@ func TestCatalogNumberedTrackRunRejectsFourDigitNumbers(t *testing.T) {
 		t.Fatal("a 01..03 track run must stay one work")
 	}
 }
+
+// A release code may appear only once in a creator folder. Two files that share
+// it are parts of one release, not two independent works.
+func TestCatalogWorkSplitModeGroupsSingleRepeatedReleaseCode(t *testing.T) {
+	names := []string{"RJ123456 上.mp3", "RJ123456 下.mp3"}
+	if got := catalogWorkSplitModeNames(names); got != catalogWorkSplitPrefix {
+		t.Fatalf("split mode = %q, want prefix for one repeated release code", got)
+	}
+}
+
+// Short prefix forms are not limited to N/B. A creator may reuse any short
+// alphanumeric label for a multi-part release.
+func TestCatalogWorkPrefixAcceptsShortAlphanumericCodes(t *testing.T) {
+	for _, name := range []string{"ABC12 part one.mp3", "Z9 ending.mp3", "KJ001234 上.mp3"} {
+		if got := catalogWorkPrefix(name); got == "" {
+			t.Fatalf("catalogWorkPrefix(%q) = empty, want a code", name)
+		}
+	}
+}

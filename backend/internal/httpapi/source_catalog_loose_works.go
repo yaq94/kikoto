@@ -12,6 +12,7 @@ import (
 	"unicode"
 
 	"github.com/yexca/kikoto/backend/internal/openlist"
+	"github.com/yexca/kikoto/backend/internal/workcode"
 )
 
 const (
@@ -23,7 +24,10 @@ const (
 // A creator folder can contain many independent works as loose audio files.
 // These patterns identify the numbering schemes those sources use. A code at
 // the start of a file name is a work number, not a track number.
-var catalogLooseWorkPrefix = regexp.MustCompile(`(?i)^(?:RJ|BJ|VJ|CC)[0-9]{5,8}(?:[^0-9A-Za-z]|$)|^[NSAB][0-9]{1,6}(?:[^0-9A-Za-z]|$)`)
+// A release code is defined once in workcode. The short creator-folder form
+// (N006, B20) is separate: it is not a global work code, but a repeated prefix
+// in one directory means several files belong to the same release.
+var catalogLooseWorkPrefix = regexp.MustCompile(`(?i)^(?:` + workcode.PrefixAlternation + `)[0-9]{5,8}(?:[^0-9A-Za-z]|$)|^[A-Z]{1,4}[0-9]{1,6}(?:[^0-9A-Za-z]|$)`)
 var catalogLooseLeadingTrack = regexp.MustCompile(`^[0-9]{1,4}(?:[\s._\-、]+|$)`)
 var catalogLooseTrailingTrack = regexp.MustCompile(`[\s._\-（(【\[]+[0-9]{1,4}[\s._\-）)】\]]*$`)
 var catalogLooseTrailingNumber = regexp.MustCompile(`[0-9]{1,4}[\s._\-）)】\]]*$`)
@@ -59,18 +63,12 @@ func catalogWorkSplitModeNames(names []string) string {
 			prefixes[prefix]++
 		}
 	}
-	if len(prefixes) >= 2 {
-		repeated := false
-		for _, count := range prefixes {
-			if count >= 2 {
-				repeated = true
-				break
-			}
-		}
-		// N006-1..N006-3 plus N007 and N008 is three works, not one card.
-		// The prefix form must recur in this directory; two unrelated A1/A2
-		// parts are not enough evidence for two works.
-		if repeated {
+	// A single repeated prefix is enough: RJ123456 上 / RJ123456 下 is one
+	// release in two files and must not become two cards just because no other
+	// code appears in the directory. A lone file with a code stays on the
+	// ordinary base-title rule.
+	for _, count := range prefixes {
+		if count >= 2 {
 			return catalogWorkSplitPrefix
 		}
 	}
