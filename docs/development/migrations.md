@@ -273,13 +273,13 @@ matches the backup.
 | unreleased (Kikoto next) | `077` | Development baseline only; `compat/077_dev.sql` |
 | unreleased (Kikoto next) | `078` | Development baseline only; `compat/078_dev.sql` |
 | unreleased (Kikoto next) | `079` | Development baseline only; `compat/079_dev.sql` |
-| unreleased (Kikoto next) | `080` | Development baseline only; `compat/080_dev.sql` |
+| unreleased (Kikoto next) | `081` | Development baseline only; `compat/081_dev.sql` |
 
 Per-release upgrade steps are in the [release notes](../history/index.md).
 
 ## Unreleased Kikoto-next Migrations
 
-Migrations `069` through `080` are part of the unreleased next release. They
+Migrations `069` through `081` are part of the unreleased next release. They
 extend the source catalog, shared associations, personal transfer, and the
 recoverable index; no released baseline replaces them yet.
 
@@ -297,6 +297,7 @@ recoverable index; no released baseline replaces them yet.
 | `078_source_catalog_loose_works.sql` | `source_catalog_entry.source_root` and `source_catalog_directory.work_split` | An empty `source_root` keeps the old `root_path` meaning; a rescan re-evaluates the split decision |
 | `079_source_catalog_sidecar.sql` | `source_catalog_entry.sidecar_json` | Empty means no read; matching falls back to person rows, and a readme never supplies a product code |
 | `080_source_catalog_sidecar_queue.sql` | `sidecar_pending`, `sidecar_attempts`, a partial queue index, and `modified_at` on observed and published files | Reads run after publication in a bounded pass; a failed read keeps its card and is retried up to five times |
+| `081_source_catalog_sidecar_revision.sql` | `source_catalog_entry.sidecar_revision` | A rescan compares the stored credit-file revision; an unchanged exhausted card stays settled, a replaced file resets its attempts |
 
 The Release To Schema Map above lists every numbered file. `069` rebuilds `work`
 and `logical_work` to relax code uniqueness and creates the catalog entry and
@@ -312,9 +313,10 @@ and `source_catalog_audio_root`.
 `079` adds one text column with an empty default; it stores only explicitly
 labelled credit evidence from a release readme, and an older binary that never
 reads it still reads every other column. `080` adds the queue columns, their
-partial index, and the source modification timestamp. Every added column has a
-default, so an existing row stays readable; the queue starts empty and a later
-scan enqueues cards that publish credit files.
+partial index, and the source modification timestamp. `081` adds the stored
+credit-file revision used to reopen an exhausted card when the file changes.
+Every added column has a default, so an existing row stays readable; the queue
+starts empty and a later scan enqueues cards that publish credit files.
 
 `077` does not change entry identity. It lets a generation remove stale file
 rows left by an older generation without touching an entry that the current

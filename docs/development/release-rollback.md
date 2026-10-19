@@ -1,7 +1,7 @@
 # Release Rollback
 
 This page gives the operator procedure for rolling back a Kikoto deployment
-whose schema reached `080`. It states which image can read which schema, how to
+whose schema reached `081`. It states which image can read which schema, how to
 take and restore a database snapshot, and what to check afterwards. It records
 no deployment result; run the commands on the target host and keep their output
 with the release record.
@@ -13,13 +13,14 @@ a database snapshot and starts a binary whose packaged migration catalog ends
 at that snapshot's schema. The image names are the ones used by the current
 next-release deployment; prefer a digest when the deployment recorded one.
 
-| Image | Highest packaged migration | Schema `079` database | Schema `080` database |
-| --- | --- | --- | --- |
-| current build | `080` | Reads and migrates to `080` | Reads and keeps `080` |
-| `kikoto:next-0f3cb4c4` | `079` | Reads and keeps `079` | Refuses: schema is newer than the binary supports |
-| `kikoto:next-be14c79f` | `078` | Refuses: schema is newer than the binary supports | Refuses |
-| `kikoto:next-41f994e0` | `077` | Refuses | Refuses |
-| Older images ending at `076` or below | `076` or below | Refuses | Refuses |
+| Image | Highest packaged migration | Schema `079` database | Schema `080` database | Schema `081` database |
+| --- | --- | --- | --- | --- |
+| current build | `081` | Reads and migrates to `081` | Reads and migrates to `081` | Reads and keeps `081` |
+| `kikoto:next-30762a6b` (080 image) | `080` | Reads and migrates to `080` | Reads and keeps `080` | Refuses |
+| `kikoto:next-0f3cb4c4` | `079` | Reads and keeps `079` | Refuses | Refuses |
+| `kikoto:next-be14c79f` | `078` | Refuses | Refuses | Refuses |
+| `kikoto:next-41f994e0` | `077` | Refuses | Refuses | Refuses |
+| Older images ending at `076` or below | `076` or below | Refuses | Refuses | Refuses |
 
 The refusal happens before any handler runs. The migration manager compares the
 database's schema version with the highest packaged migration and stops with
@@ -33,10 +34,12 @@ get past it.
 `source_catalog_directory.work_split`, both `NOT NULL DEFAULT ''`. `079` adds
 `source_catalog_entry.sidecar_json TEXT NOT NULL DEFAULT ''`. `080` adds
 `sidecar_pending`, `sidecar_attempts`, their partial index, and `modified_at`
-on observed and published files. No migration deletes or rewrites existing
-rows. A `079` snapshot restored into a `080` image upgrades by adding the empty
-queue and timestamp columns; a `080` database needs a binary that packages
-`080`, and the `079` binary must be paired with a `079` snapshot.
+on observed and published files. `081` adds `sidecar_revision TEXT NOT NULL
+DEFAULT ''`, the credit-file revision used to reopen an exhausted queue card
+when the published file changes. No migration deletes or rewrites existing
+rows. A `079` or `080` snapshot restored into an `081` image upgrades by adding
+the empty columns; an `081` database needs a binary that packages `081`, and the
+`079` binary must be paired with a `079` snapshot.
 
 `kikoto:next-be14c79f` predates commit `20e168df`, which recomputes the split
 decision for each completed revision and retires split cards the new generation
@@ -68,8 +71,8 @@ Compose file. For the development stack, use `KIKOTO_DEV_CONFIG_DIR` (default
 The application also writes a `pre-migration` backup to
 `KIKOTO_DB_BACKUP_DIR` (default `config/backups`) before the first numbered
 migration of an existing database. Its name has the form
-`kikoto-pre-migration-<UTC>-v079-to-v080.db`; the first version in the suffix
-is the schema being left, so a `v079-to-v080` file is a `079` snapshot. Keep
+`kikoto-pre-migration-<UTC>-v080-to-v081.db`; the first version in the suffix
+is the schema being left, so a `v080-to-v081` file is an `080` snapshot. Keep
 the snapshot and the previous image reference (`KIKOTO_IMAGE` or the Compose
 override) together. The `rollbacks/` directory is outside `config/`, so the
 copy does not recurse into itself.
@@ -80,7 +83,7 @@ Use this to return to `kikoto:next-0f3cb4c4`.
 
 ```sh
 docker compose down
-mv config/kikoto.db "config/kikoto.db.schema80.$(date -u +%Y%m%dT%H%M%SZ)"
+mv config/kikoto.db "config/kikoto.db.schema81.$(date -u +%Y%m%dT%H%M%SZ)"
 rm -f config/kikoto.db-wal config/kikoto.db-shm
 cp "rollbacks/<snapshot>/config/kikoto.db" config/kikoto.db
 chmod 600 config/kikoto.db
@@ -91,17 +94,17 @@ KIKOTO_IMAGE=kikoto:next-0f3cb4c4 docker compose up -d
 restore commands it is the directory under `rollbacks/`.
 
 `docker compose down` removes the container and keeps the bind mounts; do not
-add `-v`. The `mv` keeps the `080` database for inspection. Remove the WAL and
+add `-v`. The `mv` keeps the `081` database for inspection. Remove the WAL and
 SHM files before copying, because they belong to the database being replaced.
 The bundled `deploy/compose` files have a health check, so a deployment that
 uses one can wait with `up -d --wait`. The production stack in this repository
 does not define that check; poll `/health` as shown under
 [Verify The Restored Instance](#verify-the-restored-instance).
 
-## Restore A Schema 80 Snapshot
+## Restore A Schema 81 Snapshot
 
 Use this to return to the current build after a failed start or to recover a
-damaged `080` database.
+damaged `081` database.
 
 ```sh
 docker compose down
@@ -147,9 +150,9 @@ Then confirm:
 2. `GET /health` returns HTTP 200 with the restored version.
 3. An authenticated `/api/works` read returns the works that existed before the
    upgrade, and a source and catalog entry remain readable.
-4. A `080` instance whose index run was interrupted reports its saved progress
-   and can be resumed. A `079` instance does not see the queue columns, so
-   never give it a `080` database.
+4. An `081` instance whose index run was interrupted reports its saved progress
+   and can be resumed. A `080` instance does not see `sidecar_revision`, so
+   never give it an `081` database.
 
 Restoring only `kikoto.db` does not revert Fetch staging, backup, or trash
 directories under `/data`. Review unmatched transaction directories as

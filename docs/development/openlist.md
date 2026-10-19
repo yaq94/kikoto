@@ -188,9 +188,14 @@ independent sidecar worker continues the durable queue. Each pass is bounded by
 whole queue. A source that answers no file at all is not continued at once, so
 its normal retry delay applies. A card is retried at most five times; a rescan
 does not reset that budget, so an unreadable release is not retried on every
-daily pass. A deleted readme clears the old evidence instead of preserving
-credit text for a file the release no longer publishes. A changed file is
-queued again only after its evidence is cleared.
+daily pass. Migration 081 stores the credit-file revision (`path|size|mtime`)
+beside the evidence; when that revision changes, the attempt budget is reset and
+the card is read again. A deleted readme clears the old evidence instead of
+preserving credit text for a file the release no longer publishes.
+
+`sidecar_revision` is the durable comparison point. The queue never uses a
+fetch timestamp: the same unchanged file keeps its exhausted budget, while a
+replaced file is retried without waiting for a manual reset.
 
 Only explicitly labelled lines become evidence. A line such as `配音：…`,
 `声优: …`, `CV：…` or `キャスト: …` names a voice actor; `社团：…`,
