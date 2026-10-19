@@ -153,6 +153,22 @@ id order.
 Routine tests use synthetic complete trees; a real index run must separately
 record its actual ranges, timestamps and unresolved directories.
 
+## Release sidecars
+
+An indexed card can carry a `readme`, `info`, `credit` or `staff` text file
+beside its audio. The index reads at most four such files per card, at most
+256 KiB each, through the same source client, origin policy and request pacing
+as metadata. It keeps the previous credit evidence when a read fails and does
+not treat the readme as a track.
+
+Only explicitly labelled lines become evidence. A line such as `配音：…`,
+`声优: …`, `CV：…` or `キャスト: …` names a voice actor; `社团：…`,
+`社團：…`, `サークル: …` or `Circle: …` names a circle. Unlabelled prose never
+becomes a credit. The file name and size form the cache revision, so an
+unchanged readme is not fetched again. Stored evidence contains only the
+relative path, size, labels, and fetch time; it never supplies a product code,
+registers a work or downloads audio.
+
 `GET /api/remote-sources/{id}/works` uses the existing paged source card and
 search response. OpenList cards add `catalogEntryId` and may have an empty
 `primaryCode`; an absent `workId` means the entry has not been registered.

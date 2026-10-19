@@ -15,7 +15,11 @@ stores its observed directory tree without persisting signed media URLs.
 split into several works, `root_path` carries a `::<group>` suffix and
 `source_root` keeps the real source directory that playback and refresh read.
 An empty `source_root` keeps the original meaning, where `root_path` is also the
-directory. `source_catalog_directory.work_split` records the split decision
+directory. `source_catalog_entry.sidecar_json` stores only explicitly labelled credit evidence
+from a release readme or info file. It is matching evidence, never a product
+code or a registered work, and an empty value means the scan did not read one.
+
+`source_catalog_directory.work_split` records the split decision
 (`single`, `prefix`, `file`) for the current completed revision of a directory
 listing; it is recomputed for each completed revision rather than frozen at the
 first observation. A new generation retires split cards it did not republish:

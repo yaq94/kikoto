@@ -15,6 +15,9 @@ spaces are ignored), plus either:
 
 - The same nonempty voice-actor identity set and the same nonempty circle identity
   set or release date.
+- The same explicitly labelled voice-actor names from a release sidecar on both
+  sides. A title plus two matching labelled cast lists is two independent facts;
+  a readme on only one side, or an unlabelled name in prose, is not.
 - The same complete audio fingerprint already produced by the source index from
   valid, explicitly supplied SHA-256 hashes for every observed audio file.
 

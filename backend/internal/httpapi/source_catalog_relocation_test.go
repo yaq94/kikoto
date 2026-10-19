@@ -165,3 +165,63 @@ func TestSourceCatalogRelocationKeepsSingleFileRenameUnconfirmed(t *testing.T) {
 		t.Fatalf("single-file manifest moved identity: %#v", detail)
 	}
 }
+
+// A confirmed rename carries the release's credit evidence with it. The new
+// location must not keep an unrelated sidecar that happened to be published
+// under the same title.
+func TestSourceCatalogRelocationCarriesSidecarEvidence(t *testing.T) {
+	var renamed atomic.Bool
+	f := newCatalogIndexFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var in struct {
+			Path string `json:"path"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&in)
+		items := []map[string]any{}
+		switch {
+		case in.Path == "/":
+			name := "Original Work"
+			if renamed.Load() {
+				name = "Renamed Work"
+			}
+			items = []map[string]any{{"name": name, "is_dir": true}}
+		case r.URL.Path == "/api/fs/get":
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": 200, "data": map[string]any{
+				"name": "readme.txt", "size": 40, "raw_url": "http://" + r.Host + "/readme",
+			}})
+			return
+		case r.URL.Path == "/readme":
+			_, _ = w.Write([]byte("配音：Example Voice\r\n"))
+			return
+		default:
+			items = []map[string]any{
+				{"name": "01.mp3", "size": 100}, {"name": "02.mp3", "size": 200},
+				{"name": "readme.txt", "size": 40},
+			}
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"code": 200, "data": map[string]any{"content": items, "total": len(items)}})
+	}))
+	f.request(t, http.MethodPost, "/catalog/index", `{"intervalMs":100}`, 202)
+	f.drain(t)
+	var before string
+	if err := f.server.db.QueryRow(`SELECT sidecar_json FROM source_catalog_entry WHERE title='Original Work'`).Scan(&before); err != nil {
+		t.Fatal(err)
+	}
+	if before == "" {
+		t.Fatal("sidecar evidence was not stored")
+	}
+	renamed.Store(true)
+	f.request(t, http.MethodPost, "/catalog/index", `{"intervalMs":100,"force":true}`, 202)
+	f.drain(t)
+	var after string
+	if err := f.server.db.QueryRow(`SELECT sidecar_json FROM source_catalog_entry WHERE root_path LIKE '%Renamed Work%'`).Scan(&after); err != nil {
+		t.Fatal(err)
+	}
+	var beforeCache, afterCache catalogSidecarCache
+	if json.Unmarshal([]byte(before), &beforeCache) != nil || json.Unmarshal([]byte(after), &afterCache) != nil {
+		t.Fatal("invalid stored sidecar cache")
+	}
+	if len(beforeCache.Sidecars) != 1 || len(afterCache.Sidecars) != 1 ||
+		strings.Join(afterCache.Sidecars[0].VoiceActors, "|") != "Example Voice" {
+		t.Fatalf("sidecar evidence was not carried with the rename: before=%s after=%s", before, after)
+	}
+}

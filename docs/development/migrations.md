@@ -272,12 +272,13 @@ matches the backup.
 | unreleased (Kikoto next) | `076` | Development baseline only; `compat/076_dev.sql` |
 | unreleased (Kikoto next) | `077` | Development baseline only; `compat/077_dev.sql` |
 | unreleased (Kikoto next) | `078` | Development baseline only; `compat/078_dev.sql` |
+| unreleased (Kikoto next) | `079` | Development baseline only; `compat/079_dev.sql` |
 
 Per-release upgrade steps are in the [release notes](../history/index.md).
 
 ## Unreleased Kikoto-next Migrations
 
-Migrations `069` through `078` are part of the unreleased next release. They
+Migrations `069` through `079` are part of the unreleased next release. They
 extend the source catalog, shared associations, personal transfer, and the
 recoverable index; no released baseline replaces them yet.
 
@@ -293,6 +294,7 @@ recoverable index; no released baseline replaces them yet.
 | `076_source_catalog_publish_queue.sql` | Publish queue and cleanup staging | A published run drains its queue before completing |
 | `077_source_catalog_publish_cleanup.sql` | `source_catalog_scan.publish_cleanup_cursor` and `source_catalog_file_title` | The cursor retires only files the current generation republished; a later run continues from it |
 | `078_source_catalog_loose_works.sql` | `source_catalog_entry.source_root` and `source_catalog_directory.work_split` | An empty `source_root` keeps the old `root_path` meaning; a rescan re-evaluates the split decision |
+| `079_source_catalog_sidecar.sql` | `source_catalog_entry.sidecar_json` | Empty means no read; matching falls back to person rows, and a readme never supplies a product code |
 
 The Release To Schema Map above lists every numbered file. `069` rebuilds `work`
 and `logical_work` to relax code uniqueness and creates the catalog entry and
@@ -304,6 +306,8 @@ matching results, operations, control, a subject view, title indexes, and
 `work_matching_result.revision`. `075` adds portable references and progress.
 `076` adds the publish queue, its partial index, the directory publish index,
 and `source_catalog_audio_root`.
+
+`079` adds one text column with an empty default; it stores only explicitly labelled credit evidence from a release readme, and an older binary that never reads it still reads every other column.
 
 `077` does not change entry identity. It lets a generation remove stale file
 rows left by an older generation without touching an entry that the current

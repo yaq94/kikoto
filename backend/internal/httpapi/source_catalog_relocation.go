@@ -168,6 +168,11 @@ func relocateCatalogEntryTx(ctx context.Context, tx *sql.Tx, old, target catalog
 		ON CONFLICT(catalog_entry_id,relative_path) DO UPDATE SET title=excluded.title,kind=excluded.kind,size_bytes=excluded.size_bytes,content_hash=excluded.content_hash,observed_generation=excluded.observed_generation`, old.id, target.id); err != nil {
 		return err
 	}
+	// Credit evidence follows the same release. A rename does not make the
+	// target's previous sidecar text authoritative for the relocated card.
+	if _, err := tx.ExecContext(ctx, `UPDATE source_catalog_entry SET sidecar_json=(SELECT COALESCE(sidecar_json,'') FROM source_catalog_entry WHERE id=?) WHERE id=?`, target.id, old.id); err != nil {
+		return err
+	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM source_catalog_file WHERE catalog_entry_id IN (?,?) AND (catalog_entry_id=? OR observed_generation<>?)`, old.id, target.id, target.id, generation); err != nil {
 		return err
 	}

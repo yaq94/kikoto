@@ -5,6 +5,7 @@
 ## 行为边界
 
 - 沿用可靠编号、别名和既有发行关系。无码使用原始标题、声优身份集合及社团或发行日期；已有完整音频哈希仅作为已保存证据使用。
+- 无码目录可缺少作品行，此时读取来源发行目录的 readme/info 侧车文本，只接受显式标注的配音与社团字段（`配音`、`声优`、`CV`、`キャスト`、`社团`、`サークル`、`Circle`）。两侧都有相同标注集合时，标题加配音构成两项独立证据；只有一侧有侧车、或仅正文提到名字，不构成匹配。侧车不提供发行编号，不登记作品，不下载音频。
 - 完整音频哈希来自来源索引已取得、按 SHA-256 格式验证的逐音频哈希。匹配和作品登记不会为计算哈希下载音频、全量读取媒体或额外调用来源接口；缺少完整哈希时仍遵循多项元数据和歧义规则。
 - 自动提交沿用13的共享身份与本人确认事务；系列/单集层级、不同版本、私人记录和播放引用保留。拆分后的同一对对象进入人工确认。
 - 单执行者、逐项持久游标、五秒评估、候选/结果/操作预算、低空间暂停和失败退避；所有来源参与候选查询。超限只暂停，不从截断集合判唯一。详见[当前开发契约](../../../docs/development/work-matching.md)。
@@ -18,6 +19,7 @@
 - `make backend-test backend-format backend-vet backend-lint backend-build` 退出0；全后端通过，lint为0 issues。后续收尾仅重跑受影响定向行为与静态检查。
 - 最终 `go test -mod=readonly ./internal/httpapi -run '^TestWorkMatching' -count=1 -v`：12项通过，退出0；共享关联、拆分、系列的组合定向测试及单独 race 检查均退出0。未完成来源范围的新增用例先观察到错误完成，再验证暂停。
 - 前端 `make -o frontend-install frontend-lint frontend-i18n frontend-docs`、`npm run build`、选定变更文件 Prettier 检查均退出0；`npm run test:unit -- --maxWorkers=4` 为153文件、867项通过。`-o` 复用本工作区刚完成的同一锁文件依赖安装，避免运行服务期间再次移除原生模块。
+- 侧车证据新增 `TestCatalogSidecarParsesLabelledCreditsOnly`、`TestWorkMatchingSidecarCreditsAssociateNumberlessCatalog`、`TestWorkMatchingSidecarCreditsRejectDifferentCast`、`TestWorkMatchingSidecarRequiresCreditsOnBothSides`、`TestSourceCatalogIndexStoresSidecarCredits`、`TestSourceCatalogSidecarFailureKeepsPlayableCard` 与 `TestSourceCatalogRelocationCarriesSidecarEvidence`，均通过；同时 `TestWorkMatching*` 既有 12 项通过。侧车读取失败不删除卡片，不把文本变成音轨；改名认回时证据随卡片迁移。
 - `make frontend-e2e` 选择 `work-matching.spec.ts shared-association.spec.ts --project=desktop-chromium --workers=1`：两个真实前后端功能场景通过，退出0；截图、trace和video关闭。匹配原因、待确认候选入口、过期刷新、两位本人确认与重载均有行为断言。
 - 本工作区独立 `npm ci --strict-allow-scripts` 安装192包，0 vulnerabilities。第一次F准备阶段因本工作区Vite占用本机原生模块而失败；停止本工作区Vite后，重跑规范依赖目标通过，再执行F通过。没有共享node_modules入口或其他工作区依赖被改动。
 

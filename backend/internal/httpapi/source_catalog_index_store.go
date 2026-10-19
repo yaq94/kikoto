@@ -462,6 +462,7 @@ ORDER BY o.directory_path,o.name LIMIT 100`, sourceID, job.RunID, sourceID, job.
 		}
 	}
 	firstSplit := map[string]int64{}
+	publishedIDs := []int64{}
 	for _, p := range items {
 		root, sourceRoot, title := p.root, "", path.Base(p.root)
 		if plan, ok := splitPlans[p.root]; ok && p.kind == "audio" {
@@ -505,6 +506,7 @@ ORDER BY o.directory_path,o.name LIMIT 100`, sourceID, job.RunID, sourceID, job.
 				return 0, err
 			}
 		}
+		publishedIDs = append(publishedIDs, id)
 		// relative_path is relative to the real directory (source_root). The
 		// card identity may carry a ::split suffix, so rebase on source_root.
 		baseRoot := p.root
@@ -606,7 +608,16 @@ ORDER BY o.directory_path,o.name LIMIT 100`, sourceID, job.RunID, sourceID, job.
 			}
 		}
 	}
-	return len(items), tx.Commit()
+	if err = tx.Commit(); err != nil {
+		return 0, err
+	}
+	// Sidecar credits belong to the card, not to the page that published it.
+	// The audio rows are committed first, so a slow or failed readme cannot
+	// hold the write transaction or remove a playable card. Only this batch's
+	// cards are considered: scanning the whole generation here made the cost
+	// grow with every published batch.
+	s.refreshCatalogSidecars(ctx, job, sourceID, publishedIDs)
+	return len(items), nil
 }
 
 func (s *Server) sourceCatalogProgress(ctx context.Context, sourceID int64, page int) (catalogIndexProgress, error) {

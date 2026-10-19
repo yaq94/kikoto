@@ -1,7 +1,7 @@
 # Release Rollback
 
 This page gives the operator procedure for rolling back a Kikoto deployment
-whose schema reached `078`. It states which image can read which schema, how to
+whose schema reached `079`. It states which image can read which schema, how to
 take and restore a database snapshot, and what to check afterwards. It records
 no deployment result; run the commands on the target host and keep their output
 with the release record.
@@ -13,10 +13,11 @@ a database snapshot and starts a binary whose packaged migration catalog ends
 at that snapshot's schema. The image names are the ones used by the current
 next-release deployment; prefer a digest when the deployment recorded one.
 
-| Image | Highest packaged migration | Schema `077` database | Schema `078` database |
+| Image | Highest packaged migration | Schema `078` database | Schema `079` database |
 | --- | --- | --- | --- |
-| `kikoto:next-be14c79f` | `078` | Reads and migrates to `078` | Reads and keeps `078` |
-| `kikoto:next-41f994e0` | `077` | Reads and keeps `077` | Refuses: schema is newer than the binary supports |
+| `kikoto:next-0f3cb4c4` | `079` | Reads and migrates to `079` | Reads and keeps `079` |
+| `kikoto:next-be14c79f` | `078` | Reads and keeps `078` | Refuses: schema is newer than the binary supports |
+| `kikoto:next-41f994e0` | `077` | Refuses: schema is newer than the binary supports | Refuses |
 | Older images ending at `076` or below | `076` or below | Refuses | Refuses |
 
 The refusal happens before any handler runs. The migration manager compares the
@@ -28,10 +29,11 @@ get past it.
 `077` adds `source_catalog_scan.publish_cleanup_cursor` and the
 `source_catalog_file_title` index. `078` adds
 `source_catalog_entry.source_root` and
-`source_catalog_directory.work_split`, both `NOT NULL DEFAULT ''`. Neither file
-deletes or rewrites existing rows. A `077` snapshot restored into the `078`
-image upgrades by adding the two columns; a `078` database needs the `078`
-binary, and the `077` binary must be paired with a `077` snapshot.
+`source_catalog_directory.work_split`, both `NOT NULL DEFAULT ''`. `079` adds
+`source_catalog_entry.sidecar_json TEXT NOT NULL DEFAULT ''`; none of the three
+deletes or rewrites existing rows. A `078` snapshot restored into the `079`
+image upgrades by adding the sidecar column; a `079` database needs the `079`
+binary, and the `078` binary must be paired with a `078` snapshot.
 
 `kikoto:next-be14c79f` predates commit `20e168df`, which recomputes the split
 decision for each completed revision and retires split cards the new generation
@@ -63,40 +65,40 @@ Compose file. For the development stack, use `KIKOTO_DEV_CONFIG_DIR` (default
 The application also writes a `pre-migration` backup to
 `KIKOTO_DB_BACKUP_DIR` (default `config/backups`) before the first numbered
 migration of an existing database. Its name has the form
-`kikoto-pre-migration-<UTC>-v077-to-v078.db`; the first version in the suffix
-is the schema being left, so a `v077-to-v078` file is a `077` snapshot. Keep
+`kikoto-pre-migration-<UTC>-v078-to-v079.db`; the first version in the suffix
+is the schema being left, so a `v078-to-v079` file is a `078` snapshot. Keep
 the snapshot and the previous image reference (`KIKOTO_IMAGE` or the Compose
 override) together. The `rollbacks/` directory is outside `config/`, so the
 copy does not recurse into itself.
 
-## Restore A Schema 77 Snapshot
+## Restore A Schema 78 Snapshot
 
-Use this to return to `kikoto:next-41f994e0`.
+Use this to return to `kikoto:next-be14c79f`.
 
 ```sh
 docker compose down
-mv config/kikoto.db "config/kikoto.db.schema78.$(date -u +%Y%m%dT%H%M%SZ)"
+mv config/kikoto.db "config/kikoto.db.schema79.$(date -u +%Y%m%dT%H%M%SZ)"
 rm -f config/kikoto.db-wal config/kikoto.db-shm
 cp "rollbacks/<snapshot>/config/kikoto.db" config/kikoto.db
 chmod 600 config/kikoto.db
-KIKOTO_IMAGE=kikoto:next-41f994e0 docker compose up -d
+KIKOTO_IMAGE=kikoto:next-be14c79f docker compose up -d
 ```
 
 `<snapshot>` is the `release-<UTC>` directory name created above; in both
 restore commands it is the directory under `rollbacks/`.
 
 `docker compose down` removes the container and keeps the bind mounts; do not
-add `-v`. The `mv` keeps the `078` database for inspection. Remove the WAL and
+add `-v`. The `mv` keeps the `079` database for inspection. Remove the WAL and
 SHM files before copying, because they belong to the database being replaced.
 The bundled `deploy/compose` files have a health check, so a deployment that
 uses one can wait with `up -d --wait`. The production stack in this repository
 does not define that check; poll `/health` as shown under
 [Verify The Restored Instance](#verify-the-restored-instance).
 
-## Restore A Schema 78 Snapshot
+## Restore A Schema 79 Snapshot
 
-Use this to return to `kikoto:next-be14c79f` after a failed start or to recover
-a damaged `078` database.
+Use this to return to `kikoto:next-0f3cb4c4` after a failed start or to recover
+a damaged `079` database.
 
 ```sh
 docker compose down
@@ -104,7 +106,7 @@ mv config/kikoto.db "config/kikoto.db.broken.$(date -u +%Y%m%dT%H%M%SZ)"
 rm -f config/kikoto.db-wal config/kikoto.db-shm
 cp "rollbacks/<snapshot>/config/kikoto.db" config/kikoto.db
 chmod 600 config/kikoto.db
-KIKOTO_IMAGE=kikoto:next-be14c79f docker compose up -d
+KIKOTO_IMAGE=kikoto:next-0f3cb4c4 docker compose up -d
 ```
 
 `docker compose up -d` returns when the container starts. The health poll below
@@ -142,9 +144,9 @@ Then confirm:
 2. `GET /health` returns HTTP 200 with the restored version.
 3. An authenticated `/api/works` read returns the works that existed before the
    upgrade, and a source and catalog entry remain readable.
-4. A `078` instance whose index run was interrupted reports its saved progress
-   and can be resumed. A `077` instance does not see the `078` split columns,
-   so never give it a `078` database.
+4. A `079` instance whose index run was interrupted reports its saved progress
+   and can be resumed. A `078` instance does not see the `079` sidecar column,
+   so never give it a `079` database.
 
 Restoring only `kikoto.db` does not revert Fetch staging, backup, or trash
 directories under `/data`. Review unmatched transaction directories as

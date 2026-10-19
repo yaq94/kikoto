@@ -17,23 +17,28 @@ import (
 var errWorkMatchingBusy = errors.New("matching is busy")
 
 type workMatchEvidence struct {
-	Subject  associationSubject  `json:"subject"`
-	Title    string              `json:"title"`
-	Code     string              `json:"code"`
-	Level    string              `json:"level"`
-	Identity int64               `json:"identity"`
-	Family   int64               `json:"family"`
-	Voices   []int64             `json:"voices"`
-	Circles  []int64             `json:"circles"`
-	Release  string              `json:"release"`
-	Language string              `json:"language"`
-	Edition  string              `json:"edition"`
-	WorkType string              `json:"workType"`
-	Series   string              `json:"series"`
-	Position int                 `json:"position"`
-	Content  string              `json:"content"`
-	Revision int64               `json:"revision"`
-	Peers    []workMatchEvidence `json:"peers,omitempty"`
+	Subject  associationSubject `json:"subject"`
+	Title    string             `json:"title"`
+	Code     string             `json:"code"`
+	Level    string             `json:"level"`
+	Identity int64              `json:"identity"`
+	Family   int64              `json:"family"`
+	Voices   []int64            `json:"voices"`
+	Circles  []int64            `json:"circles"`
+	// Names are the readable form of the same credits. A catalog entry has no
+	// person rows, so its sidecar names are the only comparable form.
+	VoiceNames  []string               `json:"voiceNames"`
+	CircleNames []string               `json:"circleNames"`
+	Sidecar     catalogSidecarEvidence `json:"sidecar"`
+	Release     string                 `json:"release"`
+	Language    string                 `json:"language"`
+	Edition     string                 `json:"edition"`
+	WorkType    string                 `json:"workType"`
+	Series      string                 `json:"series"`
+	Position    int                    `json:"position"`
+	Content     string                 `json:"content"`
+	Revision    int64                  `json:"revision"`
+	Peers       []workMatchEvidence    `json:"peers,omitempty"`
 }
 
 type workMatchCandidate struct {
@@ -86,7 +91,7 @@ func loadWorkMatchEvidence(ctx context.Context, tx *sql.Tx, subject associationS
 
 func loadWorkMatchMember(ctx context.Context, tx *sql.Tx, subject associationSubject, peers bool) (workMatchEvidence, error) {
 	o, err := loadAssociationObject(ctx, tx, subject)
-	e := workMatchEvidence{Subject: subject, Voices: []int64{}, Circles: []int64{}}
+	e := workMatchEvidence{Subject: subject, Voices: []int64{}, Circles: []int64{}, VoiceNames: []string{}, CircleNames: []string{}}
 	if err != nil {
 		return e, err
 	}
@@ -131,6 +136,12 @@ func loadWorkMatchMember(ctx context.Context, tx *sql.Tx, subject associationSub
 				return e, errAssociationLimit
 			}
 		}
+		if e.VoiceNames, err = catalogCreditNames(ctx, tx, `SELECT p.display_name FROM person p JOIN work_credit c ON c.person_id=p.id WHERE c.work_id=? AND c.role='voice_actor' ORDER BY p.display_name LIMIT 101`, *o.WorkID); err != nil {
+			return e, err
+		}
+		if e.CircleNames, err = catalogCreditNames(ctx, tx, `SELECT p.display_name FROM party p JOIN work_party w ON w.party_id=p.id WHERE w.work_id=? AND w.role='circle' ORDER BY p.display_name LIMIT 101`, *o.WorkID); err != nil {
+			return e, err
+		}
 	}
 	if subject.Kind == "catalog" {
 		if err = tx.QueryRowContext(ctx, `SELECT content_fingerprint FROM source_catalog_entry WHERE id=?`, subject.ID).Scan(&e.Content); err != nil {
@@ -138,6 +149,13 @@ func loadWorkMatchMember(ctx context.Context, tx *sql.Tx, subject associationSub
 		}
 		if decoded, decodeErr := hex.DecodeString(e.Content); decodeErr != nil || len(decoded) != 32 {
 			e.Content = ""
+		}
+		e.Sidecar = loadWorkMatchSidecar(ctx, tx, subject.ID)
+		if len(e.Sidecar.VoiceActors) > 0 {
+			e.VoiceNames = append(e.VoiceNames, e.Sidecar.VoiceActors...)
+		}
+		if len(e.Sidecar.Circles) > 0 {
+			e.CircleNames = append(e.CircleNames, e.Sidecar.Circles...)
 		}
 	}
 	if peers && o.WorkID != nil {
@@ -235,20 +253,75 @@ func matchWorkEvidence(a, b workMatchEvidence) workMatchCandidate {
 		c.Reasons = append(c.Reasons, "complete_audio_hashes")
 		return c
 	}
-	if len(a.Voices) == 0 || !slices.Equal(a.Voices, b.Voices) {
+	// Credits are comparable either as person rows or as the names a release
+	// sidecar publishes. Person rows remain authoritative when both sides have
+	// them; names are the only common form for an unregistered catalog card.
+	voiceMatch, voiceEvidence := matchCatalogCredits(a.Voices, b.Voices, a.VoiceNames, b.VoiceNames)
+	if !voiceMatch {
+		// An explicit credit set that differs from the other side's work rows
+		// is contradictory evidence. Two catalog cards without rows are left
+		// for review instead: a readme is user-maintained text and a typo must
+		// not block an otherwise safe candidate.
+		if len(a.Voices) > 0 || len(b.Voices) > 0 {
+			c.Rule = "conflicting_evidence"
+			c.Reasons = append(c.Reasons, "voice_actors")
+		}
 		return c
 	}
-	c.Reasons = append(c.Reasons, "voice_actors")
-	if len(a.Circles) > 0 && slices.Equal(a.Circles, b.Circles) {
+	c.Reasons = append(c.Reasons, voiceEvidence)
+	if len(a.Circles) > 0 && len(b.Circles) > 0 {
+		if !slices.Equal(a.Circles, b.Circles) {
+			c.Rule = "conflicting_evidence"
+			c.Reasons = append(c.Reasons, "circles")
+			return c
+		}
 		c.Rule = "title_voice_circle"
 		c.Confidence = "high"
 		c.Reasons = append(c.Reasons, "circles")
+	} else if circleMatch, circleEvidence := matchCatalogCredits(a.Circles, b.Circles, a.CircleNames, b.CircleNames); circleMatch {
+		c.Rule = "title_voice_circle"
+		c.Confidence = "high"
+		c.Reasons = append(c.Reasons, circleEvidence)
 	} else if a.Release != "" && a.Release == b.Release {
 		c.Rule = "title_voice_release"
 		c.Confidence = "high"
 		c.Reasons = append(c.Reasons, "release_date")
+	} else if sidecarCreditEvidence(a, b) {
+		// A release readme names credits explicitly. Title plus an identical
+		// labelled cast is two independent facts even without a release date.
+		// This path is limited to sidecar evidence: two works that merely
+		// share a person row still need a third fact.
+		c.Rule = "title_voice_credits"
+		c.Confidence = "high"
 	}
 	return c
+}
+
+// sidecarCreditEvidence reports whether at least one side of the comparison
+// supplied the matching credit through a release sidecar rather than a work
+// row. It only gates the reason label; the equality check already ran.
+func sidecarCreditEvidence(a, b workMatchEvidence) bool {
+	return len(a.Sidecar.VoiceActors) > 0 || len(b.Sidecar.VoiceActors) > 0
+}
+
+// matchCatalogCredits compares credits when both sides provide them. Person ids
+// are used when both sides have them; otherwise the readable names are
+// compared. A missing credit set cannot create a match.
+func matchCatalogCredits(leftIDs, rightIDs []int64, leftNames, rightNames []string) (bool, string) {
+	if len(leftIDs) > 0 && len(rightIDs) > 0 {
+		if !slices.Equal(leftIDs, rightIDs) {
+			return false, ""
+		}
+		return true, "voice_actors"
+	}
+	left, right := uniqueSortedCatalogNames(leftNames), uniqueSortedCatalogNames(rightNames)
+	if len(left) == 0 || len(right) == 0 {
+		return false, ""
+	}
+	if !equalCatalogSidecarNames(left, right) {
+		return false, ""
+	}
+	return true, "voice_actors"
 }
 
 func evaluateWorkMatchTx(ctx context.Context, tx *sql.Tx, subject associationSubject) (workMatchResult, error) {

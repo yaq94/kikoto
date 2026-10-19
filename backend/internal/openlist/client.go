@@ -307,6 +307,13 @@ func (c *Client) Get(ctx context.Context, fullPath string) (Object, error) {
 	return object, err
 }
 
+// HTTP exposes the configured client for a bounded companion fetch, such as a
+// text sidecar reached through a raw URL returned by Get. The transport still
+// carries the caller's outbound policy, redirect rules and request pacing.
+func (c *Client) HTTP() *http.Client {
+	return c.http
+}
+
 // ScanRoot treats one explicitly configured directory as one work. Format and
 // track directories below it cannot accidentally become additional works.
 func (c *Client) ScanRoot(ctx context.Context, root string) ([]File, error) {
