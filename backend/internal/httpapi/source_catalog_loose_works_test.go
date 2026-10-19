@@ -533,7 +533,7 @@ func TestCatalogNumberedTrackRunRejectsFourDigitNumbers(t *testing.T) {
 // A release code may appear only once in a creator folder. Two files that share
 // it are parts of one release, not two independent works.
 func TestCatalogWorkSplitModeGroupsSingleRepeatedReleaseCode(t *testing.T) {
-	names := []string{"RJ123456 上.mp3", "RJ123456 下.mp3"}
+	names := []string{"RJ00000001 上.mp3", "RJ00000001 下.mp3"}
 	if got := catalogWorkSplitModeNames(names); got != catalogWorkSplitPrefix {
 		t.Fatalf("split mode = %q, want prefix for one repeated release code", got)
 	}
@@ -542,9 +542,52 @@ func TestCatalogWorkSplitModeGroupsSingleRepeatedReleaseCode(t *testing.T) {
 // Short prefix forms are not limited to N/B. A creator may reuse any short
 // alphanumeric label for a multi-part release.
 func TestCatalogWorkPrefixAcceptsShortAlphanumericCodes(t *testing.T) {
-	for _, name := range []string{"ABC12 part one.mp3", "Z9 ending.mp3", "KJ001234 上.mp3"} {
+	for _, name := range []string{"ABC12 part one.mp3", "Z9 ending.mp3", "VJ00000000 上.mp3"} {
 		if got := catalogWorkPrefix(name); got == "" {
 			t.Fatalf("catalogWorkPrefix(%q) = empty, want a code", name)
 		}
+	}
+}
+
+// A volume marker is part of the title. Vol.1 and Vol.2 are separate releases,
+// so the trailing-number rule must not fold them onto one card.
+func TestCatalogVolumeTitlesStayDistinct(t *testing.T) {
+	names := []string{"作品 Vol.1.mp3", "作品 Vol.2.mp3"}
+	if got := catalogWorkSplitModeNames(names); got != catalogWorkSplitFile {
+		t.Fatalf("split mode = %q, want one card per volume", got)
+	}
+	grouping := newCatalogLooseGrouping(names, catalogWorkSplitFile)
+	if grouping.keyFor(names[0]) == grouping.keyFor(names[1]) {
+		t.Fatalf("Vol.1 and Vol.2 share key %q", grouping.keyFor(names[0]))
+	}
+	for _, name := range []string{"作品 Vol.1.mp3", "作品 Volume 2.mp3", "作品 Vol. 3.mp3"} {
+		if base := catalogBaseTitle(name); !strings.Contains(base, "vol") {
+			t.Fatalf("catalogBaseTitle(%q) = %q, volume marker was stripped", name, base)
+		}
+	}
+}
+
+// "1of3 Title" is a track of one release, not three works. The ordinal suffix
+// must be removed with the track number rather than keeping the number in the
+// base title, which used to make every track its own card.
+func TestCatalogOfTotalTrackNamesStayOneWork(t *testing.T) {
+	for _, names := range [][]string{
+		{"1of3 Title.mp3", "2of3 Title.mp3", "3of3 Title.mp3"},
+		{"1 of 2例の作品.mp3", "2 of 2例の作品.mp3"},
+	} {
+		if !catalogNumberedTrackRun(names) {
+			t.Fatalf("catalogNumberedTrackRun(%v) = false, want a track run", names)
+		}
+		if bases := map[string]bool{}; true {
+			for _, name := range names {
+				bases[catalogBaseTitle(name)] = true
+			}
+			if len(bases) != 1 {
+				t.Fatalf("base titles %v did not collapse: %v", names, bases)
+			}
+		}
+	}
+	if catalogNumberedTrackRun([]string{"1 of 2 Opening.mp3", "2 of 3 Ending.mp3"}) {
+		t.Fatal("a mismatched total is not one ordered run")
 	}
 }

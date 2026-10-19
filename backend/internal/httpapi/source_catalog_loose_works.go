@@ -28,11 +28,16 @@ const (
 // (N006, B20) is separate: it is not a global work code, but a repeated prefix
 // in one directory means several files belong to the same release.
 var catalogLooseWorkPrefix = regexp.MustCompile(`(?i)^(?:` + workcode.PrefixAlternation + `)[0-9]{5,8}(?:[^0-9A-Za-z]|$)|^[A-Z]{1,4}[0-9]{1,6}(?:[^0-9A-Za-z]|$)`)
-var catalogLooseLeadingTrack = regexp.MustCompile(`^[0-9]{1,4}(?:[\s._\-、]+|$)`)
+// "1of3" and "2 of 3" name a track inside one release. Only the spelled-out
+// form is accepted: a slash would be a path separator, not part of a name.
+var catalogLooseLeadingTrack = regexp.MustCompile(`^[0-9]{1,4}(?:[\s._\-]*of[\s._\-]*[0-9]{1,4})?(?:[\s._\-、]+|$)`)
 var catalogLooseTrailingTrack = regexp.MustCompile(`[\s._\-（(【\[]+[0-9]{1,4}[\s._\-）)】\]]*$`)
 var catalogLooseTrailingNumber = regexp.MustCompile(`[0-9]{1,4}[\s._\-）)】\]]*$`)
-var catalogNumberedTrackPrefix = regexp.MustCompile(`^([0-9]{1,4})(?:[\s._\-、]|$)`)
+var catalogNumberedTrackPrefix = regexp.MustCompile(`^([0-9]{1,4})(?:[\s._\-]*of[\s._\-]*([0-9]{1,4}))?(?:[\s._\-、]|$)`)
 var catalogPrefixedTrack = regexp.MustCompile(`^[\s._\-、]*([0-9]{1,3})(?:[\s._\-、]|$)`)
+// A volume marker keeps its number in the title. Vol.1 and Vol.2 are separate
+// releases, unlike Title 1 and Title 2, which are tracks of one release.
+var catalogLooseVolumeMarker = regexp.MustCompile(`(?i)(?:^|[\s._\-（(【\[])(?:vol(?:ume)?)\.?\s*[0-9]{1,4}\s*$`)
 
 // catalogWorkSplitMode decides how one directory's direct audio is published.
 // The decision is taken once, when the directory listing first completes.
@@ -95,6 +100,7 @@ func catalogNumberedTrackRun(names []string) bool {
 		return false
 	}
 	positions := make([]int, 0, len(names))
+	total := -1
 	for _, name := range names {
 		stem := strings.TrimSpace(catalogFileStem(name))
 		match := catalogNumberedTrackPrefix.FindStringSubmatch(stem)
@@ -103,6 +109,20 @@ func catalogNumberedTrackRun(names []string) bool {
 		}
 		position, err := strconv.Atoi(match[1])
 		if err != nil || position <= 0 || position > 999 {
+			return false
+		}
+		// A stated total must be the same on every file; "1 of 2" next to
+		// "2 of 3" is two different releases, not one track listing.
+		if match[2] != "" {
+			declared, err := strconv.Atoi(match[2])
+			if err != nil || declared < position || declared > 999 {
+				return false
+			}
+			if total >= 0 && total != declared {
+				return false
+			}
+			total = declared
+		} else if total >= 0 {
 			return false
 		}
 		positions = append(positions, position)
@@ -131,6 +151,10 @@ func catalogFileStem(name string) string {
 // display. A title that is only a number has no base and keeps its own name.
 func catalogBaseTitle(name string) string {
 	original := strings.ToLower(strings.TrimSpace(catalogFileStem(name)))
+	if catalogLooseVolumeMarker.MatchString(original) {
+		// The number belongs to the title, so the whole stem is the identity.
+		return strings.Join(strings.Fields(original), " ")
+	}
 	stem := catalogLooseLeadingTrack.ReplaceAllString(original, "")
 	trimmed := strings.TrimSpace(catalogLooseTrailingTrack.ReplaceAllString(stem, ""))
 	if trimmed == stem {
