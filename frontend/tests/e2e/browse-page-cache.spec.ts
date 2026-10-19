@@ -67,6 +67,28 @@ type BrowsePageMockOptions = {
   favoriteWorks?: boolean;
 };
 
+// Favorites composes its page from several independent requests (shelf counts,
+// shelf artwork, continue listening, the work list). Their number depends on
+// whether the user has history, so a test cannot wait for a fixed count. Wait
+// until the counter has stopped moving for two consecutive samples instead:
+// the number of requests is still asserted afterwards, only the sampling point
+// becomes independent of timing.
+async function settleRequestCount(page: Page, current: () => number) {
+  let previous = current();
+  await expect
+    .poll(
+      async () => {
+        await page.waitForTimeout(500);
+        const value = current();
+        const stable = value > 0 && value === previous;
+        previous = value;
+        return stable;
+      },
+      { timeout: 10_000 },
+    )
+    .toBe(true);
+}
+
 function collectionWorks(size: number): Work[] {
   if (size <= 1) return [cachedWork];
   return Array.from({ length: size }, (_, index) => ({
@@ -297,10 +319,9 @@ test("@desktop keeps visited browse workspaces mounted for the current user and 
   await page.getByRole("button", { name: "Favorites", exact: true }).click();
   await expect.poll(() => (requests["favorite-works"] ?? 0) > 0).toBe(true);
   await expect(page).toHaveURL(/\/favorites(?:\?|$)/);
-  // The shelf header fetches its own artwork beside the works page. That
-  // request starts after the first page arrives, so sample only once it has
-  // settled; otherwise the later request looks like a revisit request.
-  await expect.poll(() => (requests["favorite-works"] ?? 0) >= 2).toBe(true);
+  // The page's own requests start in sequence; sampling before they settle
+  // would count a first visit as a revisit.
+  await settleRequestCount(page, () => requests["favorite-works"] ?? 0);
 
   const initialRequests = { ...requests };
 
