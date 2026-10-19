@@ -227,3 +227,14 @@ sha256 `3ea3c090…`、`7fc7ec19…`、`0231b88c…`。目录覆盖当时为
 
 结论：schema 77 快照可被上一镜像读取，回滚路径可执行；演练期间丢失的是快照
 之后的增量观察，生产库已用演练前副本恢复，未丢失 run 42 的既有进度。
+
+
+## 生产 schema 78 只读核查（2026-10-19）
+
+在生产数据库快照 `/root/kikoto/rollbacks/v080-20261019T054323Z/kikoto.db`（schema 78，`quick_check=ok`，外键 0）上核查改名链：
+
+- `SELECT count(*) FROM source_catalog_entry WHERE relocated_to_id=id` → `0`。
+- `relocated_to_id IS NOT NULL` 共 1,907 行；没有自指，也没有发现二阶环或深度超过 1 的链。
+- 代码侧：改名入口排除 old 自身，候选只取 active 行；退休路径有 `id==targetID` 守卫；解析限制 8 跳。
+
+结论：当前生产库不存在自指。数据库没有为 `relocated_to_id` 加 CHECK，但写入路径已有守卫；后续迁移若引入新的写入方，应补同类检查，而不是依赖历史数据。
