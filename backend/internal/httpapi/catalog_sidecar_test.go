@@ -300,6 +300,142 @@ func TestCatalogSidecarRescanKeepsExhaustedAttempts(t *testing.T) {
 	}
 }
 
+// A card that never produced evidence has an empty sidecar_revision. The next
+// rescan must treat that as "no earlier revision", not as a change, otherwise
+// the five-attempt budget restarts forever and the source is read every day.
+func TestCatalogSidecarRescanKeepsAttemptsAfterFailedFirstRead(t *testing.T) {
+	f := newCatalogIndexFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.NotFound(w, r)
+	}))
+	metadataReviewExec(t, f.server.db, `INSERT INTO source_catalog_entry(id,file_source_id,root_path,title,sidecar_json,sidecar_pending,sidecar_attempts,sidecar_revision)
+		VALUES(50,1,'/Example Work','Example Work','',1,5,'');
+		INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes,modified_at,observed_generation)
+		VALUES(50,'readme.txt','readme.txt','text',24,'2026-01-01T00:00:00Z',1);`)
+	tx, err := f.server.db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = markCatalogSidecarCandidatesTx(context.Background(), tx, []int64{50}, 1); err != nil {
+		t.Fatal(err)
+	}
+	if err = tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	var pending, attempts int
+	var revision string
+	if err = f.server.db.QueryRow(`SELECT sidecar_pending,sidecar_attempts,sidecar_revision FROM source_catalog_entry WHERE id=50`).Scan(&pending, &attempts, &revision); err != nil {
+		t.Fatal(err)
+	}
+	if pending != 1 || attempts != 5 {
+		t.Fatalf("failed first read restarted the budget: pending=%d attempts=%d", pending, attempts)
+	}
+	// The observed revision is recorded so the following rescan compares
+	// against the release rather than against an empty value again.
+	if revision != "readme.txt|24|2026-01-01T00:00:00Z" {
+		t.Fatalf("failed first read did not record the observed revision: %q", revision)
+	}
+}
+
+// A pass that runs out of request budget after reading some files must keep
+// those results. Otherwise the next pass requests the same bodies again.
+func TestCatalogSidecarDeferredPassKeepsReadEvidence(t *testing.T) {
+	var bodies atomic.Int32
+	upstream := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/fs/get":
+			var input struct {
+				Path string `json:"path"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&input)
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": 200, "data": map[string]any{
+				"name": path.Base(input.Path), "size": 24, "raw_url": "http://" + r.Host + "/" + path.Base(input.Path),
+			}})
+		case "/readme.txt", "/credit.txt":
+			bodies.Add(1)
+			_, _ = w.Write([]byte("配音：Example Voice\n"))
+		default:
+			http.NotFound(w, r)
+		}
+	})
+	f := newCatalogIndexFixture(t, upstream)
+	metadataReviewExec(t, f.server.db, `INSERT INTO source_catalog_entry(id,file_source_id,root_path,title,sidecar_pending)
+		VALUES(60,1,'/Example Work','Example Work',1);
+		INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes,observed_generation)
+		VALUES(60,'readme.txt','readme.txt','text',24,1),(60,'credit.txt','credit.txt','text',24,1);`)
+	// A budget of three leaves room for one metadata request and one body
+	// request, so the first file is read and the second is deferred.
+	source, err := f.server.catalogIndexSource(context.Background(), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := f.server.openListClient(source)
+	candidate := catalogSidecarCandidate{ID: 60, RootPath: "/Example Work", Title: "Example Work"}
+	files, err := f.server.loadSourceCatalogFiles(context.Background(), 60)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := readCatalogSidecars(context.Background(), client, catalogEntry{ID: 60, RootPath: "/Example Work"}, files, catalogSidecarCache{Sidecars: []catalogSidecarMeta{}}, 3)
+	if !result.Deferred || len(result.Cache.Sidecars) == 0 {
+		t.Fatalf("first file was not read before the budget ran out: %#v", result)
+	}
+	f.server.finishCatalogSidecar(context.Background(), candidate, catalogSidecarStateRetry, result)
+	var raw string
+	var pending, attempts int
+	if err = f.server.db.QueryRow(`SELECT sidecar_json,sidecar_pending,sidecar_attempts FROM source_catalog_entry WHERE id=60`).Scan(&raw, &pending, &attempts); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(raw, "readme.txt") {
+		t.Fatalf("deferred pass discarded the evidence it read: %q", raw)
+	}
+	// Budget exhaustion is not a source failure: the card stays pending and
+	// spends no attempt.
+	if pending != 1 || attempts != 0 {
+		t.Fatalf("deferred pass changed the queue: pending=%d attempts=%d", pending, attempts)
+	}
+	if bodies.Load() != 1 {
+		t.Fatalf("body reads = %d, want the one file the budget allowed", bodies.Load())
+	}
+}
+
+// Japanese releases name the same credit file without the English word. The
+// candidate set, the rank and the publication query share one vocabulary, so
+// these names must be actionable rather than silently skipped.
+func TestCatalogSidecarAcceptsJapaneseCreditNames(t *testing.T) {
+	for _, name := range []string{"りどみ.txt", "りーどみー.txt", "リードミー.txt", "クレジット.txt", "スタッフ.nfo", "紹介.txt", "説明書.txt", "はじめに.txt", "read me.txt", "Read_me.md"} {
+		if !catalogSidecarCandidateFile(SourceCatalogFile{Path: name, Kind: "text"}) {
+			t.Errorf("%q was not accepted as credit text", name)
+		}
+	}
+	// The extension still decides, and a name hint inside another word is not
+	// a credit file.
+	for _, name := range []string{"lyrics.md", "notes.nfo", "trackinfo.txt", "infomation.txt", "りどみ.pdf"} {
+		if catalogSidecarCandidateFile(SourceCatalogFile{Path: name, Kind: "text"}) {
+			t.Errorf("%q was accepted as credit text", name)
+		}
+	}
+	if rank := catalogSidecarFileRank(SourceCatalogFile{Path: "Readme_TC.txt"}); rank != 0 {
+		t.Fatalf("translated readme rank = %d, want the release readme rank", rank)
+	}
+}
+
+// One release can publish a root readme plus several translations. The limit
+// must leave room for the common language set instead of silently dropping the
+// traditional-Chinese file.
+func TestCatalogSidecarKeepsTraditionalChineseReadme(t *testing.T) {
+	files := []SourceCatalogFile{}
+	for _, name := range []string{"Readme.txt", "English/Readme_EN.txt", "日本語/Readme_JP.txt", "简体中文/Readme_SC.txt", "繁體中文/Readme_TC.txt"} {
+		files = append(files, SourceCatalogFile{Path: name, Kind: "text", Generation: 1})
+	}
+	selected := catalogSidecarFiles(files)
+	paths := map[string]bool{}
+	for _, file := range selected {
+		paths[file.Path] = true
+	}
+	if !paths["繁體中文/Readme_TC.txt"] {
+		t.Fatalf("traditional Chinese readme was dropped: %#v", selected)
+	}
+}
+
 // An unreadable file may become readable without a new release. The stored
 // revision lets a rescan distinguish that change from the same exhausted read.
 func TestCatalogSidecarRescanRetriesAfterFileRevisionChanges(t *testing.T) {

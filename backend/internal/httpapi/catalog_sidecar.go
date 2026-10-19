@@ -29,7 +29,10 @@ import (
 // code and never registers a work.
 const (
 	catalogSidecarMaxBytes = 256 << 10
-	catalogSidecarMaxFiles = 4
+	// A release commonly publishes the same readme in several language
+	// directories. Six leaves room for a root file plus a handful of
+	// translations without turning every card into a broad text read.
+	catalogSidecarMaxFiles = 6
 	// A sidecar pass is bounded by upstream requests, not cards: each selected
 	// file costs one metadata request and one body request. The cap keeps a slow
 	// source from occupying the single workflow executor for minutes.
@@ -39,6 +42,25 @@ const (
 	// An unreadable file is retried by later passes, not in a tight loop.
 	catalogSidecarMaxAttempts = 5
 )
+
+// catalogSidecarTextExtensions and catalogSidecarNameHints are the single
+// vocabulary for credit files. The reader, the selection order and the
+// publication SQL all derive from these lists: a hint added here cannot be
+// accepted by one path and ignored by another.
+var catalogSidecarTextExtensions = []string{".md", ".markdown", ".nfo", ".txt", ".html", ".htm"}
+
+var catalogSidecarNameHints = []string{
+	"readme", "read me", "read_me", "read-me",
+	"info", "credit", "staff",
+	"介绍", "介紹", "紹介", "説明書", "はじめに",
+	"クレジット", "スタッフ",
+	"りどみ", "りーどみー", "リードミー",
+}
+
+var catalogSidecarReadmeHints = []string{"readme", "read me", "read_me", "read-me"}
+var catalogSidecarCreditHints = []string{"credit", "staff", "クレジット", "スタッフ"}
+var catalogSidecarIntroductionHints = []string{"介绍", "介紹", "紹介", "説明書", "はじめに"}
+var catalogSidecarInfoHints = []string{"info", "りどみ", "りーどみー", "リードミー"}
 
 // The index warm pass and the independent worker can both observe the same
 // pending row. One pass per source keeps a card from costing two upstream
@@ -156,58 +178,120 @@ func catalogSidecarCandidateFile(file SourceCatalogFile) bool {
 		return false
 	}
 	name := strings.ToLower(path.Base(file.Path))
-	extension := path.Ext(name)
-	switch extension {
-	case ".md", ".markdown", ".nfo", ".txt", ".html", ".htm":
-		// A Markdown or NFO file can be a release page, but the same formats
-		// also hold lyrics, notes or logs. The name is the only signal available
-		// before a read, so require the conventional metadata words. A file
-		// without one is not read; labelled credits inside it therefore do not
-		// justify spending a request on every text file in a release.
-		return catalogSidecarNameHints(name)
-	default:
+	if !catalogSidecarTextFile(name) {
 		return false
 	}
+	// A Markdown or NFO file can be a release page, but the same formats also
+	// hold lyrics, notes or logs. The name is the only signal available before
+	// a read, so require a conventional metadata word. A file without one is
+	// not read; labelled credits inside it therefore do not justify spending a
+	// request on every text file in a release.
+	return catalogSidecarNamedCredit(name)
 }
 
-func catalogSidecarNameHints(name string) bool {
-	for _, hint := range []string{"readme", "info", "credit", "staff", "介绍", "介紹"} {
-		if strings.Contains(name, hint) {
+func catalogSidecarTextFile(name string) bool {
+	extension := path.Ext(name)
+	for _, accepted := range catalogSidecarTextExtensions {
+		if extension == accepted {
 			return true
 		}
 	}
 	return false
 }
 
-// catalogSidecarSQLCandidateCondition mirrors catalogSidecarCandidateFile for
-// the publication transaction. Both accept the same text extensions, and both
-// require a metadata name; keeping the condition in one constant prevents the
-// queue from admitting a file the reader would ignore.
-const catalogSidecarSQLCandidateCondition = `
-	(f.kind <> 'folder'
-		AND (lower(f.title) LIKE '%.md' OR lower(f.title) LIKE '%.markdown'
-			OR lower(f.title) LIKE '%.nfo' OR lower(f.title) LIKE '%.txt'
-			OR lower(f.title) LIKE '%.html' OR lower(f.title) LIKE '%.htm')
-		AND (instr(lower(f.title),'readme')>0 OR instr(lower(f.title),'info')>0
-			OR instr(lower(f.title),'credit')>0 OR instr(lower(f.title),'staff')>0
-			OR instr(f.title,'介绍')>0 OR instr(f.title,'介紹')>0))`
+// catalogSidecarNamedCredit accepts a hint only as a whole word. A bare
+// substring test would treat "trackinfo.txt" or "infomation.txt" as credits,
+// spending a request on a file that cannot carry them.
+func catalogSidecarNamedCredit(name string) bool {
+	for _, hint := range catalogSidecarNameHints {
+		if catalogSidecarContainsWord(name, hint) {
+			return true
+		}
+	}
+	return false
+}
 
-// Rank, then path depth, chooses the four files closest to the release root.
+// catalogSidecarContainsWord reports whether hint appears delimited from
+// adjacent letters or digits. Non-ASCII hints have no case folding concerns and
+// are matched directly; separators such as "_" and "-" count as delimiters.
+func catalogSidecarContainsWord(name, hint string) bool {
+	// CJK names have no word separators; a hint such as 介绍 is meaningful
+	// wherever it appears in the name.
+	if !catalogSidecarASCII(hint) {
+		return strings.Contains(name, hint)
+	}
+	index := strings.Index(name, hint)
+	for index >= 0 {
+		before := index == 0 || !catalogSidecarAlphanumeric(rune(name[index-1]))
+		afterIndex := index + len(hint)
+		after := afterIndex >= len(name) || !catalogSidecarAlphanumeric(rune(name[afterIndex]))
+		if before && after {
+			return true
+		}
+		next := strings.Index(name[index+1:], hint)
+		if next < 0 {
+			return false
+		}
+		index += 1 + next
+	}
+	return false
+}
+
+func catalogSidecarAlphanumeric(value rune) bool {
+	return value >= 'a' && value <= 'z' || value >= '0' && value <= '9'
+}
+
+func catalogSidecarASCII(value string) bool {
+	for _, r := range value {
+		if r > 0x7f {
+			return false
+		}
+	}
+	return true
+}
+
+// catalogSidecarSQLCandidateCondition selects every published text file by its
+// real path. The name and extension decision belongs to
+// catalogSidecarCandidateFile, which the caller applies to these rows;
+// duplicating that decision in SQL is what let the reader and the publication
+// path drift apart. This condition is deliberately a superset.
+var catalogSidecarSQLCandidateCondition = buildCatalogSidecarSQLCondition()
+
+func buildCatalogSidecarSQLCondition() string {
+	extensions := make([]string, 0, len(catalogSidecarTextExtensions))
+	for _, extension := range catalogSidecarTextExtensions {
+		extensions = append(extensions, "lower(f.relative_path) LIKE '%"+extension+"'")
+	}
+	return `
+	(f.kind <> 'folder'
+		AND (` + strings.Join(extensions, " OR ") + `))`
+}
+
+// Rank, then path depth, chooses the files closest to the release root.
 // The names are conventional labels rather than one provider's layout.
 func catalogSidecarFileRank(file SourceCatalogFile) int {
 	name := strings.ToLower(path.Base(file.Path))
 	switch {
-	case strings.HasPrefix(name, "readme"):
+	case catalogSidecarMatchesAny(name, catalogSidecarReadmeHints):
 		return 0
-	case strings.Contains(name, "credit"), strings.Contains(name, "staff"):
+	case catalogSidecarMatchesAny(name, catalogSidecarCreditHints):
 		return 1
-	case strings.Contains(name, "紹介"), strings.Contains(name, "介绍"), strings.Contains(name, "介紹"):
+	case catalogSidecarMatchesAny(name, catalogSidecarIntroductionHints):
 		return 2
-	case strings.Contains(name, "info"):
+	case catalogSidecarMatchesAny(name, catalogSidecarInfoHints):
 		return 3
 	default:
 		return 4
 	}
+}
+
+func catalogSidecarMatchesAny(name string, hints []string) bool {
+	for _, hint := range hints {
+		if catalogSidecarContainsWord(name, hint) {
+			return true
+		}
+	}
+	return false
 }
 
 // parseCatalogSidecar extracts only explicitly labelled credits. A free-form
@@ -569,23 +653,53 @@ func markCatalogSidecarCandidatesTx(ctx context.Context, tx *sql.Tx, ids []int64
 		return nil
 	}
 	placeholders := sqlPlaceholders(len(ids))
-	args := append(int64Args(ids), generation)
 	// A card whose file set was republished without its credit file loses the
 	// evidence with it. Detect this from the same committed file rows rather
 	// than from a name at read time, so a deleted readme cannot linger.
-	cleared, err := tx.ExecContext(ctx, `UPDATE source_catalog_entry
-			SET sidecar_json='',sidecar_pending=0,sidecar_attempts=0
-			WHERE id IN (`+placeholders+`) AND sidecar_json<>'' AND NOT EXISTS(
-				SELECT 1 FROM source_catalog_file f
-				WHERE f.catalog_entry_id=source_catalog_entry.id AND f.kind<>'folder'
-					AND f.observed_generation=?
-					AND (`+catalogSidecarSQLCandidateCondition+`))`, args...)
+	// The SQL condition is only an extension filter; the reader's own candidate
+	// rule decides whether a published file can carry credits. Ask it about the
+	// committed rows instead of writing a second name rule in SQL.
+	rows, err := tx.QueryContext(ctx, `SELECT e.id,f.relative_path,COALESCE(f.title,''),f.kind,f.size_bytes,COALESCE(f.modified_at,''),f.observed_generation
+		FROM source_catalog_entry e
+		JOIN source_catalog_file f ON f.catalog_entry_id=e.id
+		WHERE e.id IN (`+placeholders+`) AND e.sidecar_json<>'' AND f.observed_generation=?
+			AND (`+catalogSidecarSQLCandidateCondition+`)
+		ORDER BY e.id`, append(int64Args(ids), generation)...)
 	if err != nil {
 		return err
 	}
-	if changed, rowsErr := cleared.RowsAffected(); rowsErr == nil && changed > 0 {
-		if _, err = tx.ExecContext(ctx, `UPDATE work_matching_control SET revision=revision+1,status='queued' WHERE id=1`); err != nil {
+	byEntry := map[int64][]SourceCatalogFile{}
+	for rows.Next() {
+		var id int64
+		var file SourceCatalogFile
+		if err = rows.Scan(&id, &file.Path, &file.Title, &file.Kind, &file.Size, &file.ModifiedAt, &file.Generation); err != nil {
+			_ = rows.Close()
 			return err
+		}
+		byEntry[id] = append(byEntry[id], file)
+	}
+	evidenceErr := rows.Err()
+	_ = rows.Close()
+	if evidenceErr != nil {
+		return evidenceErr
+	}
+	clearedIDs := []int64{}
+	for _, id := range ids {
+		if len(catalogSidecarFiles(byEntry[id])) == 0 {
+			clearedIDs = append(clearedIDs, id)
+		}
+	}
+	if len(clearedIDs) > 0 {
+		cleared, clearErr := tx.ExecContext(ctx, `UPDATE source_catalog_entry
+				SET sidecar_json='',sidecar_pending=0,sidecar_attempts=0,sidecar_revision=''
+				WHERE id IN (`+sqlPlaceholders(len(clearedIDs))+`) AND sidecar_json<>''`, int64Args(clearedIDs)...)
+		if clearErr != nil {
+			return clearErr
+		}
+		if changed, rowsErr := cleared.RowsAffected(); rowsErr == nil && changed > 0 {
+			if _, err = tx.ExecContext(ctx, `UPDATE work_matching_control SET revision=revision+1,status='queued' WHERE id=1`); err != nil {
+				return err
+			}
 		}
 	}
 	// A rescan republishes the same card every day. Requeue a card with budget,
@@ -595,7 +709,7 @@ func markCatalogSidecarCandidatesTx(ctx context.Context, tx *sql.Tx, ids []int64
 	// Compare each card's current credit revision with the one stored with its
 	// evidence. Reading inside the transaction keeps the choice consistent with
 	// the publication rows just written.
-	rows, err := tx.QueryContext(ctx, `SELECT id,sidecar_attempts,sidecar_revision FROM source_catalog_entry
+	rows, err = tx.QueryContext(ctx, `SELECT id,sidecar_attempts,sidecar_revision FROM source_catalog_entry
 		WHERE id IN (`+placeholders+`)`, int64Args(ids)...)
 	if err != nil {
 		return err
@@ -627,8 +741,18 @@ func markCatalogSidecarCandidatesTx(ctx context.Context, tx *sql.Tx, ids []int64
 			continue
 		}
 		attempts := item.attempts
-		if item.revision != current {
+		// An empty stored revision means the card never completed a read. It is
+		// not a change: resetting here would make the five-attempt budget
+		// restart on every rescan, so a permanently broken release would be
+		// retried forever. Store the observed revision so the next rescan has a
+		// baseline to compare.
+		if item.revision != "" && item.revision != current {
 			attempts = 0
+		}
+		if item.revision != current {
+			if _, err = tx.ExecContext(ctx, `UPDATE source_catalog_entry SET sidecar_revision=? WHERE id=?`, current, item.id); err != nil {
+				return err
+			}
 		}
 		if _, err = tx.ExecContext(ctx, `UPDATE source_catalog_entry SET sidecar_pending=1,sidecar_attempts=? WHERE id=?`, attempts, item.id); err != nil {
 			return err
@@ -804,9 +928,20 @@ func (s *Server) finishCatalogSidecar(ctx context.Context, item catalogSidecarCa
 				return
 			}
 		}
+		if result.Revision != "" {
+			// Record the revision even when no file could be read. A failed
+			// first read otherwise leaves an empty revision that the next
+			// rescan mistakes for a change, restarting the budget.
+			if _, err := s.db.ExecContext(ctx, `UPDATE source_catalog_entry SET sidecar_revision=? WHERE id=?`, result.Revision, item.ID); err != nil {
+				slog.Warn("record catalog sidecar revision", "catalog_entry_id", item.ID, "error", err)
+				return
+			}
+		}
 		if state == catalogSidecarStateRetry && result.Deferred && !result.Failed {
-			// The pass ran out of request budget, not the source. Keep the
-			// card pending without spending an attempt.
+			// The pass ran out of request budget, not the source. Any files it
+			// did read were stored above; keep the card pending without
+			// spending an attempt so the next pass continues from that partial
+			// evidence instead of requesting the same files again.
 			return
 		}
 		if _, err := s.db.ExecContext(ctx, `UPDATE source_catalog_entry
