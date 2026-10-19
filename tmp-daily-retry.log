@@ -1,4 +1,0 @@
-=== RUN   TestSourceCatalogDailyRetriesAFailedRun
---- PASS: TestSourceCatalogDailyRetriesAFailedRun (0.36s)
-PASS
-ok  	github.com/yexca/kikoto/backend/internal/httpapi	0.420s
