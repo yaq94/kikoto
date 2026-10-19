@@ -8,6 +8,7 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -127,6 +128,105 @@ func TestCatalogSidecarPartiallyReadableKeepsSuccess(t *testing.T) {
 	}
 	if attempts == 0 {
 		t.Fatal("partially failed read did not record an attempt")
+	}
+}
+
+// A failure to read the local database is not evidence that the release has no
+// credit file. The card stays pending, spends one attempt, and keeps the
+// evidence that was already stored.
+func TestCatalogSidecarDatabaseReadFailureKeepsEvidence(t *testing.T) {
+	db := openMigratedTestDB(t)
+	s := NewServer(db, config.Config{Mode: config.ModeProduction, RootUsername: "synthetic-editor", DataRoot: t.TempDir(), CacheRoot: t.TempDir()})
+	defer func() { _ = s.Shutdown(context.Background()) }()
+	stored := `{"sidecars":[{"relativePath":"readme.txt","size":12,"voiceActors":["Example Voice"],"circles":[],"fetchedAt":"2026-01-01T00:00:00Z"}]}`
+	metadataReviewExec(t, db, `INSERT INTO source_catalog_entry(id,root_path,title,sidecar_json,sidecar_pending) VALUES(1,'/Example Work','Example Work',?,1)`, stored)
+	if _, err := db.Exec(`DROP TABLE source_catalog_file`); err != nil {
+		t.Fatal(err)
+	}
+	outcome := s.refreshCatalogSidecar(context.Background(), nil, catalogSidecarCandidate{ID: 1, RootPath: "/Example Work", Title: "Example Work"}, catalogSidecarBatchRequests)
+	if !outcome.Failed {
+		t.Fatalf("database read failure was not reported: %#v", outcome)
+	}
+	var raw string
+	var pending, attempts int
+	if err := db.QueryRow(`SELECT sidecar_json,sidecar_pending,sidecar_attempts FROM source_catalog_entry WHERE id=1`).Scan(&raw, &pending, &attempts); err != nil {
+		t.Fatal(err)
+	}
+	if raw != stored || pending != 1 || attempts != 1 {
+		t.Fatalf("database failure changed the queue or evidence: raw=%s pending=%d attempts=%d", raw, pending, attempts)
+	}
+}
+
+// The independent worker chooses the next source from the queue, so a pending
+// card on a disabled source must not hide work from an enabled source forever.
+func TestCatalogSidecarWorkerSkipsDisabledSource(t *testing.T) {
+	f := newCatalogIndexFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.NotFound(w, r)
+	}))
+	metadataReviewExec(t, f.server.db, `INSERT INTO file_source(id,code,display_name,source_type,enabled) VALUES(2,'example_remote_b','Example Remote B','openlist',1);
+		INSERT INTO file_source_endpoint(file_source_id,api_url,base_url) SELECT 2,api_url,base_url FROM file_source_endpoint WHERE file_source_id=1;
+		INSERT INTO source_catalog_entry(id,file_source_id,root_path,title,sidecar_pending) VALUES(1,1,'/Disabled','Disabled card',1);
+		INSERT INTO source_catalog_entry(id,file_source_id,root_path,title,sidecar_pending) VALUES(2,2,'/Enabled','Enabled card',1);
+		UPDATE file_source SET enabled=0 WHERE id=1;`)
+	worked, err := f.server.refreshPendingCatalogSidecars(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if worked {
+		t.Fatal("empty enabled source requested an immediate continuation")
+	}
+	var disabledPending, enabledPending int
+	if err := f.server.db.QueryRow(`SELECT sidecar_pending FROM source_catalog_entry WHERE id=1`).Scan(&disabledPending); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.server.db.QueryRow(`SELECT sidecar_pending FROM source_catalog_entry WHERE id=2`).Scan(&enabledPending); err != nil {
+		t.Fatal(err)
+	}
+	if disabledPending != 1 || enabledPending != 0 {
+		t.Fatalf("worker starved behind disabled source: disabled=%d enabled=%d", disabledPending, enabledPending)
+	}
+}
+
+// The index warm pass and the background worker can run at the same time. One
+// pending card must cost one metadata request and one body request.
+func TestCatalogSidecarConcurrentPassesReadOneCardOnce(t *testing.T) {
+	var gets atomic.Int32
+	upstream := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/fs/get":
+			gets.Add(1)
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": 200, "data": map[string]any{
+				"name": "readme.txt", "size": 24, "raw_url": "http://" + r.Host + "/readme",
+			}})
+		case "/readme":
+			gets.Add(1)
+			_, _ = w.Write([]byte("配音：Example Voice\r\n"))
+		default:
+			http.NotFound(w, r)
+		}
+	})
+	f := newCatalogIndexFixture(t, upstream)
+	metadataReviewExec(t, f.server.db, `INSERT INTO source_catalog_entry(id,file_source_id,root_path,source_root,title,sidecar_pending,last_seen_generation) VALUES(10,1,'/Example Work','/Example','Example Work',1,1);
+		INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes,observed_generation) VALUES(10,'readme.txt','readme.txt','text',24,1);`)
+	var wg sync.WaitGroup
+	for range 2 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			f.server.refreshCatalogSidecars(context.Background(), 1)
+		}()
+	}
+	wg.Wait()
+	if got := gets.Load(); got != 2 {
+		t.Fatalf("concurrent passes issued %d upstream requests, want one metadata and one body request", got)
+	}
+	var pending int
+	var evidence string
+	if err := f.server.db.QueryRow(`SELECT sidecar_pending,sidecar_json FROM source_catalog_entry WHERE id=10`).Scan(&pending, &evidence); err != nil {
+		t.Fatal(err)
+	}
+	if pending != 0 || !strings.Contains(evidence, "Example Voice") {
+		t.Fatalf("completed pass left pending=%d evidence=%s", pending, evidence)
 	}
 }
 

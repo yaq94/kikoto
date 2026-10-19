@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf16"
 	"unicode/utf8"
@@ -37,6 +38,12 @@ const (
 	// An unreadable file is retried by later passes, not in a tight loop.
 	catalogSidecarMaxAttempts = 5
 )
+
+// The index warm pass and the independent worker can both observe the same
+// pending row. One pass at a time keeps a card from costing two upstream
+// reads. A process-local lock is enough: a single Kikoto process owns the
+// queue, and a restart simply resumes the durable rows.
+var catalogSidecarMu sync.Mutex
 
 // A sidecar is fetched at most once per release revision. The source's
 // modification time is the revision; the size and digest keep the comparison
@@ -554,6 +561,8 @@ func markCatalogSidecarCandidatesTx(ctx context.Context, tx *sql.Tx, ids []int64
 // queued for an immediate continuation; a source that answered nothing is not
 // continued at once, because that would spin on a failed origin.
 func (s *Server) refreshCatalogSidecars(ctx context.Context, sourceID int64) (more bool) {
+	catalogSidecarMu.Lock()
+	defer catalogSidecarMu.Unlock()
 	source, err := s.catalogIndexSource(ctx, sourceID)
 	if err != nil {
 		return false
@@ -634,7 +643,7 @@ func (s *Server) refreshCatalogSidecar(ctx context.Context, client *openlist.Cli
 	entry := catalogEntry{ID: item.ID, RootPath: item.RootPath, SourceRoot: item.SourceRoot, Title: item.Title, PrimaryCode: item.Primary, Status: item.Status}
 	files, err := s.loadSourceCatalogFiles(ctx, item.ID)
 	if err != nil {
-		s.finishCatalogSidecar(ctx, item, false, catalogSidecarReadResult{Failed: true})
+		s.finishCatalogSidecar(ctx, item, true, catalogSidecarReadResult{Failed: true})
 		return catalogSidecarCardOutcome{Failed: true}
 	}
 	selected := catalogSidecarFiles(files)
@@ -647,7 +656,7 @@ func (s *Server) refreshCatalogSidecar(ctx context.Context, client *openlist.Cli
 	}
 	previous, err := s.loadCatalogSidecars(ctx, entry)
 	if err != nil {
-		s.finishCatalogSidecar(ctx, item, false, catalogSidecarReadResult{Failed: true})
+		s.finishCatalogSidecar(ctx, item, true, catalogSidecarReadResult{Failed: true})
 		return catalogSidecarCardOutcome{Failed: true}
 	}
 	result := readCatalogSidecars(ctx, client, entry, files, previous, budget)

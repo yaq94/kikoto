@@ -44,9 +44,11 @@ func (s *Server) refreshPendingCatalogSidecars(ctx context.Context) (bool, error
 		return false, nil
 	}
 	var sourceID int64
-	err := s.db.QueryRowContext(ctx, `SELECT file_source_id FROM source_catalog_entry
-		WHERE relocated_to_id IS NULL AND sidecar_pending=1 AND sidecar_attempts<?
-		ORDER BY id LIMIT 1`, catalogSidecarMaxAttempts).Scan(&sourceID)
+	err := s.db.QueryRowContext(ctx, `SELECT entry.file_source_id FROM source_catalog_entry entry
+		JOIN file_source source ON source.id=entry.file_source_id
+		WHERE entry.relocated_to_id IS NULL AND entry.sidecar_pending=1 AND entry.sidecar_attempts<?
+			AND source.enabled=1 AND source.source_type=?
+		ORDER BY entry.id LIMIT 1`, catalogSidecarMaxAttempts, sourceTypeOpenList).Scan(&sourceID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
