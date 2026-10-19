@@ -147,8 +147,9 @@ func currentCatalogFiles(files []SourceCatalogFile) []SourceCatalogFile {
 	return current
 }
 
-// A release publishes text in several common extensions. The extension list is
-// the role signal; the indexer's coarse "text" kind only covers a subset.
+// A release publishes credit text under several extensions. The indexer's
+// coarse "text" kind only covers a subset, so the extension and a name hint
+// decide which files are worth one bounded read.
 func catalogSidecarCandidateFile(file SourceCatalogFile) bool {
 	if file.Kind == "folder" {
 		return false
@@ -156,14 +157,12 @@ func catalogSidecarCandidateFile(file SourceCatalogFile) bool {
 	name := strings.ToLower(path.Base(file.Path))
 	extension := path.Ext(name)
 	switch extension {
-	case ".md", ".markdown", ".nfo":
-		// These formats almost always describe a release rather than hold a
-		// transcript.
-		return true
-	case ".txt", ".html", ".htm":
-		// A plain text file can be a transcript, and a saved web page can be
-		// an unrelated store page. Only a name that says it is metadata is
-		// treated as a credit source.
+	case ".md", ".markdown", ".nfo", ".txt", ".html", ".htm":
+		// A Markdown or NFO file can be a release page, but the same formats
+		// also hold lyrics, notes or logs. The name is the only signal available
+		// before a read, so require the conventional metadata words. A file
+		// without one is not read; labelled credits inside it therefore do not
+		// justify spending a request on every text file in a release.
 		return catalogSidecarNameHints(name)
 	default:
 		return false
@@ -178,6 +177,19 @@ func catalogSidecarNameHints(name string) bool {
 	}
 	return false
 }
+
+// catalogSidecarSQLCandidateCondition mirrors catalogSidecarCandidateFile for
+// the publication transaction. Both accept the same text extensions, and both
+// require a metadata name; keeping the condition in one constant prevents the
+// queue from admitting a file the reader would ignore.
+const catalogSidecarSQLCandidateCondition = `
+	(f.kind <> 'folder'
+		AND (lower(f.title) LIKE '%.md' OR lower(f.title) LIKE '%.markdown'
+			OR lower(f.title) LIKE '%.nfo' OR lower(f.title) LIKE '%.txt'
+			OR lower(f.title) LIKE '%.html' OR lower(f.title) LIKE '%.htm')
+		AND (instr(lower(f.title),'readme')>0 OR instr(lower(f.title),'info')>0
+			OR instr(lower(f.title),'credit')>0 OR instr(lower(f.title),'staff')>0
+			OR instr(f.title,'介绍')>0 OR instr(f.title,'介紹')>0))`
 
 // Rank, then path depth, chooses the four files closest to the release root.
 // The names are conventional labels rather than one provider's layout.
@@ -539,14 +551,10 @@ func markCatalogSidecarCandidatesTx(ctx context.Context, tx *sql.Tx, ids []int64
 	cleared, err := tx.ExecContext(ctx, `UPDATE source_catalog_entry
 			SET sidecar_json='',sidecar_pending=0,sidecar_attempts=0
 			WHERE id IN (`+placeholders+`) AND sidecar_json<>'' AND NOT EXISTS(
-			SELECT 1 FROM source_catalog_file f
-			WHERE f.catalog_entry_id=source_catalog_entry.id AND f.kind<>'folder'
-				AND f.observed_generation=?
-				AND (instr(lower(f.title),'readme')>0 OR instr(lower(f.title),'info')>0
-					OR instr(lower(f.title),'credit')>0 OR instr(lower(f.title),'staff')>0
-					OR instr(f.title,'介绍')>0 OR instr(f.title,'介紹')>0
-					OR lower(f.title) LIKE '%.md' OR lower(f.title) LIKE '%.markdown'
-					OR lower(f.title) LIKE '%.nfo'))`, args...)
+				SELECT 1 FROM source_catalog_file f
+				WHERE f.catalog_entry_id=source_catalog_entry.id AND f.kind<>'folder'
+					AND f.observed_generation=?
+					AND (`+catalogSidecarSQLCandidateCondition+`))`, args...)
 	if err != nil {
 		return err
 	}
@@ -562,14 +570,10 @@ func markCatalogSidecarCandidatesTx(ctx context.Context, tx *sql.Tx, ids []int64
 	_, err = tx.ExecContext(ctx, `UPDATE source_catalog_entry SET sidecar_pending=1
 			WHERE id IN (`+placeholders+`) AND sidecar_attempts<?
 			AND EXISTS(
-			SELECT 1 FROM source_catalog_file f
-			WHERE f.catalog_entry_id=source_catalog_entry.id AND f.kind<>'folder'
-				AND f.observed_generation=?
-				AND (instr(lower(f.title),'readme')>0 OR instr(lower(f.title),'info')>0
-					OR instr(lower(f.title),'credit')>0 OR instr(lower(f.title),'staff')>0
-					OR instr(f.title,'介绍')>0 OR instr(f.title,'介紹')>0
-					OR lower(f.title) LIKE '%.md' OR lower(f.title) LIKE '%.markdown'
-					OR lower(f.title) LIKE '%.nfo'))`, queueArgs...)
+					SELECT 1 FROM source_catalog_file f
+					WHERE f.catalog_entry_id=source_catalog_entry.id AND f.kind<>'folder'
+						AND f.observed_generation=?
+						AND (`+catalogSidecarSQLCandidateCondition+`))`, queueArgs...)
 	return err
 }
 
