@@ -215,13 +215,25 @@ func (s *Server) catalogSeriesProtectedNames(ctx context.Context, seriesID int64
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = rows.Close() }()
-	names := []string{}
+	workIDs := []int64{}
 	for rows.Next() {
 		var workID int64
 		if err = rows.Scan(&workID); err != nil {
+			_ = rows.Close()
 			return nil, err
 		}
+		workIDs = append(workIDs, workID)
+	}
+	readErr := rows.Err()
+	_ = rows.Close()
+	if readErr != nil {
+		return nil, readErr
+	}
+	// Close the result set before loading each work. The caller may hold the
+	// only pooled connection, and a second query while a cursor is open would
+	// wait on itself.
+	names := []string{}
+	for _, workID := range workIDs {
 		work, loadErr := s.loadWorkDetail(ctx, 0, workID, false)
 		if loadErr != nil {
 			if errors.Is(loadErr, sql.ErrNoRows) {
@@ -235,7 +247,7 @@ func (s *Server) catalogSeriesProtectedNames(ctx context.Context, seriesID int64
 			names = append(names, credit.DisplayName)
 		}
 	}
-	return names, rows.Err()
+	return names, nil
 }
 
 func (s *Server) loadRemoteTranslationField(ctx context.Context, in contentTranslationRequest) (readableTranslationField, error) {
