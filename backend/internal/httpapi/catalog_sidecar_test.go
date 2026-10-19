@@ -8,6 +8,7 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/yexca/kikoto/backend/internal/config"
@@ -44,16 +45,156 @@ func TestCatalogSidecarParsesLabelledCreditsOnly(t *testing.T) {
 	}
 }
 
+// The same release text can be published as UTF-16 or Shift-JIS. A credit
+// label is still a credit label after decoding, so the selection must not
+// depend on the file being valid UTF-8.
+func TestCatalogSidecarDecodesReleaseTextEncodings(t *testing.T) {
+	shiftJIS := []byte{
+		0x94, 0x7a, 0x89, 0xb9, 0x81, 0x46, // 配音：
+		0x45, 0x78, 0x61, 0x6d, 0x70, 0x6c, 0x65, 0x20, 0x56, 0x6f, 0x69, 0x63, 0x65, // Example Voice in ASCII
+	}
+	if got := decodeCatalogSidecar(string(shiftJIS)); !strings.Contains(got, "配音：Example Voice") {
+		t.Fatalf("Shift-JIS decode = %q", got)
+	}
+	decoded := decodeCatalogSidecar(string([]byte{0xff, 0xfe, 0x4d, 0x91, 0xf3, 0x97}))
+	if decoded != "配音" {
+		t.Fatalf("UTF-16 decode = %q", decoded)
+	}
+}
+
+// A card with a readme and an unreadable info file keeps the readme evidence.
+// One broken file must not discard the other, and the queue records the
+// failure instead of pretending the read succeeded.
+func TestCatalogSidecarPartiallyReadableKeepsSuccess(t *testing.T) {
+	upstream := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/fs/list":
+			var input struct {
+				Path string `json:"path"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&input)
+			items := []map[string]any{}
+			switch input.Path {
+			case "/":
+				items = append(items, map[string]any{"name": "Example Work", "is_dir": true})
+			case "/Example Work":
+				items = append(items,
+					map[string]any{"name": "track.mp3", "size": 100},
+					map[string]any{"name": "readme.txt", "size": 24},
+					map[string]any{"name": "info.txt", "size": 12})
+			default:
+				http.NotFound(w, r)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": 200, "data": map[string]any{"content": items, "total": len(items)}})
+		case "/api/fs/get":
+			var input struct {
+				Path string `json:"path"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&input)
+			if path.Base(input.Path) == "info.txt" {
+				http.Error(w, "temporarily unavailable", http.StatusServiceUnavailable)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": 200, "data": map[string]any{
+				"name": "readme.txt", "size": 24, "raw_url": "http://" + r.Host + "/readme",
+			}})
+		case "/readme":
+			_, _ = w.Write([]byte("配音：Example Voice\r\n"))
+		default:
+			http.NotFound(w, r)
+		}
+	})
+	f := newCatalogIndexFixture(t, upstream)
+	f.request(t, http.MethodPost, "/catalog/index", `{"intervalMs":100}`, 202)
+	if p := f.drain(t); p["status"] != "complete" {
+		t.Fatalf("scan = %#v", p)
+	}
+	var raw string
+	if err := f.server.db.QueryRow(`SELECT sidecar_json FROM source_catalog_entry WHERE title='Example Work'`).Scan(&raw); err != nil {
+		t.Fatal(err)
+	}
+	var cache catalogSidecarCache
+	if err := json.Unmarshal([]byte(raw), &cache); err != nil {
+		t.Fatal(err)
+	}
+	if len(cache.Sidecars) != 1 || strings.Join(cache.Sidecars[0].VoiceActors, "|") != "Example Voice" {
+		t.Fatalf("readable readme evidence was discarded: %s", raw)
+	}
+	var attempts int
+	if err := f.server.db.QueryRow(`SELECT sidecar_attempts FROM source_catalog_entry WHERE title='Example Work'`).Scan(&attempts); err != nil {
+		t.Fatal(err)
+	}
+	if attempts == 0 {
+		t.Fatal("partially failed read did not record an attempt")
+	}
+}
+
+// A card whose credit files were deleted must not keep evidence from files the
+// release no longer publishes.
+func TestCatalogSidecarDeletedFileDropsStaleEvidence(t *testing.T) {
+	var withReadme atomic.Bool
+	withReadme.Store(true)
+	upstream := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/fs/list":
+			var input struct {
+				Path string `json:"path"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&input)
+			items := []map[string]any{}
+			switch input.Path {
+			case "/":
+				items = append(items, map[string]any{"name": "Example Work", "is_dir": true})
+			case "/Example Work":
+				items = append(items, map[string]any{"name": "track.mp3", "size": 100})
+				if withReadme.Load() {
+					items = append(items, map[string]any{"name": "readme.txt", "size": 24})
+				}
+			default:
+				http.NotFound(w, r)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": 200, "data": map[string]any{"content": items, "total": len(items)}})
+		case "/api/fs/get":
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": 200, "data": map[string]any{
+				"name": "readme.txt", "size": 24, "raw_url": "http://" + r.Host + "/readme",
+			}})
+		case "/readme":
+			_, _ = w.Write([]byte("配音：Example Voice\r\n"))
+		default:
+			http.NotFound(w, r)
+		}
+	})
+	f := newCatalogIndexFixture(t, upstream)
+	f.request(t, http.MethodPost, "/catalog/index", `{"intervalMs":100}`, 202)
+	if p := f.drain(t); p["status"] != "complete" {
+		t.Fatalf("scan = %#v", p)
+	}
+	withReadme.Store(false)
+	f.request(t, http.MethodPost, "/catalog/index", `{"intervalMs":100,"force":true}`, 202)
+	if p := f.drain(t); p["status"] != "complete" {
+		t.Fatalf("rescan = %#v", p)
+	}
+	var raw string
+	if err := f.server.db.QueryRow(`SELECT sidecar_json FROM source_catalog_entry WHERE title='Example Work'`).Scan(&raw); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(raw, "Example Voice") {
+		t.Fatalf("stale evidence survived a deleted readme: %s", raw)
+	}
+}
+
 // Release pages spell the same credit with and without brackets. A trailing
 // annotation belongs to the markup, so it must not create a second person.
 func TestCatalogSidecarNameNormalizationIsNotSampleSpecific(t *testing.T) {
 	cases := map[string]string{
-		"【Example Voice】":   "Example Voice",
-		"Example Voice】":     "Example Voice",
-		"Example Voice（主役）":  "Example Voice",
+		"【Example Voice】":      "Example Voice",
+		"Example Voice】":       "Example Voice",
+		"Example Voice（主役）":    "Example Voice",
 		"Example Voice (Lead)": "Example Voice",
-		"「Example Voice」":    "Example Voice",
-		"Example Voice":       "Example Voice",
+		"「Example Voice」":      "Example Voice",
+		"Example Voice":        "Example Voice",
 	}
 	for raw, want := range cases {
 		got := trimCatalogSidecarBrackets(raw)

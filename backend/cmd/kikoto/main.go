@@ -123,6 +123,7 @@ func run() error {
 	if !cfg.IsDemo() {
 		server.Go(server.RunRecommendationWorker)
 		server.Go(server.RunWorkMatchingWorker)
+		server.Go(server.RunCatalogSidecarWorker)
 		server.Go(server.ResumeLibraryMigration)
 		server.Go(func(ctx context.Context) {
 			if err := server.RunStartupWorkflows(ctx); err != nil && ctx.Err() == nil {

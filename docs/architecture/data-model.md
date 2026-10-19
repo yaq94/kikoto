@@ -18,6 +18,10 @@ An empty `source_root` keeps the original meaning, where `root_path` is also the
 directory. `source_catalog_entry.sidecar_json` stores only explicitly labelled credit evidence
 from a release readme or info file. It is matching evidence, never a product
 code or a registered work, and an empty value means the scan did not read one.
+`sidecar_pending` and `sidecar_attempts` bound the background read pass, and
+`source_catalog_file.modified_at` / `source_catalog_observation.modified_at`
+carry the source's revision signal so a same-size edit is noticed without
+fetching the body first.
 
 `source_catalog_directory.work_split` records the split decision
 (`single`, `prefix`, `file`) for the current completed revision of a directory

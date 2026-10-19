@@ -155,19 +155,31 @@ record its actual ranges, timestamps and unresolved directories.
 
 ## Release sidecars
 
-An indexed card can carry a `readme`, `info`, `credit` or `staff` text file
-beside its audio. The index reads at most four such files per card, at most
-256 KiB each, through the same source client, origin policy and request pacing
-as metadata. It keeps the previous credit evidence when a read fails and does
-not treat the readme as a track.
+An indexed card can carry a `readme`, `info`, `credit` or `staff` file beside
+its audio, including `.md`, `.nfo` and saved `.html` pages. The index reads at
+most four such files per card, at most 256 KiB each, through the same source
+client, origin policy and request pacing as metadata. UTF-8, UTF-16 and
+Shift-JIS bodies are decoded before parsing. The file is not a track.
+
+Publication only marks a card `sidecar_pending`. A bounded warm pass runs when
+an index invocation finds no remaining directory or publish work, and the
+independent sidecar worker continues the durable queue. Each pass is bounded by
+12 upstream requests and 20 seconds, and the index job never waits for the
+whole queue. A source that answers no file at all is not continued at once, so
+its normal retry delay applies. A card is retried at most five times; a deleted
+readme clears the old evidence instead of preserving credit text for a file the
+release no longer publishes.
 
 Only explicitly labelled lines become evidence. A line such as `配音：…`,
 `声优: …`, `CV：…` or `キャスト: …` names a voice actor; `社团：…`,
 `社團：…`, `サークル: …` or `Circle: …` names a circle. Unlabelled prose never
-becomes a credit. The file name and size form the cache revision, so an
-unchanged readme is not fetched again. Stored evidence contains only the
-relative path, size, labels, and fetch time; it never supplies a product code,
-registers a work or downloads audio.
+becomes a credit. The source's modification time and the file size form the
+cache revision; when the source omits a timestamp, the stored digest is reused
+until the size changes. Stored evidence contains only the relative path, size,
+modification time, digest, labels and fetch time; it never supplies a product
+code, registers a work or downloads audio. Re-reading identical evidence does
+not advance the matching revision, so the matching queue is not restarted for a
+timestamp-only change.
 
 `GET /api/remote-sources/{id}/works` uses the existing paged source card and
 search response. OpenList cards add `catalogEntryId` and may have an empty

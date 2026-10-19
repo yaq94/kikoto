@@ -77,6 +77,11 @@ func (s *Server) executeSourceCatalogIndexJob(ctx context.Context, job workflowJ
 			if more {
 				return s.settleCatalogBatch(ctx, job, input.SourceID, "queued", "")
 			}
+			// Warm the credit reader once for this completed pass. The call
+			// is bounded by its own request budget; remaining cards are
+			// drained by the independent sidecar worker, so this never
+			// extends the index job for a whole release tree.
+			s.refreshCatalogSidecars(ctx, input.SourceID)
 			// No directory is left to observe and the publish queue is empty,
 			// so the set of entries this generation republished is final.
 			// Retire the rows an older generation left on those entries now;

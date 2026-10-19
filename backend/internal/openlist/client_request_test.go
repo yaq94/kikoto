@@ -37,6 +37,35 @@ func TestOpenListDeclaresKikotoIdentityByDefault(t *testing.T) {
 	}
 }
 
+// A companion text read carries the same identity and operator headers as a
+// metadata request. CDNs commonly reject the Go default identity, so this path
+// must not silently fall back to it.
+func TestOpenListCompanionTextUsesConfiguredHeaders(t *testing.T) {
+	var identity, language, custom string
+	remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		identity, language, custom = r.Header.Get("User-Agent"), r.Header.Get("Accept-Language"), r.Header.Get("X-Client-Channel")
+		_, _ = w.Write([]byte("配音：Example Voice"))
+	}))
+	defer remote.Close()
+	client := openListTestClient(remote).WithUserAgent("Kikoto/synthetic").WithRequestHeaders(map[string]string{
+		"Accept-Language":  "ja",
+		"X-Client-Channel": "synthetic",
+	})
+	body, err := client.GetText(context.Background(), remote.URL+"/readme.txt", 256)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if body != "配音：Example Voice" {
+		t.Fatalf("body = %q", body)
+	}
+	if identity != "Kikoto/synthetic" || language != "ja" || custom != "synthetic" {
+		t.Fatalf("headers = identity %q language %q custom %q", identity, language, custom)
+	}
+	if _, err = client.GetText(context.Background(), remote.URL+"/readme.txt", 4); !errors.Is(err, ErrLimit) {
+		t.Fatalf("oversized companion read = %v, want ErrLimit", err)
+	}
+}
+
 func TestOpenListOperatorIdentityAndHeadersOverride(t *testing.T) {
 	type observedRequest struct {
 		UserAgent      string

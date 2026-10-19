@@ -26,10 +26,13 @@ Missing or incomplete hashes do not satisfy that rule; other independent metadat
 can still qualify. File sizes, directory layouts, translations and title similarity
 alone never authorize an association.
 
-Different known codes without a declared relationship, voice sets, circles,
-release dates, edition labels, metadata languages or work types prevent a
-heuristic association. The same checks include retained members of an existing
-shared identity. Series, episodes and works remain different evaluation levels.
+Different known codes without a declared relationship, two present but different
+voice sets, two present but different circles, release dates, edition labels,
+metadata languages or work types prevent a heuristic association. A missing
+credit set is absence of evidence, not a conflict: an unregistered card usually
+has no person rows at all. The same checks include retained members of an
+existing shared identity. Series, episodes and works remain different evaluation
+levels.
 Episodes additionally need consistent series titles and positive episode positions.
 A split pair always requires manual review.
 

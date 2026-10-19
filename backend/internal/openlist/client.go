@@ -314,6 +314,39 @@ func (c *Client) HTTP() *http.Client {
 	return c.http
 }
 
+// GetText reads a bounded text body from a URL the source itself returned. It
+// applies the same declared identity and operator headers as metadata calls;
+// the caller keeps the URL inside the configured outbound policy.
+func (c *Client) GetText(ctx context.Context, rawURL string, limit int64) (string, error) {
+	if rawURL == "" || limit <= 0 {
+		return "", ErrInvalid
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return "", ErrInvalid
+	}
+	request.Header.Set("User-Agent", c.userAgent)
+	for name, value := range c.requestHeaders {
+		request.Header.Set(name, value)
+	}
+	response, err := c.http.Do(request)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = response.Body.Close() }()
+	if response.StatusCode != http.StatusOK {
+		return "", ErrUnavailable
+	}
+	body, err := io.ReadAll(io.LimitReader(response.Body, limit+1))
+	if err != nil {
+		return "", err
+	}
+	if int64(len(body)) > limit {
+		return "", ErrLimit
+	}
+	return string(body), nil
+}
+
 // ScanRoot treats one explicitly configured directory as one work. Format and
 // track directories below it cannot accidentally become additional works.
 func (c *Client) ScanRoot(ctx context.Context, root string) ([]File, error) {

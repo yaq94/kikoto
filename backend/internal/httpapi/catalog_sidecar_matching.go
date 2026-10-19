@@ -56,40 +56,34 @@ func uniqueSortedCatalogNames(names []string) []string {
 }
 
 func equalCatalogSidecarNames(left, right []string) bool {
-	left, right = uniqueSortedCatalogNames(left), uniqueSortedCatalogNames(right)
+	left, right = foldCatalogNames(left), foldCatalogNames(right)
 	if len(left) == 0 || len(left) != len(right) {
 		return false
 	}
 	for index := range left {
-		if !strings.EqualFold(left[index], right[index]) {
+		if left[index] != right[index] {
 			return false
 		}
 	}
 	return true
 }
 
-// sidecarVoiceIDs maps names to stable synthetic ids for the shared evidence
-// comparison. The ids never enter storage; they only let a sidecar name set
-// participate in the same equality rule as person rows.
-func sidecarVoiceIDs(names []string) []int64 {
-	names = uniqueSortedCatalogNames(names)
-	ids := make([]int64, 0, len(names))
+// foldCatalogNames compares the same spelling under one case rule. Sorting the
+// displayed strings first would let "Alice/bob" and "alice/Bob" compare in a
+// different order than their folded forms.
+func foldCatalogNames(names []string) []string {
+	seen := map[string]bool{}
+	result := []string{}
 	for _, name := range names {
-		ids = append(ids, catalogNameID(name))
+		folded := strings.ToLower(strings.TrimSpace(name))
+		if folded == "" || seen[folded] {
+			continue
+		}
+		seen[folded] = true
+		result = append(result, folded)
 	}
-	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
-	return ids
-}
-
-// catalogNameID is a stable, collision-resistant mapping from a displayed
-// credit to a comparison id. It is deliberately not a database identity.
-func catalogNameID(name string) int64 {
-	var hash uint64 = 1469598103934665603
-	for _, r := range strings.ToLower(strings.TrimSpace(name)) {
-		hash ^= uint64(r)
-		hash *= 1099511628211
-	}
-	return int64(hash & 0x7fffffffffffffff)
+	sort.Strings(result)
+	return result
 }
 
 // catalogCreditNames loads readable credit names for one work. The caller

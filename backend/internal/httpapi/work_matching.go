@@ -258,11 +258,10 @@ func matchWorkEvidence(a, b workMatchEvidence) workMatchCandidate {
 	// them; names are the only common form for an unregistered catalog card.
 	voiceMatch, voiceEvidence := matchCatalogCredits(a.Voices, b.Voices, a.VoiceNames, b.VoiceNames)
 	if !voiceMatch {
-		// An explicit credit set that differs from the other side's work rows
-		// is contradictory evidence. Two catalog cards without rows are left
-		// for review instead: a readme is user-maintained text and a typo must
-		// not block an otherwise safe candidate.
-		if len(a.Voices) > 0 || len(b.Voices) > 0 {
+		// Only two present, different voice casts contradict each other. A
+		// missing cast on one side is absence of evidence, not a conflict: an
+		// unregistered card normally has no person rows at all.
+		if hasCatalogVoices(a) && hasCatalogVoices(b) {
 			c.Rule = "conflicting_evidence"
 			c.Reasons = append(c.Reasons, "voice_actors")
 		}
@@ -302,6 +301,10 @@ func matchWorkEvidence(a, b workMatchEvidence) workMatchCandidate {
 // row. It only gates the reason label; the equality check already ran.
 func sidecarCreditEvidence(a, b workMatchEvidence) bool {
 	return len(a.Sidecar.VoiceActors) > 0 || len(b.Sidecar.VoiceActors) > 0
+}
+
+func hasCatalogVoices(e workMatchEvidence) bool {
+	return len(e.Voices) > 0 || len(uniqueSortedCatalogNames(e.VoiceNames)) > 0
 }
 
 // matchCatalogCredits compares credits when both sides provide them. Person ids

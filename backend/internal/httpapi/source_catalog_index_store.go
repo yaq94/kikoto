@@ -97,7 +97,7 @@ func (s *Server) persistCatalogPage(ctx context.Context, job workflowJobRecord, 
 				status, errorCode = "failed", "path_limit"
 				break
 			}
-			_, err = tx.ExecContext(ctx, `INSERT INTO source_catalog_observation(file_source_id,directory_path,name,revision,kind,size_bytes,content_hash,publish_pending) VALUES(?,?,?,?,?,?,?,1) ON CONFLICT(file_source_id,directory_path,name) DO UPDATE SET revision=excluded.revision,kind=excluded.kind,size_bytes=excluded.size_bytes,content_hash=excluded.content_hash,published_generation=0,publish_pending=1 WHERE source_catalog_observation.revision<>excluded.revision`, sourceID, d.Path, obj.Name, d.Revision, openlist.Kind(obj.Name, obj.IsDir), obj.Size, obj.ContentHash())
+			_, err = tx.ExecContext(ctx, `INSERT INTO source_catalog_observation(file_source_id,directory_path,name,revision,kind,size_bytes,content_hash,modified_at,publish_pending) VALUES(?,?,?,?,?,?,?,?,1) ON CONFLICT(file_source_id,directory_path,name) DO UPDATE SET revision=excluded.revision,kind=excluded.kind,size_bytes=excluded.size_bytes,content_hash=excluded.content_hash,modified_at=excluded.modified_at,published_generation=0,publish_pending=1 WHERE source_catalog_observation.revision<>excluded.revision`, sourceID, d.Path, obj.Name, d.Revision, openlist.Kind(obj.Name, obj.IsDir), obj.Size, obj.ContentHash(), obj.Modified)
 			if err != nil {
 				return err
 			}
@@ -410,7 +410,7 @@ func (s *Server) publishCatalogBatch(ctx context.Context, job workflowJobRecord,
 	rows, err := tx.QueryContext(ctx, `WITH roots AS MATERIALIZED (
 	SELECT catalog_root FROM source_catalog_audio_root WHERE file_source_id=? AND generation=?
 )
-	SELECT d.path,d.catalog_root,o.name,o.kind,o.size_bytes,o.content_hash,
+	SELECT d.path,d.catalog_root,o.name,o.kind,o.size_bytes,o.content_hash,o.modified_at,
 		-- The split decision belongs to the catalog root, so every row below
 		-- it must see the plan. A format child that read an empty mode used to
 		-- publish its own folder row into the creator card, which then could
@@ -426,13 +426,13 @@ ORDER BY o.directory_path,o.name LIMIT 100`, sourceID, job.RunID, sourceID, job.
 		return 0, err
 	}
 	type publication struct {
-		dir, root, name, kind, hash, split string
-		size                               int64
+		dir, root, name, kind, hash, modified, split string
+		size                                         int64
 	}
 	items := []publication{}
 	for rows.Next() {
 		var p publication
-		if err = rows.Scan(&p.dir, &p.root, &p.name, &p.kind, &p.size, &p.hash, &p.split); err != nil {
+		if err = rows.Scan(&p.dir, &p.root, &p.name, &p.kind, &p.size, &p.hash, &p.modified, &p.split); err != nil {
 			break
 		}
 		items = append(items, p)
@@ -514,7 +514,7 @@ ORDER BY o.directory_path,o.name LIMIT 100`, sourceID, job.RunID, sourceID, job.
 			baseRoot = sourceRoot
 		}
 		rel := strings.TrimPrefix(path.Join(p.dir, p.name), strings.TrimRight(baseRoot, "/")+"/")
-		_, err = tx.ExecContext(ctx, `INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes,content_hash,observed_generation) VALUES(?,?,?,?,?,?,?) ON CONFLICT(catalog_entry_id,relative_path) DO UPDATE SET title=excluded.title,kind=excluded.kind,size_bytes=excluded.size_bytes,content_hash=excluded.content_hash,observed_generation=excluded.observed_generation`, id, rel, p.name, p.kind, p.size, p.hash, job.RunID)
+		_, err = tx.ExecContext(ctx, `INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes,content_hash,modified_at,observed_generation) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(catalog_entry_id,relative_path) DO UPDATE SET title=excluded.title,kind=excluded.kind,size_bytes=excluded.size_bytes,content_hash=excluded.content_hash,modified_at=excluded.modified_at,observed_generation=excluded.observed_generation`, id, rel, p.name, p.kind, p.size, p.hash, p.modified, job.RunID)
 		if err != nil {
 			return 0, err
 		}
@@ -608,15 +608,15 @@ ORDER BY o.directory_path,o.name LIMIT 100`, sourceID, job.RunID, sourceID, job.
 			}
 		}
 	}
+	// Queue credit files in the same transaction that publishes the card, so a
+	// committed card is never forgotten between publication and the reader. The
+	// reads run after commit and never hold this write lock.
+	if err = markCatalogSidecarCandidatesTx(ctx, tx.Tx, publishedIDs, job.RunID); err != nil {
+		return 0, err
+	}
 	if err = tx.Commit(); err != nil {
 		return 0, err
 	}
-	// Sidecar credits belong to the card, not to the page that published it.
-	// The audio rows are committed first, so a slow or failed readme cannot
-	// hold the write transaction or remove a playable card. Only this batch's
-	// cards are considered: scanning the whole generation here made the cost
-	// grow with every published batch.
-	s.refreshCatalogSidecars(ctx, job, sourceID, publishedIDs)
 	return len(items), nil
 }
 

@@ -29,10 +29,12 @@ type catalogEntry struct {
 	Status      string `json:"status"`
 }
 type SourceCatalogFile struct {
-	Path  string `json:"path"`
-	Title string `json:"title"`
-	Kind  string `json:"kind"`
-	Size  int64  `json:"sizeBytes"`
+	Path       string `json:"path"`
+	Title      string `json:"title"`
+	Kind       string `json:"kind"`
+	Size       int64  `json:"sizeBytes"`
+	ModifiedAt string `json:"-"`
+	Generation int64  `json:"-"`
 }
 
 func (s *Server) openListClient(source remoteSourceForUse) *openlist.Client {
@@ -317,7 +319,7 @@ func (s *Server) loadSourceCatalogEntry(ctx context.Context, id int64) (catalogE
 }
 
 func (s *Server) loadSourceCatalogFiles(ctx context.Context, id int64) ([]SourceCatalogFile, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT relative_path,title,kind,size_bytes FROM source_catalog_file WHERE catalog_entry_id=? ORDER BY relative_path`, id)
+	rows, err := s.db.QueryContext(ctx, `SELECT relative_path,title,kind,size_bytes,modified_at,observed_generation FROM source_catalog_file WHERE catalog_entry_id=? ORDER BY relative_path`, id)
 	if err != nil {
 		return nil, err
 	}
@@ -325,7 +327,7 @@ func (s *Server) loadSourceCatalogFiles(ctx context.Context, id int64) ([]Source
 	files := []SourceCatalogFile{}
 	for rows.Next() {
 		var file SourceCatalogFile
-		if err = rows.Scan(&file.Path, &file.Title, &file.Kind, &file.Size); err != nil {
+		if err = rows.Scan(&file.Path, &file.Title, &file.Kind, &file.Size, &file.ModifiedAt, &file.Generation); err != nil {
 			return nil, err
 		}
 		files = append(files, file)
