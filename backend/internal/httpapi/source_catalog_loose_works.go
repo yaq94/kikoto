@@ -28,6 +28,7 @@ const (
 // (N006, B20) is separate: it is not a global work code, but a repeated prefix
 // in one directory means several files belong to the same release.
 var catalogLooseWorkPrefix = regexp.MustCompile(`(?i)^(?:` + workcode.PrefixAlternation + `)[0-9]{5,8}(?:[^0-9A-Za-z]|$)|^[A-Z]{1,4}[0-9]{1,6}(?:[^0-9A-Za-z]|$)`)
+
 // "1of3" and "2 of 3" name a track inside one release. Only the spelled-out
 // form is accepted: a slash would be a path separator, not part of a name.
 var catalogLooseLeadingTrack = regexp.MustCompile(`^[0-9]{1,4}(?:[\s._\-]*of[\s._\-]*[0-9]{1,4})?(?:[\s._\-、]+|$)`)
@@ -35,9 +36,43 @@ var catalogLooseTrailingTrack = regexp.MustCompile(`[\s._\-（(【\[]+[0-9]{1,4}
 var catalogLooseTrailingNumber = regexp.MustCompile(`[0-9]{1,4}[\s._\-）)】\]]*$`)
 var catalogNumberedTrackPrefix = regexp.MustCompile(`^([0-9]{1,4})(?:[\s._\-]*of[\s._\-]*([0-9]{1,4}))?(?:[\s._\-、]|$)`)
 var catalogPrefixedTrack = regexp.MustCompile(`^[\s._\-、]*([0-9]{1,3})(?:[\s._\-、]|$)`)
+
 // A volume marker keeps its number in the title. Vol.1 and Vol.2 are separate
 // releases, unlike Title 1 and Title 2, which are tracks of one release.
 var catalogLooseVolumeMarker = regexp.MustCompile(`(?i)(?:^|[\s._\-（(【\[])(?:vol(?:ume)?)\.?\s*[0-9]{1,4}\s*$`)
+
+// A calendar year at either end of a name is part of the title. Without this
+// guard 2021 Live and 2022 Live both reduce to "live" and merge into one card,
+// and a release dated only by its year loses its identity.
+var catalogLooseLeadingYear = regexp.MustCompile(`^(?:19|20)[0-9]{2}(?:[\s._\-、:：]|$)`)
+var catalogLooseTrailingYear = regexp.MustCompile(`(?:^|[\s._\-（(【\[])(?:19|20)[0-9]{2}\s*[）)】\]]*$`)
+
+// Disc, CD and Part number the pieces of one release. They are neither work
+// codes nor track numbers: Disc1 Opening and Disc2 Ending are one card, while
+// Vol.1 and Vol.2 stay separate releases.
+var catalogLooseLeadingDisc = regexp.MustCompile(`(?i)^(?:disc|disk|cd|part|chapter|track|scene)\s*[0-9]{1,3}(?:[\s._\-、:：]+|$)`)
+var catalogStructuredTrackPrefix = regexp.MustCompile(`(?i)^(disc|disk|cd|part|chapter|track|scene)\s*([0-9]{1,3})(?:[\s._\-、:：]+|$)`)
+
+// A trailing part word names one half of a release. 表妹上 and 表妹下 are two
+// files of one work; the same is true for 前編/後編 and card markers. The
+// marker is only removed when both halves are present in one directory, so a
+// lone title ending in 上 or 下 keeps its own identity.
+var catalogLoosePartSuffix = regexp.MustCompile(`(?i)^(.*?)(?:[\s._\-（(【\[]*(前編|後編|前编|后编|前篇|后篇|上巻|下巻|上卷|下卷|上|下|前|后|後)|[\s._\-（(【\[]+(?:part|disc|disk|cd|chapter|track|scene)\s*([0-9]{1,3}))\s*[）)】\]]*$`)
+
+var catalogPartFirstWords = map[string]bool{
+	"上": true, "前": true, "前編": true, "前编": true, "前篇": true, "上巻": true, "上卷": true,
+}
+var catalogPartSecondWords = map[string]bool{
+	"下": true, "后": true, "後": true, "後編": true, "后编": true, "后篇": true, "下巻": true, "下卷": true,
+}
+
+// Words that number a piece of a release rather than identify a work. They
+// must not become a work prefix: Disc1 and Disc2 are two halves of one work,
+// not two works.
+var catalogStructuralPrefixWords = map[string]bool{
+	"disc": true, "disk": true, "cd": true, "part": true,
+	"vol": true, "volume": true, "chapter": true, "track": true, "scene": true,
+}
 
 // catalogWorkSplitMode decides how one directory's direct audio is published.
 // The decision is taken once, when the directory listing first completes.
@@ -59,7 +94,7 @@ func catalogWorkSplitModeNames(names []string) string {
 	// set of date-only names is also all digits but is not a sequence: 20210104
 	// and 20210110 are separate recordings, so require an ordered run rather
 	// than testing the stem shape alone.
-	if catalogNumberedTrackRun(names) {
+	if catalogNumberedTrackRun(names) || catalogStructuredTrackRun(names) {
 		return catalogWorkSplitSingle
 	}
 	prefixes := map[string]int{}
@@ -108,7 +143,7 @@ func catalogNumberedTrackRun(names []string) bool {
 			return false
 		}
 		position, err := strconv.Atoi(match[1])
-		if err != nil || position <= 0 || position > 999 {
+		if err != nil || position < 0 || position > 999 {
 			return false
 		}
 		// A stated total must be the same on every file; "1 of 2" next to
@@ -128,14 +163,66 @@ func catalogNumberedTrackRun(names []string) bool {
 		positions = append(positions, position)
 	}
 	sort.Ints(positions)
-	if positions[0] != 1 {
+	if positions[0] > 1 {
 		// A year or a high counter is not a track listing. A genuine run
-		// starts at the first track; a missing start means the number is
-		// part of the title, not the only discriminator.
+		// starts at the first track (00 is an accepted prelude); a missing
+		// start means the number is part of the title.
 		return false
 	}
 	for i, position := range positions {
-		if position != i+1 {
+		if position != positions[0]+i {
+			return false
+		}
+	}
+	return true
+}
+
+// catalogStructuredTrackRun reports a directory whose files are all numbered
+// parts of one release (Disc1/Disc2, CD1/CD2, Part1/Part2). The parts may have
+// different titles, so the run itself is the evidence that they belong
+// together. A gap or a mix of marker words keeps them on the ordinary rule.
+// A work prefix may precede the marker (B20 Disc1).
+func catalogStructuredTrackRun(names []string) bool {
+	if len(names) < 2 {
+		return false
+	}
+	prefix := ""
+	word := ""
+	positions := make([]int, 0, len(names))
+	for _, name := range names {
+		stem := strings.TrimSpace(catalogFileStem(name))
+		workPrefix := catalogWorkPrefix(name)
+		rest := stem
+		if workPrefix != "" && len(stem) >= len(workPrefix) && strings.EqualFold(stem[:len(workPrefix)], workPrefix) {
+			rest = strings.TrimLeft(stem[len(workPrefix):], " ._-、")
+		}
+		match := catalogStructuredTrackPrefix.FindStringSubmatch(rest)
+		if match == nil {
+			return false
+		}
+		if prefix == "" {
+			prefix = workPrefix
+		} else if !strings.EqualFold(prefix, workPrefix) {
+			return false
+		}
+		current := strings.ToLower(match[1])
+		if word == "" {
+			word = current
+		} else if word != current {
+			return false
+		}
+		position, err := strconv.Atoi(match[2])
+		if err != nil || position > 999 {
+			return false
+		}
+		positions = append(positions, position)
+	}
+	sort.Ints(positions)
+	if positions[0] > 1 {
+		return false
+	}
+	for i, position := range positions {
+		if position != positions[0]+i {
 			return false
 		}
 	}
@@ -155,12 +242,16 @@ func catalogBaseTitle(name string) string {
 		// The number belongs to the title, so the whole stem is the identity.
 		return strings.Join(strings.Fields(original), " ")
 	}
-	stem := catalogLooseLeadingTrack.ReplaceAllString(original, "")
-	trimmed := strings.TrimSpace(catalogLooseTrailingTrack.ReplaceAllString(stem, ""))
+	stem := original
+	if !catalogLooseLeadingYear.MatchString(stem) {
+		stem = catalogLooseLeadingTrack.ReplaceAllString(stem, "")
+	}
+	stem = catalogStripLeadingDisc(stem)
+	trimmed := strings.TrimSpace(catalogStripTrailingTrack(stem))
 	if trimmed == stem {
 		// Titles such as Example Episode1 and Example Episode2 are episodes of
 		// one work even without a separator before the number.
-		trimmed = strings.TrimSpace(catalogLooseTrailingNumber.ReplaceAllString(stem, ""))
+		trimmed = strings.TrimSpace(catalogStripTrailingNumber(stem))
 	}
 	trimmed = strings.TrimRight(trimmed, " ._-（(【[")
 	// A number is not a title. Without this guard a date or a bare counter is
@@ -173,6 +264,37 @@ func catalogBaseTitle(name string) string {
 	return strings.Join(strings.Fields(trimmed), " ")
 }
 
+// catalogStripLeadingDisc removes a leading disc or part marker when a real
+// title follows. A bare marker keeps its stem because there is no identity to
+// share with another file.
+func catalogStripLeadingDisc(stem string) string {
+	match := catalogLooseLeadingDisc.FindString(stem)
+	if match == "" {
+		return stem
+	}
+	rest := strings.TrimSpace(stem[len(match):])
+	if !catalogHasLetter(rest) {
+		return stem
+	}
+	return rest
+}
+
+// catalogStripTrailingTrack removes a trailing track number unless it is a
+// calendar year, which is part of the title.
+func catalogStripTrailingTrack(stem string) string {
+	if catalogLooseTrailingYear.MatchString(stem) {
+		return stem
+	}
+	return catalogLooseTrailingTrack.ReplaceAllString(stem, "")
+}
+
+func catalogStripTrailingNumber(stem string) string {
+	if catalogLooseTrailingYear.MatchString(stem) {
+		return stem
+	}
+	return catalogLooseTrailingNumber.ReplaceAllString(stem, "")
+}
+
 func catalogHasLetter(value string) bool {
 	for _, r := range value {
 		if unicode.IsLetter(r) {
@@ -180,6 +302,157 @@ func catalogHasLetter(value string) bool {
 		}
 	}
 	return false
+}
+
+// catalogPartTitle splits a base title into the shared work title and the half
+// of the release named by its suffix. It reports rank 1 for the opening half
+// and rank 2 for the closing half; a numeric part keeps its own rank (zero for
+// a third or later part). The caller only merges when one directory contains
+// both an opening and a closing half.
+func catalogPartTitle(name string) (string, int, bool) {
+	base := catalogBaseTitle(name)
+	match := catalogLoosePartSuffix.FindStringSubmatch(base)
+	if match == nil {
+		return "", 0, false
+	}
+	neutral := strings.TrimSpace(strings.TrimRight(match[1], " ._-（(【["))
+	if neutral == "" || !catalogHasLetter(neutral) {
+		return "", 0, false
+	}
+	// A one-character stem followed by 上/下/前/后 is usually an ordinary word
+	// (之前 and 之后, 早上), not two halves of a release. Require a real title
+	// before folding an unseparated single-character marker.
+	if match[3] == "" && len([]rune(neutral)) < 2 {
+		return "", 0, false
+	}
+	if match[3] != "" {
+		position, err := strconv.Atoi(match[3])
+		if err != nil {
+			return "", 0, false
+		}
+		switch position {
+		case 1:
+			return neutral, 1, true
+		case 2:
+			return neutral, 2, true
+		default:
+			return neutral, 0, true
+		}
+	}
+	word := strings.ToLower(match[2])
+	switch {
+	case catalogPartFirstWords[word]:
+		return neutral, 1, true
+	case catalogPartSecondWords[word]:
+		return neutral, 2, true
+	}
+	return "", 0, false
+}
+
+// catalogPartFold names the files whose trailing part marker is shared with the
+// other half of the same release. A directory that only contains one file
+// ending in 上 keeps it; a pair of 上 and 下 collapses to the shared title.
+func catalogPartFold(names []string) map[string]string {
+	type partTitle struct {
+		neutral string
+		rank    int
+	}
+	parts := map[string]partTitle{}
+	ranks := map[string]map[int]bool{}
+	for _, name := range names {
+		neutral, rank, ok := catalogPartTitle(name)
+		if !ok {
+			continue
+		}
+		parts[name] = partTitle{neutral: neutral, rank: rank}
+		if ranks[neutral] == nil {
+			ranks[neutral] = map[int]bool{}
+		}
+		ranks[neutral][rank] = true
+	}
+	folded := map[string]string{}
+	for name, part := range parts {
+		if observed := ranks[part.neutral]; observed[1] && observed[2] {
+			folded[name] = part.neutral
+		}
+	}
+	return folded
+}
+
+// catalogStructuredRuns groups files that number the pieces of one release.
+// The marker may follow a work prefix (RJ... Disc1 Opening) or stand alone
+// (Disc1 Opening). Only a complete run with unique positions is evidence; a
+// duplicate Disc1 in one folder is two releases, so it keeps the ordinary
+// title rule instead of silently merging them.
+func catalogStructuredRuns(names []string) map[string]string {
+	type entry struct {
+		name     string
+		prefix   string
+		word     string
+		position int
+	}
+	entries := []entry{}
+	for _, name := range names {
+		stem := strings.TrimSpace(catalogFileStem(name))
+		prefix := catalogWorkPrefix(name)
+		rest := stem
+		if prefix != "" && len(stem) >= len(prefix) && strings.EqualFold(stem[:len(prefix)], prefix) {
+			rest = strings.TrimLeft(stem[len(prefix):], " ._-、")
+		}
+		match := catalogStructuredTrackPrefix.FindStringSubmatch(rest)
+		if match == nil {
+			continue
+		}
+		position, err := strconv.Atoi(match[2])
+		if err != nil || position > 999 {
+			continue
+		}
+		entries = append(entries, entry{name: name, prefix: prefix, word: strings.ToLower(match[1]), position: position})
+	}
+	type runKey struct{ prefix, word string }
+	grouped := map[runKey][]entry{}
+	for _, item := range entries {
+		key := runKey{item.prefix, item.word}
+		grouped[key] = append(grouped[key], item)
+	}
+	result := map[string]string{}
+	for key, group := range grouped {
+		if len(group) < 2 {
+			continue
+		}
+		positions := make([]int, 0, len(group))
+		seen := map[int]bool{}
+		for _, item := range group {
+			if seen[item.position] {
+				positions = nil
+				break
+			}
+			seen[item.position] = true
+			positions = append(positions, item.position)
+		}
+		sort.Ints(positions)
+		if len(positions) == 0 || positions[0] > 1 {
+			continue
+		}
+		complete := true
+		for i, position := range positions {
+			if position != positions[0]+i {
+				complete = false
+				break
+			}
+		}
+		if !complete {
+			continue
+		}
+		cardKey := "structured:" + key.word
+		if key.prefix != "" {
+			cardKey = key.prefix
+		}
+		for _, item := range group {
+			result[item.name] = cardKey
+		}
+	}
+	return result
 }
 
 func catalogWorkPrefix(name string) string {
@@ -197,7 +470,12 @@ func catalogWorkPrefix(name string) string {
 	if end == 0 {
 		return ""
 	}
-	return strings.ToUpper(match[:end])
+	prefix := strings.ToUpper(match[:end])
+	word := strings.TrimRightFunc(prefix, func(r rune) bool { return unicode.IsDigit(r) })
+	if catalogStructuralPrefixWords[strings.ToLower(strings.TrimSpace(word))] {
+		return ""
+	}
+	return prefix
 }
 
 // catalogLooseGrouping is the work partition of one directory listing. It is
@@ -206,6 +484,8 @@ func catalogWorkPrefix(name string) string {
 type catalogLooseGrouping struct {
 	mode          string
 	splitPrefixes map[string]bool
+	partFold      map[string]string
+	structured    map[string]string
 }
 
 // newCatalogLooseGrouping decides whether a repeated work prefix names one
@@ -218,6 +498,8 @@ func newCatalogLooseGrouping(names []string, mode string) catalogLooseGrouping {
 	grouping := catalogLooseGrouping{
 		mode:          mode,
 		splitPrefixes: map[string]bool{},
+		partFold:      catalogPartFold(names),
+		structured:    catalogStructuredRuns(names),
 	}
 	if mode == catalogWorkSplitPrefix {
 		byPrefix := map[string][]string{}
@@ -227,7 +509,7 @@ func newCatalogLooseGrouping(names []string, mode string) catalogLooseGrouping {
 			}
 		}
 		for prefix, group := range byPrefix {
-			if !catalogPrefixFilesStayTogether(prefix, group) {
+			if !catalogPrefixFilesStayTogether(prefix, group, grouping.partFold) {
 				grouping.splitPrefixes[prefix] = true
 			}
 		}
@@ -235,9 +517,13 @@ func newCatalogLooseGrouping(names []string, mode string) catalogLooseGrouping {
 	return grouping
 }
 
-func catalogPrefixFilesStayTogether(prefix string, names []string) bool {
+func catalogPrefixFilesStayTogether(prefix string, names []string, folded map[string]string) bool {
 	bases := map[string]bool{}
 	for _, name := range names {
+		if neutral, ok := folded[name]; ok {
+			bases[neutral] = true
+			continue
+		}
 		bases[catalogBaseTitle(name)] = true
 	}
 	if len(bases) == 1 {
@@ -255,17 +541,17 @@ func catalogPrefixFilesStayTogether(prefix string, names []string) bool {
 			return false
 		}
 		position, err := strconv.Atoi(match[1])
-		if err != nil || position <= 0 {
+		if err != nil || position < 0 {
 			return false
 		}
 		positions = append(positions, position)
 	}
 	sort.Ints(positions)
-	if positions[0] != 1 {
+	if positions[0] > 1 {
 		return false
 	}
 	for i, position := range positions {
-		if position != i+1 {
+		if position != positions[0]+i {
 			return false
 		}
 	}
@@ -273,6 +559,22 @@ func catalogPrefixFilesStayTogether(prefix string, names []string) bool {
 }
 
 func (g catalogLooseGrouping) keyFor(name string) string {
+	// Numbered discs, CDs and parts of one release share a card. The marker is
+	// checked before the work prefix because RJ... Disc1 and RJ... Disc2 are
+	// one release, not two works with the same prefix.
+	if key, ok := g.structured[name]; ok {
+		return key
+	}
+	// A paired part marker is not part of the work identity: both halves keep
+	// one key. The folded value already contains the work prefix and title.
+	if neutral, ok := g.partFold[name]; ok {
+		if g.mode == catalogWorkSplitPrefix {
+			if prefix := catalogWorkPrefix(name); prefix != "" && strings.EqualFold(strings.TrimSpace(neutral), prefix) {
+				return prefix
+			}
+		}
+		return neutral
+	}
 	if g.mode == catalogWorkSplitPrefix {
 		prefix := catalogWorkPrefix(name)
 		if prefix == "" {
@@ -539,23 +841,121 @@ func retireCatalogSplitParentTx(ctx context.Context, tx *sql.Tx, sourceID int64,
 	if err != nil {
 		return err
 	}
+	// A directory card is a container, so any alias of it names the directory,
+	// not one of the works inside. Re-pointing such an alias to an arbitrary
+	// split card would move a personal record to an unrelated work; the parent
+	// stays as a hidden alias until an explicit decision names a work.
 	if workID.Valid || series != 0 || relocated != 0 || id == targetID {
 		return nil
 	}
-	if _, err = tx.ExecContext(ctx, `UPDATE source_catalog_entry SET file_source_id=NULL,relocated_to_id=?,updated_at=CURRENT_TIMESTAMP WHERE id=?`, targetID, id); err != nil {
+	return retireCatalogCardTx(ctx, tx, id, targetID)
+}
+
+// retireCatalogCardTx retires one card after re-pointing any card that was
+// relocated to it. The alias rows keep their id, so every personal record that
+// references the alias stays resolvable; only the shared target changes.
+func retireCatalogCardTx(ctx context.Context, tx *sql.Tx, id, targetID int64) error {
+	if targetID != 0 && targetID != id {
+		if _, err := tx.ExecContext(ctx, `UPDATE source_catalog_entry SET relocated_to_id=? WHERE relocated_to_id=? AND id<>?`, targetID, id, targetID); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE source_catalog_entry SET file_source_id=NULL,relocated_to_id=?,updated_at=CURRENT_TIMESTAMP WHERE id=?`, nullIfZero(targetID), id); err != nil {
 		return err
 	}
-	_, err = tx.ExecContext(ctx, `DELETE FROM source_catalog_file WHERE catalog_entry_id=?`, id)
+	_, err := tx.ExecContext(ctx, `DELETE FROM source_catalog_file WHERE catalog_entry_id=?`, id)
 	return err
+}
+
+func nullIfZero(value int64) any {
+	if value == 0 {
+		return nil
+	}
+	return value
+}
+
+// replacementCatalogCardTx reports the current card that inherited a stale
+// card's identity. A split card is named after the lexicographically first file
+// in its group, so that file is the card's identity evidence. If the current
+// generation publishes exactly one card for the same relative path, that card
+// took over the identity; if the path is gone or several cards claim it, the
+// evidence does not name a replacement and the caller leaves the stale card for
+// review. A container card has no identity file and is handled by
+// retireCatalogSplitParentTx instead.
+func replacementCatalogCardTx(ctx context.Context, tx *sql.Tx, sourceID, generation int64, parentRoot string, staleID int64) (int64, error) {
+	var title string
+	if err := tx.QueryRowContext(ctx, `SELECT title FROM source_catalog_entry WHERE id=?`, staleID).Scan(&title); err != nil {
+		return 0, err
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT relative_path FROM source_catalog_file
+		WHERE catalog_entry_id=? AND kind='audio' ORDER BY relative_path`, staleID)
+	if err != nil {
+		return 0, err
+	}
+	identityPath := ""
+	var readErr error
+	for rows.Next() {
+		var relativePath string
+		if err = rows.Scan(&relativePath); err != nil {
+			break
+		}
+		if identityPath == "" && strings.EqualFold(catalogFileStem(relativePath), title) {
+			identityPath = relativePath
+		}
+	}
+	readErr = rows.Err()
+	_ = rows.Close()
+	if err != nil {
+		return 0, err
+	}
+	if readErr != nil {
+		return 0, readErr
+	}
+	if identityPath == "" {
+		// The title is not one of this card's file stems, so the card was a
+		// directory container and has no work identity to transfer.
+		return 0, nil
+	}
+	rows, err = tx.QueryContext(ctx, `SELECT e.id FROM source_catalog_entry e
+		JOIN source_catalog_file f ON f.catalog_entry_id=e.id
+		WHERE e.file_source_id=? AND e.last_seen_generation=? AND e.id<>?
+			AND (e.source_root=? OR e.root_path=?)
+			AND f.relative_path=? AND f.kind='audio'
+		ORDER BY e.id LIMIT 2`, sourceID, generation, staleID, parentRoot, parentRoot, identityPath)
+	if err != nil {
+		return 0, err
+	}
+	candidates := []int64{}
+	for rows.Next() {
+		var id int64
+		if err = rows.Scan(&id); err != nil {
+			break
+		}
+		candidates = append(candidates, id)
+	}
+	readErr = rows.Err()
+	_ = rows.Close()
+	if err != nil {
+		return 0, err
+	}
+	if readErr != nil {
+		return 0, readErr
+	}
+	if len(candidates) == 1 {
+		return candidates[0], nil
+	}
+	// The identity file is gone or several current cards claim it. Keep the old
+	// card instead of guessing.
+	return 0, nil
 }
 
 // retireStaleSplitCardsTx hides split cards for this root that the current
 // generation did not publish. A directory that used to hold separate works can
 // become one audiobook (or change its grouping); the old cards would otherwise
-// stay visible beside the new one. A card with a work, a series member, or a
-// relocation target keeps its identity and is left for explicit review. The
-// retired row keeps file_source_id NULL and no target: the old card is gone,
-// but its id stays resolvable for personal records.
+// stay visible beside the new one. A card with a work or a series member keeps
+// its identity and is left for explicit review. An alias child is re-pointed to
+// the card that inherited the files, so the old card can retire without
+// stranding the child's personal records.
 func retireStaleSplitCardsTx(ctx context.Context, tx *sql.Tx, sourceID, generation int64, parentRoot string, keep map[int64]bool) error {
 	// The parent card of a former split has source_root='' while its split
 	// cards carry the real directory. Include both shapes so a split -> single
@@ -588,17 +988,27 @@ func retireStaleSplitCardsTx(ctx context.Context, tx *sql.Tx, sourceID, generati
 		var blocked int
 		if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM source_catalog_entry e WHERE e.id=? AND (
 			e.work_id IS NOT NULL
-			OR EXISTS(SELECT 1 FROM catalog_series_member m WHERE m.catalog_entry_id=e.id)
-			OR EXISTS(SELECT 1 FROM source_catalog_entry r WHERE r.relocated_to_id=e.id)))`, id).Scan(&blocked); err != nil {
+			OR EXISTS(SELECT 1 FROM catalog_series_member m WHERE m.catalog_entry_id=e.id)))`, id).Scan(&blocked); err != nil {
 			return err
 		}
 		if blocked != 0 {
 			continue
 		}
-		if _, err = tx.ExecContext(ctx, `DELETE FROM source_catalog_file WHERE catalog_entry_id=?`, id); err != nil {
+		var children int
+		if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM source_catalog_entry WHERE relocated_to_id=?`, id).Scan(&children); err != nil {
 			return err
 		}
-		if _, err = tx.ExecContext(ctx, `UPDATE source_catalog_entry SET file_source_id=NULL,relocated_to_id=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=?`, id); err != nil {
+		target, err := replacementCatalogCardTx(ctx, tx, sourceID, generation, parentRoot, id)
+		if err != nil {
+			return err
+		}
+		if children != 0 && target == 0 {
+			// The old card still anchors aliases but no current card carries
+			// its works. Retiring it would strand those aliases, so leave the
+			// conflict visible for review instead of guessing a target.
+			continue
+		}
+		if err = retireCatalogCardTx(ctx, tx, id, target); err != nil {
 			return err
 		}
 	}

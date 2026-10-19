@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -94,6 +95,27 @@ func (f *looseWorkFixture) tracks(t *testing.T, card map[string]any) []any {
 	id := strconv.Itoa(int(card["catalogEntryId"].(float64)))
 	body := reviewRequest(t, f.handler, f.cookie, http.MethodGet, "/api/source-catalog/"+id+"/tracks", "", 200)
 	return body["tracks"].([]any)
+}
+
+// indexCreator publishes one creator directory through the real index route and
+// returns the directory's audio names. Every grouping test below starts from
+// this entry point so an internal mode function alone can never pass while the
+// published cards are wrong.
+func indexCreator(t *testing.T, names []string) (*looseWorkFixture, map[string]map[string]any) {
+	t.Helper()
+	items := make([]map[string]any, 0, len(names))
+	for _, name := range names {
+		items = append(items, looseAudio(name))
+	}
+	f := newLooseWorkFixture(t, map[string][]map[string]any{
+		"/":        {looseDir("Creator")},
+		"/Creator": items,
+	})
+	f.request(t, http.MethodPost, "/catalog/index", `{"intervalMs":100}`, 202)
+	if p := f.drain(t); p["status"] != "complete" {
+		t.Fatalf("scan = %#v", p)
+	}
+	return f, f.cards(t)
 }
 
 // A pure numeric run is one audiobook with many episodes, not many works.
@@ -536,6 +558,212 @@ func TestCatalogWorkSplitModeGroupsSingleRepeatedReleaseCode(t *testing.T) {
 	names := []string{"RJ00000001 上.mp3", "RJ00000001 下.mp3"}
 	if got := catalogWorkSplitModeNames(names); got != catalogWorkSplitPrefix {
 		t.Fatalf("split mode = %q, want prefix for one repeated release code", got)
+	}
+}
+
+// The split rules are only useful when the published cards follow them. Each
+// case below indexes a real creator directory and counts the cards and tracks
+// the API returns, so an internal predicate that disagrees with publication
+// fails the test.
+func TestSourceCatalogSplitRulesPublishExpectedCards(t *testing.T) {
+	cases := []struct {
+		name   string
+		names  []string
+		cards  int
+		tracks int
+		titles []string
+	}{
+		{
+			name:   "paired release halves",
+			names:  []string{"RJ00000001 上.mp3", "RJ00000001 下.mp3"},
+			cards:  1,
+			tracks: 2,
+			titles: []string{"RJ00000001 上"},
+		},
+		{
+			name:   "disc markers",
+			names:  []string{"Disc1 Opening.mp3", "Disc2 Ending.mp3"},
+			cards:  1,
+			tracks: 2,
+			titles: []string{"Creator"},
+		},
+		{
+			name:   "cd markers",
+			names:  []string{"CD1 First.mp3", "CD2 Second.mp3"},
+			cards:  1,
+			tracks: 2,
+			titles: []string{"Creator"},
+		},
+		{
+			name:   "part markers",
+			names:  []string{"Part1 First.mp3", "Part2 Second.mp3"},
+			cards:  1,
+			tracks: 2,
+			titles: []string{"Creator"},
+		},
+		{
+			name:   "disc markers with a work code",
+			names:  []string{"B20 Disc1 First.mp3", "B20 Disc2 Second.mp3"},
+			cards:  1,
+			tracks: 2,
+			titles: []string{"Creator"},
+		},
+		{
+			name:   "year is part of the title",
+			names:  []string{"2021 Live.mp3", "2022 Live.mp3"},
+			cards:  2,
+			tracks: 1,
+			titles: []string{"2021 Live", "2022 Live"},
+		},
+		{
+			name:   "volumes stay separate",
+			names:  []string{"作品 Vol.1.mp3", "作品 Vol.2.mp3"},
+			cards:  2,
+			tracks: 1,
+			titles: []string{"作品 Vol.1", "作品 Vol.2"},
+		},
+		{
+			name:   "of total tracks",
+			names:  []string{"1of3 Title.mp3", "2of3 Title.mp3", "3of3 Title.mp3"},
+			cards:  1,
+			tracks: 3,
+			titles: []string{"Creator"},
+		},
+		{
+			name:   "zero prelude with numbered tracks",
+			names:  []string{"00 Intro.mp3", "01 Main.mp3", "02 End.mp3"},
+			cards:  1,
+			tracks: 3,
+			titles: []string{"Creator"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f, cards := indexCreator(t, tc.names)
+			if len(cards) != tc.cards {
+				t.Fatalf("cards=%d, want %d: %v", len(cards), tc.cards, cards)
+			}
+			for _, title := range tc.titles {
+				card := cards[title]
+				if card == nil {
+					t.Fatalf("missing card %q in %v", title, cards)
+				}
+				if got := len(f.tracks(t, card)); got != tc.tracks {
+					t.Fatalf("%s tracks=%d, want %d", title, got, tc.tracks)
+				}
+			}
+		})
+	}
+}
+
+// A single-character trailing 上/下 is part of an ordinary word unless the
+// directory pairs it with the other half. 之前 and 之后 are two recordings, not
+// two halves of one release.
+func TestSourceCatalogSingleCharacterPartWordsStayDistinct(t *testing.T) {
+	_, cards := indexCreator(t, []string{"之前.mp3", "之后.mp3"})
+	if len(cards) != 2 {
+		t.Fatalf("cards=%d, want two recordings: %v", len(cards), cards)
+	}
+	for _, title := range []string{"之前", "之后"} {
+		if cards[title] == nil {
+			t.Fatalf("missing recording %q in %v", title, cards)
+		}
+	}
+}
+
+// A grouping change publishes a new card key for files an older card already
+// owned. The older card can carry alias children from an earlier relocation.
+// Its aliases must move to the card that took over the same files, and the old
+// card must retire, otherwise the same work stays visible twice.
+func TestSourceCatalogStaleSplitCardMovesAliasesToItsReplacement(t *testing.T) {
+	f, cards := indexCreator(t, []string{"N006-1 First.mp3", "N006-2 Second.mp3"})
+	if len(cards) != 1 {
+		t.Fatalf("cards=%d, want one split card: %v", len(cards), cards)
+	}
+	current := int64(cards["N006-1 First"]["catalogEntryId"].(float64))
+	// Rebuild the state a previous generation leaves behind: an old split card
+	// that owned exactly these files, plus an alias child that points at it.
+	if _, err := f.server.db.Exec(`INSERT INTO source_catalog_entry(id,file_source_id,root_path,source_root,title,last_seen_generation)
+			VALUES(900,1,'/Creator::old-key','/Creator','N006-1 First',0);
+		INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes,observed_generation)
+			VALUES(900,'N006-1 First.mp3','N006-1 First.mp3','audio',100,0),
+				(900,'N006-2 Second.mp3','N006-2 Second.mp3','audio',100,0);
+		INSERT INTO source_catalog_entry(id,root_path,title,relocated_to_id)
+			VALUES(901,'/Creator::legacy-alias','N006-1 First',900);`); err != nil {
+		t.Fatal(err)
+	}
+	f.request(t, http.MethodPost, "/catalog/index", `{"intervalMs":100,"force":true}`, 202)
+	if p := f.drain(t); p["status"] != "complete" {
+		t.Fatalf("rescan = %#v", p)
+	}
+	after := f.cards(t)
+	if len(after) != 1 || after["N006-1 First"] == nil {
+		t.Fatalf("visible cards after retirement = %v, want one card", after)
+	}
+	var sourceID sql.NullInt64
+	var relocated sql.NullInt64
+	if err := f.server.db.QueryRow(`SELECT file_source_id,relocated_to_id FROM source_catalog_entry WHERE id=900`).Scan(&sourceID, &relocated); err != nil {
+		t.Fatal(err)
+	}
+	if sourceID.Valid || !relocated.Valid || relocated.Int64 != current {
+		t.Fatalf("stale card was not retired to the current card: source=%v relocated=%v want=%d", sourceID, relocated, current)
+	}
+	if err := f.server.db.QueryRow(`SELECT relocated_to_id FROM source_catalog_entry WHERE id=901`).Scan(&relocated); err != nil {
+		t.Fatal(err)
+	}
+	if !relocated.Valid || relocated.Int64 != current {
+		t.Fatalf("alias child still points at %v, want the current card %d", relocated, current)
+	}
+	// The id is what personal records reference, so it must survive the move.
+	var refs int
+	if err := f.server.db.QueryRow(`SELECT count(*) FROM personal_transfer_ref WHERE catalog_entry_id=901`).Scan(&refs); err != nil {
+		t.Fatal(err)
+	}
+	if refs != 1 {
+		t.Fatalf("alias personal refs=%d, want the original id kept", refs)
+	}
+	var files int
+	if err := f.server.db.QueryRow(`SELECT count(*) FROM source_catalog_file WHERE catalog_entry_id=900`).Scan(&files); err != nil {
+		t.Fatal(err)
+	}
+	if files != 0 {
+		t.Fatalf("retired card kept %d file rows", files)
+	}
+}
+
+// A stale card whose identity file no longer belongs to any current card has no
+// named replacement. Its aliases stay put instead of being reassigned to an
+// unrelated work merely to make the duplicate disappear.
+func TestSourceCatalogStaleSplitCardWithoutSingleReplacementKeepsAliases(t *testing.T) {
+	f, cards := indexCreator(t, []string{"N006-1 First.mp3", "N006-2 Second.mp3"})
+	if len(cards) != 1 {
+		t.Fatalf("cards=%d, want one split card: %v", len(cards), cards)
+	}
+	if _, err := f.server.db.Exec(`INSERT INTO source_catalog_entry(id,file_source_id,root_path,source_root,title,last_seen_generation)
+			VALUES(910,1,'/Creator::old-key','/Creator','Removed Work',0);
+		INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes,observed_generation)
+			VALUES(910,'Removed Work.mp3','Removed Work.mp3','audio',100,0);
+		INSERT INTO source_catalog_entry(id,root_path,title,relocated_to_id)
+			VALUES(911,'/Creator::legacy-alias','Removed Work',910);`); err != nil {
+		t.Fatal(err)
+	}
+	f.request(t, http.MethodPost, "/catalog/index", `{"intervalMs":100,"force":true}`, 202)
+	if p := f.drain(t); p["status"] != "complete" {
+		t.Fatalf("rescan = %#v", p)
+	}
+	var sourceID sql.NullInt64
+	if err := f.server.db.QueryRow(`SELECT file_source_id FROM source_catalog_entry WHERE id=910`).Scan(&sourceID); err != nil {
+		t.Fatal(err)
+	}
+	if !sourceID.Valid {
+		t.Fatal("a stale card without a named replacement was retired anyway")
+	}
+	var relocated sql.NullInt64
+	if err := f.server.db.QueryRow(`SELECT relocated_to_id FROM source_catalog_entry WHERE id=911`).Scan(&relocated); err != nil {
+		t.Fatal(err)
+	}
+	if !relocated.Valid || relocated.Int64 != 910 {
+		t.Fatalf("alias child moved to %v without evidence", relocated)
 	}
 }
 
