@@ -154,6 +154,10 @@ export function FavoritesPage({ active = true }: { active?: boolean }) {
   const [worksSnapshotUserID, setWorksSnapshotUserID] = useState<number | null>(null);
   const [worksLoadError, setWorksLoadError] = useState("");
   const [worksReloadToken, setWorksReloadToken] = useState(0);
+  // Shelf artwork follows shelf membership, not the header count. The count
+  // arrives one request after the artwork's own key, so keying the covers on
+  // it would refetch an unchanged shelf a second time.
+  const [shelfCoversToken, setShelfCoversToken] = useState(0);
   const [shelfCountsUserID, setShelfCountsUserID] = useState<number | null>(null);
   const [listEditor, setListEditor] = useState<FavoriteList | "new" | null>(null);
   const [deleteListTarget, setDeleteListTarget] = useState<FavoriteList | null>(null);
@@ -485,8 +489,10 @@ export function FavoritesPage({ active = true }: { active?: boolean }) {
       favoriteEntity === "works" &&
       (hasWorksSnapshot || shelfCountsUserID === principalID),
     listID: activeList,
-    // The shelf total follows membership changes that do not reload the works.
-    requestKey: `${principalID ?? "anonymous"}:${worksReloadToken}:${shelfTotal}`,
+    // Membership changes bump this token. The total is not a membership
+    // signal: it arrives from a second request, so including it would fetch
+    // the same shelf again after every first load and every filter refresh.
+    requestKey: `${principalID ?? "anonymous"}:${worksReloadToken}:${shelfCoversToken}`,
   });
 
   useEffect(() => {
@@ -626,6 +632,10 @@ export function FavoritesPage({ active = true }: { active?: boolean }) {
   const reloadFavoriteLists = async () => {
     const lists = await api.listFavoriteLists();
     setFavoriteLists(lists);
+    // A list edit can change which works the shelf shows. The works reload has
+    // its own counter; the artwork follows it because the list rows alone do
+    // not tell the shelf which covers to draw.
+    setShelfCoversToken((value) => value + 1);
     const result = await api.listFavoriteWorksPage(
       currentPage,
       pageSize,
