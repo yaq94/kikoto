@@ -176,7 +176,20 @@ its audio, including `.md`, `.nfo` and saved `.html` pages. Every text extension
 metadata words in its file name. The extension alone is not enough: the same
 formats hold lyrics, notes and logs, and reading them would spend requests on
 text that cannot carry credits. `readme.md` and `staff.nfo` qualify while
-`lyrics.md` does not. The index reads at most four such files per card, at most
+`lyrics.md` does not.
+
+The accepted names are a shared vocabulary in code, not a per-format check:
+`readme`, the spaced or joined forms `read me`/`read_me`/`read-me`, `info`,
+`credit`, `staff`, `介绍`, `介紹`, `紹介`, `説明書`, `はじめに`, `クレジット`,
+`スタッフ`, `りどみ`, `りーどみー` and `リードミー`. ASCII hints must be a whole
+word, so `trackinfo.txt` and `infomation.txt` are not credit files; CJK hints
+match anywhere in the name. The publication path applies the same predicate
+after reading the committed rows, so a name the reader accepts can never be
+skipped when a card is queued. A file outside these names is a known miss, not
+an implied acceptance: release pages that use an unlisted word need that word
+added to the shared list rather than a second SQL rule.
+
+The index reads at most six such files per card, at most
 256 KiB each, through the same source client, origin policy and request pacing
 as metadata. UTF-8, UTF-16 and Shift-JIS bodies are decoded before parsing. The
 file is not a track.
