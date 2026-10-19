@@ -199,16 +199,53 @@ an index invocation finds no remaining directory or publish work, and the
 independent sidecar worker continues the durable queue. Each pass is bounded by
 12 upstream requests and 20 seconds, and the index job never waits for the
 whole queue. A source that answers no file at all is not continued at once, so
-its normal retry delay applies. A card is retried at most five times; a rescan
-does not reset that budget, so an unreadable release is not retried on every
-daily pass. Migration 081 stores the credit-file revision (`path|size|mtime`)
-beside the evidence; when that revision changes, the attempt budget is reset and
-the card is read again. A deleted readme clears the old evidence instead of
-preserving credit text for a file the release no longer publishes.
+its normal retry delay applies. A definitively unreadable card is retried at
+most five times; a rescan does not reset that budget, so a deleted readme is
+not requested on every daily pass. Migration 081 stores the credit-file
+revision (`path|size|mtime`) beside the evidence; when that revision changes,
+the attempt budget is reset and the card is read again. A deleted readme clears
+the old evidence instead of preserving credit text for a file the release no
+longer publishes.
+
+Migration 082 separates two outcomes that used to share one counter. A
+definitive answer - `404`/`410` for the object or its body, a body above the
+read limit, or an invalid object - is permanent and spends one of five
+`sidecar_attempts`. Anything else (connection failure, `5xx`, authentication
+refusal, rate limit, timeout, a local database read) is temporary: it
+increments `sidecar_transient_attempts`, writes `sidecar_retry_at` and leaves
+the permanent budget untouched. A card with both a deleted file and a temporary
+failure follows the temporary path, because settling it would drop the file
+that can still be read when the source recovers.
+
+The temporary wait starts at 15 minutes, doubles per failure and is capped at
+24 hours. The timestamp is produced by SQLite's own clock
+(`datetime('now','+N seconds')`) so it compares correctly with the
+`CURRENT_TIMESTAMP` used by the due queries. After eight temporary failures the
+card leaves the automatic queue (`sidecar_pending=0`) instead of probing a dead
+source forever; its attempts and failure category stay visible. `sidecar_failure`
+holds `temporarily_unavailable`, `unreadable` or `request_budget` so an operator
+can tell those cases apart without reading logs.
+
+A rescan is not a read: when the credit-file revision is unchanged, the daily
+publication pass keeps the attempts, the backoff and the stopped state exactly
+as the worker left them. Only a genuinely new revision reopens a card
+automatically.
 
 `sidecar_revision` is the durable comparison point. The queue never uses a
 fetch timestamp: the same unchanged file keeps its exhausted budget, while a
 replaced file is retried without waiting for a manual reset.
+
+### Reopening the credit queue
+
+`POST /api/remote-sources/{id}/catalog/sidecars/retry` requires `sources:write`
+and reopens every card of that source that is pending, has spent attempts, or
+records a failure. It clears `sidecar_attempts`, `sidecar_transient_attempts`,
+`sidecar_retry_at` and `sidecar_failure` and sets `sidecar_pending=1`; stored
+credit evidence, work associations and personal records are not touched. Use it
+after fixing a share password, DNS entry or upstream outage. Cards that were
+never attempted and have no failure are not reopened by this route; a full
+rebuild still uses a force index, and the daily pass keeps them queued on its
+own.
 
 Only explicitly labelled lines become evidence. A line such as `配音：…`,
 `声优: …`, `CV：…` or `キャスト: …` names a voice actor; `社团：…`,

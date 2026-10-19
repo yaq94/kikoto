@@ -1,7 +1,7 @@
 # Release Rollback
 
 This page gives the operator procedure for rolling back a Kikoto deployment
-whose schema reached `081`. It states which image can read which schema, how to
+whose schema reached `082`. It states which image can read which schema, how to
 take and restore a database snapshot, and what to check afterwards. It records
 no deployment result; run the commands on the target host and keep their output
 with the release record.
@@ -13,14 +13,13 @@ a database snapshot and starts a binary whose packaged migration catalog ends
 at that snapshot's schema. The image names are the ones used by the current
 next-release deployment; prefer a digest when the deployment recorded one.
 
-| Image | Highest packaged migration | Schema `079` database | Schema `080` database | Schema `081` database |
+| Image | Highest packaged migration | Schema `080` database | Schema `081` database | Schema `082` database |
 | --- | --- | --- | --- | --- |
-| current build | `081` | Reads and migrates to `081` | Reads and migrates to `081` | Reads and keeps `081` |
-| `kikoto:next-30762a6b` (080 image) | `080` | Reads and migrates to `080` | Reads and keeps `080` | Refuses |
-| `kikoto:next-0f3cb4c4` | `079` | Reads and keeps `079` | Refuses | Refuses |
-| `kikoto:next-be14c79f` | `078` | Refuses | Refuses | Refuses |
-| `kikoto:next-41f994e0` | `077` | Refuses | Refuses | Refuses |
-| Older images ending at `076` or below | `076` or below | Refuses | Refuses | Refuses |
+| current build | `082` | Reads and migrates to `082` | Reads and migrates to `082` | Reads and keeps `082` |
+| `kikoto:next-31db58af` (081 image) | `081` | Reads and migrates to `081` | Reads and keeps `081` | Refuses |
+| `kikoto:next-30762a6b` (080 image) | `080` | Reads and keeps `080` | Refuses | Refuses |
+| `kikoto:next-0f3cb4c4` (079 image) | `079` | Refuses | Refuses | Refuses |
+| `kikoto:next-be14c79f` (078 image) | `078` | Refuses | Refuses | Refuses |
 
 The refusal happens before any handler runs. The migration manager compares the
 database's schema version with the highest packaged migration and stops with
@@ -36,10 +35,12 @@ get past it.
 `sidecar_pending`, `sidecar_attempts`, their partial index, and `modified_at`
 on observed and published files. `081` adds `sidecar_revision TEXT NOT NULL
 DEFAULT ''`, the credit-file revision used to reopen an exhausted queue card
-when the published file changes. No migration deletes or rewrites existing
-rows. A `079` or `080` snapshot restored into an `081` image upgrades by adding
-the empty columns; an `081` database needs a binary that packages `081`, and the
-`079` binary must be paired with a `079` snapshot.
+when the published file changes. `082` adds `sidecar_transient_attempts`,
+`sidecar_retry_at` and `sidecar_failure`, all with empty defaults, plus a
+partial index over the due queue. No migration deletes or rewrites existing
+rows. An `080` or `081` snapshot restored into a `082` image upgrades by adding
+the empty columns; a `082` database needs a binary that packages `082`, and an
+`081` binary must be paired with an `081` snapshot.
 
 `kikoto:next-be14c79f` predates commit `20e168df`, which recomputes the split
 decision for each completed revision and retires split cards the new generation
@@ -71,8 +72,8 @@ Compose file. For the development stack, use `KIKOTO_DEV_CONFIG_DIR` (default
 The application also writes a `pre-migration` backup to
 `KIKOTO_DB_BACKUP_DIR` (default `config/backups`) before the first numbered
 migration of an existing database. Its name has the form
-`kikoto-pre-migration-<UTC>-v080-to-v081.db`; the first version in the suffix
-is the schema being left, so a `v080-to-v081` file is an `080` snapshot. Keep
+`kikoto-pre-migration-<UTC>-v081-to-v082.db`; the first version in the suffix
+is the schema being left, so a `v081-to-v082` file is an `081` snapshot. Keep
 the snapshot and the previous image reference (`KIKOTO_IMAGE` or the Compose
 override) together. The `rollbacks/` directory is outside `config/`, so the
 copy does not recurse into itself.
@@ -83,7 +84,7 @@ Use this to return to `kikoto:next-0f3cb4c4`.
 
 ```sh
 docker compose down
-mv config/kikoto.db "config/kikoto.db.schema81.$(date -u +%Y%m%dT%H%M%SZ)"
+mv config/kikoto.db "config/kikoto.db.schema79.$(date -u +%Y%m%dT%H%M%SZ)"
 rm -f config/kikoto.db-wal config/kikoto.db-shm
 cp "rollbacks/<snapshot>/config/kikoto.db" config/kikoto.db
 chmod 600 config/kikoto.db
@@ -94,17 +95,19 @@ KIKOTO_IMAGE=kikoto:next-0f3cb4c4 docker compose up -d
 restore commands it is the directory under `rollbacks/`.
 
 `docker compose down` removes the container and keeps the bind mounts; do not
-add `-v`. The `mv` keeps the `081` database for inspection. Remove the WAL and
+add `-v`. The `mv` keeps the `079` database for inspection. Remove the WAL and
 SHM files before copying, because they belong to the database being replaced.
 The bundled `deploy/compose` files have a health check, so a deployment that
 uses one can wait with `up -d --wait`. The production stack in this repository
 does not define that check; poll `/health` as shown under
 [Verify The Restored Instance](#verify-the-restored-instance).
 
-## Restore A Schema 81 Snapshot
+## Restore A Schema 82 Snapshot
 
 Use this to return to the current build after a failed start or to recover a
-damaged `081` database.
+damaged `082` database. A `082` snapshot is readable by the current `082`
+image only; to return to schema `081`, restore an `081` snapshot and start the
+`kikoto:next-31db58af` image instead.
 
 ```sh
 docker compose down

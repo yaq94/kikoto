@@ -301,3 +301,34 @@ AC-28 禁止的是以截图、像素或人工视觉作为门禁；本期运行�
 - 旧拆分卡存在别名子节点时永不退休；现在把子节点重指向唯一继承文件的当前卡片，
   再在同一事务退休旧卡。没有唯一继承者时保留旧卡交人工复核，不猜目标。
 - 旧卡有多个候选替换者时不迁移，避免把个人记录挂到无关作品。
+
+## 信用文件重试策略与 schema 082（未部署）
+
+081 把暂时故障和永久缺失都记在同一个 `sidecar_attempts` 上：一次上游 503
+或凭据失效会消耗五次预算，恢复后卡片仍停在被耗尽的状态。082 将两类结果
+分开：
+
+- 永久失败（`404`/`410`、超过读取上限、对象无效）继续消耗五次
+  `sidecar_attempts`，耗尽后存 `sidecar_failure='unreadable'`。
+- 暂时失败（连接错误、`5xx`、认证拒绝、限流、超时、本地数据库读取失败）
+  只递增 `sidecar_transient_attempts`，写入 `sidecar_retry_at`，不消耗永久预算。
+  退避从 15 分钟开始、逐次翻倍、上限 24 小时；第 8 次后停止自动探测，
+  由管理员重开。
+- 同一张卡既有已删除文件又有暂时故障时按暂时失败处理，避免一个删除的
+  readme 把仍可恢复的读取永久settle。
+- 重扫不是读取：revision 未变时保留 attempts、退避和停止状态；只有真正
+  变化的 revision 自动重开。
+- `sidecar_retry_at` 由 SQLite `datetime('now','+N seconds')` 生成，与队列
+  比较使用的 `CURRENT_TIMESTAMP` 同一时钟，避免进程与数据库时钟漂移。
+
+管理员入口为 `POST /api/remote-sources/{id}/catalog/sidecars/retry`
+（`sources:write`），只重置排队与计数，不改证据、作品关联和个人记录。
+
+本地验证：`go test ./...` 全部通过；`go test -race ./internal/httpapi -run
+'TestCatalogSidecar|TestCatalog|TestSourceCatalogLooseWorks|TestRetire'`
+通过；`go vet ./...`、`gofmt` 检查、前端 `tsc -b`/`lint` 通过；文档链接与
+敏感扫描通过。新增回归覆盖暂时失败不消耗预算、SQLite 时钟写入、
+永久失败耗尽预算、混合失败保留退避、重扫不重启已停止的暂时卡、退避上限
+和管理员重开路由。
+
+该变更尚未部署到生产；生产仍为 schema 81、镜像 `kikoto:next-31db58af`。

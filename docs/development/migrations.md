@@ -274,12 +274,13 @@ matches the backup.
 | unreleased (Kikoto next) | `078` | Development baseline only; `compat/078_dev.sql` |
 | unreleased (Kikoto next) | `079` | Development baseline only; `compat/079_dev.sql` |
 | unreleased (Kikoto next) | `081` | Development baseline only; `compat/081_dev.sql` |
+| unreleased (Kikoto next) | `082` | Development baseline only; `compat/082_dev.sql` |
 
 Per-release upgrade steps are in the [release notes](../history/index.md).
 
 ## Unreleased Kikoto-next Migrations
 
-Migrations `069` through `081` are part of the unreleased next release. They
+Migrations `069` through `082` are part of the unreleased next release. They
 extend the source catalog, shared associations, personal transfer, and the
 recoverable index; no released baseline replaces them yet.
 
@@ -298,6 +299,7 @@ recoverable index; no released baseline replaces them yet.
 | `079_source_catalog_sidecar.sql` | `source_catalog_entry.sidecar_json` | Empty means no read; matching falls back to person rows, and a readme never supplies a product code |
 | `080_source_catalog_sidecar_queue.sql` | `sidecar_pending`, `sidecar_attempts`, a partial queue index, and `modified_at` on observed and published files | Reads run after publication in a bounded pass; a failed read keeps its card and is retried up to five times |
 | `081_source_catalog_sidecar_revision.sql` | `source_catalog_entry.sidecar_revision` | A rescan compares the stored credit-file revision; an unchanged exhausted card stays settled, a replaced file resets its attempts |
+| `082_source_catalog_sidecar_retry.sql` | `sidecar_transient_attempts`, `sidecar_retry_at`, `sidecar_failure`, and a due-row index | A temporary outage waits on a bounded backoff instead of spending the five permanent attempts; a definitive 404/410 still settles, and an administrator can reopen the queue |
 
 The Release To Schema Map above lists every numbered file. `069` rebuilds `work`
 and `logical_work` to relax code uniqueness and creates the catalog entry and
@@ -315,6 +317,10 @@ labelled credit evidence from a release readme, and an older binary that never
 reads it still reads every other column. `080` adds the queue columns, their
 partial index, and the source modification timestamp. `081` adds the stored
 credit-file revision used to reopen an exhausted card when the file changes.
+`082` separates retry bookkeeping from the permanent budget: a transient
+failure records its category, a retry timestamp and a transient count, while a
+missing or oversized file still spends one of the five permanent attempts. The
+partial index keeps the worker from scanning settled rows.
 Every added column has a default, so an existing row stays readable; the queue
 starts empty and a later scan enqueues cards that publish credit files.
 
