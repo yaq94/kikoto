@@ -79,7 +79,13 @@ test("catalog tabs preserve exact playback identity across registered and standa
   await page.getByText("catalog-b.wav", { exact: true }).click();
   await expect.poll(async () => (await queueState()).index).toBe(1);
   expect(await audio.evaluate((element: HTMLAudioElement) => element.currentTime)).toBeLessThan(3);
-  await page.locator('[data-player-surface="compact"]').getByText("catalog-b.wav", { exact: true }).click();
+  // A long title renders a second marquee copy for the scroll animation. That
+  // copy is aria-hidden, so a role query names the one interactive element
+  // while a text query would match both.
+  await page
+    .locator('[data-player-surface="compact"]')
+    .getByRole("button", { name: /catalog-b\.wav/ })
+    .click();
   await page.getByRole("slider", { name: "Seek", exact: true }).fill("42");
   await page.evaluate(() => window.dispatchEvent(new Event("pagehide")));
   await expect
