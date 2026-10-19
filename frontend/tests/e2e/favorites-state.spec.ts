@@ -22,6 +22,11 @@ import {
   worksPageFixture,
 } from "./fixtures/api";
 
+// The current acceptance boundary is functional, not visual. Keep the
+// behavior assertions; do not turn this file into a layout gate or attach
+// failure screenshots.
+test.use({ screenshot: "off", trace: "off", video: "off" });
+
 const baseWork = workFixture({
   title: "Favorite work 1",
   ageRating: "R18",

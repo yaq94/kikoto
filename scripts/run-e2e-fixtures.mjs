@@ -581,6 +581,10 @@ async function runGroup(group, options, usedPorts, backendBinary) {
       ...process.env,
       PLAYWRIGHT_BASE_URL: pageURL,
       VITE_API_BASE_URL: fixtureURL,
+      // The current acceptance boundary is functional: no screenshots,
+      // traces or pixel/layout sign-off. Existing suites keep their own
+      // definitions; this only controls the artifacts this runner captures.
+      E2E_NO_ARTIFACTS: "1",
       ...Object.fromEntries(
         Object.entries(group.env ?? {}).map(([key, value]) => [
           key,

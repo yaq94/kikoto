@@ -110,8 +110,7 @@ export function useWorkSourceContext({
   // a source that no longer holds the work.
   const presenceCode =
     work?.sourcePresence?.find(
-      (presence) =>
-        presence.type === "source" && presence.availability === "available" && Boolean(presence.remoteCode),
+      (presence) => presence.type === "source" && presence.availability === "available" && Boolean(presence.remoteCode),
     )?.remoteCode ?? "";
   const availabilityCode = work?.primaryCode || presenceCode;
 
