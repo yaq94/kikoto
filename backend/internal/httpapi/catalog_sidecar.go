@@ -401,20 +401,18 @@ func readCatalogSidecars(ctx context.Context, client *openlist.Client, entry cat
 
 // catalogSidecarRevision is the cheap revision of the published credit files.
 // It is stored beside the evidence so a rescan can tell an exhausted, unchanged
-// file from one the release replaced.
+// file from one the release replaced. One function owns the selected set and
+// its order; a second copy of this rule drifted from the reader once already.
 func catalogSidecarRevision(files []SourceCatalogFile) string {
 	selected := catalogSidecarFiles(currentCatalogFiles(files))
 	if len(selected) == 0 {
 		return ""
 	}
-	var builder strings.Builder
+	parts := make([]string, 0, len(selected))
 	for _, file := range selected {
-		if builder.Len() > 0 {
-			builder.WriteByte('\n')
-		}
-		_, _ = fmt.Fprintf(&builder, "%s|%d|%s", file.Path, file.Size, file.ModifiedAt)
+		parts = append(parts, fmt.Sprintf("%s|%d|%s", file.Path, file.Size, file.ModifiedAt))
 	}
-	return builder.String()
+	return strings.Join(parts, "\n")
 }
 
 func keepCatalogSidecarEvidence(cache *catalogSidecarCache, known map[string]catalogSidecarMeta, relativePath string) {
@@ -509,18 +507,33 @@ func (s *Server) storeCatalogSidecars(ctx context.Context, id int64, cache catal
 	}
 	defer release()
 	var previous string
-	if err = tx.QueryRowContext(ctx, `SELECT sidecar_json FROM source_catalog_entry WHERE id=?`, id).Scan(&previous); err != nil {
+	var previousRevision string
+	if err = tx.QueryRowContext(ctx, `SELECT sidecar_json,sidecar_revision FROM source_catalog_entry WHERE id=?`, id).Scan(&previous, &previousRevision); err != nil {
 		return err
 	}
 	raw, err := json.Marshal(cache)
 	if err != nil {
 		return err
 	}
-	if previous == string(raw) || sameCatalogSidecarEvidence(previous, string(raw)) {
+	if previous == string(raw) {
+		// A release can rewrite the same bytes with a new timestamp. Recording
+		// the current revision keeps the next rescan from reading it again.
+		if revision == previousRevision {
+			return tx.Commit()
+		}
+		if _, err = tx.ExecContext(ctx, `UPDATE source_catalog_entry SET sidecar_revision=? WHERE id=?`, revision, id); err != nil {
+			return err
+		}
 		return tx.Commit()
 	}
+	unchanged := sameCatalogSidecarEvidence(previous, string(raw))
 	if _, err = tx.ExecContext(ctx, `UPDATE source_catalog_entry SET sidecar_json=?,sidecar_revision=? WHERE id=?`, string(raw), revision, id); err != nil {
 		return err
+	}
+	if unchanged {
+		// Only bookkeeping changed: the credits a match decision reads are the
+		// same, so the matching revision must not restart the queue.
+		return tx.Commit()
 	}
 	if _, err = tx.ExecContext(ctx, `UPDATE work_matching_control SET revision=revision+1,status='queued' WHERE id=1`); err != nil {
 		return err
@@ -555,12 +568,8 @@ func markCatalogSidecarCandidatesTx(ctx context.Context, tx *sql.Tx, ids []int64
 	if len(ids) == 0 {
 		return nil
 	}
-	placeholders := strings.TrimRight(strings.Repeat("?,", len(ids)), ",")
-	args := make([]any, 0, len(ids)+2)
-	for _, id := range ids {
-		args = append(args, id)
-	}
-	args = append(args, generation)
+	placeholders := sqlPlaceholders(len(ids))
+	args := append(int64Args(ids), generation)
 	// A card whose file set was republished without its credit file loses the
 	// evidence with it. Detect this from the same committed file rows rather
 	// than from a name at read time, so a deleted readme cannot linger.
@@ -587,7 +596,7 @@ func markCatalogSidecarCandidatesTx(ctx context.Context, tx *sql.Tx, ids []int64
 	// evidence. Reading inside the transaction keeps the choice consistent with
 	// the publication rows just written.
 	rows, err := tx.QueryContext(ctx, `SELECT id,sidecar_attempts,sidecar_revision FROM source_catalog_entry
-		WHERE id IN (`+placeholders+`)`, idsToAny(ids)...)
+		WHERE id IN (`+placeholders+`)`, int64Args(ids)...)
 	if err != nil {
 		return err
 	}
@@ -628,16 +637,11 @@ func markCatalogSidecarCandidatesTx(ctx context.Context, tx *sql.Tx, ids []int64
 	return nil
 }
 
-func idsToAny(ids []int64) []any {
-	values := make([]any, len(ids))
-	for index, id := range ids {
-		values[index] = id
-	}
-	return values
-}
-
 func publishedCatalogSidecarRevision(ctx context.Context, tx *sql.Tx, id, generation int64) (string, error) {
-	rows, err := tx.QueryContext(ctx, `SELECT f.relative_path || '|' || f.size_bytes || '|' || f.modified_at
+	// Read the rows and reuse the reader's own selection. A second SQL copy of
+	// the rank, depth and file-count rules had already ordered the same set
+	// differently, so an unchanged release looked changed on every rescan.
+	rows, err := tx.QueryContext(ctx, `SELECT f.relative_path,f.size_bytes,COALESCE(f.modified_at,''),f.kind,f.observed_generation
 		FROM source_catalog_file f
 		WHERE f.catalog_entry_id=? AND f.kind<>'folder' AND f.observed_generation=?
 			AND (`+catalogSidecarSQLCandidateCondition+`)
@@ -645,24 +649,22 @@ func publishedCatalogSidecarRevision(ctx context.Context, tx *sql.Tx, id, genera
 	if err != nil {
 		return "", err
 	}
-	var builder strings.Builder
+	files := []SourceCatalogFile{}
 	for rows.Next() {
-		var part string
-		if err = rows.Scan(&part); err != nil {
+		var file SourceCatalogFile
+		if err = rows.Scan(&file.Path, &file.Size, &file.ModifiedAt, &file.Kind, &file.Generation); err != nil {
 			_ = rows.Close()
 			return "", err
 		}
-		if builder.Len() > 0 {
-			builder.WriteByte('\n')
-		}
-		builder.WriteString(part)
+		file.Title = path.Base(file.Path)
+		files = append(files, file)
 	}
 	readErr := rows.Err()
 	_ = rows.Close()
 	if readErr != nil {
 		return "", readErr
 	}
-	return builder.String(), nil
+	return catalogSidecarRevision(files), nil
 }
 
 // refreshCatalogSidecars drains a bounded batch of queued cards. It runs after

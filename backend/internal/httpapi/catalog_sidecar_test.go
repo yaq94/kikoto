@@ -331,6 +331,103 @@ func TestCatalogSidecarRescanRetriesAfterFileRevisionChanges(t *testing.T) {
 	}
 }
 
+// The revision is produced once and compared with itself. Building it a second
+// time in SQL ordered the same files differently, so an unchanged release
+// looked changed on every rescan and the attempt budget never settled.
+func TestCatalogSidecarRevisionMatchesRescanQuery(t *testing.T) {
+	f := newCatalogIndexFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.NotFound(w, r)
+	}))
+	metadataReviewExec(t, f.server.db, `INSERT INTO source_catalog_entry(id,file_source_id,root_path,title,sidecar_pending,sidecar_attempts,sidecar_revision)
+		VALUES(40,1,'/Example Work','Example Work',0,5,'');
+		INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes,modified_at,observed_generation)
+		VALUES(40,'readme.txt','readme.txt','text',10,'m1',1),
+			(40,'aaa_credit.txt','aaa_credit.txt','text',20,'m2',1),
+			(40,'01.mp3','01.mp3','audio',100,'m3',1);`)
+	tx, err := f.server.db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	queryRevision, err := publishedCatalogSidecarRevision(context.Background(), tx, 40, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	files, err := f.server.loadSourceCatalogFiles(context.Background(), 40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := catalogSidecarRevision(files); queryRevision != want {
+		t.Fatalf("rescan revision = %q, reader revision = %q", queryRevision, want)
+	}
+	metadataReviewExec(t, f.server.db, `UPDATE source_catalog_entry SET sidecar_revision=? WHERE id=40`, queryRevision)
+	// Both credit files are selected and the audio file is not, in the
+	// reader's own order.
+	if !strings.Contains(queryRevision, "readme.txt|10|m1\naaa_credit.txt|20|m2") {
+		t.Fatalf("revision = %q", queryRevision)
+	}
+	tx, err = f.server.db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = markCatalogSidecarCandidatesTx(context.Background(), tx, []int64{40}, 1); err != nil {
+		t.Fatal(err)
+	}
+	if err = tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	var pending, attempts int
+	if err = f.server.db.QueryRow(`SELECT sidecar_pending,sidecar_attempts FROM source_catalog_entry WHERE id=40`).Scan(&pending, &attempts); err != nil {
+		t.Fatal(err)
+	}
+	if pending != 1 || attempts != 5 {
+		t.Fatalf("unchanged revision reset the budget: pending=%d attempts=%d", pending, attempts)
+	}
+}
+
+// Rewriting identical bytes with a newer timestamp is a new revision for the
+// reader, so the stored revision must follow it; otherwise every rescan reads
+// the same unchanged file again after the budget was already spent.
+func TestCatalogSidecarStoresRevisionWhenOnlyTheTimestampChanges(t *testing.T) {
+	f := newCatalogIndexFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.NotFound(w, r)
+	}))
+	cache := catalogSidecarCache{Sidecars: []catalogSidecarMeta{{
+		RelativePath: "readme.txt", Size: 24, ModifiedAt: "2026-01-01T00:00:00Z",
+		Digest: "abc", VoiceActors: []string{"Example Voice"}, Circles: []string{},
+		FetchedAt: "2026-01-01T00:00:00Z",
+	}}}
+	raw, err := json.Marshal(cache)
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadataReviewExec(t, f.server.db, `INSERT INTO source_catalog_entry(id,file_source_id,root_path,title,sidecar_json,sidecar_attempts,sidecar_revision)
+		VALUES(41,1,'/Example Work','Example Work',?,5,'readme.txt|24|2026-01-01T00:00:00Z')`, string(raw))
+	before := 0
+	if err = f.server.db.QueryRow(`SELECT revision FROM work_matching_control WHERE id=1`).Scan(&before); err != nil {
+		t.Fatal(err)
+	}
+	if err = f.server.storeCatalogSidecars(context.Background(), 41, cache, "readme.txt|24|2026-02-01T00:00:00Z"); err != nil {
+		t.Fatal(err)
+	}
+	var revision string
+	if err = f.server.db.QueryRow(`SELECT sidecar_revision FROM source_catalog_entry WHERE id=41`).Scan(&revision); err != nil {
+		t.Fatal(err)
+	}
+	if revision != "readme.txt|24|2026-02-01T00:00:00Z" {
+		t.Fatalf("stored revision = %q", revision)
+	}
+	after := 0
+	if err = f.server.db.QueryRow(`SELECT revision FROM work_matching_control WHERE id=1`).Scan(&after); err != nil {
+		t.Fatal(err)
+	}
+	if after != before {
+		t.Fatalf("bookkeeping-only change restarted matching: %d -> %d", before, after)
+	}
+}
+
 // A card whose credit files were deleted must not keep evidence from files the
 // release no longer publishes.
 func TestCatalogSidecarDeletedFileDropsStaleEvidence(t *testing.T) {
