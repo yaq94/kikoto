@@ -185,6 +185,60 @@ func TestContentTranslationProtectsNamesAndReusesAuthoredLanguage(t *testing.T) 
 	}
 }
 
+// A catalog card and its series title belong to the same release as their
+// registered work. The circle and cast are protected there too, even though the
+// request names the catalog entry rather than the work.
+func TestContentTranslationProtectsNamesForCatalogAndSeries(t *testing.T) {
+	var calls atomic.Int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		var payload struct {
+			Messages []struct {
+				Content string `json:"content"`
+			} `json:"messages"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&payload)
+		prompt := payload.Messages[0].Content
+		if strings.Contains(prompt, "Example Voice") || strings.Contains(prompt, "Example Circle") {
+			t.Error("protected catalog names reached the model")
+		}
+		parts := strings.SplitN(prompt, "\n\n", 2)
+		content := strings.ReplaceAll(parts[1], "Example title", "示例标题")
+		_ = json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": map[string]string{"content": content}, "finish_reason": "stop"}}})
+	}))
+	defer upstream.Close()
+	s, host, admin, listener := translationHTTPFixture(t)
+	_, err := s.db.Exec(`INSERT INTO work (id,primary_code,title,description) VALUES (1,'','Example title','Example description')
+		,(2,'','Example episode','Example episode description');
+		INSERT INTO person (id,display_name) VALUES (1,'Example Voice');
+		INSERT INTO work_credit (work_id,person_id,role) VALUES (1,1,'voice_actor'),(2,1,'voice_actor');
+		INSERT INTO party (id,display_name) VALUES (1,'Example Circle');
+		INSERT INTO work_party (work_id,party_id) VALUES (1,1),(2,1);
+		INSERT INTO file_source(id,code,display_name,source_type) VALUES (7,'example_catalog','Example Catalog','openlist');
+		INSERT INTO file_source_endpoint(file_source_id,api_url,base_url) VALUES (7,'https://catalog.example.invalid','https://catalog.example.invalid');
+		INSERT INTO source_catalog_entry(id,file_source_id,root_path,title,work_id) VALUES (1,7,'/Example title','Example title',1);
+		INSERT INTO catalog_series(id,title) VALUES (1,'Example title');
+		INSERT INTO catalog_series_member(series_id,catalog_entry_id,position,evidence) VALUES (1,1,1,'manual');`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, _ := json.Marshal(map[string]any{"baseUrl": upstream.URL})
+	translationRequest(t, host, admin, "PATCH", "/api/settings/translation", string(cfg), 200)
+	cases := []string{
+		`{"catalogEntryId":1,"field":"title","text":"Example title","language":"zh-cn"}`,
+		`{"seriesId":1,"field":"title","text":"Example title","language":"zh-cn"}`,
+	}
+	for _, body := range cases {
+		result := translationRequest(t, host, listener, "POST", "/api/content-translations", body, 200)
+		if result["text"] != "示例标题" {
+			t.Fatalf("catalog translation = %#v", result)
+		}
+	}
+	if calls.Load() == 0 {
+		t.Fatal("catalog translation did not reach the configured model")
+	}
+}
+
 func TestContentTranslationCacheInvalidatesAndHonorsDiskBudget(t *testing.T) {
 	var calls atomic.Int32
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

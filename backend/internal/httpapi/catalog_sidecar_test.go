@@ -230,6 +230,37 @@ func TestCatalogSidecarConcurrentPassesReadOneCardOnce(t *testing.T) {
 	}
 }
 
+// A daily rescan republishes the same card. Five failed reads already exhausted
+// the attempt budget, so the next publication must keep the card settled rather
+// than retrying the same unreadable release every day.
+func TestCatalogSidecarRescanKeepsExhaustedAttempts(t *testing.T) {
+	f := newCatalogIndexFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.NotFound(w, r)
+	}))
+	evidence := `{"sidecars":[{"relativePath":"readme.txt","size":24,"voiceActors":["Example Voice"],"circles":[],"fetchedAt":"2026-01-01T00:00:00Z"}]}`
+	metadataReviewExec(t, f.server.db, `INSERT INTO source_catalog_entry(id,file_source_id,root_path,title,sidecar_json,sidecar_pending,sidecar_attempts)
+		VALUES(20,1,'/Example Work','Example Work','`+evidence+`',0,5);
+		INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes,observed_generation)
+		VALUES(20,'readme.txt','readme.txt','text',24,1);`)
+	tx, err := f.server.db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = markCatalogSidecarCandidatesTx(context.Background(), tx, []int64{20}, 1); err != nil {
+		t.Fatal(err)
+	}
+	if err = tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	var pending, attempts int
+	if err = f.server.db.QueryRow(`SELECT sidecar_pending,sidecar_attempts FROM source_catalog_entry WHERE id=20`).Scan(&pending, &attempts); err != nil {
+		t.Fatal(err)
+	}
+	if pending != 0 || attempts != 5 {
+		t.Fatalf("rescan reset the exhausted budget: pending=%d attempts=%d", pending, attempts)
+	}
+}
+
 // A card whose credit files were deleted must not keep evidence from files the
 // release no longer publishes.
 func TestCatalogSidecarDeletedFileDropsStaleEvidence(t *testing.T) {

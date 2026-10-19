@@ -40,10 +40,17 @@ const (
 )
 
 // The index warm pass and the independent worker can both observe the same
-// pending row. One pass at a time keeps a card from costing two upstream
-// reads. A process-local lock is enough: a single Kikoto process owns the
-// queue, and a restart simply resumes the durable rows.
-var catalogSidecarMu sync.Mutex
+// pending row. One pass per source keeps a card from costing two upstream
+// reads without serializing unrelated sources. A process-local lock is enough:
+// a single Kikoto process owns the queue, and a restart resumes durable rows.
+var catalogSidecarLocks sync.Map
+
+func lockCatalogSidecarSource(sourceID int64) func() {
+	value, _ := catalogSidecarLocks.LoadOrStore(sourceID, &sync.Mutex{})
+	lock := value.(*sync.Mutex)
+	lock.Lock()
+	return lock.Unlock
+}
 
 // A sidecar is fetched at most once per release revision. The source's
 // modification time is the revision; the size and digest keep the comparison
@@ -74,7 +81,6 @@ type catalogSidecarCandidate struct {
 	Title      string
 	Primary    string
 	Status     string
-	Attempts   int
 }
 
 var (
@@ -442,7 +448,9 @@ func (s *Server) loadCatalogSidecars(ctx context.Context, entry catalogEntry) (c
 	}
 	cache := catalogSidecarCache{Sidecars: []catalogSidecarMeta{}}
 	if raw != "" {
-		_ = json.Unmarshal([]byte(raw), &cache)
+		if err = json.Unmarshal([]byte(raw), &cache); err != nil {
+			return catalogSidecarCache{}, err
+		}
 	}
 	return cache, nil
 }
@@ -515,17 +523,22 @@ func markCatalogSidecarCandidatesTx(ctx context.Context, tx *sql.Tx, ids []int64
 		return nil
 	}
 	placeholders := strings.TrimRight(strings.Repeat("?,", len(ids)), ",")
-	args := make([]any, 0, len(ids)+1)
+	args := make([]any, 0, len(ids)+2)
 	for _, id := range ids {
 		args = append(args, id)
 	}
 	args = append(args, generation)
+	queueArgs := make([]any, 0, len(ids)+2)
+	for _, id := range ids {
+		queueArgs = append(queueArgs, id)
+	}
+	queueArgs = append(queueArgs, catalogSidecarMaxAttempts, generation)
 	// A card whose file set was republished without its credit file loses the
 	// evidence with it. Detect this from the same committed file rows rather
 	// than from a name at read time, so a deleted readme cannot linger.
 	cleared, err := tx.ExecContext(ctx, `UPDATE source_catalog_entry
-		SET sidecar_json='',sidecar_pending=0,sidecar_attempts=0
-		WHERE id IN (`+placeholders+`) AND sidecar_json<>'' AND NOT EXISTS(
+			SET sidecar_json='',sidecar_pending=0,sidecar_attempts=0
+			WHERE id IN (`+placeholders+`) AND sidecar_json<>'' AND NOT EXISTS(
 			SELECT 1 FROM source_catalog_file f
 			WHERE f.catalog_entry_id=source_catalog_entry.id AND f.kind<>'folder'
 				AND f.observed_generation=?
@@ -542,8 +555,13 @@ func markCatalogSidecarCandidatesTx(ctx context.Context, tx *sql.Tx, ids []int64
 			return err
 		}
 	}
-	_, err = tx.ExecContext(ctx, `UPDATE source_catalog_entry SET sidecar_pending=1,sidecar_attempts=0
-		WHERE id IN (`+placeholders+`) AND EXISTS(
+	// A rescan republishes the same card every day. A card that already spent
+	// its attempts stays settled; a changed credit file is queued again through
+	// the evidence-clearing branch above. Requeue only cards that still have
+	// budget, so a permanently unreadable release is not retried every scan.
+	_, err = tx.ExecContext(ctx, `UPDATE source_catalog_entry SET sidecar_pending=1
+			WHERE id IN (`+placeholders+`) AND sidecar_attempts<?
+			AND EXISTS(
 			SELECT 1 FROM source_catalog_file f
 			WHERE f.catalog_entry_id=source_catalog_entry.id AND f.kind<>'folder'
 				AND f.observed_generation=?
@@ -551,7 +569,7 @@ func markCatalogSidecarCandidatesTx(ctx context.Context, tx *sql.Tx, ids []int64
 					OR instr(lower(f.title),'credit')>0 OR instr(lower(f.title),'staff')>0
 					OR instr(f.title,'介绍')>0 OR instr(f.title,'介紹')>0
 					OR lower(f.title) LIKE '%.md' OR lower(f.title) LIKE '%.markdown'
-					OR lower(f.title) LIKE '%.nfo'))`, args...)
+					OR lower(f.title) LIKE '%.nfo'))`, queueArgs...)
 	return err
 }
 
@@ -561,15 +579,15 @@ func markCatalogSidecarCandidatesTx(ctx context.Context, tx *sql.Tx, ids []int64
 // queued for an immediate continuation; a source that answered nothing is not
 // continued at once, because that would spin on a failed origin.
 func (s *Server) refreshCatalogSidecars(ctx context.Context, sourceID int64) (more bool) {
-	catalogSidecarMu.Lock()
-	defer catalogSidecarMu.Unlock()
+	unlock := lockCatalogSidecarSource(sourceID)
+	defer unlock()
 	source, err := s.catalogIndexSource(ctx, sourceID)
 	if err != nil {
 		return false
 	}
 	ctx, cancel := context.WithTimeout(ctx, catalogSidecarPassTimeout)
 	defer cancel()
-	rows, err := s.db.QueryContext(ctx, `SELECT id,root_path,COALESCE(source_root,''),title,COALESCE(primary_code,''),availability_status,sidecar_attempts
+	rows, err := s.db.QueryContext(ctx, `SELECT id,root_path,COALESCE(source_root,''),title,COALESCE(primary_code,''),availability_status
 		FROM source_catalog_entry WHERE file_source_id=? AND relocated_to_id IS NULL
 			AND sidecar_pending=1 AND sidecar_attempts<?
 		ORDER BY id LIMIT ?`, sourceID, catalogSidecarMaxAttempts, catalogSidecarBatchCards)
@@ -580,7 +598,7 @@ func (s *Server) refreshCatalogSidecars(ctx context.Context, sourceID int64) (mo
 	candidates := []catalogSidecarCandidate{}
 	for rows.Next() {
 		var item catalogSidecarCandidate
-		if err = rows.Scan(&item.ID, &item.RootPath, &item.SourceRoot, &item.Title, &item.Primary, &item.Status, &item.Attempts); err != nil {
+		if err = rows.Scan(&item.ID, &item.RootPath, &item.SourceRoot, &item.Title, &item.Primary, &item.Status); err != nil {
 			break
 		}
 		candidates = append(candidates, item)
@@ -643,7 +661,7 @@ func (s *Server) refreshCatalogSidecar(ctx context.Context, client *openlist.Cli
 	entry := catalogEntry{ID: item.ID, RootPath: item.RootPath, SourceRoot: item.SourceRoot, Title: item.Title, PrimaryCode: item.Primary, Status: item.Status}
 	files, err := s.loadSourceCatalogFiles(ctx, item.ID)
 	if err != nil {
-		s.finishCatalogSidecar(ctx, item, true, catalogSidecarReadResult{Failed: true})
+		s.finishCatalogSidecar(ctx, item, catalogSidecarStateFailed, catalogSidecarReadResult{Failed: true})
 		return catalogSidecarCardOutcome{Failed: true}
 	}
 	selected := catalogSidecarFiles(files)
@@ -651,35 +669,48 @@ func (s *Server) refreshCatalogSidecar(ctx context.Context, client *openlist.Cli
 		// The text rows no longer carry a credit file, for example after a
 		// rescan. Clear the queue entry and drop stale evidence for files that
 		// no longer exist.
-		s.finishCatalogSidecar(ctx, item, false, catalogSidecarReadResult{})
+		s.finishCatalogSidecar(ctx, item, catalogSidecarStateEmpty, catalogSidecarReadResult{})
 		return catalogSidecarCardOutcome{}
 	}
 	previous, err := s.loadCatalogSidecars(ctx, entry)
 	if err != nil {
-		s.finishCatalogSidecar(ctx, item, true, catalogSidecarReadResult{Failed: true})
+		s.finishCatalogSidecar(ctx, item, catalogSidecarStateFailed, catalogSidecarReadResult{Failed: true})
 		return catalogSidecarCardOutcome{Failed: true}
 	}
 	result := readCatalogSidecars(ctx, client, entry, files, previous, budget)
 	// A budget stop is not a failed read: the same evidence stays pending for
 	// the next pass without consuming an attempt.
-	s.finishCatalogSidecar(ctx, item, result.Failed || result.Deferred, result)
+	state := catalogSidecarStateComplete
+	if result.Failed || result.Deferred {
+		state = catalogSidecarStateRetry
+	}
+	s.finishCatalogSidecar(ctx, item, state, result)
 	return catalogSidecarCardOutcome{Requests: result.Requests, Reads: len(result.Cache.Sidecars), Failed: result.Failed, Deferred: result.Deferred}
 }
+
+type catalogSidecarState int
+
+const (
+	catalogSidecarStateComplete catalogSidecarState = iota
+	catalogSidecarStateEmpty
+	catalogSidecarStateRetry
+	catalogSidecarStateFailed
+)
 
 // finishCatalogSidecar records one bounded outcome. Cards with some read files
 // store the partial evidence; only a fully read card clears the queue. A
 // failed card counts an attempt and is retried by a later pass. When no credit
 // file remains, the old evidence is dropped because it describes files that
 // are no longer published.
-func (s *Server) finishCatalogSidecar(ctx context.Context, item catalogSidecarCandidate, pending bool, result catalogSidecarReadResult) {
-	if pending {
+func (s *Server) finishCatalogSidecar(ctx context.Context, item catalogSidecarCandidate, state catalogSidecarState, result catalogSidecarReadResult) {
+	if state == catalogSidecarStateRetry || state == catalogSidecarStateFailed {
 		if len(result.Cache.Sidecars) > 0 {
 			if err := s.storeCatalogSidecars(ctx, item.ID, result.Cache); err != nil {
 				slog.Warn("store catalog sidecar evidence", "catalog_entry_id", item.ID, "error", err)
 				return
 			}
 		}
-		if result.Deferred && !result.Failed {
+		if state == catalogSidecarStateRetry && result.Deferred && !result.Failed {
 			// The pass ran out of request budget, not the source. Keep the
 			// card pending without spending an attempt.
 			return
@@ -701,7 +732,7 @@ func (s *Server) finishCatalogSidecar(ctx context.Context, item catalogSidecarCa
 		slog.Warn("clear catalog sidecar evidence", "catalog_entry_id", item.ID, "error", err)
 		return
 	}
-	if _, err := s.db.ExecContext(ctx, `UPDATE source_catalog_entry SET sidecar_pending=0,sidecar_attempts=0 WHERE id=?`, item.ID); err != nil {
+	if _, err := s.db.ExecContext(ctx, `UPDATE source_catalog_entry SET sidecar_pending=0 WHERE id=?`, item.ID); err != nil {
 		slog.Warn("clear catalog sidecar queue", "catalog_entry_id", item.ID, "error", err)
 	}
 }

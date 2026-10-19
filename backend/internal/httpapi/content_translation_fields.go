@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -24,15 +25,23 @@ func (s *Server) loadTranslationField(ctx context.Context, in contentTranslation
 		}
 		var title string
 		err := s.db.QueryRowContext(ctx, `SELECT title FROM catalog_series WHERE id=?`, in.SeriesID).Scan(&title)
-		return readableTranslationField{Text: title, Original: title}, err
+		field := readableTranslationField{Text: title, Original: title}
+		if err == nil {
+			field.Names, err = s.catalogSeriesProtectedNames(ctx, in.SeriesID)
+		}
+		return field, err
 	}
 	if in.CatalogEntryID > 0 {
 		entry, _, err := s.loadSourceCatalogEntry(ctx, in.CatalogEntryID)
 		if err != nil {
 			return readableTranslationField{}, err
 		}
+		names, err := s.catalogEntryProtectedNames(ctx, entry)
+		if err != nil {
+			return readableTranslationField{}, err
+		}
 		if in.Field == "title" {
-			return readableTranslationField{Text: entry.Title, Original: entry.Title}, nil
+			return readableTranslationField{Text: entry.Title, Original: entry.Title, Names: names}, nil
 		}
 		if in.Field == "directory" {
 			files, err := s.loadSourceCatalogFiles(ctx, in.CatalogEntryID)
@@ -41,7 +50,7 @@ func (s *Server) loadTranslationField(ctx context.Context, in contentTranslation
 			}
 			for _, file := range files {
 				if file.Path == in.Path {
-					return readableTranslationField{Text: file.Title, Original: file.Title}, nil
+					return readableTranslationField{Text: file.Title, Original: file.Title, Names: names}, nil
 				}
 			}
 		}
@@ -173,6 +182,60 @@ func (s *Server) loadTranslationField(ctx context.Context, in contentTranslation
 		}
 	}
 	return field, nil
+}
+
+// A catalog card and its directory names can mention the circle or a voice
+// actor. Those names stay as published, even when no work is registered yet.
+func (s *Server) catalogEntryProtectedNames(ctx context.Context, entry catalogEntry) ([]string, error) {
+	names := []string{}
+	if entry.WorkID == nil {
+		return names, nil
+	}
+	work, err := s.loadWorkDetail(ctx, 0, *entry.WorkID, false)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return names, nil
+		}
+		return nil, err
+	}
+	names = append(names, work.Circle)
+	names = append(names, work.VoiceActors...)
+	for _, credit := range work.VoiceCredits {
+		names = append(names, credit.DisplayName)
+	}
+	return names, nil
+}
+
+// A series title belongs to the same work as its episodes, so every member's
+// circle and cast are protected names for that title.
+func (s *Server) catalogSeriesProtectedNames(ctx context.Context, seriesID int64) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT COALESCE(e.work_id,0) FROM catalog_series_member m
+		JOIN source_catalog_entry e ON e.id=m.catalog_entry_id
+		WHERE m.series_id=? AND e.work_id IS NOT NULL`, seriesID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	names := []string{}
+	for rows.Next() {
+		var workID int64
+		if err = rows.Scan(&workID); err != nil {
+			return nil, err
+		}
+		work, loadErr := s.loadWorkDetail(ctx, 0, workID, false)
+		if loadErr != nil {
+			if errors.Is(loadErr, sql.ErrNoRows) {
+				continue
+			}
+			return nil, loadErr
+		}
+		names = append(names, work.Circle)
+		names = append(names, work.VoiceActors...)
+		for _, credit := range work.VoiceCredits {
+			names = append(names, credit.DisplayName)
+		}
+	}
+	return names, rows.Err()
 }
 
 func (s *Server) loadRemoteTranslationField(ctx context.Context, in contentTranslationRequest) (readableTranslationField, error) {
