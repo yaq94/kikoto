@@ -478,12 +478,14 @@ func (s *Server) listOpenListWorks(w http.ResponseWriter, r *http.Request, sourc
 	from := `FROM (SELECT candidates.*,ROW_NUMBER() OVER (PARTITION BY CASE WHEN work_id IS NOT NULL THEN 'work:' || (SELECT identity_work_id FROM shared_work_identity WHERE work_id=candidates.work_id) WHEN series_id>0 THEN 'series:' || series_id ELSE 'catalog:' || id END ORDER BY series_id,id) AS identity_rank FROM (
 		SELECT e.id,0 AS series_id,e.primary_code,e.title,e.work_id,e.updated_at FROM source_catalog_entry e
 		WHERE e.file_source_id=? AND e.relocated_to_id IS NULL AND NOT EXISTS(SELECT 1 FROM catalog_series_member m WHERE m.catalog_entry_id=e.id)
+			AND EXISTS(SELECT 1 FROM source_catalog_file f WHERE f.catalog_entry_id=e.id AND f.kind='audio')
 		AND (?='' OR instr(lower(e.title),lower(?))>0 OR instr(lower(e.primary_code),lower(?))>0
 			OR EXISTS(SELECT 1 FROM source_catalog_file f WHERE f.catalog_entry_id=e.id AND instr(lower(f.title),lower(?))>0))
 		UNION ALL
 		SELECT 0,s.id,'',s.title,s.work_id,s.created_at FROM catalog_series s
 		WHERE EXISTS(SELECT 1 FROM catalog_series_member m JOIN source_catalog_entry e ON e.id=m.catalog_entry_id
-		WHERE m.series_id=s.id AND e.file_source_id=? AND (?='' OR instr(lower(s.title),lower(?))>0 OR instr(lower(e.title),lower(?))>0 OR instr(lower(e.primary_code),lower(?))>0
+		WHERE m.series_id=s.id AND e.file_source_id=? AND e.relocated_to_id IS NULL
+			AND (?='' OR instr(lower(s.title),lower(?))>0 OR instr(lower(e.title),lower(?))>0 OR instr(lower(e.primary_code),lower(?))>0
 			OR EXISTS(SELECT 1 FROM source_catalog_file f WHERE f.catalog_entry_id=e.id AND instr(lower(f.title),lower(?))>0)))
 	) AS candidates) AS cards WHERE identity_rank=1`
 	args := []any{source.ID, q, q, q, q, source.ID, q, q, q, q, q}

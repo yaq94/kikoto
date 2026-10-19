@@ -58,6 +58,44 @@ func TestOpenListMetadataBoundariesPreserveExistingCatalog(t *testing.T) {
 	}
 }
 
+// A creator folder that only holds subdirectories has no observable audio of
+// its own. It is navigation state, not a playable card: listing it would
+// advertise a work that cannot be opened or played, and search would return
+// the same empty result. The playlist cards inside it stay visible.
+func TestOpenListCatalogOmitsCardsWithoutAudio(t *testing.T) {
+	remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"code":200,"data":{"content":[],"total":0}}`))
+	}))
+	defer remote.Close()
+	db := openMigratedTestDBWithProductionPool(t)
+	_, err := db.Exec(`INSERT INTO file_source(id,code,display_name,source_type,config_json) VALUES(7,'example_remote_a','Example Remote A','openlist','{"openListRoots":["/Example Work"]}');
+		INSERT INTO file_source_endpoint(file_source_id,api_url,base_url) VALUES(7,?,?);
+		INSERT INTO source_catalog_entry(id,file_source_id,root_path,title) VALUES
+			(1,7,'/Example Work','Example Work'),
+			(2,7,'/Example Work/Episode','Example Episode');
+		INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes) VALUES
+			(1,'Episode/track.mp3','track.mp3','folder',0),
+			(2,'track.mp3','Example Track','audio',16);`, remote.URL, remote.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := NewServer(db, config.Config{Mode: config.ModeProduction, RootUsername: "synthetic-user", DataRoot: t.TempDir(), CacheRoot: t.TempDir()})
+	t.Cleanup(func() { _ = server.Shutdown(context.Background()) })
+	createTestAdministrator(t, server, "synthetic-user", "synthetic-password")
+	handler := server.Routes()
+	cookie := loginTestSession(t, handler, "synthetic-user", "synthetic-password")
+	for _, target := range []string{"/api/remote-sources/7/works", "/api/remote-sources/7/works?q=Example"} {
+		list := reviewRequest(t, handler, cookie, http.MethodGet, target, "", http.StatusOK)
+		works := list["works"].([]any)
+		if list["total"] != float64(1) || len(works) != 1 {
+			t.Fatalf("%s returned a card without audio: %#v", target, list)
+		}
+		if works[0].(map[string]any)["title"] != "Example Episode" {
+			t.Fatalf("%s kept the wrong card: %#v", target, works)
+		}
+	}
+}
+
 func TestOpenListMediaRejectsUntrustedDestinations(t *testing.T) {
 	credentialURL := url.URL{Scheme: "http", Host: "source.example.invalid", Path: "/audio", User: url.UserPassword("synthetic-user", "synthetic-password")}
 	for _, target := range []string{"file:///etc/passwd", credentialURL.String(), "http://127.0.0.2/audio", "http://192.0.2.1/audio", "http://[::1]/audio"} {

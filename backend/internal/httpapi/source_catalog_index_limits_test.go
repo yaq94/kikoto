@@ -41,7 +41,8 @@ func TestSourceCatalogIndexLowDiskPausesBeforePublishingAndResumes(t *testing.T)
 		}
 		return diskSpaceSnapshot{Available: 4 << 30}, nil
 	}
-	metadataReviewExec(t, f.server.db, `INSERT INTO source_catalog_entry(id,file_source_id,root_path,title) VALUES(91,1,'/Retained','Example retained card')`)
+	metadataReviewExec(t, f.server.db, `INSERT INTO source_catalog_entry(id,file_source_id,root_path,title) VALUES(91,1,'/Retained','Example retained card');
+		INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes) VALUES(91,'track.mp3','Example track','audio',100);`)
 	reviewRequest(t, f.handler, f.cookie, http.MethodPatch, "/api/source-catalog/91/user-state", `{"rating":0,"note":"Example retained note"}`, 200)
 	f.request(t, http.MethodPost, "/catalog/index", `{"intervalMs":100}`, 202)
 	p := f.drain(t)

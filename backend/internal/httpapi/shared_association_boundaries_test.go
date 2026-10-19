@@ -73,6 +73,9 @@ func TestSharedAssociationSeriesEpisodesAndRegistration(t *testing.T) {
 	INSERT INTO file_source_endpoint(file_source_id,api_url,base_url) VALUES(7,'https://source.example.invalid','https://source.example.invalid');
 	INSERT INTO catalog_series(id,title) VALUES(1,'Example series A'),(2,'Example series B');
 	INSERT INTO source_catalog_entry(id,file_source_id,root_path,title) VALUES(1,7,'/Episode A','Episode A'),(2,7,'/Episode B','Episode B'),(3,7,'/Independent A','Independent A'),(4,7,'/Independent B','Independent B');
+	INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes) VALUES
+		(1,'01 track.mp3','01 track.mp3','audio',100),(2,'01 track.mp3','01 track.mp3','audio',100),
+		(3,'01 track.mp3','01 track.mp3','audio',100),(4,'01 track.mp3','01 track.mp3','audio',100);
 	INSERT INTO catalog_series_member(series_id,catalog_entry_id,position,evidence) VALUES(1,1,1,'manual'),(2,2,1,'manual');`)
 	app := httptest.NewServer(s.Routes())
 	defer app.Close()
