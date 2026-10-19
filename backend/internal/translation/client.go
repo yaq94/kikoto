@@ -19,6 +19,16 @@ const TemplateVersion = "index-user-v1"
 const MaxInputBytes = 8 << 10
 const MaxResponseBytes = 256 << 10
 
+const (
+	// A translation can expand relative to its source and the model tokenizer
+	// does not count runes, so budget two output tokens per source rune. The
+	// floor keeps short titles from a needlessly small completion; the ceiling
+	// bounds generation cost and stays far below MaxResponseBytes.
+	outputTokensPerRune = 2
+	minOutputTokens     = 256
+	maxOutputTokens     = 4096
+)
+
 type Input struct {
 	Text           string `json:"text"`
 	TargetLanguage string `json:"targetLanguage"`
@@ -49,6 +59,21 @@ func (in Input) Validate() error {
 	return nil
 }
 
+// outputTokenBudget sizes one completion from the source text. The factor is a
+// conservative estimate, not a tokenizer count: it leaves headroom for target
+// language expansion while the ceiling keeps realistic synopsis-length fields
+// within one bounded request.
+func outputTokenBudget(text string) int {
+	tokens := utf8.RuneCountInString(strings.TrimSpace(text)) * outputTokensPerRune
+	if tokens < minOutputTokens {
+		return minOutputTokens
+	}
+	if tokens > maxOutputTokens {
+		return maxOutputTokens
+	}
+	return tokens
+}
+
 // Translate makes exactly one non-streaming completion request. The caller owns
 // the configured-origin policy client; credentials never enter the result.
 func Translate(ctx context.Context, client *http.Client, cfg Config, in Input) (Result, error) {
@@ -64,7 +89,7 @@ func Translate(ctx context.Context, client *http.Client, cfg Config, in Input) (
 	payload := map[string]any{
 		"model":       cfg.Model,
 		"messages":    []map[string]string{{"role": "user", "content": "请将以下文本翻译为" + languageNames[in.TargetLanguage] + "，直接输出翻译结果，不要进行任何解释。\n\n" + strings.TrimSpace(in.Text)}},
-		"temperature": 0, "max_tokens": 1024, "stream": false,
+		"temperature": 0, "max_tokens": outputTokenBudget(in.Text), "stream": false,
 	}
 	if cfg.DisableThinking {
 		payload["chat_template_kwargs"] = map[string]bool{"enable_thinking": false}

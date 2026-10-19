@@ -133,7 +133,7 @@ func TestTranslationTrialUsesSavedModelKeyAndOfficialSingleUserTemplate(t *testi
 	if len(messages) != 1 || messages[0].(map[string]any)["role"] != "user" || messages[0].(map[string]any)["content"] != "请将以下文本翻译为简体中文，直接输出翻译结果，不要进行任何解释。\n\nThe weather is nice today." {
 		t.Fatalf("unexpected prompt: %#v", messages)
 	}
-	if sent["temperature"] != float64(0) || sent["max_tokens"] != float64(1024) || sent["stream"] != false || sent["chat_template_kwargs"].(map[string]any)["enable_thinking"] != false {
+	if sent["temperature"] != float64(0) || sent["max_tokens"] != float64(256) || sent["stream"] != false || sent["chat_template_kwargs"].(map[string]any)["enable_thinking"] != false {
 		t.Fatalf("unexpected model parameters: %#v", sent)
 	}
 	translationRequest(t, host, admin, "PATCH", "/api/settings/translation", `{"disableThinking":false}`, 200)
