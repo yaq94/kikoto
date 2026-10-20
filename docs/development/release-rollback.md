@@ -42,14 +42,6 @@ rows. An `080` or `081` snapshot restored into a `082` image upgrades by adding
 the empty columns; a `082` database needs a binary that packages `082`, and an
 `081` binary must be paired with an `081` snapshot.
 
-`kikoto:next-be14c79f` predates commit `20e168df`, which recomputes the split
-decision for each completed revision and retires split cards the new generation
-did not publish. The image still reads every `078` row, but a directory whose
-listing already had a stored `work_split` keeps that earlier decision, and
-split cards from an older generation are not retired by that image. Use the
-current build when those two behaviors are required; use `next-be14c79f` only
-for schema compatibility and ordinary reads.
-
 ## Back Up Before A Deployment
 
 Stop the service so the copy and its WAL files describe one moment:
