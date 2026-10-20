@@ -325,14 +325,17 @@ func (s *Server) cleanupCatalogPublishBatch(ctx context.Context, job workflowJob
 		// A folder row that is now its own catalog entry belongs to that
 		// entry, not to the card above it. Keeping it makes the parent list a
 		// child work as one of its tracks.
+		// rtrim handles the configured root: "/" has no trailing component of
+		// its own, so the old prefix check never matched it and the root card
+		// kept a folder row for every child work.
 		result, execErr := tx.ExecContext(ctx, `DELETE FROM source_catalog_file
 			WHERE catalog_entry_id=? AND relative_path IN (
-				SELECT substr(e.root_path,length(parent.root_path)+2)
+				SELECT substr(e.root_path,length(rtrim(parent.root_path,'/'))+2)
 				FROM source_catalog_entry e
 				JOIN source_catalog_entry parent ON parent.id=?
 				WHERE e.file_source_id=parent.file_source_id
 					AND e.relocated_to_id IS NULL AND e.id<>parent.id
-					AND parent.root_path<>'/' AND substr(e.root_path,1,length(parent.root_path)+1)=parent.root_path || '/')`, id, id)
+					AND substr(e.root_path,1,length(rtrim(parent.root_path,'/'))+1)=rtrim(parent.root_path,'/') || '/')`, id, id)
 		if execErr != nil {
 			return 0, 0, execErr
 		}
