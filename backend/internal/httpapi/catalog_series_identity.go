@@ -165,7 +165,9 @@ func mergeSameCatalogSeriesMemberTx(ctx context.Context, tx *sql.Tx, fromID, toI
 		var occupant int64
 		err := tx.QueryRowContext(ctx, `SELECT catalog_entry_id FROM catalog_series_member WHERE series_id=? AND position=?`, seriesID, evidence.Position).Scan(&occupant)
 		if errors.Is(err, sql.ErrNoRows) {
-			_, err = tx.ExecContext(ctx, `UPDATE catalog_series_member SET position=? WHERE catalog_entry_id=?`, evidence.Position, toID)
+			if _, execErr := tx.ExecContext(ctx, `UPDATE catalog_series_member SET position=? WHERE catalog_entry_id=?`, evidence.Position, toID); execErr != nil {
+				return execErr
+			}
 		} else if err != nil {
 			return err
 		}
