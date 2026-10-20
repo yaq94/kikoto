@@ -89,4 +89,6 @@
 
 `EXPLAIN QUERY PLAN` 显示原查询对每个候选目录扫一遍物化的 roots（`SCAN r`）并额外做临时排序；目录优先的形态用 `source_catalog_directory` 主键顺序，无需临时排序。schema 不变，仍为 82。
 
-同时修正两处判断：8 批 × 50 行的几何在 -race 契约套件上是 891s，4 批 × 100 行是 274s（同一测试树，基线 `e2ba6b96` 为 274.7s），固定成本主导，已恢复 4 × 100；`catalogSlowWriteThreshold` 随 `catalogIndexNoPacingKey` 一起关闭，避免 race 开销淹没真实信号。
+发布几何保持施工单确认的 8 批 × 50 行（每 pass 400 行）。曾一度改回 4 × 100，依据是 -race 契约套件的 891s 与 846s 对比；复测后确认那 45s 差异来自每个事务的固定成本（当时的 88ms CTE 扫描），而不是批次大小，且 -race 本身放大约 5–10 倍。CTE 修掉后单批固定成本降到 0.2ms，更小的批次才真正缩短单次持锁时间，因此恢复 8 × 50。清理保持 4 × 100，避免把清理扫描量翻倍。
+
+`catalogSlowWriteThreshold` 随 `catalogIndexNoPacingKey` 一起关闭，避免 race 开销淹没真实信号。
