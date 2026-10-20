@@ -124,6 +124,7 @@ func run() error {
 		server.Go(server.RunRecommendationWorker)
 		server.Go(server.RunWorkMatchingWorker)
 		server.Go(server.RunCatalogSidecarWorker)
+		server.Go(server.RunCatalogAvailabilityWorker)
 		server.Go(server.ResumeLibraryMigration)
 		server.Go(func(ctx context.Context) {
 			if err := server.RunStartupWorkflows(ctx); err != nil && ctx.Err() == nil {

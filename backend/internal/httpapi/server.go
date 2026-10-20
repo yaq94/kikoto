@@ -110,6 +110,9 @@ type Server struct {
 	catalogNow                     func() time.Time
 	workMatchingMu                 sync.Mutex
 	catalogSidecarCooldown         *catalogSidecarSourceCooldown
+	catalogAvailabilityMu          sync.Mutex
+	catalogAvailabilityQueued      map[int64]struct{}
+	catalogAvailabilityQueue       chan int64
 }
 
 type localMediaIndexCall struct {
@@ -141,6 +144,8 @@ func NewServer(db *sql.DB, cfg config.Config) *Server {
 		appUpdateEndpoints:             defaultAppUpdateEndpoints(),
 		lifetime:                       newServerLifetime(),
 		catalogSidecarCooldown:         newCatalogSidecarSourceCooldown(),
+		catalogAvailabilityQueued:      map[int64]struct{}{},
+		catalogAvailabilityQueue:       make(chan int64, catalogAvailabilityQueueLimit),
 	}
 	server.proxyConfig = &proxyConfigStore{load: server.loadProxyConfig}
 	server.metadataTransport = newMetadataTransport(dlsiteEndpoints, func(ctx context.Context) (proxyRoute, error) {

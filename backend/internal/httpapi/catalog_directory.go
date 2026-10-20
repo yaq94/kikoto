@@ -21,13 +21,26 @@ func (s *Server) refreshCatalogDirectory(w http.ResponseWriter, r *http.Request)
 		writeAPIError(w, 400, "invalid_request", "invalid catalog id", false)
 		return
 	}
-	entry, source, err := s.loadSourceCatalogEntry(r.Context(), id)
-	if err != nil {
+	ctx, cancel := context.WithTimeout(r.Context(), catalogAvailabilityTimeout)
+	defer cancel()
+	if _, err = s.refreshCatalogEntry(ctx, id); err != nil {
+		if errors.Is(err, errCatalogNoPlayableFiles) {
+			writeAPIError(w, 502, "upstream_error", "catalog directory has no playable files", true)
+			return
+		}
 		writeUpstreamError(w, err)
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
-	defer cancel()
+	writeJSON(w, http.StatusOK, map[string]any{"catalogEntryId": id, "status": "available"})
+}
+
+// refreshCatalogEntry publishes a complete playable snapshot. A failed refresh
+// keeps the previous snapshot and records the failure on the card itself.
+func (s *Server) refreshCatalogEntry(ctx context.Context, id int64) (string, error) {
+	entry, source, err := s.loadSourceCatalogEntry(ctx, id)
+	if err != nil {
+		return "", err
+	}
 	sourceRoot := entry.SourceRoot
 	if sourceRoot == "" {
 		sourceRoot = entry.RootPath
@@ -43,12 +56,11 @@ func (s *Server) refreshCatalogDirectory(w http.ResponseWriter, r *http.Request)
 				status = "missing"
 			}
 			if statusErr := s.setCatalogEntryStatus(ctx, entry.ID, status); statusErr != nil {
-				writeError(w, statusErr)
-				return
+				return status, statusErr
 			}
+			return status, err
 		}
-		writeUpstreamError(w, err)
-		return
+		return "", err
 	}
 	cardFiles := catalogSplitCardFiles(entry.RootPath, entry.SourceRoot, files)
 	playable := false
@@ -60,35 +72,29 @@ func (s *Server) refreshCatalogDirectory(w http.ResponseWriter, r *http.Request)
 	}
 	if !playable {
 		if err = s.setCatalogEntryStatus(ctx, entry.ID, "unconfirmed_empty"); err != nil {
-			writeError(w, err)
-			return
+			return "unconfirmed_empty", err
 		}
-		writeAPIError(w, 502, "upstream_error", "catalog directory has no playable files", true)
-		return
+		return "unconfirmed_empty", errCatalogNoPlayableFiles
 	}
 	if entry.SourceRoot != "" {
 		// A split card refreshes only its own files; the directory scan above
 		// read the real creator folder to resolve them.
 		tx, release, txErr := beginTxWithDatabaseBusyRetry(ctx, s.db)
 		if txErr != nil {
-			writeError(w, txErr)
-			return
+			return "", txErr
 		}
 		defer release()
 		defer func() { _ = tx.Rollback() }()
 		if _, txErr = persistOpenListSnapshotTx(ctx, tx.Tx, source.ID, entry.RootPath, entry.SourceRoot, entry.Title, cardFiles); txErr != nil {
-			writeError(w, txErr)
-			return
+			return "", txErr
 		}
 		if txErr = tx.Commit(); txErr != nil {
-			writeError(w, txErr)
-			return
+			return "", txErr
 		}
 	} else if _, err = s.persistOpenListRoot(ctx, source, entry.RootPath, files); err != nil {
-		writeError(w, err)
-		return
+		return "", err
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"catalogEntryId": id, "status": "available"})
+	return "available", nil
 }
 
 // A catalog directory identifies a source entry, not a second work. Exact work
@@ -118,7 +124,7 @@ func (s *Server) getWorkCatalogDirectories(w http.ResponseWriter, r *http.Reques
 	)
 	SELECT entry.id,COALESCE(entry.file_source_id,0),COALESCE(source.display_name,''),entry.title,entry.primary_code,COALESCE(source.enabled,0),entry.work_id,
 	 CASE WHEN entry.file_source_id IS NULL THEN 'missing' ELSE entry.availability_status END,
-	 COALESCE(strftime('%Y-%m-%dT%H:%M:%SZ',COALESCE(entry.status_checked_at,entry.updated_at)),'')
+	 COALESCE(strftime('%Y-%m-%dT%H:%M:%SZ',entry.status_checked_at),'')
 	FROM source_catalog_entry AS entry LEFT JOIN file_source AS source ON source.id=entry.file_source_id
 	WHERE entry.relocated_to_id IS NULL AND (source.source_type='openlist' OR entry.file_source_id IS NULL)
 		AND (entry.work_id IN (SELECT work_id FROM family) OR (entry.work_id IS NULL AND entry.primary_code<>'' AND
@@ -158,6 +164,9 @@ func (s *Server) getWorkCatalogDirectories(w http.ResponseWriter, r *http.Reques
 		directoryType := "catalog"
 		if entryID == 0 {
 			directoryType = "remote"
+		}
+		if entryID > 0 && enabled && catalogDirectoryNeedsCheck(status, checkedAt, time.Now()) {
+			s.enqueueCatalogDirectoryCheck(entryID)
 		}
 		directories = append(directories, map[string]any{"catalogEntryId": entryID, "sourceId": sourceID, "sourceName": sourceName, "title": title, "primaryCode": primaryCode, "workId": directoryWorkID, "directoryType": directoryType, "status": status, "checkedAt": checkedAt})
 	}

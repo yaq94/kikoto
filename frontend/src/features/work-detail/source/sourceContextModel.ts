@@ -255,6 +255,15 @@ export function sourceProvidesDirectory(source: LibrarySource) {
 }
 
 /** A missing timestamp is stale; a different source's recent check cannot renew it. */
+/** A catalog tab is due for a background check after a day, or when the source
+ * never answered. Disabled sources stay untouched. */
+export function catalogDirectoryNeedsCheck(entry: Pick<CatalogDirectory, "status" | "checkedAt">, now = Date.now()) {
+  if (entry.status === "disabled") return false;
+  if (entry.status === "unknown" || !entry.status) return true;
+  const checked = Date.parse(entry.checkedAt ?? "");
+  return !Number.isFinite(checked) || now - checked >= 24 * 60 * 60 * 1000;
+}
+
 export function sourceAvailabilityNeedsCheck(summary: SourceAvailabilitySource, now = Date.now()) {
   if (summary.status === "disabled" || summary.status === "unavailable") return false;
   const checked = Date.parse(summary.checkedAt ?? "");

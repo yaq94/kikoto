@@ -4,6 +4,7 @@ import type { CatalogDirectory, MediaItem, SourceAvailabilitySource, WorkDetail 
 import {
   buildCatalogTabs,
   buildSourceTabs,
+  catalogDirectoryNeedsCheck,
   buildTrackedPresenceOptions,
   currentRemoteSourceWorkCode,
   trackedPresenceKey,
@@ -187,6 +188,14 @@ describe("sourceContextModel", () => {
     } as NonNullable<WorkDetail["sourcePresence"]>[number];
 
     expect(trackedPresenceKey({ ...base, workId: 11 })).not.toBe(trackedPresenceKey({ ...base, workId: 12 }));
+  });
+
+  it("checks a catalog tab that never answered or whose answer is a day old", () => {
+    const now = Date.parse("2026-10-21T12:00:00Z");
+    expect(catalogDirectoryNeedsCheck({ status: "available", checkedAt: "" }, now)).toBe(true);
+    expect(catalogDirectoryNeedsCheck({ status: "available", checkedAt: "2026-10-21T11:00:00Z" }, now)).toBe(false);
+    expect(catalogDirectoryNeedsCheck({ status: "missing", checkedAt: "2026-10-19T12:00:00Z" }, now)).toBe(true);
+    expect(catalogDirectoryNeedsCheck({ status: "disabled", checkedAt: "" }, now)).toBe(false);
   });
 });
 
