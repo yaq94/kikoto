@@ -15,10 +15,22 @@ import (
 
 const sourceCatalogIndexWorkerType = "source_catalog_index"
 
-// catalogPublishBatchesPerPass bounds publication work in one workflow
-// invocation. Each batch holds the write lock for at most 100 rows, and the
-// remaining backlog returns to the durable queue.
-const catalogPublishBatchesPerPass = 4
+const (
+	// 每批行数与“批次已满”哨兵必须成对修改。行数小于哨兵会让 worker
+	// 把未完成的队列判成空，且不报错。
+	catalogPublishRows   = 50
+	catalogLifecycleRows = 100
+	catalogCleanupRows   = 100
+	catalogStagingRows   = 100
+	catalogRetireRoots   = 100
+	catalogExpandRows    = 100
+
+	// catalogPublishBatchesPerPass bounds publication work in one workflow
+	// invocation. Each batch holds the write lock for at most
+	// catalogPublishRows rows, and the remaining backlog returns to the
+	// durable queue. Eight batches keep the per-pass total at 400 rows.
+	catalogPublishBatchesPerPass = 8
+)
 
 type catalogIndexOptions struct {
 	PageSize             int   `json:"pageSize"`
@@ -31,7 +43,7 @@ type catalogIndexOptions struct {
 }
 
 func defaultCatalogIndexOptions() catalogIndexOptions {
-	return catalogIndexOptions{100, 8, 1, 1000, openlist.MaxResponseBytes, 2 << 30, 10000}
+	return catalogIndexOptions{100, 8, 2, 500, openlist.MaxResponseBytes, 2 << 30, 10000}
 }
 
 func (o catalogIndexOptions) validate() error {

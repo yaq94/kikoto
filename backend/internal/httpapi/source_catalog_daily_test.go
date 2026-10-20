@@ -223,11 +223,11 @@ func TestSourceCatalogDailyJoinsQueuedRunningAndCancelledScansWithSavedBudget(t 
 	other := loginTestSession(t, f.handler, "synthetic-listener", "synthetic-password")
 	reviewRequest(t, f.handler, other, http.MethodPost, f.base+"/catalog/index", `{}`, 403)
 	reviewRequest(t, f.handler, other, http.MethodGet, f.base+"/catalog/index", "", 403)
-	f.request(t, http.MethodPost, "/catalog/index", `{}`, 202)
+	f.request(t, http.MethodPost, "/catalog/index", `{"concurrency":1,"intervalMs":1000}`, 202)
 	if p := f.drain(t); p["status"] != "complete" {
 		t.Fatalf("initial scan: %#v", p)
 	}
-	queued := f.request(t, http.MethodPost, "/catalog/index", `{}`, 202)["runId"]
+	queued := f.request(t, http.MethodPost, "/catalog/index", `{"concurrency":1,"intervalMs":1000}`, 202)["runId"]
 	for range 3 {
 		if p := f.request(t, http.MethodPost, "/catalog/index", `{}`, 202); p["runId"] != queued {
 			t.Fatal("queued scan duplicated")

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"path"
 	"strings"
+	"time"
 
 	"github.com/yexca/kikoto/backend/internal/openlist"
 )
@@ -42,6 +43,9 @@ func (s *Server) pendingCatalogDirectories(ctx context.Context, sourceID, genera
 // Every page and its next cursor commit together; no pooled connection remains
 // checked out while an HTTP response is pending.
 func (s *Server) persistCatalogPage(ctx context.Context, job workflowJobRecord, sourceID int64, d catalogScanDirectory, data openlist.Page, requestErr error, options catalogIndexOptions) error {
+	started := time.Now()
+	written := 0
+	defer func() { observeCatalogWrite("persist_page", started, written) }()
 	tx, release, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
 	if err != nil {
 		return err
@@ -168,6 +172,7 @@ func (s *Server) persistCatalogPage(ctx context.Context, job workflowJobRecord, 
 	if err = refreshCatalogAudioRootTx(ctx, tx.Tx, sourceID, job.RunID, d.Path); err != nil {
 		return err
 	}
+	written = len(data.Content)
 	return tx.Commit()
 }
 
@@ -375,7 +380,7 @@ func (s *Server) expandCatalogDirectory(ctx context.Context, job workflowJobReco
 	if err != nil {
 		return false, err
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT name FROM source_catalog_observation WHERE file_source_id=? AND directory_path=? AND revision=? AND kind='folder' AND name>? ORDER BY name LIMIT 100`, sourceID, p, revision, cursor)
+	rows, err := tx.QueryContext(ctx, `SELECT name FROM source_catalog_observation WHERE file_source_id=? AND directory_path=? AND revision=? AND kind='folder' AND name>? ORDER BY name LIMIT ?`, sourceID, p, revision, cursor, catalogExpandRows)
 	if err != nil {
 		return false, err
 	}
@@ -406,7 +411,7 @@ func (s *Server) expandCatalogDirectory(ctx context.Context, job workflowJobReco
 		cursor = name
 	}
 	status := "listing_complete"
-	if len(names) < 100 {
+	if len(names) < catalogExpandRows {
 		status = "complete"
 	}
 	_, err = tx.ExecContext(ctx, `UPDATE source_catalog_directory SET children_cursor=?,status=?,completed_at=CASE WHEN ?='complete' THEN CURRENT_TIMESTAMP ELSE NULL END WHERE file_source_id=? AND path=?`, cursor, status, status, sourceID, p)
@@ -450,6 +455,9 @@ func refreshCatalogAudioRootTx(ctx context.Context, tx *sql.Tx, sourceID, genera
 // Publish a bounded number of validated observations. The first playable
 // observation creates a catalog identity; it never registers a library work.
 func (s *Server) publishCatalogBatch(ctx context.Context, job workflowJobRecord, sourceID int64) (int, error) {
+	started := time.Now()
+	published := 0
+	defer func() { observeCatalogWrite("publish_batch", started, published) }()
 	tx, release, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
 	if err != nil {
 		return 0, err
@@ -472,7 +480,7 @@ JOIN source_catalog_directory d ON d.file_source_id=o.file_source_id AND d.path=
 LEFT JOIN source_catalog_directory rd ON rd.file_source_id=d.file_source_id AND rd.path=d.catalog_root AND rd.generation=d.generation
 JOIN roots r ON r.catalog_root=d.catalog_root
 WHERE o.file_source_id=? AND o.publish_pending=1 AND d.generation=? AND d.status='complete' AND d.catalog_root<>''
-ORDER BY o.directory_path,o.name LIMIT 100`, sourceID, job.RunID, sourceID, job.RunID)
+ORDER BY o.directory_path,o.name LIMIT ?`, sourceID, job.RunID, sourceID, job.RunID, catalogPublishRows)
 	if err != nil {
 		return 0, err
 	}
@@ -592,7 +600,7 @@ ORDER BY o.directory_path,o.name LIMIT 100`, sourceID, job.RunID, sourceID, job.
 			return 0, err
 		}
 	}
-	// Retirement is a property of a finished generation, not of one 100-row
+	// Retirement is a property of a finished generation, not of one publish
 	// batch. Running it while other rows are still pending could delete the only
 	// playable copy of a group that a later batch is about to publish, and it
 	// made every publish batch scan the whole source. The final batch (or a
@@ -696,7 +704,8 @@ ORDER BY o.directory_path,o.name LIMIT 100`, sourceID, job.RunID, sourceID, job.
 		if err = tx.Commit(); err != nil {
 			return 0, err
 		}
-		return len(items), nil
+		published = len(items)
+		return published, nil
 	}
 	for _, p := range items {
 		if p.split != "" && p.split != catalogWorkSplitSingle {
@@ -735,7 +744,8 @@ ORDER BY o.directory_path,o.name LIMIT 100`, sourceID, job.RunID, sourceID, job.
 	if err = tx.Commit(); err != nil {
 		return 0, err
 	}
-	return len(items), nil
+	published = len(items)
+	return published, nil
 }
 
 func (s *Server) sourceCatalogProgress(ctx context.Context, sourceID int64, page int) (catalogIndexProgress, error) {

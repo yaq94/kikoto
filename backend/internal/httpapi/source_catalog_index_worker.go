@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"path/filepath"
 	"time"
 
@@ -14,6 +15,32 @@ import (
 // delay is a source-protection policy, not the subject of that suite; the
 // configured-rate tests own it.
 type catalogIndexNoPacingKey struct{}
+
+const catalogWritePause = 8 * time.Millisecond
+
+// pauseCatalogWriter 在写事务之间让出 SQLite 写锁。等待者每 10ms 重试一次，
+// 8ms 的窗口足以让它拿到锁。契约套件通过 catalogIndexNoPacingKey 关闭该暂停。
+func pauseCatalogWriter(ctx context.Context) error {
+	if ctx.Value(catalogIndexNoPacingKey{}) != nil {
+		return ctx.Err()
+	}
+	timer := time.NewTimer(catalogWritePause)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+const catalogSlowWriteThreshold = 500 * time.Millisecond
+
+func observeCatalogWrite(kind string, started time.Time, rows int) {
+	if elapsed := time.Since(started); elapsed > catalogSlowWriteThreshold {
+		slog.Warn("catalog write transaction is slow", "kind", kind, "rows", rows, "elapsed_ms", elapsed.Milliseconds())
+	}
+}
 
 func (s *Server) executeSourceCatalogIndexJob(ctx context.Context, job workflowJobRecord) error {
 	var input catalogIndexInput
@@ -30,6 +57,13 @@ func (s *Server) executeSourceCatalogIndexJob(ctx context.Context, job workflowJ
 	}
 	options := progress.Options
 	if err = options.validate(); err != nil {
+		return err
+	}
+	// Rows left pending by earlier generations can no longer be published in
+	// this run; clearing the flag keeps the publish query from scanning them on
+	// every batch. Only the flag changes, and a remaining backlog continues on
+	// the next invocation.
+	if err = s.purgeStaleCatalogPending(ctx, job, input.SourceID); err != nil {
 		return err
 	}
 	httpClient := s.sourceClient(source, 30*time.Second, sourceRequestCatalogIndex)
@@ -62,6 +96,9 @@ func (s *Server) executeSourceCatalogIndexJob(ctx context.Context, job workflowJ
 			return err
 		}
 		if expanded {
+			if err = pauseCatalogWriter(ctx); err != nil {
+				return err
+			}
 			count++
 			continue
 		}
@@ -100,11 +137,14 @@ func (s *Server) executeSourceCatalogIndexJob(ctx context.Context, job workflowJ
 				if err != nil {
 					return err
 				}
-				if scanned < 100 {
+				if err = pauseCatalogWriter(ctx); err != nil {
+					return err
+				}
+				if scanned < catalogCleanupRows {
 					break
 				}
 			}
-			if scanned == 100 {
+			if scanned == catalogCleanupRows {
 				return s.settleCatalogBatch(ctx, job, input.SourceID, "queued", "")
 			}
 			p, err := s.sourceCatalogProgress(ctx, input.SourceID, 1)
@@ -136,11 +176,17 @@ func (s *Server) executeSourceCatalogIndexJob(ctx context.Context, job workflowJ
 				if err != nil {
 					return err
 				}
-				if retired == 100 {
+				if err = pauseCatalogWriter(ctx); err != nil {
+					return err
+				}
+				if retired == catalogRetireRoots {
 					return s.settleCatalogBatch(ctx, job, input.SourceID, "queued", "")
 				}
 				pending, err := s.settleCatalogLifecycleBatch(ctx, job, input.SourceID)
 				if err != nil {
+					return err
+				}
+				if err = pauseCatalogWriter(ctx); err != nil {
 					return err
 				}
 				if pending {
@@ -149,6 +195,9 @@ func (s *Server) executeSourceCatalogIndexJob(ctx context.Context, job workflowJ
 				}
 				n, err := s.cleanupCatalogStagingBatch(ctx, job, input.SourceID)
 				if err != nil {
+					return err
+				}
+				if err = pauseCatalogWriter(ctx); err != nil {
 					return err
 				}
 				if n > 0 {
@@ -184,7 +233,9 @@ func (s *Server) executeSourceCatalogIndexJob(ctx context.Context, job workflowJ
 					pauseReason = reason
 				}
 				if pauseReason == "" {
-					writeErr = s.persistCatalogPage(ctx, job, input.SourceID, result.dir, result.data, result.err, options)
+					if writeErr = s.persistCatalogPage(ctx, job, input.SourceID, result.dir, result.data, result.err, options); writeErr == nil {
+						writeErr = pauseCatalogWriter(ctx)
+					}
 				}
 			}
 		}
@@ -214,11 +265,21 @@ func (s *Server) publishCatalogQueue(ctx context.Context, job workflowJobRecord,
 			return published, false, err
 		}
 		published += n
-		if n < 100 {
+		if err = pauseCatalogWriter(ctx); err != nil {
+			return published, false, err
+		}
+		if !catalogPublishBatchHasMore(n) {
 			return published, false, nil
 		}
 	}
 	return published, true, nil
+}
+
+// catalogPublishBatchHasMore is the single sentinel for "the batch was full".
+// It must use the same constant as the publish query's LIMIT: a smaller row
+// count would silently strand the rest of the queue.
+func catalogPublishBatchHasMore(rows int) bool {
+	return rows >= catalogPublishRows
 }
 
 func (s *Server) catalogIndexDiskPause(options catalogIndexOptions) string {

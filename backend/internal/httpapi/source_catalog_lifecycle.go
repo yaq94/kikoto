@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"time"
 
 	"github.com/yexca/kikoto/backend/internal/openlist"
 )
@@ -24,8 +25,9 @@ func catalogRootIncomplete(ctx context.Context, tx *sql.Tx, sourceID, generation
 			AND (?='/' OR d.catalog_root=? OR d.path=? OR substr(d.path,1,length(?)+1)=? || '/')
 		UNION ALL
 		SELECT 1 FROM source_catalog_observation o
-		JOIN source_catalog_directory pd ON pd.file_source_id=o.file_source_id AND pd.path=o.directory_path
+		JOIN source_catalog_directory pd ON pd.file_source_id=o.file_source_id AND pd.path=o.directory_path AND o.revision=pd.revision
 		WHERE o.file_source_id=? AND pd.generation=? AND o.publish_pending=1
+			AND NOT (pd.status='empty' AND pd.error_code='not_found')
 			AND (?='/' OR pd.catalog_root=? OR pd.path=? OR substr(pd.path,1,length(?)+1)=? || '/')
 	)`, sourceID, generation, root, root, root, root, root,
 		sourceID, generation, root, root, root, root, root).Scan(&incomplete)
@@ -115,6 +117,9 @@ func setCatalogEntryStatusTx(ctx context.Context, tx *sql.Tx, id int64, status s
 // Only full successful coverage reaches this bounded final pass. Failure,
 // cancellation and empty directories cannot retire a previous observation.
 func (s *Server) settleCatalogLifecycleBatch(ctx context.Context, job workflowJobRecord, sourceID int64) (bool, error) {
+	started := time.Now()
+	observedCount := 0
+	defer func() { observeCatalogWrite("settle_lifecycle", started, observedCount) }()
 	tx, release, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
 	if err != nil {
 		return false, err
@@ -131,7 +136,7 @@ func (s *Server) settleCatalogLifecycleBatch(ctx context.Context, job workflowJo
 	if stage == "done" {
 		return false, nil
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT id,last_seen_generation FROM source_catalog_entry WHERE file_source_id=? AND relocated_to_id IS NULL AND id>? ORDER BY id LIMIT 100`, sourceID, cursor)
+	rows, err := tx.QueryContext(ctx, `SELECT id,last_seen_generation FROM source_catalog_entry WHERE file_source_id=? AND relocated_to_id IS NULL AND id>? ORDER BY id LIMIT ?`, sourceID, cursor, catalogLifecycleRows)
 	if err != nil {
 		return false, err
 	}
@@ -217,7 +222,8 @@ func (s *Server) settleCatalogLifecycleBatch(ctx context.Context, job workflowJo
 		}
 		cursor = e.id
 	}
-	if len(entries) < 100 {
+	observedCount = len(entries)
+	if len(entries) < catalogLifecycleRows {
 		if stage == "observe" {
 			stage = "reconcile"
 			cursor = 0
@@ -239,6 +245,8 @@ func (s *Server) settleCatalogLifecycleBatch(ctx context.Context, job workflowJo
 // retires those rows as soon as the entry is republished, for every outcome of
 // the run, without touching an entry this generation did not publish.
 func (s *Server) cleanupCatalogPublishBatch(ctx context.Context, job workflowJobRecord, sourceID int64) (scanned, removed int64, err error) {
+	started := time.Now()
+	defer func() { observeCatalogWrite("cleanup_publish", started, int(scanned)) }()
 	tx, release, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
 	if err != nil {
 		return 0, 0, err
@@ -255,7 +263,7 @@ func (s *Server) cleanupCatalogPublishBatch(ctx context.Context, job workflowJob
 	uncertainSeen := false
 	rows, err := tx.QueryContext(ctx, `SELECT id FROM source_catalog_entry
 		WHERE file_source_id=? AND last_seen_generation=? AND id>?
-		ORDER BY id LIMIT 100`, sourceID, job.RunID, cursor)
+		ORDER BY id LIMIT ?`, sourceID, job.RunID, cursor, catalogCleanupRows)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -334,7 +342,7 @@ func (s *Server) cleanupCatalogPublishBatch(ctx context.Context, job workflowJob
 		// completes. Reaching the tail of the cursor rewinds it once, so the next
 		// pass revisits those cards instead of skipping them forever. A partial
 		// page keeps its forward cursor; the rewind happens when the scan ends.
-		if uncertainSeen && len(ids) < 100 && startCursor != 0 {
+		if uncertainSeen && len(ids) < catalogCleanupRows && startCursor != 0 {
 			cursor = 0
 		}
 		if _, err = tx.ExecContext(ctx, `UPDATE source_catalog_scan SET publish_cleanup_cursor=?,updated_at=CURRENT_TIMESTAMP WHERE file_source_id=?`, cursor, sourceID); err != nil {

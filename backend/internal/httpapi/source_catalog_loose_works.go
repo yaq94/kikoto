@@ -1325,8 +1325,8 @@ func (s *Server) retireOrphanSplitRootsBatch(ctx context.Context, job workflowJo
 					AND (b.work_id IS NOT NULL
 						OR EXISTS(SELECT 1 FROM catalog_series_member m WHERE m.catalog_entry_id=b.id)
 						OR EXISTS(SELECT 1 FROM source_catalog_entry r WHERE r.relocated_to_id=b.id)))
-		ORDER BY e.source_root LIMIT 100`,
-		sourceID, job.RunID)
+		ORDER BY e.source_root LIMIT ?`,
+		sourceID, job.RunID, catalogRetireRoots)
 	if err != nil {
 		return 0, err
 	}
