@@ -238,6 +238,14 @@ func completeCatalogDirectoryTx(ctx context.Context, tx *sql.Tx, sourceID, gener
 			return err
 		}
 		if codedChild == 0 {
+			// A format copy, auxiliary folder or track container keeps the root
+			// it inherits. An entry published by an older generation must not
+			// pin the directory to itself: that made every later admission
+			// fix ineffective and left a second card for one release.
+			if catalogWorkPartDirectory(path.Base(d.Path)) {
+				d.Root = catalogAdmissionRoot(d.Path, d.Root, catalogDirectorySummary{audio, formats, auxiliary, tracks, otherDirs})
+				return finish()
+			}
 			d.Root = d.Path
 			return finish()
 		}
@@ -607,6 +615,14 @@ ORDER BY o.directory_path,o.name LIMIT 100`, sourceID, job.RunID, sourceID, job.
 				return 0, err
 			}
 		}
+	}
+	// A format copy that an older generation published as its own card is an
+	// alias once the release card owns the audio. The scan below is independent
+	// of the split plans: a format directory is `single`, so it never enters the
+	// split loops, and its stale card would otherwise keep winning the
+	// admission check in every later generation.
+	if err = retireStaleFormatCardsTx(ctx, tx.Tx, sourceID, job.RunID); err != nil {
+		return 0, err
 	}
 	// Queue credit files in the same transaction that publishes the card, so a
 	// committed card is never forgotten between publication and the reader. The

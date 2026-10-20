@@ -949,6 +949,78 @@ func replacementCatalogCardTx(ctx context.Context, tx *sql.Tx, sourceID, generat
 	return 0, nil
 }
 
+// retireStaleFormatCardsTx hides cards for a format copy, auxiliary folder or
+// track container once the release card that owns those files exists. An older
+// generation admitted such a directory as its own root; the rescan publishes the
+// release, so the stale card becomes an alias of it. The id is kept and the
+// relocation is set, so a saved link, a personal review or an import reference
+// still resolves. A card with its own work, a series membership or an incoming
+// relocation keeps its identity and is left for explicit review.
+//
+// The parent must be a card of the current generation at the directory directly
+// above, so the audio really belongs to it. Without that evidence the card
+// stays: guessing a parent would move a personal record to an unrelated work.
+func retireStaleFormatCardsTx(ctx context.Context, tx *sql.Tx, sourceID, generation int64) error {
+	rows, err := tx.QueryContext(ctx, `SELECT id,root_path FROM source_catalog_entry
+		WHERE file_source_id=? AND relocated_to_id IS NULL AND last_seen_generation<>?`, sourceID, generation)
+	if err != nil {
+		return err
+	}
+	type staleCard struct {
+		id   int64
+		root string
+	}
+	stale := []staleCard{}
+	for rows.Next() {
+		var card staleCard
+		if err = rows.Scan(&card.id, &card.root); err != nil {
+			break
+		}
+		if !catalogWorkPartDirectory(path.Base(card.root)) {
+			continue
+		}
+		stale = append(stale, card)
+	}
+	readErr := rows.Err()
+	_ = rows.Close()
+	if err != nil {
+		return err
+	}
+	if readErr != nil {
+		return readErr
+	}
+	for _, card := range stale {
+		parent := path.Dir(card.root)
+		if parent == "." || parent == "/" || parent == card.root {
+			continue
+		}
+		var parentID int64
+		err = tx.QueryRowContext(ctx, `SELECT id FROM source_catalog_entry
+			WHERE file_source_id=? AND root_path=? AND relocated_to_id IS NULL AND last_seen_generation=?`,
+			sourceID, parent, generation).Scan(&parentID)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		var blocked int
+		if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM source_catalog_entry e WHERE e.id=? AND (
+			e.work_id IS NOT NULL
+			OR EXISTS(SELECT 1 FROM catalog_series_member m WHERE m.catalog_entry_id=e.id)
+			OR EXISTS(SELECT 1 FROM source_catalog_entry r WHERE r.relocated_to_id=e.id)))`, card.id).Scan(&blocked); err != nil {
+			return err
+		}
+		if blocked != 0 {
+			continue
+		}
+		if err = retireCatalogCardTx(ctx, tx, card.id, parentID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // retireStaleSplitCardsTx hides split cards for this root that the current
 // generation did not publish. A directory that used to hold separate works can
 // become one audiobook (or change its grouping); the old cards would otherwise
