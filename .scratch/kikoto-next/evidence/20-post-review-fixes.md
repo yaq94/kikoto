@@ -51,3 +51,30 @@
 - `TestCatalogSeriesOmitsMissingEpisodesUntilRepublished`
 
 复验：后端 `go test ./...` exit 0；前端 typecheck/lint/build 与 155 文件、874 测试通过；`make backend-lint` 0 issues；`make sensitive-check` 通过。
+
+## 目录索引写锁与吞吐（2026-10-20 19:xx）
+
+依据 `E:\项目\服务器\.kikoto-work\index-write-contention.md`（本机施工单，不入库）。
+基线 run 50：并发 2、间隔 300ms、99 目录/分钟、146 分钟；期间 116 次 `SQLITE_BUSY`、202 次 `context deadline exceeded`，与目录作业起止强相关。
+
+改动：
+
+1. 批次常量与哨兵成对定义：发布 8 批 × 50 行（每 pass 仍 400 行），清理保持 4 批 × 100 行；`LIMIT` 与"队列已满"哨兵共用同一个常量。
+2. 每个写事务成功后让出 8ms 写锁；页面写同样暂停。`catalogIndexNoPacingKey` 仍可在契约测试中关闭。
+3. 扫描默认并发 2、间隔 500ms；UI 1–4 上限不变。
+4. 扫描开始前清除旧 generation 的 `publish_pending` 标志（只改标志，不动行、entry、file、个人记录），每次最多 16,000 行。
+5. `work_matching_worker` 三处状态写入改用 `sqlutil.ExecBounded`，锁冲突时归还连接。
+6. 清理游标在末页遇到不确定子树时标记一次重试（负值哨兵，下一次 pass 消费，新扫描归零）。
+7. 单次写事务超过 500ms 记录一条 Warn（kind、rows、elapsed_ms）。
+
+测试：
+
+- `TestCatalogWritePauseHonoursContext`
+- `TestPublishCatalogQueueSentinelMatchesBatchRows`
+- `TestPublishCatalogBatchLimitMatchesConstant`
+- `TestSourceCatalogPurgesStalePendingBeforePublish`
+- `TestSourceCatalogPendingPurgeBounded`
+- `TestWorkMatchingWriteBoundDoesNotHoldConnectionWhileLocked`
+- `TestSourceIndexWriteContention`（`KIKOTO_SOURCE_INDEX_WRITE_PERF_ASSERT=1` 时断言 busy=0、最长获锁 <5s、drain <2×持锁）
+
+本批无迁移，schema 仍为 82。
