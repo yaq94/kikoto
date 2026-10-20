@@ -646,6 +646,15 @@ ORDER BY o.directory_path,o.name LIMIT 100`, sourceID, job.RunID, sourceID, job.
 			return 0, err
 		}
 	}
+	if publishIdle {
+		// A root can stop being split (a creator folder is re-read as one
+		// work, or its groups disappear). Its old split cards have no current
+		// plan, so the loop below never visits that root; retire them here once
+		// the whole range is observed.
+		if err = retireOrphanSplitRootsTx(ctx, tx.Tx, sourceID, job.RunID); err != nil {
+			return 0, err
+		}
+	}
 	for root := range splitRoots {
 		if !publishIdle {
 			break

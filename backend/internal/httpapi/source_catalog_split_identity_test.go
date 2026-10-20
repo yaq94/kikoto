@@ -358,3 +358,42 @@ func TestSourceCatalogPartialRescanKeepsSidecarEvidence(t *testing.T) {
 		t.Fatalf("partial rescan cleared credit evidence: %q", raw)
 	}
 }
+
+// A creator folder that stops being a set of separate works must not leave the
+// old split cards behind. The new single card replaces them.
+func TestSourceCatalogRetiresOrphanSplitCards(t *testing.T) {
+	f := newLooseWorkFixture(t, map[string][]map[string]any{
+		"/":        {looseDir("Creator")},
+		"/Creator": {looseAudio("Alpha.mp3"), looseAudio("Beta.mp3")},
+	})
+	f.request(t, http.MethodPost, "/catalog/index", `{"intervalMs":100}`, 202)
+	if p := f.drain(t); p["status"] != "complete" {
+		t.Fatalf("scan = %#v", p)
+	}
+	if cards := f.cards(t); len(cards) != 2 {
+		t.Fatalf("cards=%v, want two split works", cards)
+	}
+	f.updates(map[string][]map[string]any{
+		"/":        {looseDir("Creator")},
+		"/Creator": {looseAudio("01.mp3"), looseAudio("02.mp3")},
+	})
+	f.request(t, http.MethodPost, "/catalog/index", `{"intervalMs":100,"force":true}`, 202)
+	if p := f.drain(t); p["status"] != "complete" {
+		t.Fatalf("rescan = %#v", p)
+	}
+	cards := f.cards(t)
+	if len(cards) != 1 || cards["Creator"] == nil {
+		t.Fatalf("cards=%v, want the single Creator card", cards)
+	}
+	if got := countCatalogAudio(f.tracks(t, cards["Creator"])); got != 2 {
+		t.Fatalf("tracks=%d, want 2", got)
+	}
+	var live int
+	if err := f.server.db.QueryRow(`SELECT count(*) FROM source_catalog_entry
+		WHERE source_root='/Creator' AND relocated_to_id IS NULL AND file_source_id IS NOT NULL`).Scan(&live); err != nil {
+		t.Fatal(err)
+	}
+	if live != 0 {
+		t.Fatalf("%d orphan split cards still have a source", live)
+	}
+}

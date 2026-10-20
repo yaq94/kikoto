@@ -1297,6 +1297,82 @@ func catalogCardFilesCoveredTx(ctx context.Context, tx *sql.Tx, staleID, ownerID
 	return missing == 0, err
 }
 
+// retireOrphanSplitRootsTx retires split cards whose root is no longer split
+// in the current generation. A full index only builds a plan for roots that
+// still split, so without this pass the cards of a former creator split would
+// keep their files and stay visible beside the single card that replaced them.
+// A card with a work, a series membership or an incoming alias is retained for
+// explicit review, and a root that is not fully observed is skipped.
+func retireOrphanSplitRootsTx(ctx context.Context, tx *sql.Tx, sourceID, generation int64) error {
+	rows, err := tx.QueryContext(ctx, `SELECT DISTINCT source_root FROM source_catalog_entry
+		WHERE file_source_id=? AND source_root<>'' AND relocated_to_id IS NULL AND last_seen_generation<>?`,
+		sourceID, generation)
+	if err != nil {
+		return err
+	}
+	roots := []string{}
+	for rows.Next() {
+		var root string
+		if err = rows.Scan(&root); err != nil {
+			break
+		}
+		roots = append(roots, root)
+	}
+	readErr := rows.Err()
+	_ = rows.Close()
+	if err != nil {
+		return err
+	}
+	if readErr != nil {
+		return readErr
+	}
+	for _, root := range roots {
+		var status string
+		if err = tx.QueryRowContext(ctx, `SELECT status FROM source_catalog_directory
+			WHERE file_source_id=? AND generation=? AND path=?`, sourceID, generation, root).Scan(&status); errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if status != "complete" {
+			continue
+		}
+		incomplete, err := catalogRootIncomplete(ctx, tx, sourceID, generation, root)
+		if err != nil {
+			return err
+		}
+		if incomplete {
+			continue
+		}
+		keep := map[int64]bool{}
+		rows, err := tx.QueryContext(ctx, `SELECT id FROM source_catalog_entry
+			WHERE file_source_id=? AND source_root=? AND last_seen_generation=?`, sourceID, root, generation)
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			var id int64
+			if err = rows.Scan(&id); err != nil {
+				break
+			}
+			keep[id] = true
+		}
+		readErr := rows.Err()
+		_ = rows.Close()
+		if err != nil {
+			return err
+		}
+		if readErr != nil {
+			return readErr
+		}
+		if err = retireStaleSplitCardsTx(ctx, tx, sourceID, generation, root, keep); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // markStaleSnapshotCardsTx reports cards a finite scan no longer publishes as
 // unavailable. The scan rewrites every card of the root in one transaction, so
 // a child card outside the written set describes content the source no longer
