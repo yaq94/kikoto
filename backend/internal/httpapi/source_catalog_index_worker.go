@@ -121,7 +121,7 @@ func (s *Server) executeSourceCatalogIndexJob(ctx context.Context, job workflowJ
 			rootEmpty := false
 			if p.Empty > 0 {
 				if err = s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM source_catalog_directory
-					WHERE file_source_id=? AND generation=? AND status='empty' AND path='/')`,
+					WHERE file_source_id=? AND generation=? AND status='empty' AND error_code<>'not_found' AND path='/')`,
 					input.SourceID, job.RunID).Scan(&rootEmpty); err != nil {
 					return err
 				}

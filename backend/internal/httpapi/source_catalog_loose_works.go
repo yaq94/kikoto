@@ -162,6 +162,11 @@ func catalogTrailingNumberRun(names []string) bool {
 			return false
 		}
 		number := strings.TrimRight(stem[loc[0]:], " ._-）)】]")
+		// A zero-padded number is a code, not a track counter: T001/T002 and
+		// B006/B007 are separate releases.
+		if len(number) > 1 && number[0] == '0' {
+			return false
+		}
 		position, err := strconv.Atoi(strings.TrimSpace(number))
 		if err != nil || position > 9999 {
 			return false
@@ -274,6 +279,11 @@ func catalogWorkIdentityTitle(name string) string {
 	if catalogLooseVolumeMarker.MatchString(original) {
 		return strings.Join(strings.Fields(original), " ")
 	}
+	// A stem that is nothing but a local code is the whole identity. Stripping
+	// its digits would collapse T001 and T002 onto "t".
+	if catalogLooseWorkPrefix.FindString(original) == original {
+		return original
+	}
 	stem := original
 	if !catalogLooseLeadingYear.MatchString(stem) {
 		stem = catalogLooseLeadingTrack.ReplaceAllString(stem, "")
@@ -309,11 +319,18 @@ func catalogNumberedTrackRun(names []string) bool {
 	}
 	positions := make([]int, 0, len(names))
 	total := -1
+	bare := 0
 	for _, name := range names {
 		stem := strings.TrimSpace(catalogFileStem(name))
 		match := catalogNumberedTrackPrefix.FindStringSubmatch(stem)
 		if match == nil {
 			return false
+		}
+		// A bare number is a track only when the whole listing is numbered.
+		// "T001 Crossing" / "T002 Departure" carry the number after the code,
+		// and a single "T001" beside a title must not fold the two together.
+		if strings.TrimSpace(stem[len(match[0]):]) == "" {
+			bare++
 		}
 		position, err := strconv.Atoi(match[1])
 		if err != nil || position < 0 || position > 999 {
@@ -334,6 +351,11 @@ func catalogNumberedTrackRun(names []string) bool {
 			return false
 		}
 		positions = append(positions, position)
+	}
+	if bare != len(names) && bare != 0 {
+		// Mixed bare numbers and titled files in one folder are separate
+		// recordings, not one track list.
+		return false
 	}
 	sort.Ints(positions)
 	if positions[0] > 1 {

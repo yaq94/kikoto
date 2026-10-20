@@ -2,6 +2,8 @@ package httpapi
 
 import (
 	"net/http"
+	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -219,5 +221,140 @@ func TestCatalogEpisodeFormatCopyStaysWithEpisode(t *testing.T) {
 		if evidence, ok := catalogEpisodeEvidence("/Series/" + name); ok {
 			t.Fatalf("%q became episode evidence: %#v", name, evidence)
 		}
+	}
+}
+
+// A bare local code is the whole identity. T001 and T002 are two works even
+// though the numbers are consecutive.
+func TestCatalogSplitModeKeepsBareCodesApart(t *testing.T) {
+	names := []string{"T001.mp3", "T002.mp3"}
+	if got := catalogWorkSplitModeNames(names); got != catalogWorkSplitFile {
+		t.Fatalf("split mode = %q, want file", got)
+	}
+	grouping := newCatalogLooseGrouping(names, catalogWorkSplitFile)
+	if grouping.keyFor(names[0]) == grouping.keyFor(names[1]) {
+		t.Fatalf("T001 and T002 share identity %q", grouping.keyFor(names[0]))
+	}
+}
+
+// A format copy of an episode sits beside the episode. Its files join that
+// episode's card instead of creating a second member.
+func TestSourceCatalogEpisodeFormatCopyStaysWithEpisode(t *testing.T) {
+	f := newLooseWorkFixture(t, map[string][]map[string]any{
+		"/":                                {looseDir("Series: Example")},
+		"/Series: Example":                 {looseDir("Episode 1"), looseDir("Episode 1 (MP3)"), looseDir("Episode 2")},
+		"/Series: Example/Episode 1":       {looseAudio("audio.flac")},
+		"/Series: Example/Episode 1 (MP3)": {looseAudio("audio.mp3")},
+		"/Series: Example/Episode 2":       {looseAudio("audio.flac")},
+	})
+	f.request(t, http.MethodPost, "/catalog/index", `{"intervalMs":100}`, 202)
+	if p := f.drain(t); p["status"] != "complete" {
+		t.Fatalf("scan = %#v", p)
+	}
+	cards := f.cards(t)
+	// Members of a multi-member series are shown inside the series card, not
+	// as separate top-level cards.
+	if len(cards) != 1 || cards["Series: Example"] == nil {
+		t.Fatalf("cards=%v, want the series card", cards)
+	}
+	detail := f.request(t, http.MethodGet, "/works?pageSize=100", "", 200)
+	var seriesID float64
+	for _, raw := range detail["works"].([]any) {
+		card := raw.(map[string]any)
+		if id, ok := card["seriesId"].(float64); ok && id != 0 {
+			seriesID = id
+		}
+	}
+	if seriesID == 0 {
+		t.Fatalf("series card missing: %v", cards)
+	}
+	body := reviewRequest(t, f.handler, f.cookie, http.MethodGet, "/api/catalog-series/"+strconv.FormatInt(int64(seriesID), 10), "", 200)
+	if len(body["episodes"].([]any)) != 2 {
+		t.Fatalf("episodes=%v, want two members", body["episodes"])
+	}
+	var copyRoot, copyFiles int
+	if err := f.server.db.QueryRow(`SELECT count(*) FROM source_catalog_entry
+		WHERE root_path='/Series: Example/Episode 1 (MP3)' AND relocated_to_id IS NULL`).Scan(&copyRoot); err != nil {
+		t.Fatal(err)
+	}
+	if copyRoot != 0 {
+		t.Fatalf("format copy kept its own entry (%d)", copyRoot)
+	}
+	if err := f.server.db.QueryRow(`SELECT count(*) FROM source_catalog_file f
+		JOIN source_catalog_entry e ON e.id=f.catalog_entry_id
+		WHERE e.root_path='/Series: Example/Episode 1'`).Scan(&copyFiles); err != nil {
+		t.Fatal(err)
+	}
+	if copyFiles != 2 {
+		t.Fatalf("episode files=%d, want the flac and the mp3 copy", copyFiles)
+	}
+}
+
+// A directory the source answers 404 for is a confirmed deletion. The card
+// keeps its identity and review but becomes missing, and the scan completes.
+func TestSourceCatalogDeletedDirectoryBecomesMissing(t *testing.T) {
+	tree := map[string][]map[string]any{
+		"/":     {looseDir("Work")},
+		"/Work": {looseAudio("track.mp3")},
+	}
+	f := newLooseWorkFixture(t, tree)
+	f.request(t, http.MethodPost, "/catalog/index", `{"intervalMs":100}`, 202)
+	if p := f.drain(t); p["status"] != "complete" {
+		t.Fatalf("scan = %#v", p)
+	}
+	card := f.cards(t)["Work"]
+	if card == nil {
+		t.Fatal("work card missing")
+	}
+	id := strconv.Itoa(int(card["catalogEntryId"].(float64)))
+	reviewRequest(t, f.handler, f.cookie, http.MethodPatch, "/api/source-catalog/"+id+"/user-state", `{"rating":5,"note":"Example kept"}`, 200)
+	f.updates(map[string][]map[string]any{"/": {looseDir("Work")}})
+	f.request(t, http.MethodPost, "/catalog/index", `{"intervalMs":100,"force":true}`, 202)
+	if p := f.drain(t); p["status"] != "complete" {
+		t.Fatalf("rescan = %#v", p)
+	}
+	detail := reviewRequest(t, f.handler, f.cookie, http.MethodGet, "/api/source-catalog/"+id, "", 200)
+	if detail["status"] != "missing" {
+		t.Fatalf("status=%v, want missing", detail["status"])
+	}
+	if detail["personalRating"] != float64(5) || detail["personalNote"] != "Example kept" {
+		t.Fatalf("personal review lost: %#v", detail)
+	}
+}
+
+// A partial rescan must not clear credit evidence. The release audio is
+// republished while a sibling directory fails, so the readme's absence is not
+// proof of deletion.
+func TestSourceCatalogPartialRescanKeepsSidecarEvidence(t *testing.T) {
+	f := newLooseWorkFixture(t, map[string][]map[string]any{
+		"/":            {looseDir("Work")},
+		"/Work":        {looseAudio("track.mp3"), looseAudio("readme.txt"), looseDir("Disc 1")},
+		"/Work/Disc 1": {looseAudio("01.mp3")},
+	})
+	f.request(t, http.MethodPost, "/catalog/index", `{"intervalMs":100}`, 202)
+	if p := f.drain(t); p["status"] != "complete" {
+		t.Fatalf("scan = %#v", p)
+	}
+	var entryID int64
+	if err := f.server.db.QueryRow(`SELECT id FROM source_catalog_entry WHERE root_path='/Work'`).Scan(&entryID); err != nil {
+		t.Fatal(err)
+	}
+	metadataReviewExec(t, f.server.db, `UPDATE source_catalog_entry SET sidecar_json='{"sidecars":[{"relativePath":"readme.txt","size":3,"voiceActors":["Example Voice"]}]}',sidecar_pending=0 WHERE id=`+strconv.FormatInt(entryID, 10))
+	f.updates(map[string][]map[string]any{
+		"/":            {looseDir("Work")},
+		"/Work":        {looseAudio("track.mp3"), looseDir("Disc 1")},
+		"/Work/Disc 1": {looseAudio("01.mp3")},
+	})
+	f.failPath("/Work/Disc 1")
+	f.request(t, http.MethodPost, "/catalog/index", `{"intervalMs":100,"force":true}`, 202)
+	if p := f.drain(t); p["status"] != "partial" {
+		t.Fatalf("rescan = %#v, want partial", p)
+	}
+	var raw string
+	if err := f.server.db.QueryRow(`SELECT sidecar_json FROM source_catalog_entry WHERE id=?`, entryID).Scan(&raw); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(raw, "Example Voice") {
+		t.Fatalf("partial rescan cleared credit evidence: %q", raw)
 	}
 }

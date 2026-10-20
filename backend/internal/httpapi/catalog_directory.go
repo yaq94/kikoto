@@ -3,8 +3,11 @@ package httpapi
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"net/http"
 	"time"
+
+	"github.com/yexca/kikoto/backend/internal/openlist"
 )
 
 // Refresh is an explicit, single-entry scan with the same budgets as catalog
@@ -32,7 +35,14 @@ func (s *Server) refreshCatalogDirectory(w http.ResponseWriter, r *http.Request)
 	files, err := s.openListClient(source).ScanRoot(ctx, sourceRoot)
 	if err != nil {
 		if ctx.Err() == nil {
-			if statusErr := s.setCatalogEntryStatus(ctx, entry.ID, catalogFailureStatus(err)); statusErr != nil {
+			status := catalogFailureStatus(err)
+			if errors.Is(err, openlist.ErrNotFound) {
+				// A 404/410 from the source is a definite answer: the directory
+				// is gone. Reporting it as a transient failure would keep the
+				// card in a retry loop that can never succeed.
+				status = "missing"
+			}
+			if statusErr := s.setCatalogEntryStatus(ctx, entry.ID, status); statusErr != nil {
 				writeError(w, statusErr)
 				return
 			}

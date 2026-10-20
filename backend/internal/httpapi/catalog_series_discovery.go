@@ -93,17 +93,32 @@ func catalogEpisodeEvidence(root string) (catalogSeriesEvidence, bool) {
 }
 
 // catalogEpisodeFormatCopy reports a directory that names an episode and a
-// format copy of it, such as "Episode 1 (MP3)" or "Episode 2 FLAC".
-func catalogEpisodeFormatCopy(name string) bool {
+// format copy of it, such as "Episode 1 (MP3)" or "Episode 2 FLAC". It returns
+// the episode name without the format marker so the copy can be folded into
+// the episode beside it.
+func catalogEpisodeFormatCopy(name string) (string, bool) {
 	match := catalogEpisodeMarker.FindStringSubmatch(name)
 	if match == nil {
 		match = catalogEpisodeMarkerCJK.FindStringSubmatch(name)
 	}
 	if match == nil {
-		return false
+		return "", false
 	}
 	suffix := strings.TrimSpace(match[3])
-	return suffix != "" && (catalogFormatDirectory(suffix) || catalogAuxiliaryDirectory(suffix))
+	if suffix == "" || !(catalogFormatDirectory(suffix) || catalogAuxiliaryDirectory(suffix)) {
+		return "", false
+	}
+	// Rebuild the name from the episode marker alone: everything after the
+	// number is the format marker, and the part before it is the optional title.
+	prefix := strings.TrimSpace(match[1])
+	if prefix != "" {
+		prefix += " "
+	}
+	episode := "Episode " + match[2]
+	if catalogEpisodeMarkerCJK.FindStringSubmatch(name) != nil {
+		episode = "第" + match[2] + "話"
+	}
+	return prefix + episode, true
 }
 
 // splitCatalogEpisodeRoots partitions an unregistered finite scan only when

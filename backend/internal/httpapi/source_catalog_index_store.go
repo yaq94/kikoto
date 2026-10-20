@@ -181,6 +181,23 @@ func verifyCatalogLease(ctx context.Context, tx *sql.Tx, job workflowJobRecord) 
 }
 
 func completeCatalogDirectoryTx(ctx context.Context, tx *sql.Tx, sourceID, generation int64, d *catalogScanDirectory) error {
+	// "Episode 1 (MP3)" sits beside "Episode 1" under the same series. The
+	// format copy is the same episode, so its files join that episode's card
+	// instead of creating a second member or a separate work. The sibling must
+	// exist as a directory in this generation; otherwise the copy keeps its own
+	// identity rather than pointing at a path that was never observed.
+	if episode, ok := catalogEpisodeFormatCopy(path.Base(d.Path)); ok {
+		sibling := path.Join(path.Dir(d.Path), episode)
+		var exists int
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM source_catalog_directory
+			WHERE file_source_id=? AND path=?)`, sourceID, sibling).Scan(&exists); err != nil {
+			return err
+		}
+		if exists != 0 {
+			d.Root = sibling
+			return decideCatalogWorkSplitTx(ctx, tx, sourceID, generation, d.Path, d.Revision)
+		}
+	}
 	rows, err := tx.QueryContext(ctx, `SELECT name,kind FROM source_catalog_observation WHERE file_source_id=? AND directory_path=? AND revision=?`, sourceID, d.Path, d.Revision)
 	if err != nil {
 		return err

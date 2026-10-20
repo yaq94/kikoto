@@ -43,13 +43,7 @@ func catalogAdmissionRoot(directoryPath, parentRoot string, observed catalogDire
 		if code := catalogDirectoryCode(directoryPath); code != "" && code == catalogDirectoryCode(parent) {
 			return parent
 		}
-		// "Episode 1 (MP3)" is the format copy of episode 1. Its files belong
-		// to the episode card instead of creating a second episode.
-		if catalogEpisodeFormatCopy(path.Base(directoryPath)) {
-			if _, episode := catalogEpisodeEvidence(parent); episode {
-				return parent
-			}
-		}
+
 	}
 	// A directory named with its own product code is an authored work, not a
 	// format or auxiliary directory inside the parent work. Keeping the parent

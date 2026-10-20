@@ -491,7 +491,8 @@ func (s *Server) listOpenListWorks(w http.ResponseWriter, r *http.Request, sourc
 	}
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
 	from := `FROM (SELECT candidates.*,ROW_NUMBER() OVER (PARTITION BY CASE WHEN work_id IS NOT NULL THEN 'work:' || (SELECT identity_work_id FROM shared_work_identity WHERE work_id=candidates.work_id) WHEN series_id>0 THEN 'series:' || series_id ELSE 'catalog:' || id END ORDER BY series_id,id) AS identity_rank FROM (
-		SELECT e.id,0 AS series_id,e.primary_code,e.title,e.work_id,e.updated_at,e.availability_status FROM source_catalog_entry e
+		SELECT e.id,0 AS series_id,e.primary_code,e.title,e.work_id,e.updated_at,e.availability_status,
+			EXISTS(SELECT 1 FROM source_catalog_file f WHERE f.catalog_entry_id=e.id AND f.kind='audio') AS has_audio FROM source_catalog_entry e
 		WHERE e.file_source_id=? AND e.relocated_to_id IS NULL AND NOT EXISTS(SELECT 1 FROM catalog_series_member m WHERE m.catalog_entry_id=e.id AND (SELECT COUNT(*) FROM catalog_series_member sibling WHERE sibling.series_id=m.series_id)>=2)
 			AND EXISTS(SELECT 1 FROM source_catalog_file f WHERE f.catalog_entry_id=e.id AND f.kind='audio')
 		AND (?='' OR instr(lower(e.title),lower(?))>0 OR instr(lower(e.primary_code),lower(?))>0
@@ -501,7 +502,11 @@ func (s *Server) listOpenListWorks(w http.ResponseWriter, r *http.Request, sourc
 			SELECT 1 FROM catalog_series_member mm JOIN source_catalog_entry ee ON ee.id=mm.catalog_entry_id
 			JOIN source_catalog_file ff ON ff.catalog_entry_id=ee.id AND ff.kind='audio'
 			WHERE mm.series_id=s.id AND ee.relocated_to_id IS NULL AND ee.availability_status='available'
-		) THEN 'available' ELSE 'missing' END FROM catalog_series s
+		) THEN 'available' ELSE 'missing' END,EXISTS(
+			SELECT 1 FROM catalog_series_member mm JOIN source_catalog_entry ee ON ee.id=mm.catalog_entry_id
+			JOIN source_catalog_file ff ON ff.catalog_entry_id=ee.id AND ff.kind='audio'
+			WHERE mm.series_id=s.id AND ee.relocated_to_id IS NULL
+		) AS has_audio FROM catalog_series s
 		WHERE (SELECT COUNT(*) FROM catalog_series_member all_members WHERE all_members.series_id=s.id)>=2
 		AND EXISTS(SELECT 1 FROM catalog_series_member m JOIN source_catalog_entry e ON e.id=m.catalog_entry_id
 		WHERE m.series_id=s.id AND e.file_source_id=? AND e.relocated_to_id IS NULL
@@ -514,7 +519,7 @@ func (s *Server) listOpenListWorks(w http.ResponseWriter, r *http.Request, sourc
 		writeError(w, err)
 		return
 	}
-	rows, err := s.db.QueryContext(r.Context(), "SELECT id,series_id,primary_code,title,work_id,updated_at,availability_status "+from+" ORDER BY updated_at DESC,series_id DESC,id DESC LIMIT ? OFFSET ?", append(args, pageSize, (page-1)*pageSize)...)
+	rows, err := s.db.QueryContext(r.Context(), "SELECT id,series_id,primary_code,title,work_id,updated_at,availability_status,has_audio "+from+" ORDER BY updated_at DESC,series_id DESC,id DESC LIMIT ? OFFSET ?", append(args, pageSize, (page-1)*pageSize)...)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -523,7 +528,8 @@ func (s *Server) listOpenListWorks(w http.ResponseWriter, r *http.Request, sourc
 	for rows.Next() {
 		var item remoteWorkSummary
 		var availability string
-		if err = rows.Scan(&item.CatalogEntryID, &item.SeriesID, &item.PrimaryCode, &item.Title, &item.WorkID, &item.UpdatedAt, &availability); err != nil {
+		var hasAudio bool
+		if err = rows.Scan(&item.CatalogEntryID, &item.SeriesID, &item.PrimaryCode, &item.Title, &item.WorkID, &item.UpdatedAt, &availability, &hasAudio); err != nil {
 			break
 		}
 		item.RemoteID = strconv.FormatInt(item.CatalogEntryID, 10)
@@ -534,7 +540,6 @@ func (s *Server) listOpenListWorks(w http.ResponseWriter, r *http.Request, sourc
 		// A retained card still has its identity and personal records, but a
 		// completed scan that found the source missing must not advertise
 		// playback. An unfinished scan keeps the last known availability.
-		item.RemotePlayable = availability == "available"
 		item.ImportStatus = "remote"
 		item.ListeningStatus = "none"
 		item.Tags = []string{}
@@ -543,6 +548,9 @@ func (s *Server) listOpenListWorks(w http.ResponseWriter, r *http.Request, sourc
 		if item.WorkID != nil {
 			item.ImportStatus = "imported"
 		}
+		// A retained card still has its identity and personal records, but a
+		// scan that lost its files must not advertise playback.
+		item.RemotePlayable = availability == "available" && hasAudio
 		works = append(works, item)
 	}
 	if err == nil {

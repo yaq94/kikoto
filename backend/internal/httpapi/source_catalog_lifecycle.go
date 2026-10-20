@@ -33,20 +33,14 @@ func catalogRootIncomplete(ctx context.Context, tx *sql.Tx, sourceID, generation
 // still-pending directory proves nothing about deletion, so callers keep the
 // rows recorded by earlier generations.
 func catalogRangeUncertain(ctx context.Context, tx *sql.Tx, sourceID, generation int64, base string) (bool, error) {
-	if base == "" || base == "/" {
-		var rootIncomplete int
-		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM source_catalog_directory
-			WHERE file_source_id=? AND generation=? AND path='/' AND status IN ('failed','restricted','empty','pending','listing_complete'))`,
-			sourceID, generation).Scan(&rootIncomplete); err != nil {
-			return false, err
-		}
-		if rootIncomplete != 0 {
-			return true, nil
-		}
-	}
+	// status='empty' with error_code='not_found' is a definite 404/410 answer,
+	// not an unconfirmed listing. Treating it as uncertain kept the whole
+	// source partial and preserved rows a deleted directory no longer owns.
+	const uncertainStatus = ` status IN ('failed','restricted','empty','pending','listing_complete')
+		AND NOT (status='empty' AND error_code='not_found')`
 	var uncertain int
 	err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM source_catalog_directory d
-		WHERE d.file_source_id=? AND d.generation=? AND d.status IN ('failed','restricted','empty','pending','listing_complete')
+		WHERE d.file_source_id=? AND d.generation=? AND `+uncertainStatus+`
 			AND (d.path=? OR substr(d.path,1,length(?)+1)=? || '/'))`,
 		sourceID, generation, base, base, base).Scan(&uncertain)
 	return uncertain != 0, err
@@ -283,19 +277,25 @@ func (s *Server) cleanupCatalogPublishBatch(ctx context.Context, job workflowJob
 		// nothing about its files. Deleting the older generation below it would
 		// hide tracks that the source never had a chance to republish. Keep the
 		// rows until a later scan completes that subtree.
-		var uncertain int
+		uncertain := false
 		if base == "" || base == "/" {
-			uncertain = 1
-		} else if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM source_catalog_directory
-			WHERE file_source_id=? AND generation=? AND status IN ('failed','restricted','empty')
-				AND (path=? OR substr(path,1,length(?)+1)=? || '/'))`,
-			sourceID, job.RunID, base, base, base).Scan(&uncertain); err != nil {
+			// The configured root is a card only when audio sits directly in
+			// it. Otherwise its own entries decide, so a child failure does not
+			// block cleanup for an unrelated card.
+			var ownRows int
+			if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM source_catalog_entry
+				WHERE file_source_id=? AND last_seen_generation=? AND root_path='/')`,
+				sourceID, job.RunID).Scan(&ownRows); err != nil {
+				return 0, 0, err
+			}
+			uncertain = ownRows != 0
+		} else if uncertain, err = catalogRangeUncertain(ctx, tx.Tx, sourceID, job.RunID, base); err != nil {
 			return 0, 0, err
 		}
-		if uncertain != 0 {
+		if uncertain {
 			uncertainSeen = true
 		}
-		if uncertain == 0 {
+		if !uncertain {
 			result, execErr := tx.ExecContext(ctx, `DELETE FROM source_catalog_file WHERE catalog_entry_id=? AND observed_generation<>?`, id, job.RunID)
 			if execErr != nil {
 				return 0, 0, execErr
