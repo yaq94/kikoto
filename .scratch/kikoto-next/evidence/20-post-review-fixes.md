@@ -198,3 +198,47 @@
 | integrated-acceptance / openlist | 1 + 4 passed |
 | mobile-shell | 5 passed |
 | LIVE | 两个用例通过，见上 |
+
+## 二次代码审查修复（2026-10-21）
+
+独立审查在 `d7d29bc1` 上复现了系列目录整体改名、根卡目录行、指纹超限、混合 hash、遗留 alias、集号位置、中断代次和翻译资源优先级八项。每项都有对应的行为测试，修复后在同一工作区通过。
+
+### 系列目录整体改名（10/11）
+
+- 系列 key 含父目录路径，改名后生成第二个系列，旧单集全部 missing。
+- 现在若新旧系列标题相同，或两侧仍然存在的单集目录名逐一相同，则认定为同一系列：新系列成员并入已建立系列，空系列行删除，系列 id、个人记录与 episode id 保持在旧系列。
+- 单文件单集只有在“系列整体改名且集目录名不变”时才接受 manifest 证据；单个同大小文件本身仍不足以认回。
+- 测试：`TestCatalogSeriesDirectoryRenameKeepsOneSeries`（真实发布，断言 1 个系列、2 个旧 id、1 个 alias）。
+
+### 根卡与拆分目录（11）
+
+- 拆分卡的 `root_path` 是 `/Creator::key`，真实目录在 `source_root`；根卡清理现在按有效目录比较。
+- 测试：`TestRootCardDropsSplitChildFolder`（根直接音频 + Creator 拆分，根卡不再列 Creator 目录）。
+
+### relocation 证据与恢复（10/11）
+
+- 旧卡有 provider hash、新位置没有 hash 时，manifest 仍作为次级证据；候选自身存在不同 hash 时仍判冲突。
+- 改名目标由中断的上一代发布时，`discovered >= 旧卡 last_seen` 即可认回，不再要求恰好等于当前代。
+- 测试：`TestCatalogRelocationUsesLayoutWhenTheOldCardHasHashes`、`TestCatalogRelocationAcceptsAnInterruptedGeneration`。
+
+### 系列成员与集号（11）
+
+- 兼容性检查与合并读取 alias 闭包；同一卡片被两个系列声明时保留冲突，不静默合并。
+- 单集改名后按新目录的显式集号更新 position；槽位已被其他单集占用时保留原顺序。
+- 测试：`TestCatalogSeriesMembershipConflictReadsAliases`、`TestCatalogSeriesRenameUpdatesEpisodeNumberPosition`。
+
+### 指纹超限终态（08）
+
+- 10,001 个以上音频的卡片永远不会产生 manifest。reconcile 预扫描只选择可计算范围的卡片，超限卡不再被反复选中。
+- 测试：`TestCatalogLifecycleFingerprintLimitSettles`（10,001 行，pre-pass 在有限次调用内结束）。
+
+### 翻译资源优先级（02）
+
+- `sourceId + description` 仍返回 400 `translation_invalid_input`，但只在没有更高优先级资源时；同时给出卡片或作品时由该资源提供字段。远端字段加载器返回类型化的“字段不存在”，不再依赖 handler 的宽泛判断。
+- 已登记卡片若文本等于作品本名，复用该作品已有的目标语言标题，不重复调用模型。
+- 测试：`TestContentTranslationRejectsRemoteDescription`、`TestContentTranslationRemoteDescriptionUsesAHigherPriorityResource`、`TestContentTranslationReusesAWorkTitleOnACatalogCard`。
+
+### 前端单测稳定性
+
+- `toast.test.ts` 原在用例体内动态导入 i18n 与 API 模块；并行全量套件下偶发超过默认 5 秒（单文件稳定通过）。改为静态导入同一模块，行为与断言不变。
+- `npm run test:unit -- --run` 874/874 通过，默认并发。
