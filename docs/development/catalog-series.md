@@ -13,6 +13,8 @@ provides source-local grouping evidence. Shared creators, similar titles,
 topics and numeric track names do not. Format and track subdirectories stay
 inside their episode. Duplicate episode numbers remain independent for review.
 A series contains at most 100 members; additional entries stay independent.
+`ep` and `ep.` count as episode markers only at a word boundary. An `ep`
+inside an English word, as in `Deep 2` or `Step 2`, is not series evidence.
 
 A finite scan partitions a new root only when every playable file belongs to
 an evidenced direct child. Full indexing attaches membership in the same

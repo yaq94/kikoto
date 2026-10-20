@@ -15,7 +15,7 @@ import (
 
 // Only authored episode markers or an explicitly labelled series directory are
 // evidence. A creator, topic, plain numeric track or format name is not.
-var catalogEpisodeMarker = regexp.MustCompile(`(?i)^(.*?)\s*(?:episode\s*|ep\.?\s*|第\s*)([0-9]{1,6})(?:\s*(?:集|話|话|回))?(?:\s*[-:：._ ]\s*.*)?$`)
+var catalogEpisodeMarker = regexp.MustCompile(`(?i)^(.*?)\s*(?:\bepisode\s*|\bep\.?\s*|第\s*)([0-9]{1,6})(?:\s*(?:集|話|话|回))?(?:\s*[-:：._ ]\s*.*)?$`)
 var catalogSeriesPrefix = regexp.MustCompile(`(?i)^(?:series|系列|シリーズ)\s*[:： -]\s*(.+)$`)
 var catalogSeriesSuffix = regexp.MustCompile(`(?i)^(.+?)\s*(?:系列|シリーズ|\sseries)$`)
 var catalogNonEpisode = regexp.MustCompile(`(?i)^(?:(?:mp3|flac|wav|m4a|ogg|opus|aac|aiff|dsd|ape|wma)(?:\s*\d+(?:k|bit|hz|kbps).*)?|tracks?|分轨|分軌|音轨|音軌|音声|音聲|audio|disc\s*\d+|cd\s*\d+)$`)
