@@ -279,11 +279,11 @@ matches the backup.
 
 Per-release upgrade steps are in the [release notes](../history/index.md).
 
-## Unreleased Kikoto-next Migrations
+## Kikoto-next Schema Additions
 
-Migrations `069` through `082` are part of the unreleased next release. They
-extend the source catalog, shared associations, personal transfer, and the
-recoverable index; no released baseline replaces them yet.
+Migrations `069` through `082` extend the source catalog, shared associations,
+personal transfer, and the recoverable index. Pending release notes and upgrade
+steps are in [Unreleased](../history/unreleased.md).
 
 | Migration | Change | Recovery and read behaviour |
 | --- | --- | --- |

@@ -1,8 +1,8 @@
 # Source Catalog Index Performance
 
-This page records why the recoverable full index publishes from a durable
-queue, what was measured on a real indexed database, and which SQLite guidance
-applies to this deployment. The worker contract is in
+This page explains why the recoverable full index publishes from a durable
+queue and which SQLite guidance applies to this deployment. The worker contract
+is in
 [OpenList: Recoverable full index](openlist.md#recoverable-full-index); the
 general write-lock policy is in
 [SQLite write performance](sqlite-write-performance.md).
@@ -22,21 +22,17 @@ first and no temporary B-tree is used.
 The queue columns, indexes, root maintenance and batch drain are specified in
 [OpenList: Recoverable full index](openlist.md#recoverable-full-index).
 
-## Repeated plan measurement
+## Bounded tail
 
-The current directory-first query on a production-scale copy (14,459
-current-generation directories, 14,459 audio roots, 266,296 rows left pending
-by an earlier generation) returns a 100-row batch in 0.2 ms; the worker asks for
-50 rows with the same plan. A 34 MB synthetic database with 3,917 directories
-and 47,670 observations returns a five-row tail in 3.2–4.0 ms and a
-3,000-directory tail in about 5 ms. `EXPLAIN QUERY PLAN` uses the directory
+The directory-first query reads a batch in proportion to the rows returned, not
+to the size of the pending backlog. `EXPLAIN QUERY PLAN` uses the directory
 primary key, seeks the pending partial index and probes the audio-root covering
 index, without a temporary sort or a scan of a materialized root set.
 
 `TestSourceCatalogPublishTailStaysBounded` asserts the bounded tail;
 `TestSourceCatalogPublishTailPerformance` and
-`make source-index-tail-performance` print the current plan and the reference
-comparison from the calibration harness.
+`make source-index-tail-performance` print the plan and timing on the
+calibration harness.
 
 ## Choosing the rate
 

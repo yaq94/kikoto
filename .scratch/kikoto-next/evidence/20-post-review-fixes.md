@@ -176,8 +176,8 @@
 
 ### 19 CI
 
-- 新增 `mobile-shell` group：目录骨架、移动收藏货架、封面单击/双击与播放器折叠共 5 项。runner 支持多 spec、project 与 grep；`validate.yml` 增加矩阵项。本地 5 passed。
-- AC-28 的证据集是各工单选定的纯功能 F；Full CI 的 mocked shard 仍运行仓库既有布局回归，按规格保留其定义，不作为 AC-28 证据。
+- 新增 `mobile-shell` group，按 AC-28 只选纯功能用例：移动收藏页脚返回与排序保持、封面单击/双击、目录骨架出现与消失，共 5 项。原有骨架高度、收藏布局与播放器拖拽测试保留定义，但不进入该门禁。
+- runner 支持多 spec、project 与 grep；`validate.yml` 增加矩阵项。本地 5 passed。
 
 ### 01 / 03 真实模型
 
@@ -242,3 +242,28 @@
 
 - `toast.test.ts` 原在用例体内动态导入 i18n 与 API 模块；并行全量套件下偶发超过默认 5 秒（单文件稳定通过）。改为静态导入同一模块，行为与断言不变。
 - `npm run test:unit -- --run` 874/874 通过，默认并发。
+
+## 第三轮审查修复（2026-10-21）
+
+### 未登记卡片的侧车名称（02/03）
+
+- 未登记卡片没有 work 行，但 sidecar 已保存社团与声优。翻译标题时现在从 sidecar 读取这些名称并加入保护名单，不再把已发布身份送进模型。
+- 系列标题对未登记成员做同样处理。
+- 测试：`TestContentTranslationProtectsSidecarNamesOfAnUnregisteredCard`。
+
+### 未知与过期 catalog 标签（05/AC-10）
+
+- 作品详情返回 catalog 目录后，服务端把从未检查（`status_checked_at` 为空）或超过 24 小时未检查的卡片放入有界后台队列；worker 复用单目录刷新逻辑，失败只更新该卡状态，已有目录快照保持可读。
+- 目录列表的 `checkedAt` 不再用 `updated_at` 冒充检查时间，从未检查的卡片明确为空。
+- 前端在收到待检查目录后做最多两次、间隔 3 秒的刷新，使后台结果可见且不会形成轮询循环。
+- 测试：`TestCatalogDirectoryListingChecksUnknownAndStaleTabs`、`TestCatalogDirectoryNeedsCheck`、`sourceContextModel.test.ts` 的 catalog 检查规则。
+
+### AC-08 搜索边界
+
+- 统一搜索入口是库页的搜索框：本地范围搜索已登记作品，来源范围搜索该来源的全部索引卡片。未登记条目通过来源范围可搜索、可打开目录，且不会因浏览而登记 work；保存个人评价时才按需要登记。
+- 该边界由 `openlist-catalog` 功能用例和 08 的完整索引证据覆盖。
+
+### AC-28 移动门禁
+
+- `mobile-shell` 只保留文本、操作、请求与持久状态断言；新增 `work detail shows a directory skeleton while media loads`，用可见性与隐藏断言覆盖骨架同步，不测量高度。
+- 既有布局测试定义未修改，仍可在本地单独运行，但不作为 AC-28 证据或 Full CI 门禁。
