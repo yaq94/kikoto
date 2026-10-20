@@ -6,11 +6,11 @@
 
 ## 当前产物
 
-- 集成 HEAD：`aa17d43c1e7e5b07fe44a0ad8b5fde3a401f0613`。
+- 集成 HEAD：`2bae5db98acceff6b45fdb4d168908c7b0da9177`。
 - 固定审查基线：`9949175e53979bcd590c75a624bc0efc67684da3`。
-- 部署镜像：`kikoto:next-aa17d43c`，镜像 ID
-  `sha256:3e50f381f6821415d20106d0c0bbf5b08a4d5e897a4987e2e7698b456ab0dad7`。
-- Full CI：run `39488501655`，26 个 job 全部 `success`，Gate `success`。
+- 部署镜像：`kikoto:next-2bae5db9`，镜像 ID
+  `sha256:25e5467ede40342fad8ca772b95d931343a87e3c5239bd535bbc0330777b1a99`。
+- Full CI：run `39496305624`，27 个 job 全部 `success`（含 Gate）。
 - 双轴审查：Standards 与 Spec 在当前差异上执行，结论见
   [22 最终审查记录](22-final-review.md)。
 
@@ -30,8 +30,11 @@
 兼容矩阵与命令模板见
 [发布回退](../../docs/development/release-rollback.md)。当前部署的关键前提：
 
-- 回滚镜像 `kikoto:next-2d78344a` 保留，包含 schema `082` 的打包迁移目录。
-- 部署前快照中的数据库为 schema `082`，WAL/SHM 与环境文件与快照同一时刻。
+- 回滚镜像 `kikoto:next-aa17d43c` 保留，包含 schema `083` 的打包迁移目录。
+- 部署前快照 `pre-2bae5db9-20261020T211725Z` 中的数据库为 schema `083`，
+  WAL/SHM 与环境文件与快照同一时刻；`quick_check=ok`、外键 0 行。
+- 上一版部署的 schema `082` 快照 `pre-aa17d43c-20261020T200351Z` 与镜像
+  `kikoto:next-2d78344a` 仍保留，可用于回退到 schema 82。
 - 回滚脚本执行：停止容器、替换数据库与 WAL/SHM、恢复环境中的镜像引用、
   启动旧镜像、轮询 `/health`。脚本已通过 `bash -n` 语法检查；快照文件与镜像
   均存在。未在生产上执行破坏性回滚切换。

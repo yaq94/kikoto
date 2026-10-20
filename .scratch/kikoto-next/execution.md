@@ -2,8 +2,8 @@
 
 **Status:** ready-for-agent
 **Implementation:** in-progress
-**当前部署:** `aa17d43c`，镜像 `kikoto:next-aa17d43c`，schema 83，Full CI run
-`39488501655` 全绿；分项验收见[21 最终验收记录](evidence/21-final-acceptance.md)。
+**当前部署:** `2bae5db9`，镜像 `kikoto:next-2bae5db9`，schema 83，Full CI run
+`39496305624` 全绿；分项验收见[21 最终验收记录](evidence/21-final-acceptance.md)。
 剩余门禁：run 53 全量索引终态与 `work_matching_control` 终态。
 **阶段:** 01–07、14 resolved；08–13、15、16、18、19 已集成并保持 verified-local；2026-10-20 完成双轴审查后的目录身份、删除确认、sidecar、翻译、关联与导入修复批次（见 [20 证据](evidence/20-post-review-fixes.md)），待推送、CI 与部署验收。双轴审查完成且发现已闭环；部署提交 `7ed73fa06b38686caf4422f5a9cbd090ba53b7a3` 的 Full CI 全绿（run 39049272400）；2026-10-17T16:44:24Z 已部署到现有服务，schema 68→76，备份与回滚演练通过；生产已创建规格指定 OpenList 来源并完成首次索引启动（429 后退避恢复续跑），浏览/搜索/媒体 Range 回读通过。首次全量索引 runId 41 收于 `partial`（14,458/14,491 complete、6 failed、27 未确认空），暴露父卡不释放子作品、失败运行无法重新观察、创作者目录折叠三类准入缺陷；修复后 schema 77 已部署，runId 42 以新 generation 重扫中。证据见 [17 部署证据](evidence/17-deployment.md)。
 **依据:** [正式规格](spec.md) · [工单总览](ticket-proposal.md) · [领域词汇表](../../GLOSSARY.md) · [作品身份与个人记录 ADR](../../docs/decisions/ADR-0004-work-identity-and-personal-state.md)
