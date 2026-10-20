@@ -294,3 +294,9 @@
 ### 回滚文档
 
 - 删除 `release-rollback.md` 中引用具体旧镜像与提交的段落；兼容矩阵仍按当前支持关系陈述。
+### 发布批次按证据清理侧车（08）
+
+- `markCatalogSidecarCandidatesTx` 原先对批次里的每个已发布 id 都调用 `catalogRootIncomplete`，包括从未有过 readme 证据的新卡片。一次 50 行发布因此在生产上对 14k 目录做重复范围扫描，单批稳定耗时约 15 秒，写锁几乎持续占用，其他写入持续 `SQLITE_BUSY`。
+- 现在先用主键查询筛出仍带 `sidecar_json` 的卡片，只对它们检查范围是否完整；没有证据的卡片没有可清除的内容。
+- 部署后实测：`publish_pending` 从 222,314 降到 208,464 用时 60 秒（约 230 文件/秒），3 分钟内 0 条 `SQLITE_BUSY`，慢批次告警不再出现。此前的 15 秒/50 行对应约 3.3 文件/秒。
+- 侧车套件 `TestCatalogSidecar*` 通过。
