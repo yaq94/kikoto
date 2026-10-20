@@ -42,3 +42,9 @@
 ## 交接边界
 
 提交前按 `make sensitive-check` 验证当前完整差异，提交与推送沿用仓库既有配置。合入集成分支及最终 Full CI 由主流程完成；本票不宣称整个 CI 或生产验收通过。
+
+## 集成交接（2026-10-21）
+
+- 本票实现提交：`924f8079a60d7583058f79409cd1afd1826c6474`（Publish library migration completion with maintenance release）。
+- 合入集成分支：`2c2e87c4`；CI 迁移相关提交另见 `298ebddc`、`a46b9a70`、`be14c79f`、`e1cadf0f`。
+- `codex/kikoto-ci-migration` 是临时实施分支，合入后未保留独立远端分支；集成历史与上述 SHA 即交接点。最终 Full CI 对集成分支执行。

@@ -51,12 +51,16 @@ the panel unmounts; newly published cards refresh the source results.
 Scan options are saved with the source's checkpoint and reused by an empty
 start request. An active run keeps its options until it is stopped and resumed.
 
-A full scan's first complete success enables daily updates for that source.
-The next due time is persisted in `app_setting` and is checked by the existing
-workflow coordinator on startup and while the application runs. A stopped
-application catches up with one update when it starts; elapsed days do not queue
-multiple crawls. Finite scans, failed scans and unconfirmed empty coverage do not
-enable the schedule. Disabled sources are skipped.
+A full scan that reached the end of the tree enables daily updates for that
+source. The next due time is persisted in `app_setting` and is checked by the
+existing workflow coordinator on startup and while the application runs. A
+stopped application catches up with one update when it starts; elapsed days do
+not queue multiple crawls. A run that still has unconfirmed empty ranges also
+schedules the next re-observation, but the daily trigger resumes the same
+generation instead of creating an independent full crawl, so new content below
+a transient empty answer is eventually discovered. Failed and restricted ranges
+retry on the same schedule; a low-disk pause waits for the operator. Finite
+scans and disabled sources do not enable the schedule.
 
 Daily dispatch uses the same transaction as manual dispatch: queued/running
 scans are joined, and cancelled, failed, paused or partial scans resume their

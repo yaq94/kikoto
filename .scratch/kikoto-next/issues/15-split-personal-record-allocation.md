@@ -6,7 +6,7 @@
 
 **Status:** ready-for-agent
 
-**Implementation:** verified-local
+**Implementation:** verified-local；系列三对象与版本已补证，最终部署验收待 17。
 
 **证据:** [拆分验收](../evidence/15-shared-split.md)
 

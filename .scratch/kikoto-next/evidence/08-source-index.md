@@ -256,3 +256,10 @@ relocated 依赖时，才写 `file_source_id=NULL, relocated_to_id=第一张拆�
 - 副本检测只比较文件大小，没有内容哈希；同大小不同内容会被当成副本，目前生产 `content_hash` 全为空。
 - 有限扫描（`/catalog/scan`）与全量索引共用判定函数，但不写 `work_split`，重复扫描仍幂等。
 - 父卡退役后原评分备注解析到第一张拆分子卡，其余子卡不继承；拆分归属规则见 ADR-0004。
+
+## 审计后修复（2026-10-21）
+
+- 未确认空目录不再让 run 显示 `succeeded`：worker 统计 `empty AND error_code<>'not_found'`，任一存在即 `partial`。404/410 的 `empty + not_found` 仍可完成并进入 missing。测试 `TestSourceCatalogIndexNonRootUnconfirmedEmptyStaysPartial`、`TestCatalogScanTreatsGoneDirectoryAsMissing`。
+- 首次 publish 前检查磁盘：恢复运行在低空间下不会先发布 8×50 行积压。测试 `TestSourceCatalogIndexLowDiskBlocksTheFirstPublishOfAResumedRun`。
+- lifecycle 结算仍只跳过自身范围 uncertain 的卡片，其他完整范围继续 available/missing；未确认空子树保留旧文件行。
+- 复验：全后端 32 包通过。真实全量终态在最终部署后的新 generation 记录；本节的 run 52 仍是 `a50cd62c` 时代数据。

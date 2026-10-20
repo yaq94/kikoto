@@ -133,3 +133,68 @@
 修复：`catalogPublishQuery` 用 `CROSS JOIN` 固定「目录 → 观察」的联接顺序。目录主键 `(file_source_id,path)` 直接提供 `ORDER BY d.path` 前缀，观察行按 `(file_source_id,directory_path)` 与 pending 部分索引点查。生产库只读实测：同一批 50 行从数秒降到 10 ms。新增 `TestCatalogPublishQueryPlanStaysDirectoryDriven`：先造 400 条上一代 pending，再断言计划没有 `TEMP B-TREE`、且 `SEARCH d` 在 `SEARCH o` 之前；这个用例在旧写法下会失败。
 
 注意：这一批问题的触发条件是「上一代留下大批 pending」。新库或已清空积压的源上，旧写法也能通过功能测试，因此性能回归必须用计划断言而不是只看结果行数。
+
+## 审计收敛修复（2026-10-21）
+
+审计 A–F 的阻断项以 `a50cd62c` 为固定基线逐项复现。下列每项都先有失败测试或可观察红例，修复后在同一工作区通过。
+
+### 系列改名与删除来源（工单 10/11）
+
+- **B1 改名**：原 relocation 只迁移 entry 与 file，不迁移 `catalog_series_member`，并把新位置当成 survivor，旧 id 的成员与卡片脱节。现以已建立的 entry 为 survivor：新位置的系列成员并入旧 entry（同系列合并，异系列保留给复核），新位置成为 alias；系列详情从 successor 取标题、来源与可用性；详情接口沿 alias 链返回 `seriesId`。
+- **B2 删除来源**：原系列查询只看 `availability_status<>'missing'`，删除 `file_source` 后仍列出成员。现要求当前源或 successor 仍存在；全源删除的卡片保留为 `missing`，个人记录仍可读。
+- **reconcile 前置**：新发布的 successor 在本代 fingerprint 尚未落盘时会被判 `insufficient_evidence`。reconcile 前先补齐本代 manifest；改名不再因遍历顺序失败。
+- 测试：`TestCatalogSeriesRenameKeepsOneMemberAndSuccessorNavigation`（真实扫描/发布，`-count=3` 通过）、`TestCatalogSeriesOmitsEntriesWithoutASource`、`TestCatalogSeriesFollowsRelocatedEpisodeToItsSuccessor`、`TestCatalogSeriesOmitsMissingEpisodesUntilRepublished`。
+- 另补真实发布卡：`TestCatalogScanPublishesZeroPaddedWorksApart`、`TestCatalogScanKeepsDifferentEpisodeCountersApart`；第1話与第1集共享数字时按不同计数器保留两条成员。
+
+### 08 完整覆盖与低空间
+
+- 未确认空目录不再让 run 显示 `succeeded`；只有 404/410（`empty + not_found`）可排除。测试 `TestSourceCatalogIndexNonRootUnconfirmedEmptyStaysPartial`、`TestCatalogScanTreatsGoneDirectoryAsMissing`。
+- 首次 publish 前检查磁盘；恢复运行不会先发布积压。测试 `TestSourceCatalogIndexLowDiskBlocksTheFirstPublishOfAResumedRun`。
+- lifecycle 仍可为已完整观察的范围结算，未确认空子树由 `catalogRangeUncertain` 单独跳过。
+
+### 09 低空间暂停与每日调度
+
+- `pause_reason='low_disk_space'` 时忽略已存每日时间，不再 24 小时后自动重试；测试保留旧设置后断言不派发。
+- 到达树尾、仅剩未确认空的 run 会安排次日同代重观察；这是恢复同一 generation，不是独立全站任务。文档与证据按实际行为更正。
+
+### 14 匹配
+
+- sidecar 双方都有 circle 且不同时判为冲突，不再因声优相同命中 `title_voice_credits`；新增反例 H。
+- 补 2 MiB 证据上限、1,000 次/日自动操作上限、第三次失败转终态三项测试。
+
+### 13 / 15 共享关联与拆分
+
+- 13：`myConflictFields` 的 rating、note、组合、相同与空值规则有纯规则表；关联后两个 work 的 edition 标签保持原值。
+- 15：一个系列加两个单集的拆分保留成员、work、edition 与 media 定位；新增 `TestSharedSplitSeriesKeepsTwoEpisodesAndTheirPlaybackEditions`。
+
+### 02 翻译
+
+- 远端 listing 没有 description，`sourceId + field=description` 明确返回 400 `translation_invalid_input`，不再落成 stale 409。
+- 已有目标语言 edition description 直接复用，不调用模型；测试 `TestContentTranslationReusesAnExistingEditionDescription`。
+- F 先回到 work root，再展开目录，断言展开后的 `ZH: Example track.wav`，覆盖“展开目录后的新增文字”。
+- 全局手动简介没有语言列，属于所选原文而不是“已有目标语言字段”，不参与 existing 复用。
+
+### 19 CI
+
+- 新增 `mobile-shell` group：目录骨架、移动收藏货架、封面单击/双击与播放器折叠共 5 项。runner 支持多 spec、project 与 grep；`validate.yml` 增加矩阵项。本地 5 passed。
+- AC-28 的证据集是各工单选定的纯功能 F；Full CI 的 mocked shard 仍运行仓库既有布局回归，按规格保留其定义，不作为 AC-28 证据。
+
+### 01 / 03 真实模型
+
+- 服务器使用 Go 1.26.9 与生产模型端点运行两个 opt-in LIVE。测试新增显式 `KIKOTO_TRANSLATION_LIVE_ALLOW_LOOPBACK=1` 开关，默认仍只接受 HTTPS。
+- `TestTranslationLiveConfiguredService`：model `Index-Translate-35B-A3B`，template `index-user-v1`，526ms，输出“今天天气很好。”
+- `TestContentTranslationTraditionalLiveConfiguredService`：两个样例均 `translated`；zh-tw 复用 zh-cn 生成，`cacheStatus` 为 stored/hit/hit；示例社团、示例声优保持原文。
+- `docs/development/translation.md` 与 01 证据的 `max_tokens` 改为按输入长度 256–4096。
+
+### 复验
+
+| 检查 | 结果 |
+| --- | --- |
+| `go test ./... -count=1` | 32 个含测试包全部 ok，exit 0 |
+| `npm run typecheck:e2e && npm run lint && npm run build && npm run test:unit -- --run` | 通过；lint 0 warnings/0 errors；155 文件、874 测试 |
+| content-translation / traditional-translation | 3 + 2 passed；含真实目录展开 |
+| translation-settings / personal | 2 + 2 passed |
+| source-playback / series / matching | 5 + 3 + 3 passed |
+| integrated-acceptance / openlist | 1 + 4 passed |
+| mobile-shell | 5 passed |
+| LIVE | 两个用例通过，见上 |

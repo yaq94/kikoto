@@ -6,7 +6,7 @@
 
 **Status:** ready-for-agent
 
-**Implementation:** verified-local
+**Implementation:** verified-local；字段级冲突与 edition 保持已补证，最终部署验收待 17。
 
 **证据:** [实现边界与验收](../evidence/13-shared-association.md)
 

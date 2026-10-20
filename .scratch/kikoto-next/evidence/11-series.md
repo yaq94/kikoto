@@ -53,3 +53,9 @@
 
 未执行生产部署、真实媒体 LIVE、全站真实覆盖、截图或人工视觉验收。所有运行数据为
 合成目录、临时数据库和本地模型/音频桩。07 外部缺口不被本票本地证据替代。
+
+## 审计后修复（2026-10-21）
+
+- 成员改名后 target 被跳过或旧/新成员重复的问题已修复：relocation 以已建立 entry 为 survivor，迁移 `catalog_series_member`，新位置成为 alias；系列详情从 successor 取数。
+- 第1話/第1集共享数字时按不同计数器保留两条成员；T001/T002 在真实发布卡中保持独立。
+- 新增 `TestCatalogSeriesRenameKeepsOneMemberAndSuccessorNavigation`、`TestCatalogScanKeepsDifferentEpisodeCountersApart`、`TestCatalogScanPublishesZeroPaddedWorksApart`。改名用例 `-count=3` 通过。

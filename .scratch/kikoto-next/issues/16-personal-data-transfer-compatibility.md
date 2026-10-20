@@ -5,7 +5,7 @@
 **Blocked by:** [12：系列与单集独立个人评价](12-series-episode-personal-reviews.md)。
 
 **Status:** ready-for-agent
-**Implementation:** verified-local；本票 H/R/F 证据见[验收记录](../evidence/16-personal-transfer.md)与[集成复验](../evidence/16-19-integration.md)，完整发布前置保留。
+**Implementation:** verified-local；HEAD H/R/F 已通过，最终部署验收待 17。
 
 **依据:** [正式规格](../spec.md) · [工单总览](../ticket-proposal.md)
 

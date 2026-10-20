@@ -44,3 +44,9 @@
 ## 交付边界
 
 本票本地验收已取得，仍沿用 07/08 的真实服务与索引覆盖发布前置，保持 `verified-local`。本报告不宣称真实来源媒体/全站覆盖、生产迁移、部署或视觉验收完成。原始合成测试日志存放在仓库外，临时测试服务已停止；完整集成及生产验收由主流程统一完成。
+
+## 审计后修复（2026-10-21）
+
+- 删除 `file_source` 后系列详情仍列出成员的问题已修复：系列查询要求当前源或 successor 仍存在；卡片保留为 `missing`，个人记录可读。`TestCatalogSeriesOmitsEntriesWithoutASource` 覆盖“删除来源→系列为空→保留记录”。
+- 改名同时修复成员迁移与旧链接导航：`TestCatalogSeriesRenameKeepsOneMemberAndSuccessorNavigation` 断言真实扫描后仅一条 successor、成员数不变、旧 id 仍解析到 survivor 并返回 `seriesId`。
+- 复验：`go test ./internal/httpapi -run 'TestCatalogSeries|TestSourceCatalogRelocation' -count=1` 通过；全后端 32 包通过。

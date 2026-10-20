@@ -26,3 +26,9 @@
 原始日志留在任务指定的仓库外 `t14-evidence` 目录；不把本机路径、服务日志、会话或真实数据写入仓库。
 
 本任务启动的测试后端均通过专用停止入口退出0，Vite进程树已停止；独立工作区保留供集成。没有部署或真实媒体访问，本票不替代07/08/17尚需取得的真实来源、完整索引及发布验收。
+
+## 审计后修复与补证（2026-10-21）
+
+- `title_voice_credits` 的门槛补齐 circle：双方都有 circle 且不同时判为 `conflicting_evidence`，不再因声优相同自动关联。新增 `TestWorkMatchingSidecarCreditsRejectDifferentCircles`。
+- 新增预算与终态 H：`TestWorkMatchingPausesAtEvidenceByteLimit`（2 MiB）、`TestWorkMatchingPausesAfterDailyOperationBudget`（1,000/日）、`TestWorkMatchingWorkerGivesUpAfterThirdFailure`（30s/60s 后第三次失败转 failed）。
+- 既有的 worker 重启、低空间、并发复用与候选漂移用例继续通过；全后端 32 包通过。

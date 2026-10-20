@@ -1,7 +1,7 @@
 # 19：既有浏览器测试可靠性
 
 Status: ready-for-agent
-Implementation: verified-local
+Implementation: verified-local；mobile-shell 已进入 CI，最终 Full CI 后签收。
 Blocked by: none
 
 依据：已确认的 CI 收尾要求；本票在 17 整体验收前集成。范围限既有骨架、收藏与移动封面触摸行为，保留原断言。完整 Full/Gate 由集成流程执行。

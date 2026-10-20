@@ -6,7 +6,7 @@
 
 **Status:** ready-for-agent
 
-**Implementation:** verified-local；本票 H/R/F 已通过，07/08 的真实来源与索引覆盖发布前置保留。
+**Implementation:** verified-local；改名与删除来源已修复，最终部署验收待 17。
 
 **依据:** [正式规格](../spec.md) · [工单总览](../ticket-proposal.md)
 

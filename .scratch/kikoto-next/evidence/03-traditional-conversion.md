@@ -97,3 +97,11 @@ Go 1.26.9、Node 24.19.0、npm 11.17.0；每进程 PATH 与 `GOTOOLCHAIN=local`�
 已读取终态。没有停止其他票的服务，没有本票未跟踪合成缓存或删除拒绝。
 已忽略的项目依赖、构建输出和 Playwright 结果可供复用，原始运行日志与资源
 测量程序保留在仓库外。本票所有验收已完成；未执行部署、媒体 LIVE 或视觉验收。
+
+## HEAD LIVE 复验（2026-10-21）
+
+在服务器用 Go 1.26.9 与生产模型端点运行 `TestContentTranslationTraditionalLiveConfiguredService`：
+
+- 样例 1：简中“今天天气真好。我听示例声优和示例社团的音乐。”，繁中转换 11 ms；样例 2 同样只有一次生成。
+- 两个样例均为 `translated`，`cacheStatus` 依次 stored/hit/hit；示例声优、示例社团保持原文；繁体请求复用简体生成，没有第二次模型调用。
+- 日志保存在仓库外 `.kikoto-work/live-test-head.log`。

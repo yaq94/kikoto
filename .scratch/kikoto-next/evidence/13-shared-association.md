@@ -35,3 +35,9 @@
 文档目标未跳过 frontend-install，触发 npm ci，沿已有共享 node_modules junction 部分移除了现有依赖，并因运行中的 native 文件锁而失败。自有前端服务停止后，按完全相同的原 lockfile 执行 npm ci --strict-allow-scripts，192 packages 恢复、0 vulnerabilities、退出 0；package.json 与 package-lock 未变化，junction 保留。已向主代理报告恢复。源码和迁移未受影响，恢复后的最终 F、前端构建、867 单测及文档检查通过。
 
 报告前 merge 最新 integration（含12与072），结果 Already up to date。15 尚未实施；本票没有部署或真实来源 LIVE。07/08 的 LIVE 与真实索引覆盖发布前置仍保留。
+
+## 审计后补证（2026-10-21）
+
+- `associationConflicts` 的字段级规则新增纯规则表：仅 rating、仅 note、两者、相同值、单侧空值。
+- 两用户真实关联用例增加版本断言：关联后 work 11/12 的 `work_edition.edition_label` 保持各自原值，不被对方覆盖。
+- 复验：`TestSharedAssociationWaitsForEachRecordOwner`、`TestSharedAssociationConflictFields` 通过；全后端通过。

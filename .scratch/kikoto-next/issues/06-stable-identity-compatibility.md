@@ -5,7 +5,7 @@
 **Blocked by:** None (can start immediately)
 
 **Status:** ready-for-agent
-**Implementation:** resolved
+**Implementation:** verified-local；HEAD H/R 已通过，最终部署验收待 17。
 
 **依据:** [正式规格](../spec.md) · [工单总览](../ticket-proposal.md)
 

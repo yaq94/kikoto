@@ -87,3 +87,10 @@ screenshot、trace、video，没有像素、布局或人工视觉验收。
   已读取并确认仅含合成译文。清理调用在执行前被工具自动策略拒绝，原始理由
   `blocked by policy`。主代理明确要求保留原处、显式排除暂存，不换工具删除，
   不新增忽略规则。工作区因此不能称为完全干净；新测试都用独立临时 CacheRoot。
+
+## 审计后修复（2026-10-21）
+
+- 远端 listing 无 description：`sourceId + field=description` 现在返回 400 `translation_invalid_input`，不再因空 `field.Text` 落成 409。测试 `TestContentTranslationRejectsRemoteDescription`。
+- 已有目标语言 edition description 直接复用，不调用模型：`TestContentTranslationReusesAnExistingEditionDescription`。
+- 目录展开 F：先回到 work root，再展开文件夹，断言展开后的 `ZH: Example track.wav`；content-translation 3 项全部通过。
+- 全局手动简介没有语言列，是用户选择的原文，不作为“已有目标语言字段”复用；四类字段仍然有效。

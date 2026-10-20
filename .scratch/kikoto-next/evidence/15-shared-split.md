@@ -27,3 +27,7 @@
 `POST /api/shared-associations/{id}/split-preview`、`GET /api/shared-associations/{id}/splits`、`GET /api/shared-splits/{id}`、`POST /api/shared-splits/{id}/start` 和 `/decision` 复用073持久状态。本人归属输入为 left/right/both，关联前与应用后快照保留；拆分先在事务内解除本次映射，再恢复原分组并写本人选定值，无物理删除。
 
 没有部署或执行真实来源LIVE。07/08的LIVE、真实索引覆盖与完整发布门槛保留。
+
+## 审计后补证（2026-10-21）
+
+- 新增 `TestSharedSplitSeriesKeepsTwoEpisodesAndTheirPlaybackEditions`：一个系列加两个单集完成共享后再拆分，系列仍列两集；每个 work 的 edition 标签、`catalog_stream` media 定位保持原值。补齐“三对象与版本”断言。

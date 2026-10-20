@@ -6,7 +6,7 @@
 
 **Status:** ready-for-agent
 
-**Implementation:** verified-local；本票 H/R 与资源契约已验证，[验收证据](../evidence/09-daily-index.md)。08 的真实覆盖与完整发布前置保留。
+**Implementation:** verified-local；低空间暂停与同代重观察已修复，最终部署验收待 17。
 
 **依据:** [正式规格](../spec.md) · [工单总览](../ticket-proposal.md)
 

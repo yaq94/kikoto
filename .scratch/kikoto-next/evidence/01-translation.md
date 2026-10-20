@@ -9,7 +9,7 @@
 | AC-01 默认模型、保存、密钥和权限 | `TestTranslationAdminConfigurationIsPrivateAndPreservesModel` 通过真实 HTTP、会话和迁移 SQLite 验证默认 `Index-Translate-35B-A3B`、自定义调用名原样保存、掩码回读、省略保留与空串清除；普通用户 GET/PATCH 为 403，匿名读取为 401。 | 通过 |
 | AC-01 重启与语言隔离 | `TestTranslationConfigurationAndTrialSurviveApplicationRestart` 关闭 HTTP 服务、应用与数据库，重新迁移并打开同一数据库；复用真实持久会话，经 GET 回读相同配置，再向边界上游完成试译。已保存界面语言保持日语，试译目标为简体中文。 | R 通过 |
 | AC-01/02 表单入口 | `translation-settings.spec.ts` 启动真实 Kikoto 生产模式进程及迁移 SQLite，仅外部模型使用本地服务桩。管理员从设置标签进入，保存、重载、试译、查看失败并清除密钥；第二场景取消请求并确认上游连接结束，再成功试译。普通用户没有翻译配置标签，API 读取为 403。 | F 2/2 通过 |
-| AC-02 模板与参数 | `TestTranslationTrialUsesSavedModelKeyAndOfficialSingleUserTemplate` 在外部 HTTP 边界读取真实请求，确认单条 user 模板、原样模型名、保存的 bearer key、`temperature=0`、`max_tokens=1024`、非流式及可选关闭推理扩展。省略密钥与明确清除后的真实请求头也被验证。 | H 通过 |
+| AC-02 模板与参数 | `TestTranslationTrialUsesSavedModelKeyAndOfficialSingleUserTemplate` 在外部 HTTP 边界读取真实请求，确认单条 user 模板、原样模型名、保存的 bearer key、`temperature=0`、按输入长度计算的输出预算（短文本 256，上限 4096）、非流式及可选关闭推理扩展。省略密钥与明确清除后的真实请求头也被验证。 | H 通过 |
 | AC-02 失败分类 | `TestTranslationTrialFailuresAreClassifiedWithoutLeakingOrRetrying` 覆盖空输出、截断、缺失完成标记、格式错误、无效 UTF-8、推理块、401/403、429、400、503、重定向、超大响应与超时。每例仅一次上游请求，失败无译文且不泄露上游内容或配置。 | H 14 个子场景通过 |
 | AC-02 有限真实生成 | 专用 HTTPS 配置在进程内存读取，以进程环境注入 `TestTranslationLiveConfiguredService`；通过本票 HTTP 配置和试译接口发出一次真实请求，使用选定 Index 调用名、正式模板和默认关闭推理扩展。 | LIVE 通过 |
 | AC-27 输入与请求边界 | `TestTranslationConfigurationRejectsInvalidBodiesAndURLsAtomically` 拒绝非法协议、嵌入凭据、查询参数、fragment、非法字段、超大 JSON 和追加 JSON，并 GET 验证无部分更新。 | H 通过 |
@@ -64,3 +64,11 @@ F 的可复验准备和环境名见 [开发文档](../../../docs/development/tra
 本票复用 `app_setting`，没有增加迁移或占用 069；未实现 02 缓存、04 个人评价或生产部署。完整规格的后续验收保持在所属工单。
 
 F 自有后端和模型服务由测试收尾关闭；本票 Vite 后台进程已停止，专属前后端监听端口均实际确认关闭。保留可复用依赖、构建产物和源码，没有遗留本票运行服务或临时凭据文件。
+
+## HEAD LIVE 复验（2026-10-21）
+
+在服务器用 Go 1.26.9 与生产模型端点（`Index-Translate-35B-A3B`）运行 `TestTranslationLiveConfiguredService`：
+
+- 模板 `index-user-v1`，耗时 526 ms，输出“今天天气很好。”，响应不含密钥或端点。
+- 测试新增 `KIKOTO_TRANSLATION_LIVE_ALLOW_LOOPBACK=1` 显式开关，仅允许 127.0.0.1/localhost 的 HTTP；默认仍要求 HTTPS。
+- 该用例对应当前 HEAD 的客户端与输出预算，不再是旧提交的沿用证据。日志保存在仓库外 `.kikoto-work/live-test-head.log`。

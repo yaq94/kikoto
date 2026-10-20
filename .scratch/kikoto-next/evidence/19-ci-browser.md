@@ -84,3 +84,13 @@
 - **不新增**：本票不新增任何几何或视觉断言，也不修改全仓既有视觉测试的定义（AC-28 末句）。
 
 这样工单 19 与 AC-28 不再冲突：既有断言按原样保留，本期非视觉验收只引用文本、操作、请求、持久状态与媒体功能断言。
+
+## 移动用例进入 CI（2026-10-21）
+
+- `scripts/run-e2e-fixtures.mjs` 新增 `mobile-shell` group，支持多 spec、`mobile-chromium` project 与定向 grep；`.github/workflows/validate.yml` 增加同名矩阵项。
+- 选择 5 项：目录骨架响应同步、移动收藏货架、全屏播放器折叠与封面双击、封面单击不跳转、双击按播放来源跳转。本地 `node scripts/run-e2e-fixtures.mjs --group=mobile-shell` 为 5 passed。
+- Full CI 的 mocked shard 仍按 desktop project 运行仓库既有回归；mobile-shell 单独跑移动用例，二者都不再遗漏本票的移动断言。
+
+## AC-28 证据范围（2026-10-21）
+
+AC-28 的证据集是各工单选定的纯功能 F（content-translation、traditional-translation、translation-settings、personal、source-playback、series、matching、integrated-acceptance、openlist、mobile-shell）。Full CI 的 `favorites-state` 布局用例属于仓库既有回归，按规格保留原定义，不作为 AC-28 或 AC-26 的证据，也不新增视觉门禁。

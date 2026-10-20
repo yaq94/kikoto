@@ -8,7 +8,7 @@
 **发布依赖:** 07 全部验收（含真实媒体 LIVE）和本票完整清单仍须通过；本地开发不关闭外部缺口，也不改变作品身份及个人记录保护要求。
 
 **Status:** ready-for-agent
-**Implementation:** verified-local
+**Implementation:** verified-local；改名成员与计数身份已修复，最终部署验收待 17。
 **本地证据:** [071、H/R/F 与回归验收](../evidence/11-series.md)。本票清单通过，07 真实媒体 LIVE 的发布依赖仍保留。
 
 **依据:** [正式规格](../spec.md) · [工单总览](../ticket-proposal.md)

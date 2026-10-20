@@ -6,7 +6,7 @@
 
 **Status:** ready-for-agent
 
-**Implementation:** resolved
+**Implementation:** verified-local；HEAD H/F 已通过，真实媒体 Range 在最终部署复验。
 
 **证据:** [05 来源与播放验证](../evidence/05-source-playback.md)。既有编号来源与 catalog 来源 H/F 验收通过；已吸收 02／07 并复验真实 path、内容语言隔离、无码多源和播放游标一致性。本票无新增迁移。
 

@@ -6,7 +6,7 @@
 
 **Status:** ready-for-agent
 
-**Implementation:** resolved；实现与当前验证见[14 证据](../evidence/14-work-matching.md)，完整发布前置沿用执行记录。
+**Implementation:** verified-local；circle 冲突与预算/退避已修复，最终部署验收待 17。
 
 **依据:** [正式规格](../spec.md) · [工单总览](../ticket-proposal.md)
 

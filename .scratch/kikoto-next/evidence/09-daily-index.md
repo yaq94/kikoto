@@ -8,8 +8,9 @@ Implementation: verified-local
 
 ## 行为与验收对应
 
-- AC-22：只有首次完整成功的全来源索引启用每日更新；有限扫描、未启动、空目录或
-  部分覆盖均不启用。既有完整扫描通过其成功时间补齐调度，关闭期间错过时间仅补一次。
+- AC-22：首次扫描到达树尾后启用每日调度。只有未确认空范围的 partial 会安排次日
+  重观察，并恢复同一 generation，不创建独立全站任务；失败/受限范围按同一调度重试，
+  低空间暂停等待运维。有限扫描和未启动来源不启用。关闭期间错过时间仅补一次。
 - AC-21：每日和手动共用一个入队事务，复用 queued/running，恢复 cancelled/paused/
   failed/partial 的相同 generation。入队和下一次时间原子提交；停止后队列仍在 SQLite。
 - AC-25：定时任务沿用已存选项及原扫描执行器；默认 1 并发、1 请求/秒，低空间暂停。
@@ -27,7 +28,7 @@ Go 1.26.9，`GOTOOLCHAIN=local`；Node 24.19.0。Go 定向命令均在 `backend/
 | 命令 / 检查 | 退出码与证据 |
 | --- | --- |
 | `go test -mod=readonly ./internal/httpapi -run '^TestSourceCatalogDailyStartsOnlyAfterCompleteAndSurvivesRestart$' -count=1 -v -timeout=1m`，接入调度前 | 1；真实重启后仍为原 run 1/complete，未触发次日更新；接入后同用例退出 0。 |
-| `go test -mod=readonly ./internal/httpapi -run '^TestSourceCatalogDailyDoesNotRetryIncompleteFirstCoverage$' -count=1 -v -timeout=1m`，旧源调度清除前 | 1；复用 id 的新来源部分扫描被错误自动重试；清除后定向总回归覆盖。 |
+| `go test -mod=readonly ./internal/httpapi -run '^TestSourceCatalogDailyReobservesAFinishedUnconfirmedEmptyGeneration$' -count=1 -v -timeout=1m`，旧源调度清除前 | 1；复用 id 的新来源部分扫描被错误自动重试；清除后定向总回归覆盖。 |
 | `go test -mod=readonly ./internal/httpapi -run '^TestSourceCatalog(Daily\|Index)' -count=1 -v -timeout=3m` | 退出 0；16 个顶层 H/R 通过，35.478 秒。 |
 | `go test -race -mod=readonly ./internal/httpapi -run '^TestSourceCatalogDaily' -count=1 -v -timeout=3m` | 退出 0；3 项通过，无 race，30.184 秒。 |
 | `make backend-test` | 退出 0；完整后端通过，httpapi 150.494 秒。此轮后补充旧源 id 调度清理，并由最终定向回归/静态检查覆盖该改动。 |
@@ -45,3 +46,9 @@ Go 1.26.9，`GOTOOLCHAIN=local`；Node 24.19.0。Go 定向命令均在 `backend/
 成功结算时原子保存下一次更新时间。没有修改 11 的 roots、publish 或系列模块。
 09 未修改前端交互，沿用已有索引管理入口；无需新增 F，未采集截图。
 07 的真实媒体 LIVE、08 的真实全来源覆盖及发布前置继续保留；本票未部署或访问真实站点。
+
+## 审计后修复（2026-10-21）
+
+- 低空间暂停原会被已存每日时间覆盖，24 小时后自动重试。现在 `pause_reason='low_disk_space'` 时忽略 setting 与完成时间，等待运维；`TestSourceCatalogDailyDoesNotRetryALowDiskPause` 先写入过期 setting 再断言不派发。
+- 到达树尾、仅剩未确认空的 run 会安排次日同代重观察；测试与证据名称已改为 `TestSourceCatalogDailyReobservesAFinishedUnconfirmedEmptyGeneration`，不再写成“部分覆盖不启用每日”。
+- 复验：`go test ./internal/httpapi -run 'TestSourceCatalogDaily' -count=1` 通过；全后端 32 包通过。
