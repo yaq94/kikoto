@@ -28,8 +28,8 @@ func Open(path string) (*sql.DB, error) {
 		db.SetMaxOpenConns(1)
 		db.SetMaxIdleConns(1)
 	} else {
-		db.SetMaxOpenConns(4)
-		db.SetMaxIdleConns(4)
+		db.SetMaxOpenConns(8)
+		db.SetMaxIdleConns(8)
 		// File-backed connections are cheap to reopen. Bounding their idle and
 		// total lifetimes ensures that an unexpectedly contaminated connection
 		// cannot retain a SQLite lock indefinitely while sitting in the pool.
@@ -60,8 +60,8 @@ func UseTempDirectory(ctx context.Context, db *sql.DB, dir string) error {
 	return err
 }
 
-// Per-connection SQLite tuning. The file-backed pool holds at most four
-// connections, so the page cache is bounded to roughly 64 MiB in total and the
+// Per-connection SQLite tuning. The file-backed pool holds at most eight
+// connections, so the page cache is bounded to roughly 128 MiB in total and the
 // shared memory map to one 256 MiB window per connection (address space, not
 // resident memory). WAL with synchronous=NORMAL keeps the database consistent
 // after a crash; only the most recent commits may roll back on power loss.

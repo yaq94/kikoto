@@ -707,3 +707,52 @@ func TestMigrateAddsQueryIndexes(t *testing.T) {
 		}
 	}
 }
+
+// Four concurrent readers can occupy the older four-slot pool. A background
+// writer then waits for a connection even though SQLite WAL admits it.
+func TestOpenKeepsAConnectionForAWriterDuringFourReaders(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "pool.db"))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`CREATE TABLE probe (id INTEGER PRIMARY KEY, value INTEGER NOT NULL)`); err != nil {
+		t.Fatalf("create table: %v", err)
+	}
+
+	ctx := context.Background()
+	readers := make([]*sql.Conn, 4)
+	for i := range readers {
+		conn, err := db.Conn(ctx)
+		if err != nil {
+			t.Fatalf("reader Conn(%d): %v", i, err)
+		}
+		readers[i] = conn
+		if _, err := conn.ExecContext(ctx, "BEGIN"); err != nil {
+			t.Fatalf("reader %d BEGIN: %v", i, err)
+		}
+		var count int
+		if err := conn.QueryRowContext(ctx, "SELECT count(*) FROM probe").Scan(&count); err != nil {
+			t.Fatalf("reader %d SELECT: %v", i, err)
+		}
+	}
+	defer func() {
+		for _, conn := range readers {
+			_, _ = conn.ExecContext(context.Background(), "ROLLBACK")
+			_ = conn.Close()
+		}
+	}()
+
+	writeCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	if _, err := db.ExecContext(writeCtx, "INSERT INTO probe (value) VALUES (1)"); err != nil {
+		t.Fatalf("writer waited for a reader slot: %v", err)
+	}
+	var count int
+	if err := db.QueryRowContext(ctx, "SELECT count(*) FROM probe").Scan(&count); err != nil {
+		t.Fatalf("count after write: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("rows after write = %d, want 1", count)
+	}
+}
