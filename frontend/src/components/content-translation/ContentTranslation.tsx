@@ -60,9 +60,7 @@ export function ContentLanguageProvider({ children }: { children: ReactNode }) {
         // language. Keep the last successful choice for this session; the next
         // revision or a reload retries the request.
         if (!controller.signal.aborted) {
-          setLoaded((current) =>
-            current.session === session ? current : { session, revision, language: "origin" },
-          );
+          setLoaded((current) => (current.session === session ? current : { session, revision, language: "origin" }));
         }
       });
     return () => controller.abort();
