@@ -132,7 +132,7 @@ func (s *Server) executeSourceCatalogIndexJob(ctx context.Context, job workflowJ
 			// can retire continues on the next step instead of leaving the tail
 			// permanently uncleaned.
 			scanned := int64(0)
-			for pass := 0; pass < catalogPublishBatchesPerPass; pass++ {
+			for pass := 0; pass < catalogCleanupBatchesPerPass; pass++ {
 				scanned, _, err = s.cleanupCatalogPublishBatch(ctx, job, input.SourceID)
 				if err != nil {
 					return err

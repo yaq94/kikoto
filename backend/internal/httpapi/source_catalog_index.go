@@ -30,6 +30,9 @@ const (
 	// catalogPublishRows rows, and the remaining backlog returns to the
 	// durable queue. Eight batches keep the per-pass total at 400 rows.
 	catalogPublishBatchesPerPass = 8
+	// Cleanup keeps its own pass count so the smaller publish batch does not
+	// double the rows one pass scans for retirement.
+	catalogCleanupBatchesPerPass = 4
 )
 
 type catalogIndexOptions struct {
