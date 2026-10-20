@@ -87,6 +87,36 @@ func TestCatalogRangeUncertainAtConfiguredRoot(t *testing.T) {
 	if !incomplete {
 		t.Fatal("an unconfirmed empty directory must keep the card incomplete")
 	}
+
+	// A complete directory with a staged but unpublished observation is still
+	// an observation gap: publishing may add files the card must not lose.
+	if _, err = tx.Exec(`UPDATE source_catalog_directory SET status='complete',error_code=''
+		WHERE path='/Example Work'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tx.Exec(`INSERT INTO source_catalog_observation
+		(file_source_id,directory_path,name,revision,kind,size_bytes,publish_pending)
+		VALUES(7,'/Example Work','track.mp3',1,'audio',100,1)`); err != nil {
+		t.Fatal(err)
+	}
+	incomplete, err = catalogRootIncomplete(ctx, tx, 7, 9, "/Example Work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !incomplete {
+		t.Fatal("a pending observation must keep the card incomplete")
+	}
+	if _, err = tx.Exec(`UPDATE source_catalog_observation SET publish_pending=0
+		WHERE file_source_id=7 AND directory_path='/Example Work'`); err != nil {
+		t.Fatal(err)
+	}
+	incomplete, err = catalogRootIncomplete(ctx, tx, 7, 9, "/Example Work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if incomplete {
+		t.Fatal("a published observation closes the gap")
+	}
 }
 
 func TestCatalogFormatDirectoryAcceptsMultipleQualitySuffixes(t *testing.T) {
@@ -95,9 +125,15 @@ func TestCatalogFormatDirectoryAcceptsMultipleQualitySuffixes(t *testing.T) {
 			t.Errorf("%q should be a format copy", name)
 		}
 	}
-	for _, name := range []string{"MP3 Collection", "FLAC 24bit 96kHz Extra", "Audio Drama"} {
+	for _, name := range []string{"MP3 Collection", "Audio Drama", "Example Release 2"} {
 		if catalogFormatDirectory(name) {
 			t.Errorf("%q should stay a title", name)
 		}
+	}
+	// A name that starts with a format and quality tokens is folded into the
+	// release even when it ends with another word: creating a work from it
+	// would be the worse error.
+	if !catalogWorkPartDirectory("FLAC 24bit 96kHz Extra") {
+		t.Error("a format-led directory must stay a work part")
 	}
 }

@@ -26,8 +26,8 @@ func catalogRootIncomplete(ctx context.Context, tx *sql.Tx, sourceID, generation
 		SELECT 1 FROM source_catalog_observation o
 		JOIN source_catalog_directory pd ON pd.file_source_id=o.file_source_id AND pd.path=o.directory_path
 		WHERE o.file_source_id=? AND pd.generation=? AND o.publish_pending=1
-			AND (?='/' OR pd.catalog_root=? OR substr(pd.path,1,length(?)+1)=? || '/')
-	)`, sourceID, generation, root, root, root, root, root, root,
+			AND (?='/' OR pd.catalog_root=? OR pd.path=? OR substr(pd.path,1,length(?)+1)=? || '/')
+	)`, sourceID, generation, root, root, root, root, root,
 		sourceID, generation, root, root, root, root, root).Scan(&incomplete)
 	return incomplete != 0, err
 }
@@ -49,7 +49,7 @@ func catalogRangeUncertain(ctx context.Context, tx *sql.Tx, sourceID, generation
 	err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM source_catalog_directory d
 		WHERE d.file_source_id=? AND d.generation=? AND `+uncertainStatus+`
 			AND (?='/' OR d.path=? OR substr(d.path,1,length(?)+1)=? || '/'))`,
-		sourceID, generation, base, base, base, base, base).Scan(&uncertain)
+		sourceID, generation, base, base, base, base).Scan(&uncertain)
 	return uncertain != 0, err
 }
 
