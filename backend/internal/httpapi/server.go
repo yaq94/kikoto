@@ -110,6 +110,7 @@ type Server struct {
 	catalogNow                     func() time.Time
 	workMatchingMu                 sync.Mutex
 	catalogSidecarCooldown         *catalogSidecarSourceCooldown
+	catalogRefreshMu               sync.Mutex
 	catalogAvailabilityMu          sync.Mutex
 	catalogAvailabilityQueued      map[int64]struct{}
 	catalogAvailabilityQueue       chan int64
