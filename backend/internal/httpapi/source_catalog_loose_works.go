@@ -1397,13 +1397,12 @@ func (s *Server) retireOrphanSplitRootsBatch(ctx context.Context, job workflowJo
 	return len(roots), nil
 }
 
-// markStaleSnapshotCardsTx reports cards a finite scan no longer publishes as
-// unavailable. The scan rewrites every card of the root in one transaction, so
-// a child card outside the written set describes content the source no longer
-// lists. The card itself, its work link and its personal records are kept, as
-// a failed or partial scan cannot prove a deletion; only its availability
-// changes. This never runs for a failed scan: the caller returns before
-// publishing in that case.
+// markStaleSnapshotCardsTx marks cards a finite scan no longer publishes as
+// missing. The scan rewrites every card of the root in one transaction, so a
+// child card outside the written set describes content the source no longer
+// lists. The card itself, its work link and its personal records are kept; a
+// later scan that lists the path again restores it. This never runs for a
+// failed scan: the caller returns before publishing in that case.
 func markStaleSnapshotCardsTx(ctx context.Context, tx *sql.Tx, sourceID int64, root string, keep map[int64]bool) error {
 	rows, err := tx.QueryContext(ctx, `SELECT id,root_path FROM source_catalog_entry
 		WHERE file_source_id=? AND relocated_to_id IS NULL

@@ -296,12 +296,10 @@ func matchWorkEvidence(a, b workMatchEvidence) workMatchCandidate {
 	return c
 }
 
-// sidecarCreditEvidence reports the same labelled cast on both sides. A
-// readme plus another catalog entry's readme must both be present: two entries
-// that repeat one source listing are not two independent facts. A registered
-// work is different: its cast comes from authored metadata, so title plus an
-// identical readme cast is two facts. Without this exception a numberless
-// release could never match its already registered counterpart.
+// sidecarCreditEvidence reports the same labelled cast on both sides. Both
+// readmes must be present: one readme plus one authored row repeats the same
+// source metadata and is not two independent facts, so that pair stays a
+// review candidate instead of an automatic association.
 func sidecarCreditEvidence(a, b workMatchEvidence) bool {
 	// Both sides need their own readme. A registered work's cast can be a copy
 	// of the same source metadata the readme repeats, so one labelled readme
