@@ -308,3 +308,4 @@
 - `catalogRangeUncertain` 去掉参数化的 `base='/'` 分支，根目录直接不加路径条件，其他根使用索引可寻址的半开区间；生产副本单卡由 5.3 ms（冷）降到 9 µs（冷），热态 0.57 ms 降到 0.14 ms。
 - 新增 `TestCatalogCleanupRemovesFolderRowsThatBecameEntries`，覆盖 `source_root` 与 `root_path` 两种子目录形式，并确认只删除精确匹配的文件夹行。
 - 批次总耗时与 `SQLITE_BUSY` 计数在部署后重新测量，不以副本单查询替代。
+- 子路径截取改由 SQLite `length()` 按字符计数。Go 的 `len()` 是字节数，中文父目录会把相对路径截在错误位置；回归用例同时覆盖 ASCII 与中文父目录。

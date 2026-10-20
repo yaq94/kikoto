@@ -382,17 +382,19 @@ func (s *Server) cleanupCatalogPublishBatch(ctx context.Context, job workflowJob
 			// encode above this sentinel, so the range still covers all paths.
 			lower, upper = "", "\U0010FFFF"
 		}
-		offset := len(parentRoot) + 2
+		// length() counts characters, while a Go byte offset would split a
+		// multibyte path at the wrong position. The expression does not affect
+		// how the range predicates seek the indexes.
 		result, execErr := tx.ExecContext(ctx, `DELETE FROM source_catalog_file
 			WHERE catalog_entry_id=? AND relative_path IN (
-				SELECT substr(root_path,?) FROM source_catalog_entry
+				SELECT substr(root_path,length(?)+2) FROM source_catalog_entry
 				WHERE file_source_id=? AND id<>? AND relocated_to_id IS NULL
 					AND source_root='' AND root_path>=? AND root_path<?
 				UNION ALL
-				SELECT substr(source_root,?) FROM source_catalog_entry
+				SELECT substr(source_root,length(?)+2) FROM source_catalog_entry
 				WHERE file_source_id=? AND id<>? AND relocated_to_id IS NULL
 					AND source_root<>'' AND source_root>=? AND source_root<?
-			)`, id, offset, sourceID, id, lower, upper, offset, sourceID, id, lower, upper)
+			)`, id, parentRoot, sourceID, id, lower, upper, parentRoot, sourceID, id, lower, upper)
 		if execErr != nil {
 			return 0, 0, execErr
 		}
