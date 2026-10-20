@@ -82,8 +82,13 @@ func TestCatalogScanTreatsGoneDirectoryAsMissing(t *testing.T) {
 	}
 	gone.Store(true)
 	f.request(t, http.MethodPost, "/catalog/index", `{"intervalMs":100,"force":true}`, 202)
-	if p := f.drain(t); p["status"] != "complete" {
+	p := f.drain(t)
+	if p["status"] != "complete" {
 		t.Fatalf("rescan = %#v", p)
+	}
+	// A confirmed disappearance is complete coverage, not an unconfirmed gap.
+	if p["completedDirectories"] != p["directories"] || p["unconfirmedEmptyDirectories"] != float64(0) {
+		t.Fatalf("gone directory was not counted as completed: %#v", p)
 	}
 	var status string
 	if err := f.server.db.QueryRow(`SELECT availability_status FROM source_catalog_entry WHERE id=?`, id).Scan(&status); err != nil {

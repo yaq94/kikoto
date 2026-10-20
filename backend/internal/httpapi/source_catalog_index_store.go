@@ -782,7 +782,10 @@ func (s *Server) sourceCatalogProgress(ctx context.Context, sourceID int64, page
 	if p.PauseReason != "" && p.Status == "partial" {
 		p.Status = "paused"
 	}
-	err = s.db.QueryRowContext(ctx, `SELECT count(*),coalesce(sum(status='complete'),0),coalesce(sum(status IN ('pending','listing_complete')),0),coalesce(sum(status='failed'),0),coalesce(sum(status='restricted'),0),coalesce(sum(status='empty' AND error_code<>'not_found'),0),count(DISTINCT partition_path) FROM source_catalog_directory WHERE file_source_id=? AND generation=?`, sourceID, p.RunID).Scan(&p.Directories, &p.Completed, &p.Pending, &p.Failed, &p.Restricted, &p.Empty, &p.PartitionTotal)
+	// A confirmed 404/410 is a completed observation: the directory is gone,
+	// which is exactly what the scan learned. Counting it in neither completed
+	// nor unconfirmed made the partition total disagree with its parts.
+	err = s.db.QueryRowContext(ctx, `SELECT count(*),coalesce(sum(status='complete' OR (status='empty' AND error_code='not_found')),0),coalesce(sum(status IN ('pending','listing_complete')),0),coalesce(sum(status='failed'),0),coalesce(sum(status='restricted'),0),coalesce(sum(status='empty' AND error_code<>'not_found'),0),count(DISTINCT partition_path) FROM source_catalog_directory WHERE file_source_id=? AND generation=?`, sourceID, p.RunID).Scan(&p.Directories, &p.Completed, &p.Pending, &p.Failed, &p.Restricted, &p.Empty, &p.PartitionTotal)
 	if err != nil {
 		return p, err
 	}
@@ -798,7 +801,7 @@ func (s *Server) sourceCatalogProgress(ctx context.Context, sourceID int64, page
 	if err != nil {
 		return p, err
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT partition_path,count(*),sum(status='complete'),sum(status='failed'),sum(status='restricted'),sum(status='empty' AND error_code<>'not_found') FROM source_catalog_directory WHERE file_source_id=? AND generation=? GROUP BY partition_path ORDER BY partition_path LIMIT 50 OFFSET ?`, sourceID, p.RunID, (page-1)*50)
+	rows, err := s.db.QueryContext(ctx, `SELECT partition_path,count(*),sum(status='complete' OR (status='empty' AND error_code='not_found')),sum(status='failed'),sum(status='restricted'),sum(status='empty' AND error_code<>'not_found') FROM source_catalog_directory WHERE file_source_id=? AND generation=? GROUP BY partition_path ORDER BY partition_path LIMIT 50 OFFSET ?`, sourceID, p.RunID, (page-1)*50)
 	if err != nil {
 		return p, err
 	}
