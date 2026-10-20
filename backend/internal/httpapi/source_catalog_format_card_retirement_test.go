@@ -201,8 +201,10 @@ func TestSourceCatalogFormatCardStaysWhenSubtreeFails(t *testing.T) {
 
 	next := formatCardTree()
 	next["/Creator/Release"] = append(next["/Creator/Release"], looseAudio("00 intro.mp3"))
-	delete(next, "/Creator/Release/MP3")
+	// Keep the directory in the tree but make the upstream fail: a 404 is a
+	// confirmed deletion, while a transient error must retain the old card.
 	f.updates(next)
+	f.failPath("/Creator/Release/MP3")
 
 	f.request(t, http.MethodPost, "/catalog/index", `{"intervalMs":100,"force":true}`, 202)
 	if p := f.drain(t); p["status"] != "partial" {

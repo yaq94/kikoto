@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"strings"
 
 	"github.com/yexca/kikoto/backend/internal/openlist"
 )
@@ -27,6 +26,30 @@ func catalogRootIncomplete(ctx context.Context, tx *sql.Tx, sourceID, generation
 	)`, sourceID, generation, root, root, root, root, root, root,
 		sourceID, generation, root, root, root, root, root).Scan(&incomplete)
 	return incomplete != 0, err
+}
+
+// catalogRangeUncertain reports a directory below base that the current
+// generation could not observe. An unconfirmed-empty, failed, restricted or
+// still-pending directory proves nothing about deletion, so callers keep the
+// rows recorded by earlier generations.
+func catalogRangeUncertain(ctx context.Context, tx *sql.Tx, sourceID, generation int64, base string) (bool, error) {
+	if base == "" || base == "/" {
+		var rootIncomplete int
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM source_catalog_directory
+			WHERE file_source_id=? AND generation=? AND path='/' AND status IN ('failed','restricted','empty','pending','listing_complete'))`,
+			sourceID, generation).Scan(&rootIncomplete); err != nil {
+			return false, err
+		}
+		if rootIncomplete != 0 {
+			return true, nil
+		}
+	}
+	var uncertain int
+	err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM source_catalog_directory d
+		WHERE d.file_source_id=? AND d.generation=? AND d.status IN ('failed','restricted','empty','pending','listing_complete')
+			AND (d.path=? OR substr(d.path,1,length(?)+1)=? || '/'))`,
+		sourceID, generation, base, base, base).Scan(&uncertain)
+	return uncertain != 0, err
 }
 
 func catalogFailureStatus(err error) string {
@@ -58,9 +81,14 @@ func (s *Server) setCatalogEntryStatus(ctx context.Context, id int64, status str
 
 func markCatalogRangeStatusTx(ctx context.Context, tx *sql.Tx, sourceID int64, root, status string) error {
 	_, err := tx.ExecContext(ctx, `UPDATE source_catalog_entry SET availability_status=?,status_checked_at=CURRENT_TIMESTAMP
-		WHERE file_source_id=? AND relocated_to_id IS NULL AND (?='/' OR root_path=? OR instr(root_path,?)=1 OR instr(root_path,?)=1)`, status, sourceID, root, root, strings.TrimRight(root, "/")+"/", strings.TrimRight(root, "/")+"::")
+		WHERE file_source_id=? AND relocated_to_id IS NULL AND (?='/' OR root_path=? OR source_root=? OR substr(root_path,1,length(?)+2)=? || '::')`,
+		status, sourceID, root, root, root, root, root)
 	return err
 }
+
+// markCatalogDirectoryStatusTx applies a directory's own outcome to the cards
+// whose real path is that directory. A failed child below a card does not make
+// the card unplayable: its own files were still observed and published.
 
 func setCatalogEntryStatusTx(ctx context.Context, tx *sql.Tx, id int64, status string) error {
 	if _, err := tx.ExecContext(ctx, `UPDATE source_catalog_entry SET availability_status=?,status_checked_at=CURRENT_TIMESTAMP WHERE id=?`, status, id); err != nil {
@@ -143,14 +171,11 @@ func (s *Server) settleCatalogLifecycleBatch(ctx context.Context, job workflowJo
 				FROM source_catalog_entry WHERE id=?`, e.id).Scan(&base); err != nil {
 				return false, err
 			}
-			var uncertain int
-			if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM source_catalog_directory d
-				WHERE d.file_source_id=? AND d.generation=? AND d.status IN ('failed','restricted','empty')
-					AND (d.path=? OR substr(d.path,1,length(?)+1)=? || '/'))`,
-				sourceID, job.RunID, base, base, base).Scan(&uncertain); err != nil {
+			uncertain, err := catalogRangeUncertain(ctx, tx.Tx, sourceID, job.RunID, base)
+			if err != nil {
 				return false, err
 			}
-			if uncertain != 0 {
+			if uncertain {
 				cursor = e.id
 				continue
 			}
@@ -167,8 +192,23 @@ func (s *Server) settleCatalogLifecycleBatch(ctx context.Context, job workflowJo
 			if _, err = tx.ExecContext(ctx, `UPDATE source_catalog_entry SET content_fingerprint=?,layout_fingerprint=? WHERE id=?`, strong, layout, e.id); err != nil {
 				return false, err
 			}
-			if _, err = tx.ExecContext(ctx, `DELETE FROM source_catalog_file WHERE catalog_entry_id=? AND observed_generation<>?`, e.id, job.RunID); err != nil {
+			// Republishing the card does not prove that every directory below
+			// it was observed. An unconfirmed-empty or failed child may still
+			// be the only place an older file row can be confirmed, so keep the
+			// old rows until that subtree completes.
+			var base string
+			if err = tx.QueryRowContext(ctx, `SELECT CASE WHEN COALESCE(source_root,'')='' THEN root_path ELSE source_root END
+				FROM source_catalog_entry WHERE id=?`, e.id).Scan(&base); err != nil {
 				return false, err
+			}
+			uncertain, err := catalogRangeUncertain(ctx, tx.Tx, sourceID, job.RunID, base)
+			if err != nil {
+				return false, err
+			}
+			if !uncertain {
+				if _, err = tx.ExecContext(ctx, `DELETE FROM source_catalog_file WHERE catalog_entry_id=? AND observed_generation<>?`, e.id, job.RunID); err != nil {
+					return false, err
+				}
 			}
 		}
 		if err = setCatalogEntryStatusTx(ctx, tx.Tx, e.id, status); err != nil {
@@ -210,6 +250,8 @@ func (s *Server) cleanupCatalogPublishBatch(ctx context.Context, job workflowJob
 	if err = tx.QueryRowContext(ctx, `SELECT publish_cleanup_cursor FROM source_catalog_scan WHERE file_source_id=?`, sourceID).Scan(&cursor); err != nil {
 		return 0, 0, err
 	}
+	startCursor := cursor
+	uncertainSeen := false
 	rows, err := tx.QueryContext(ctx, `SELECT id FROM source_catalog_entry
 		WHERE file_source_id=? AND last_seen_generation=? AND id>?
 		ORDER BY id LIMIT 100`, sourceID, job.RunID, cursor)
@@ -250,6 +292,9 @@ func (s *Server) cleanupCatalogPublishBatch(ctx context.Context, job workflowJob
 			sourceID, job.RunID, base, base, base).Scan(&uncertain); err != nil {
 			return 0, 0, err
 		}
+		if uncertain != 0 {
+			uncertainSeen = true
+		}
 		if uncertain == 0 {
 			result, execErr := tx.ExecContext(ctx, `DELETE FROM source_catalog_file WHERE catalog_entry_id=? AND observed_generation<>?`, id, job.RunID)
 			if execErr != nil {
@@ -283,6 +328,14 @@ func (s *Server) cleanupCatalogPublishBatch(ctx context.Context, job workflowJob
 		cursor = id
 	}
 	if len(ids) > 0 {
+		// A card skipped because its subtree was unreadable is not finished: the
+		// older rows it still lists can only be judged after that subtree
+		// completes. Reaching the tail of the cursor rewinds it once, so the next
+		// pass revisits those cards instead of skipping them forever. A partial
+		// page keeps its forward cursor; the rewind happens when the scan ends.
+		if uncertainSeen && len(ids) < 100 && startCursor != 0 {
+			cursor = 0
+		}
 		if _, err = tx.ExecContext(ctx, `UPDATE source_catalog_scan SET publish_cleanup_cursor=?,updated_at=CURRENT_TIMESTAMP WHERE file_source_id=?`, cursor, sourceID); err != nil {
 			return 0, 0, err
 		}

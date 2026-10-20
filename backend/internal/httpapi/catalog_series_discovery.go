@@ -15,10 +15,14 @@ import (
 
 // Only authored episode markers or an explicitly labelled series directory are
 // evidence. A creator, topic, plain numeric track or format name is not.
-var catalogEpisodeMarker = regexp.MustCompile(`(?i)^(.*?)\s*(?:\bepisode\s*|\bep\.?\s*|第\s*)([0-9]{1,6})(?:\s*(?:集|話|话|回))?(?:\s*[-:：._]\s*|\s+)?(.*)$`)
+// An English episode marker is a word plus a number. The Japanese/Chinese
+// form needs its counter: "第3話" names an episode, while "第3章" names a
+// chapter inside one work and must not create a series from chapter folders.
+var catalogEpisodeMarker = regexp.MustCompile(`(?i)^(.*?)\s*(?:\bepisode\s*|\bep\.?\s*)([0-9]{1,6})(?:\s*[-:：._]\s*|\s+)?(.*)$`)
+var catalogEpisodeMarkerCJK = regexp.MustCompile(`^(.*?)\s*第\s*([0-9]{1,6})\s*(?:集|話|话|回)(?:\s*[-:：._]\s*|\s+)?(.*)$`)
 var catalogSeriesPrefix = regexp.MustCompile(`(?i)^(?:series|系列|シリーズ)\s*[:： -]\s*(.+)$`)
 var catalogSeriesSuffix = regexp.MustCompile(`(?i)^(.+?)\s*(?:系列|シリーズ|\sseries)$`)
-var catalogNonEpisode = regexp.MustCompile(`(?i)^(?:(?:mp3|flac|wav|m4a|ogg|opus|aac|aiff|dsd|ape|wma)(?:\s*\d+(?:k|bit|hz|kbps).*)?|tracks?|分轨|分軌|音轨|音軌|音声|音聲|audio|disc\s*\d+|cd\s*\d+)$`)
+var catalogNonEpisode = regexp.MustCompile(`(?i)^(?:(?:mp3|flac|wav|m4a|ogg|opus|aac|aiff|dsd|ape|wma)(?:\s*\d+(?:k|bit|hz|kbps).*)?|tracks?|分轨|分軌|音轨|音軌|音声|音聲|audio|disc\s*[._\-]?\s*\d+|cd\s*[._\-]?\s*\d+)$`)
 
 type catalogSeriesEvidence struct {
 	Key, Title string
@@ -46,12 +50,16 @@ func catalogSeriesLabel(name string) string {
 func catalogEpisodeEvidence(root string) (catalogSeriesEvidence, bool) {
 	name := path.Base(root)
 	parent := path.Dir(root)
-	if catalogNonEpisode.MatchString(name) {
+	if catalogNonEpisode.MatchString(name) || catalogFormatDirectory(name) || catalogAuxiliaryDirectory(name) {
 		return catalogSeriesEvidence{}, false
 	}
 	seriesLabel := catalogSeriesLabel(path.Base(parent))
 	markerTitle, position := "", 0
-	if match := catalogEpisodeMarker.FindStringSubmatch(name); match != nil {
+	match := catalogEpisodeMarker.FindStringSubmatch(name)
+	if match == nil {
+		match = catalogEpisodeMarkerCJK.FindStringSubmatch(name)
+	}
+	if match != nil {
 		n, err := strconv.Atoi(match[2])
 		if err != nil || n <= 0 {
 			return catalogSeriesEvidence{}, false
@@ -82,6 +90,20 @@ func catalogEpisodeEvidence(root string) (catalogSeriesEvidence, bool) {
 		title = ""
 	}
 	return catalogSeriesEvidence{Key: parent + "\n" + strings.ToLower(title), Title: title, Position: position}, true
+}
+
+// catalogEpisodeFormatCopy reports a directory that names an episode and a
+// format copy of it, such as "Episode 1 (MP3)" or "Episode 2 FLAC".
+func catalogEpisodeFormatCopy(name string) bool {
+	match := catalogEpisodeMarker.FindStringSubmatch(name)
+	if match == nil {
+		match = catalogEpisodeMarkerCJK.FindStringSubmatch(name)
+	}
+	if match == nil {
+		return false
+	}
+	suffix := strings.TrimSpace(match[3])
+	return suffix != "" && (catalogFormatDirectory(suffix) || catalogAuxiliaryDirectory(suffix))
 }
 
 // splitCatalogEpisodeRoots partitions an unregistered finite scan only when
@@ -245,14 +267,22 @@ func (s *Server) persistCatalogEpisodeRoots(ctx context.Context, source remoteSo
 	default:
 		return 0, true, err
 	}
+	keep := map[int64]bool{}
 	for _, child := range roots {
 		id, err := persistOpenListSnapshotTx(ctx, tx, source.ID, child, "", path.Base(child), split[child])
 		if err != nil {
 			return 0, true, err
 		}
+		keep[id] = true
 		if first == 0 {
 			first = id
 		}
+	}
+	// A removed or renumbered episode must not stay visible in the series or
+	// as a standalone card. The current listing is a complete snapshot of this
+	// directory, so unre-published episode cards are stale.
+	if err = markStaleSnapshotCardsTx(ctx, tx, source.ID, root, keep); err != nil {
+		return 0, true, err
 	}
 	if existing != 0 {
 		// The root had no work, series membership or personal record above, so

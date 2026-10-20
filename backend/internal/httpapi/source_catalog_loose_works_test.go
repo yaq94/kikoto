@@ -19,7 +19,20 @@ type looseWorkFixture struct {
 	catalogIndexFixture
 	mu      sync.Mutex
 	gets    []string
+	failing map[string]bool
 	updates func(map[string][]map[string]any)
+}
+
+// failPath makes one directory answer 500 on the next scan. A missing tree
+// entry answers 404, which is a confirmed deletion; this helper represents the
+// transient failure that must not retire anything.
+func (f *looseWorkFixture) failPath(path string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.failing == nil {
+		f.failing = map[string]bool{}
+	}
+	f.failing[path] = true
 }
 
 // looseWorkUpstream serves the listing tree and records every real media path
@@ -55,7 +68,12 @@ func newLooseWorkFixture(t *testing.T, tree map[string][]map[string]any) *looseW
 			_ = json.NewDecoder(r.Body).Decode(&input)
 			f.mu.Lock()
 			items, ok := tree[input.Path]
+			failing := f.failing[input.Path]
 			f.mu.Unlock()
+			if failing {
+				http.Error(w, "upstream unavailable", http.StatusInternalServerError)
+				return
+			}
 			if !ok {
 				http.NotFound(w, r)
 				return

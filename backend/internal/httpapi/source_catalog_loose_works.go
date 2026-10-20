@@ -57,7 +57,7 @@ var catalogStructuredTrackPrefix = regexp.MustCompile(`(?i)^(disc|disk|cd|part|c
 // files of one work; the same is true for 前編/後編 and card markers. The
 // marker is only removed when both halves are present in one directory, so a
 // lone title ending in 上 or 下 keeps its own identity.
-var catalogLoosePartSuffix = regexp.MustCompile(`(?i)^(.*?)(?:[\s._\-（(【\[]*(前編|後編|前编|后编|前篇|后篇|上巻|下巻|上卷|下卷|上|下|前|后|後)|[\s._\-（(【\[]+(?:part|disc|disk|cd|chapter|track|scene)\s*([0-9]{1,3}))\s*[）)】\]]*$`)
+var catalogLoosePartSuffix = regexp.MustCompile(`(?i)^(.*?)(?:[\s._\-（(【\[]*(前編|後編|前编|后编|前篇|后篇|上巻|下巻|上卷|下卷|中篇|中編|中编|中部|上|中|下|前|后|後)|[\s._\-（(【\[]+(?:part|disc|disk|cd|chapter|track|scene)\s*([0-9]{1,3}))\s*[）)】\]]*$`)
 
 var catalogPartFirstWords = map[string]bool{
 	"上": true, "前": true, "前編": true, "前编": true, "前篇": true, "上巻": true, "上卷": true,
@@ -65,6 +65,15 @@ var catalogPartFirstWords = map[string]bool{
 var catalogPartSecondWords = map[string]bool{
 	"下": true, "后": true, "後": true, "後編": true, "后编": true, "后篇": true, "下巻": true, "下卷": true,
 }
+var catalogPartMiddleWords = map[string]bool{
+	"中": true, "中篇": true, "中編": true, "中编": true, "中部": true,
+}
+
+// A release can name its parts instead of numbering them: Prologue / Main
+// Story / Epilogue or Opening / Ending. When every file in one directory is
+// such a part, the directory is one work rather than one work per part.
+var catalogNarrativePart = regexp.MustCompile(`(?i)^(?:prologue|epilogue|opening|ending|intro|outro|main story|main|bonus track|bonus|extra|omake|preview|sample|teaser|序章|終章|终章|前編|後編|前篇|后篇|上|中|下)$`)
+var catalogNarrativeSuffix = regexp.MustCompile(`(?i)^(.+?)[\s._\-（(【\[]*(?:prologue|epilogue|opening|ending|intro|outro|main story|bonus track|bonus|extra|omake|preview|sample|teaser|序章|終章|终章|前編|後編|前篇|后篇|上巻|下巻|上卷|下卷|上|中|下)[）)】\]]*$`)
 
 // Words that number a piece of a release rather than identify a work. They
 // must not become a work prefix: Disc1 and Disc2 are two halves of one work,
@@ -94,7 +103,9 @@ func catalogWorkSplitModeNames(names []string) string {
 	// set of date-only names is also all digits but is not a sequence: 20210104
 	// and 20210110 are separate recordings, so require an ordered run rather
 	// than testing the stem shape alone.
-	if catalogNumberedTrackRun(names) || catalogStructuredTrackRun(names) {
+	if catalogNumberedTrackRun(names) || catalogStructuredTrackRun(names) ||
+		catalogTrailingNumberRun(names) || catalogNamedPartRun(names) ||
+		catalogNumberedRunWithExtras(names) {
 		return catalogWorkSplitSingle
 	}
 	prefixes := map[string]int{}
@@ -118,12 +129,174 @@ func catalogWorkSplitModeNames(names []string) string {
 	// and 01 Opening/02 Ending together.
 	distinct := map[string]bool{}
 	for _, name := range names {
-		distinct[catalogBaseTitle(name)] = true
+		// Keep a trailing number as part of the identity unless the whole set
+		// forms a contiguous run (handled above). Room 101 and Room 102 are
+		// different works; stripping both to "room" would merge them, while a
+		// genuine Example Session 1..4 has already been recognized as one work.
+		distinct[catalogWorkIdentityTitle(name)] = true
 	}
 	if len(distinct) > 1 {
 		return catalogWorkSplitFile
 	}
 	return catalogWorkSplitSingle
+}
+
+// catalogTrailingNumberRun reports titles that share one base and differ only
+// by a contiguous trailing number starting at 0 or 1: "Example Session 1..4".
+// A high or gapped counter ("Room 101", "Case 7") stays part of the title.
+func catalogTrailingNumberRun(names []string) bool {
+	if len(names) < 2 {
+		return false
+	}
+	prefix := ""
+	positions := make([]int, 0, len(names))
+	for _, name := range names {
+		stem := strings.TrimSpace(catalogFileStem(name))
+		// Vol.1 and Vol.2 are separate releases even though the numbers form a
+		// run. The volume marker belongs to the title.
+		if catalogLooseVolumeMarker.MatchString(strings.ToLower(stem)) {
+			return false
+		}
+		loc := catalogLooseTrailingNumber.FindStringIndex(stem)
+		if loc == nil || loc[1] != len(stem) {
+			return false
+		}
+		number := strings.TrimRight(stem[loc[0]:], " ._-）)】]")
+		position, err := strconv.Atoi(strings.TrimSpace(number))
+		if err != nil || position > 9999 {
+			return false
+		}
+		base := strings.TrimSpace(strings.TrimRight(stem[:loc[0]], " ._-（(【["))
+		if !catalogHasLetter(base) {
+			return false
+		}
+		if prefix == "" {
+			prefix = strings.ToLower(base)
+		} else if !strings.EqualFold(prefix, base) {
+			return false
+		}
+		positions = append(positions, position)
+	}
+	sort.Ints(positions)
+	if positions[0] > 1 {
+		return false
+	}
+	for i, position := range positions {
+		if position != positions[0]+i {
+			return false
+		}
+	}
+	return true
+}
+
+// catalogNamedPartRun reports a directory whose files are all named parts of
+// one release and share the same base. Whole names such as Prologue and Main
+// Story have an empty base; 表妹上 and 表妹下 share "表妹".
+func catalogNamedPartRun(names []string) bool {
+	if len(names) < 2 {
+		return false
+	}
+	base := ""
+	for index, name := range names {
+		// A repeated release code already has its own grouping rule; folding it
+		// here would hide that evidence and change the card identity.
+		if catalogWorkPrefix(name) != "" {
+			return false
+		}
+		stem := strings.ToLower(strings.TrimSpace(catalogFileStem(name)))
+		current := ""
+		if catalogNarrativePart.MatchString(stem) {
+			current = ""
+		} else if match := catalogNarrativeSuffix.FindStringSubmatch(stem); match != nil {
+			current = strings.TrimSpace(match[1])
+			if !catalogHasLetter(current) {
+				return false
+			}
+		} else {
+			return false
+		}
+		if index == 0 {
+			base = current
+		} else if current != base {
+			return false
+		}
+	}
+	return true
+}
+
+// catalogNumberedRunWithExtras keeps a numbered release together when one or
+// two files are named Bonus, Extra or a narrative part. Without this a single
+// Bonus track turns 01..03 into four separate works.
+func catalogNumberedRunWithExtras(names []string) bool {
+	if len(names) < 2 {
+		return false
+	}
+	numbered := make([]string, 0, len(names))
+	extras := 0
+	for _, name := range names {
+		stem := strings.ToLower(strings.TrimSpace(catalogFileStem(name)))
+		if catalogNumberedTrackPrefix.MatchString(stem) {
+			numbered = append(numbered, name)
+			continue
+		}
+		if catalogNarrativePart.MatchString(stem) || catalogNarrativeSuffix.MatchString(stem) ||
+			catalogAuxiliaryDirectory(stem) || catalogFormatDirectory(stem) {
+			extras++
+			continue
+		}
+		return false
+	}
+	if extras == 0 || len(numbered) == 0 {
+		return false
+	}
+	if len(numbered) >= 2 {
+		return catalogNumberedTrackRun(numbered)
+	}
+	match := catalogNumberedTrackPrefix.FindStringSubmatch(strings.TrimSpace(catalogFileStem(numbered[0])))
+	if match == nil {
+		return false
+	}
+	position, err := strconv.Atoi(match[1])
+	return err == nil && position <= 1
+}
+
+// catalogEpisodeNumberLimit separates an episode or track number from a
+// number that belongs to the title. "Alpha Rain 1..3" are three episodes of
+// one work; "Room 101" and "Room 102" are different works.
+const catalogEpisodeNumberLimit = 30
+
+// catalogWorkIdentityTitle is the base title used to decide whether a
+// directory contains several works. A small trailing number is a track or
+// episode marker and is removed, so one work stays together; a larger number
+// is part of its title, so unrelated works do not collapse onto one card.
+func catalogWorkIdentityTitle(name string) string {
+	original := strings.ToLower(strings.TrimSpace(catalogFileStem(name)))
+	if catalogLooseVolumeMarker.MatchString(original) {
+		return strings.Join(strings.Fields(original), " ")
+	}
+	stem := original
+	if !catalogLooseLeadingYear.MatchString(stem) {
+		stem = catalogLooseLeadingTrack.ReplaceAllString(stem, "")
+	}
+	stem = strings.TrimSpace(catalogStripLeadingDisc(stem))
+	trimmed := strings.TrimSpace(catalogStripTrailingTrack(stem))
+	if trimmed == stem {
+		trimmed = strings.TrimSpace(catalogStripTrailingNumber(stem))
+	}
+	if trimmed != stem {
+		digits := strings.TrimRight(stem[len(trimmed):], " ._-）)】]")
+		// A zero-padded number is a release or work code ("T001", "N006"),
+		// not an episode counter. Stripping it would merge T001 and T002.
+		codeSuffix := strings.HasPrefix(digits, "0") && len(digits) > 1
+		if number, err := strconv.Atoi(strings.TrimSpace(digits)); err == nil && number <= catalogEpisodeNumberLimit && !codeSuffix {
+			stem = trimmed
+		}
+	}
+	trimmed = strings.TrimRight(stem, " ._-（(【[")
+	if !catalogHasLetter(trimmed) {
+		return strings.Join(strings.Fields(original), " ")
+	}
+	return strings.Join(strings.Fields(trimmed), " ")
 }
 
 // catalogNumberedTrackRun reports a directory whose every file starts with an
@@ -345,6 +518,10 @@ func catalogPartTitle(name string) (string, int, bool) {
 		return neutral, 1, true
 	case catalogPartSecondWords[word]:
 		return neutral, 2, true
+	case catalogPartMiddleWords[word]:
+		// The middle part has no rank of its own; it joins the pair when the
+		// opening and closing halves are present.
+		return neutral, 0, true
 	}
 	return "", 0, false
 }
@@ -600,8 +777,21 @@ func (g catalogLooseGrouping) keyFor(name string) string {
 		}
 		return prefix
 	}
-	if base := catalogBaseTitle(name); base != "" {
+	if g.mode == catalogWorkSplitFile {
+		// In a creator folder the file title decides the work. A trailing
+		// number belongs to that title unless the whole set is a contiguous
+		// run, which the mode check has already treated as one work.
+		if base := catalogWorkIdentityTitle(name); base != "" {
+			return base
+		}
+	}
+	if base := catalogBaseTitle(name); base != "" && g.mode != catalogWorkSplitFile {
 		return base
+	}
+	if g.mode == catalogWorkSplitFile {
+		if base := catalogWorkIdentityTitle(name); base != "" {
+			return base
+		}
 	}
 	return strings.ToLower(strings.TrimSpace(catalogFileStem(name)))
 }
@@ -707,6 +897,10 @@ func catalogSplitSnapshot(root string, files []openlist.File, mode string) (map[
 	parent := []openlist.File{}
 	for _, file := range files {
 		if file.Kind != "audio" {
+			// Readmes, covers and subtitles describe the whole directory, not
+			// one split work. They stay on the parent card so a split does not
+			// silently drop the release's credit file or artwork.
+			parent = append(parent, file)
 			continue
 		}
 		target, ok := plan.targetFor(file.Path)
@@ -1007,19 +1201,41 @@ func retireStaleFormatCardsTx(ctx context.Context, tx *sql.Tx, sourceID, generat
 		if complete {
 			continue
 		}
-		parent := path.Dir(card.root)
-		if parent == "." || parent == "/" || parent == card.root {
-			continue
-		}
-		var parentID int64
-		err = tx.QueryRowContext(ctx, `SELECT id FROM source_catalog_entry
-			WHERE file_source_id=? AND root_path=? AND relocated_to_id IS NULL AND last_seen_generation=?`,
-			sourceID, parent, generation).Scan(&parentID)
+		// The owner is the catalog root assigned by the current directory pass,
+		// not necessarily path.Dir. A format folder can sit below an unadmitted
+		// wrapper, so its parent path may have no card while the release card is
+		// a grandparent. Using the recorded root also prevents attaching the old
+		// card to an unrelated work that happens to share the parent path.
+		var owner string
+		err = tx.QueryRowContext(ctx, `SELECT catalog_root FROM source_catalog_directory
+			WHERE file_source_id=? AND generation=? AND path=?`, sourceID, generation, directory).Scan(&owner)
 		if errors.Is(err, sql.ErrNoRows) {
 			continue
 		}
 		if err != nil {
 			return err
+		}
+		if owner == "" || owner == directory || owner == card.root {
+			continue
+		}
+		var parentID int64
+		err = tx.QueryRowContext(ctx, `SELECT id FROM source_catalog_entry
+			WHERE file_source_id=? AND root_path=? AND relocated_to_id IS NULL AND last_seen_generation=?`,
+			sourceID, owner, generation).Scan(&parentID)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		covered, err := catalogCardFilesCoveredTx(ctx, tx, card.id, parentID, directory, owner)
+		if err != nil {
+			return err
+		}
+		if !covered {
+			// The current card does not publish every audio path the old card
+			// owned. Retiring it would hide playable files, so keep it for review.
+			continue
 		}
 		var blocked int
 		if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM source_catalog_entry e WHERE e.id=? AND (
@@ -1032,6 +1248,73 @@ func retireStaleFormatCardsTx(ctx context.Context, tx *sql.Tx, sourceID, generat
 			continue
 		}
 		if err = retireCatalogCardTx(ctx, tx, card.id, parentID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// catalogCardFilesCoveredTx reports whether every audio path of a stale format
+// card is also published by the current owner card. The relative path of the
+// stale card is rebased onto the owner root, because the owner may be a
+// grandparent such as /Creator while the stale card is /Creator/Release/MP3.
+func catalogCardFilesCoveredTx(ctx context.Context, tx *sql.Tx, staleID, ownerID int64, staleRoot, ownerRoot string) (bool, error) {
+	prefix := strings.TrimPrefix(staleRoot, ownerRoot)
+	prefix = strings.TrimLeft(prefix, "/")
+	if prefix != "" {
+		prefix += "/"
+	}
+	var missing int
+	err := tx.QueryRowContext(ctx, `SELECT EXISTS(
+		SELECT 1 FROM source_catalog_file old
+		WHERE old.catalog_entry_id=? AND old.kind='audio'
+			AND NOT EXISTS(SELECT 1 FROM source_catalog_file cur
+				WHERE cur.catalog_entry_id=? AND cur.kind='audio'
+					AND cur.relative_path=? || old.relative_path))`,
+		staleID, ownerID, prefix).Scan(&missing)
+	return missing == 0, err
+}
+
+// markStaleSnapshotCardsTx reports cards a finite scan no longer publishes as
+// unavailable. The scan rewrites every card of the root in one transaction, so
+// a child card outside the written set describes content the source no longer
+// lists. The card itself, its work link and its personal records are kept, as
+// a failed or partial scan cannot prove a deletion; only its availability
+// changes. This never runs for a failed scan: the caller returns before
+// publishing in that case.
+func markStaleSnapshotCardsTx(ctx context.Context, tx *sql.Tx, sourceID int64, root string, keep map[int64]bool) error {
+	rows, err := tx.QueryContext(ctx, `SELECT id,root_path FROM source_catalog_entry
+		WHERE file_source_id=? AND relocated_to_id IS NULL
+			AND (source_root=? OR root_path=? OR substr(root_path,1,length(?)+1)=? || '/')
+		ORDER BY id`, sourceID, root, root, root, root)
+	if err != nil {
+		return err
+	}
+	type staleCard struct {
+		id   int64
+		root string
+	}
+	stale := []staleCard{}
+	for rows.Next() {
+		var card staleCard
+		if err = rows.Scan(&card.id, &card.root); err != nil {
+			break
+		}
+		if keep[card.id] || card.root == root {
+			continue
+		}
+		stale = append(stale, card)
+	}
+	readErr := rows.Err()
+	_ = rows.Close()
+	if err != nil {
+		return err
+	}
+	if readErr != nil {
+		return readErr
+	}
+	for _, card := range stale {
+		if err = setCatalogEntryStatusTx(ctx, tx, card.id, "missing"); err != nil {
 			return err
 		}
 	}
@@ -1185,17 +1468,23 @@ func (s *Server) catalogSplitPlanForRoot(ctx context.Context, tx *sql.Tx, source
 	// Only audio with a card of its own can be retired with the parent. A
 	// nested file under an unrelated folder stays on the parent card, so the
 	// parent must remain published.
-	rows, err = tx.QueryContext(ctx, `SELECT o.directory_path,o.name FROM source_catalog_observation o
+	rows, err = tx.QueryContext(ctx, `SELECT o.directory_path,o.name,o.kind FROM source_catalog_observation o
 		JOIN source_catalog_directory d ON d.file_source_id=o.file_source_id AND d.path=o.directory_path
-		WHERE d.file_source_id=? AND d.generation=? AND d.catalog_root=? AND o.kind='audio'
+		WHERE d.file_source_id=? AND d.generation=? AND d.catalog_root=? AND o.kind<>'folder'
 		ORDER BY o.directory_path,o.name`, sourceID, generation, root)
 	if err != nil {
 		return catalogSplitPlan{}, false, err
 	}
 	parentNeeded := 0
 	for rows.Next() {
-		var dir, name string
-		if err = rows.Scan(&dir, &name); err != nil {
+		var dir, name, kind string
+		if err = rows.Scan(&dir, &name, &kind); err != nil {
+			break
+		}
+		if kind != "audio" {
+			// A readme, cover or subtitle describes the whole release. Keep the
+			// parent card so its credit evidence and artwork survive a split.
+			parentNeeded = 1
 			break
 		}
 		rel := strings.TrimPrefix(path.Join(dir, name), strings.TrimRight(root, "/")+"/")

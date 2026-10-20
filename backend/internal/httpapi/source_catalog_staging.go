@@ -37,5 +37,20 @@ func (s *Server) cleanupCatalogStagingBatch(ctx context.Context, job workflowJob
 		}
 		removed += n
 	}
+	// The audio-root table holds one row per generation and root. Publishing
+	// only reads the current generation, so older rows are reclaimable staging
+	// data and would otherwise grow with every daily rescan.
+	if removed < 100 {
+		result, err = tx.ExecContext(ctx, `DELETE FROM source_catalog_audio_root WHERE rowid IN (
+		SELECT rowid FROM source_catalog_audio_root WHERE file_source_id=? AND generation<>? LIMIT ?)`, sourceID, job.RunID, 100-removed)
+		if err != nil {
+			return 0, err
+		}
+		n, err := result.RowsAffected()
+		if err != nil {
+			return 0, err
+		}
+		removed += n
+	}
 	return removed, tx.Commit()
 }

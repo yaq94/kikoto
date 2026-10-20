@@ -43,6 +43,13 @@ func catalogAdmissionRoot(directoryPath, parentRoot string, observed catalogDire
 		if code := catalogDirectoryCode(directoryPath); code != "" && code == catalogDirectoryCode(parent) {
 			return parent
 		}
+		// "Episode 1 (MP3)" is the format copy of episode 1. Its files belong
+		// to the episode card instead of creating a second episode.
+		if catalogEpisodeFormatCopy(path.Base(directoryPath)) {
+			if _, episode := catalogEpisodeEvidence(parent); episode {
+				return parent
+			}
+		}
 	}
 	// A directory named with its own product code is an authored work, not a
 	// format or auxiliary directory inside the parent work. Keeping the parent
@@ -108,29 +115,26 @@ func catalogSelfWorkRoot(directoryPath string, observed catalogDirectorySummary)
 
 func catalogFormatDirectory(name string) bool {
 	lower := catalogDirectoryFormatName(name)
-	// A format directory often carries a quality marker, such as
-	// "FLAC 24bit" or "MP3 320kbps". Match the leading format token so those
-	// copies stay part of the work instead of becoming a second card.
-	token := lower
-	rest := ""
-	if index := strings.IndexFunc(lower, func(r rune) bool {
-		return r == ' ' || r == '_' || r == '-' || r == '(' || r == ')' || r == '['
-	}); index > 0 {
-		token = lower[:index]
-		rest = lower[index:]
-	}
-	switch token {
-	case "mp3", "flac", "wav", "ogg", "opus", "m4a", "aac", "aiff", "aif",
-		"wma", "dsd", "dsf", "dff", "ape", "alac", "wv", "tta":
-		// Only a quality marker may follow the format word. "MP3 Collection"
-		// is a title; "MP3 320kbps" and "FLAC 24bit" are copies.
-		return strings.TrimSpace(rest) == "" || catalogFormatQuality.MatchString(rest)
+	// Brackets and separators are noise: "MP3 (V0)", "[FLAC]" and "FLAC24bit"
+	// are all copies of the release audio. Comparing the compact form keeps the
+	// token check independent of punctuation.
+	compact := strings.NewReplacer("(", "", ")", "", "[", "", "]", "",
+		"（", "", "）", "", "【", "", "】", "", " ", "", "_", "", "-", "").Replace(lower)
+	for _, token := range []string{"mp3", "flac", "wav", "ogg", "opus", "m4a", "aac",
+		"aiff", "aif", "wma", "dsd", "dsf", "dff", "ape", "alac", "wv", "tta"} {
+		if !strings.HasPrefix(compact, token) {
+			continue
+		}
+		rest := compact[len(token):]
+		// Only a quality marker may follow the format word. "MP3Collection"
+		// is a title; "MP3 320kbps" and "FLAC24bit" are copies.
+		return rest == "" || catalogFormatQualityOnly(rest)
 	}
 	// A Japanese release names its audio copy "音声" or "ボイス". These words
 	// are also ordinary title words ("Audio Drama", "音声剧"), so only the
 	// complete name counts; an ordinal prefix such as "1.音声" was removed
 	// above.
-	switch lower {
+	switch strings.TrimSpace(lower) {
 	case "音声", "音聲", "音频", "音頻", "ボイス", "voice", "audio":
 		return true
 	}
@@ -143,7 +147,22 @@ func catalogFormatDirectory(name string) bool {
 	return false
 }
 
-var catalogFormatQuality = regexp.MustCompile(`[\s._\-()\[\]]*(?:[0-9]{1,3}\s*(?:k|kbps|bps|bit|khz|hz)?[\s._\-()\[\]]*)+$`)
+// catalogFormatQualityOnly reports a quality suffix after the format token.
+// The separators were already removed by the caller.
+func catalogFormatQualityOnly(rest string) bool {
+	switch rest {
+	case "v0", "v2", "vbr", "cbr", "hires", "lossless":
+		return true
+	}
+	for len(rest) > 0 && rest[0] >= '0' && rest[0] <= '9' {
+		rest = rest[1:]
+	}
+	switch rest {
+	case "", "k", "kbps", "bps", "bit", "khz", "hz", "kbit", "mbit":
+		return true
+	}
+	return false
+}
 
 // catalogDirectoryFormatName removes a leading order marker from a directory
 // name. Releases order their copies as "2-mp3", "01_mp3" or "1.音声"; without
@@ -175,7 +194,7 @@ func catalogWorkPartDirectory(name string) bool {
 // title. Episode markers keep their own series path. Volumes are deliberately
 // absent: "Vol 1"/"Vol 2" names separate releases as often as parts of one, and
 // treating only the dotted spelling as separate was inconsistent.
-var catalogNumberedTrackContainer = regexp.MustCompile(`(?i)^(?:chapter|ch|track|scene|part)\s*[0-9]+(?:\b|$)`)
+var catalogNumberedTrackContainer = regexp.MustCompile(`(?i)^(?:disc|disk|cd|chapter|ch|track|scene|part)\s*[._\-]?\s*[0-9]+(?:\b|$)|^第\s*[0-9]{1,6}\s*(?:章|節|节)(?:\b|$)`)
 
 func catalogTrackContainerDirectory(name string) bool {
 	lower := catalogDirectoryFormatName(name)
@@ -201,7 +220,9 @@ func catalogAuxiliaryDirectory(name string) bool {
 		"script", "scripts", "文本", "text", "txt", "pdf", "视频", "視頻", "video",
 		"pv", "demo", "试听", "試聴", "sample", "wallpaper", "壁纸", "壁紙",
 		"art", "arts", "artwork", "photo", "photos", "picture", "pictures",
-		"image", "images", "img", "scans", "scan", "写真", "照片":
+		"image", "images", "img", "scans", "scan", "写真", "照片",
+		"booklet", "booklets", "bk", "ブックレット", "歌词", "歌詞", "lyrics",
+		"特典ボイス", "特典音声", "特典音聲", "bonus voice", "bonus voices":
 		return true
 	}
 	return false

@@ -200,6 +200,12 @@ func (s *Server) persistOpenListRoot(ctx context.Context, source remoteSourceFor
 	if err != nil {
 		return 0, err
 	}
+	// A directory that used to be split can become one work (or lose an
+	// episode). The current listing is a complete snapshot, so cards of this
+	// root that it no longer publishes are stale.
+	if err = markStaleSnapshotCardsTx(ctx, tx, source.ID, root, map[int64]bool{id: true}); err != nil {
+		return 0, err
+	}
 	return id, tx.Commit()
 }
 
@@ -219,6 +225,7 @@ func (s *Server) persistCatalogLooseWorkRoots(ctx context.Context, source remote
 	sort.Strings(roots)
 	var first, firstSplit int64
 	parentKept := false
+	keep := map[int64]bool{}
 	for _, groupRoot := range roots {
 		title := strings.TrimPrefix(groupRoot, root+"::")
 		files := groups[groupRoot]
@@ -233,6 +240,7 @@ func (s *Server) persistCatalogLooseWorkRoots(ctx context.Context, source remote
 		if err != nil {
 			return 0, err
 		}
+		keep[id] = true
 		if firstSplit == 0 {
 			firstSplit = id
 		}
@@ -242,10 +250,17 @@ func (s *Server) persistCatalogLooseWorkRoots(ctx context.Context, source remote
 		if id, err = persistOpenListSnapshotTx(ctx, tx, source.ID, root, "", path.Base(root), parent); err != nil {
 			return 0, err
 		}
+		keep[id] = true
 		if first == 0 {
 			first = id
 		}
 		parentKept = true
+	}
+	// This scan published a complete snapshot of the root. Split cards from an
+	// earlier snapshot that were not republished no longer describe a playable
+	// group; leaving them visible would show works the source no longer has.
+	if err = markStaleSnapshotCardsTx(ctx, tx, source.ID, root, keep); err != nil {
+		return 0, err
 	}
 	if firstSplit != 0 && !parentKept {
 		if err = retireCatalogSplitParentTx(ctx, tx, source.ID, root, firstSplit); err != nil {

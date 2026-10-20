@@ -9,9 +9,12 @@ work id, source directory and playback timeline.
 
 An authored `Episode 1`, `Ep. 1` or `第1集` marker, or a child of an explicitly
 labelled `Series: Example`, `Example Series`, `系列：示例` or `示例系列` directory,
-provides source-local grouping evidence. Shared creators, similar titles,
+provides source-local grouping evidence. The Chinese and Japanese form requires
+its counter: `第3話` is an episode, while `第3章` is a chapter inside one work and
+is treated as a track container instead. Shared creators, similar titles,
 topics and numeric track names do not. Format and track subdirectories stay
-inside their episode. Duplicate episode numbers remain independent for review.
+inside their episode, including `Episode 1 (MP3)` and `Episode 2 [FLAC]`.
+Duplicate episode numbers remain independent for review.
 A series contains at most 100 members; additional entries stay independent.
 A single-member series is not displayed as a series card: the entry keeps its
 own card until a second evidenced member exists, so an isolated `Episode 1`
@@ -30,8 +33,12 @@ belong together through the preview and confirm flow described below (AC-14).
 A finite scan partitions a new root only when every playable file belongs to
 an evidenced direct child. Full indexing attaches membership in the same
 transaction as catalog publication. Published containers keep their existing
-identity when later observations reveal episode children. Reading or grouping
-does not register works, download media, or change personal records.
+identity when later observations reveal episode children; a later numberless
+work below a reviewed grouping folder still receives its own card. Reading or
+grouping does not register works, download media, or change personal records.
+A complete refresh marks episode cards that the listing no longer contains as
+`missing`, keeping their id, work link and personal records; the series view
+stops listing them until they are published again.
 
 ## Shared grouping
 

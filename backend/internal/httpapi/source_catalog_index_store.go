@@ -70,6 +70,12 @@ func (s *Server) persistCatalogPage(ctx context.Context, job workflowJobRecord, 
 	status, errorCode := "pending", ""
 	if requestErr != nil {
 		status, errorCode = "failed", "upstream_unavailable"
+		if errors.Is(requestErr, openlist.ErrNotFound) {
+			// A 404/410 is a definitive answer: the directory no longer exists.
+			// Recording it as a failed range made the run permanently partial
+			// and blocked lifecycle for the whole source.
+			status, errorCode = "empty", "not_found"
+		}
 		if errors.Is(requestErr, openlist.ErrChallenged) {
 			// A bot challenge is a transport-level refusal: never retried
 			// tightly, and never reported as an anonymous permission denial.
@@ -144,6 +150,9 @@ func (s *Server) persistCatalogPage(ctx context.Context, job workflowJobRecord, 
 		if status == "empty" {
 			availability = "unconfirmed_empty"
 		}
+		// The card that owns this directory reports the failure. The match is
+		// still path-bounded: a failed /Work must not mark /Work2, and a split
+		// card is reached through its real source_root.
 		root := d.Path
 		if d.Root != "" {
 			root = d.Root
@@ -313,7 +322,17 @@ func completeCatalogDirectoryTx(ctx context.Context, tx *sql.Tx, sourceID, gener
 		}
 	}
 	if reviewedParent != 0 {
-		return nil
+		// A reviewed card is not automatically a container. An uncoded child
+		// that is a new self-contained work must receive its own card; only
+		// episodes, format copies, auxiliary folders and track parts stay in
+		// the reviewed object. Otherwise a creator card reviewed once absorbs
+		// every later numberless work below it.
+		if catalogContainerDirectory(path.Base(d.Root)) || catalogWorkPartDirectory(path.Base(d.Path)) {
+			return nil
+		}
+		if _, episode := catalogEpisodeEvidence(d.Path); episode {
+			return nil
+		}
 	}
 	d.Root = catalogAdmissionRoot(d.Path, d.Root, catalogDirectorySummary{audio, formats, auxiliary, tracks, otherDirs})
 	return finish()
@@ -507,11 +526,13 @@ ORDER BY o.directory_path,o.name LIMIT 100`, sourceID, job.RunID, sourceID, job.
 				root, sourceRoot, title = target.Root, target.SourceRoot, target.Title
 			}
 		}
-		if _, split := splitPlans[p.root]; split && !parentNeeded[p.root] && root == p.root {
+		if _, split := splitPlans[p.root]; split && !parentNeeded[p.root] && root == p.root && p.kind == "folder" {
 			// The creator card was retired in favour of split cards. A folder
-			// or other row still points at it; mark it published without
-			// recreating the card (its file_source_id is now NULL, so the
-			// unique key would not match the retired row).
+			// row still points at it; mark it published without recreating the
+			// card (its file_source_id is now NULL, so the unique key would not
+			// match the retired row). Readmes, covers and subtitles are kept
+			// below by publishing them on the metadata-only parent card: they
+			// describe the whole release and carry its credit evidence.
 			_, err = tx.ExecContext(ctx, `UPDATE source_catalog_observation SET published_generation=?,publish_pending=0 WHERE file_source_id=? AND directory_path=? AND name=?`, job.RunID, sourceID, p.dir, p.name)
 			if err != nil {
 				return 0, err
@@ -523,7 +544,7 @@ ORDER BY o.directory_path,o.name LIMIT 100`, sourceID, job.RunID, sourceID, job.
 		// entry published before code parsing understood a prefix keeps its
 		// empty code unless the rescan rewrites it, and then search never
 		// finds the work by its published number.
-		err = tx.QueryRowContext(ctx, `INSERT INTO source_catalog_entry(file_source_id,root_path,source_root,primary_code,title,last_seen_generation,discovered_generation) VALUES(?,?,?,?,?,?,?) ON CONFLICT(file_source_id,root_path) DO UPDATE SET source_root=excluded.source_root,primary_code=excluded.primary_code,title=excluded.title,last_seen_generation=excluded.last_seen_generation,updated_at=CURRENT_TIMESTAMP RETURNING id`, sourceID, root, sourceRoot, catalogEntryCode(root), title, job.RunID, job.RunID).Scan(&id)
+		err = tx.QueryRowContext(ctx, `INSERT INTO source_catalog_entry(file_source_id,root_path,source_root,primary_code,title,last_seen_generation,discovered_generation) VALUES(?,?,?,?,?,?,?) ON CONFLICT(file_source_id,root_path) DO UPDATE SET source_root=excluded.source_root,primary_code=excluded.primary_code,title=excluded.title,last_seen_generation=excluded.last_seen_generation,availability_status='available',status_checked_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP RETURNING id`, sourceID, root, sourceRoot, catalogEntryCode(root), title, job.RunID, job.RunID).Scan(&id)
 		if err != nil {
 			return 0, err
 		}

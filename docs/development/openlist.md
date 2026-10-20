@@ -162,9 +162,10 @@ remaining rows stay queued and the job returns to the workflow queue. An
 exhausted queue returns without another publication query. When no directory and
 no publish row remain, the cleanup pass visits only entries this generation
 republished and deletes file rows an older generation left there. It records
-progress in `source_catalog_scan.publish_cleanup_cursor`; a resumed generation
-resets that cursor once before its final pass because publication order differs
-from entry id order.
+progress in `source_catalog_scan.publish_cleanup_cursor`. The cursor only moves
+forward, so the tail is reached once; a card skipped because its subtree was
+failed, restricted or unconfirmed-empty is retried when the pass reaches the
+end of the cursor, which rewinds to the start.
 Routine tests use synthetic complete trees; a real index run must separately
 record its actual ranges, timestamps and unresolved directories.
 
@@ -203,9 +204,11 @@ its normal retry delay applies. A definitively unreadable card is retried at
 most five times; a rescan does not reset that budget, so a deleted readme is
 not requested on every daily pass. Migration 081 stores the credit-file
 revision (`path|size|mtime`) beside the evidence; when that revision changes,
-the attempt budget is reset and the card is read again. A deleted readme clears
-the old evidence instead of preserving credit text for a file the release no
-longer publishes.
+the attempt budget is reset and the card is read again. A readme that a complete
+snapshot no longer publishes clears the old evidence together with its failure
+and retry fields. A card republished while its readme's directory is still
+failed, restricted or unconfirmed-empty keeps its evidence: an incomplete range
+cannot prove that the file was deleted.
 
 Migration 082 separates two outcomes that used to share one counter. A
 definitive answer - `404`/`410` for the object or its body, a body above the
@@ -223,8 +226,9 @@ The temporary wait starts at 15 minutes, doubles per failure and is capped at
 `CURRENT_TIMESTAMP` used by the due queries. After eight temporary failures the
 card leaves the automatic queue (`sidecar_pending=0`) instead of probing a dead
 source forever; its attempts and failure category stay visible. `sidecar_failure`
-holds `temporarily_unavailable`, `unreadable` or `request_budget` so an operator
-can tell those cases apart without reading logs.
+holds `temporarily_unavailable` or `unreadable` so an operator can tell those
+cases apart without reading logs. A pass that stops on the request budget keeps
+the card pending without writing a failure category.
 
 A rescan is not a read: when the credit-file revision is unchanged, the daily
 publication pass keeps the attempts, the backoff and the stopped state exactly
@@ -278,7 +282,9 @@ readme: `MP3`, `2-mp3`, `01_mp3`, `FLAC 24bit`, `1.音声`, `ボイス`. Those
 folders are part of the release above them and never become a card of their
 own. The admission rule strips a leading order marker (`2-`, `01_`, `[2] `)
 before matching the format word, so a numbered copy is recognized without
-treating a title such as `24.歡迎光臨閃亮銀CV床貓` as a format. A format word
+treating a title such as `24.歡迎光臨閃亮銀CV床貓` as a format. Brackets and
+quality markers are ignored for that comparison, so `(MP3)`, `[FLAC]`,
+`MP3 (V0)` and `FLAC24bit` are copies too. A format word
 followed by a quality marker (`MP3 320kbps`, `FLAC 24bit`) still matches; a
 title that merely starts with one (`MP3 Collection`) does not. Artwork and
 script folders (`ART`, `photo`, `3-photo`, `台本`) are auxiliary for the same
@@ -315,7 +321,12 @@ A creator or tag folder that holds many independent works as loose audio is
 published as several cards. Each completed directory revision recomputes the
 split decision in `source_catalog_directory.work_split`: `single` keeps one
 card, `prefix` groups files by a repeated work code such as `N006`, and `file`
-groups direct audio by base title so `Example Episode1..6` stays one work.
+groups direct audio by work title. A small trailing number (up to 30) is a
+track marker, so `Example Episode1..6` and `Alpha Rain 1..3` stay one work each.
+A larger number belongs to the title, so `Room 101` and `Room 102` stay two
+works; a zero-padded code such as `T001`/`T002` is likewise part of the identity.
+Named parts of one release (`Prologue`/`Main Story`/`Epilogue`, `表妹上`/`中`/`下`)
+and a numbered run with a `Bonus` or `Extra` file also stay on one card.
 Split cards store the real directory in `source_catalog_entry.source_root` and a
 `::<group>` identity suffix in `root_path`; playback and refresh resolve files
 through `source_root`. A folder whose audio is almost entirely a size-identical
@@ -325,6 +336,10 @@ below it has been published, so existing personal references still resolve.
 Split cards from an older generation that the current generation did not
 republish are retired with their file rows; a card with a work, a series
 membership, or an incoming relocation keeps its identity for explicit review.
+An explicit refresh rewrites the whole root from one complete listing, so a
+card the listing no longer contains is marked `missing` instead of being
+deleted: its identity, work link and personal records stay available, and a
+later scan that publishes it again restores `available`.
 
 `POST /api/source-catalog/{id}/refresh` requires `sources:write`. It scans only
 that entry's observed root with the same per-root limits and a five-minute
@@ -363,6 +378,10 @@ personal records. Explicit directory refresh records its failure status and a
 successful refresh restores availability. A full scan confirms missing entries
 only after all its directory ranges are complete; cancelled or partial scans
 cannot declare a missing work. Availability belongs to each source separately.
+A 404 or 410 answer is a definitive absence and is recorded as an empty
+directory rather than a failed range, so a deleted folder cannot hold the whole
+source at `partial` forever. Status matching is path-bounded: a failed `/Work`
+does not mark `/Work2`. Publishing a card again resets it to `available`.
 
 Each complete scan records a bounded fingerprint of the audio file paths, sizes
 and explicit SHA-256 hashes provided by the source. A moved root retains its
