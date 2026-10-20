@@ -96,6 +96,45 @@ func TestOpenListCatalogOmitsCardsWithoutAudio(t *testing.T) {
 	}
 }
 
+// A retained card keeps its identity, personal records and search entry after
+// the source confirms the directory is gone, but the card must not claim it can
+// play. The flag follows the last completed availability verdict.
+func TestOpenListCatalogMarksRetainedCardsUnplayable(t *testing.T) {
+	remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"code":200,"data":{"content":[],"total":0}}`))
+	}))
+	defer remote.Close()
+	db := openMigratedTestDBWithProductionPool(t)
+	_, err := db.Exec(`INSERT INTO file_source(id,code,display_name,source_type,config_json) VALUES(7,'example_remote_a','Example Remote A','openlist','{"openListRoots":["/Example Work"]}');
+		INSERT INTO file_source_endpoint(file_source_id,api_url,base_url) VALUES(7,?,?);
+		INSERT INTO source_catalog_entry(id,file_source_id,root_path,title,availability_status) VALUES
+			(1,7,'/Example Work','Example Work','available'),
+			(2,7,'/Example Removed','Example Removed','missing');
+		INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes) VALUES
+			(1,'track.mp3','track.mp3','audio',16),
+			(2,'track.mp3','track.mp3','audio',16);`, remote.URL, remote.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := NewServer(db, config.Config{Mode: config.ModeProduction, RootUsername: "synthetic-user", DataRoot: t.TempDir(), CacheRoot: t.TempDir()})
+	t.Cleanup(func() { _ = server.Shutdown(context.Background()) })
+	createTestAdministrator(t, server, "synthetic-user", "synthetic-password")
+	handler := server.Routes()
+	cookie := loginTestSession(t, handler, "synthetic-user", "synthetic-password")
+	list := reviewRequest(t, handler, cookie, http.MethodGet, "/api/remote-sources/7/works", "", http.StatusOK)
+	playable := map[string]bool{}
+	for _, raw := range list["works"].([]any) {
+		card := raw.(map[string]any)
+		playable[card["title"].(string)] = card["remotePlayable"].(bool)
+	}
+	if !playable["Example Work"] {
+		t.Fatalf("available card is not playable: %#v", playable)
+	}
+	if playable["Example Removed"] {
+		t.Fatalf("missing card still advertises playback: %#v", playable)
+	}
+}
+
 func TestOpenListMediaRejectsUntrustedDestinations(t *testing.T) {
 	credentialURL := url.URL{Scheme: "http", Host: "source.example.invalid", Path: "/audio", User: url.UserPassword("synthetic-user", "synthetic-password")}
 	for _, target := range []string{"file:///etc/passwd", credentialURL.String(), "http://127.0.0.2/audio", "http://192.0.2.1/audio", "http://[::1]/audio"} {

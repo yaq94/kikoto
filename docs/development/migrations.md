@@ -273,6 +273,7 @@ matches the backup.
 | unreleased (Kikoto next) | `077` | Development baseline only; `compat/077_dev.sql` |
 | unreleased (Kikoto next) | `078` | Development baseline only; `compat/078_dev.sql` |
 | unreleased (Kikoto next) | `079` | Development baseline only; `compat/079_dev.sql` |
+| unreleased (Kikoto next) | `080` | Development baseline only; `compat/080_dev.sql` |
 | unreleased (Kikoto next) | `081` | Development baseline only; `compat/081_dev.sql` |
 | unreleased (Kikoto next) | `082` | Development baseline only; `compat/082_dev.sql` |
 

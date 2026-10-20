@@ -426,6 +426,11 @@ type catalogSidecarReadResult struct {
 	Cache    catalogSidecarCache
 	Revision string
 	Requests int
+	// Reads counts files fetched from the source in this pass. Reused stored
+	// evidence is not progress: a card that failed every request but still has
+	// older credit text must not look like a productive pass and restart the
+	// worker immediately.
+	Reads    int
 	Failed   bool
 	Deferred bool
 	// Transient marks at least one failure that heals without the release
@@ -492,6 +497,7 @@ func readCatalogSidecars(ctx context.Context, client *openlist.Client, entry cat
 			continue
 		}
 		voices, circles, title := parseCatalogSidecar(decodeCatalogSidecar(body))
+		result.Reads++
 		digest := sha256.Sum256([]byte(body))
 		result.Cache.Sidecars = append(result.Cache.Sidecars, catalogSidecarMeta{
 			RelativePath: file.Path, Size: file.Size, ModifiedAt: file.ModifiedAt,
@@ -943,7 +949,7 @@ func (s *Server) refreshCatalogSidecar(ctx context.Context, client *openlist.Cli
 		state = catalogSidecarStateRetry
 	}
 	s.finishCatalogSidecar(ctx, item, state, result)
-	return catalogSidecarCardOutcome{Requests: result.Requests, Reads: len(result.Cache.Sidecars), Failed: result.Failed, Deferred: result.Deferred}
+	return catalogSidecarCardOutcome{Requests: result.Requests, Reads: result.Reads, Failed: result.Failed, Deferred: result.Deferred}
 }
 
 type catalogSidecarState int

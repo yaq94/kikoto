@@ -787,20 +787,19 @@ func TestCatalogSidecarNameNormalizationIsNotSampleSpecific(t *testing.T) {
 	}
 }
 
-// A numberless card and a registered work with the same original title and the
-// same labelled cast are a unique high-confidence candidate even when the
-// source publishes no audio hash.
+// Two numberless cards with the same original title and the same labelled cast
+// are a unique high-confidence candidate even when the source publishes no
+// audio hash. Both sides must carry the labelled cast: one readme beside a work
+// row is not two independent facts.
 func TestWorkMatchingSidecarCreditsAssociateNumberlessCatalog(t *testing.T) {
 	db := openMigratedTestDB(t)
 	s := NewServer(db, config.Config{Mode: config.ModeProduction, RootUsername: "synthetic-editor", DataRoot: t.TempDir(), CacheRoot: t.TempDir()})
 	defer func() { _ = s.Shutdown(context.Background()) }()
 	createTestAdministrator(t, s, "synthetic-editor", "synthetic-password")
-	metadataReviewExec(t, db, `INSERT INTO work(id,primary_code,title) VALUES(11,'','Example Work');
-	INSERT INTO person(id,display_name) VALUES(1,'Example Voice');
-	INSERT INTO work_credit(work_id,person_id,role) VALUES(11,1,'voice_actor');
-	INSERT INTO file_source(id,code,display_name,source_type) VALUES(7,'example_remote_a','Example Remote A','openlist');
+	metadataReviewExec(t, db, `INSERT INTO file_source(id,code,display_name,source_type) VALUES(7,'example_remote_a','Example Remote A','openlist');
 	INSERT INTO file_source_endpoint(file_source_id,api_url,base_url) VALUES(7,'https://source.example.invalid','https://source.example.invalid');
-	INSERT INTO source_catalog_entry(id,file_source_id,root_path,title,sidecar_json) VALUES(1,7,'/Example Work','Example Work','{"sidecars":[{"relativePath":"readme.txt","size":12,"voiceActors":["Example Voice"],"circles":[],"fetchedAt":"2026-01-01T00:00:00Z"}]}');`)
+	INSERT INTO source_catalog_entry(id,file_source_id,root_path,title,sidecar_json) VALUES(1,7,'/Example Work','Example Work','{"sidecars":[{"relativePath":"readme.txt","size":12,"voiceActors":["Example Voice"],"circles":[],"fetchedAt":"2026-01-01T00:00:00Z"}]}');
+	INSERT INTO source_catalog_entry(id,file_source_id,root_path,title,sidecar_json) VALUES(2,7,'/Example Work Copy','Example Work','{"sidecars":[{"relativePath":"readme.txt","size":12,"voiceActors":["Example Voice"],"circles":[],"fetchedAt":"2026-01-01T00:00:00Z"}]}');`)
 	app := httptest.NewServer(s.Routes())
 	defer app.Close()
 	cookie := workReferenceLogin(t, app, "synthetic-editor")
@@ -822,12 +821,10 @@ func TestWorkMatchingSidecarCreditsRejectDifferentCast(t *testing.T) {
 	s := NewServer(db, config.Config{Mode: config.ModeProduction, RootUsername: "synthetic-editor", DataRoot: t.TempDir(), CacheRoot: t.TempDir()})
 	defer func() { _ = s.Shutdown(context.Background()) }()
 	createTestAdministrator(t, s, "synthetic-editor", "synthetic-password")
-	metadataReviewExec(t, db, `INSERT INTO work(id,primary_code,title) VALUES(11,'','Example Work');
-	INSERT INTO person(id,display_name) VALUES(1,'Example Voice A');
-	INSERT INTO work_credit(work_id,person_id,role) VALUES(11,1,'voice_actor');
-	INSERT INTO file_source(id,code,display_name,source_type) VALUES(7,'example_remote_a','Example Remote A','openlist');
+	metadataReviewExec(t, db, `INSERT INTO file_source(id,code,display_name,source_type) VALUES(7,'example_remote_a','Example Remote A','openlist');
 	INSERT INTO file_source_endpoint(file_source_id,api_url,base_url) VALUES(7,'https://source.example.invalid','https://source.example.invalid');
-	INSERT INTO source_catalog_entry(id,file_source_id,root_path,title,sidecar_json) VALUES(1,7,'/Example Work','Example Work','{"sidecars":[{"relativePath":"readme.txt","size":12,"voiceActors":["Example Voice B"],"circles":[],"fetchedAt":"2026-01-01T00:00:00Z"}]}');`)
+	INSERT INTO source_catalog_entry(id,file_source_id,root_path,title,sidecar_json) VALUES(1,7,'/Example Work','Example Work','{"sidecars":[{"relativePath":"readme.txt","size":12,"voiceActors":["Example Voice B"],"circles":[],"fetchedAt":"2026-01-01T00:00:00Z"}]}');
+	INSERT INTO source_catalog_entry(id,file_source_id,root_path,title,sidecar_json) VALUES(2,7,'/Example Work Copy','Example Work','{"sidecars":[{"relativePath":"readme.txt","size":12,"voiceActors":["Example Voice A"],"circles":[],"fetchedAt":"2026-01-01T00:00:00Z"}]}');`)
 	app := httptest.NewServer(s.Routes())
 	defer app.Close()
 	cookie := workReferenceLogin(t, app, "synthetic-editor")
@@ -922,6 +919,8 @@ func TestWorkMatchingSidecarRequiresCreditsOnBothSides(t *testing.T) {
 	defer func() { _ = s.Shutdown(context.Background()) }()
 	createTestAdministrator(t, s, "synthetic-editor", "synthetic-password")
 	metadataReviewExec(t, db, `INSERT INTO work(id,primary_code,title) VALUES(11,'','Example Work');
+	INSERT INTO person(id,display_name) VALUES(1,'Example Voice');
+	INSERT INTO work_credit(work_id,person_id,role) VALUES(11,1,'voice_actor');
 	INSERT INTO file_source(id,code,display_name,source_type) VALUES(7,'example_remote_a','Example Remote A','openlist');
 	INSERT INTO file_source_endpoint(file_source_id,api_url,base_url) VALUES(7,'https://source.example.invalid','https://source.example.invalid');
 	INSERT INTO source_catalog_entry(id,file_source_id,root_path,title,sidecar_json) VALUES(1,7,'/Example Work','Example Work','{"sidecars":[{"relativePath":"readme.txt","size":12,"voiceActors":["Example Voice"],"circles":[],"fetchedAt":"2026-01-01T00:00:00Z"}]}');`)

@@ -990,6 +990,23 @@ func retireStaleFormatCardsTx(ctx context.Context, tx *sql.Tx, sourceID, generat
 		return readErr
 	}
 	for _, card := range stale {
+		// The format directory must have been observed completely in this
+		// generation before its old card can be retired. A failed or restricted
+		// subtree proves nothing: its audio was not republished, so deleting the
+		// old rows would hide playable files until the source recovers. A split
+		// card root carries a "::key" suffix; the directory row uses the path
+		// before it.
+		directory := card.root
+		if index := strings.Index(directory, "::"); index >= 0 {
+			directory = directory[:index]
+		}
+		complete, err := catalogRootIncomplete(ctx, tx, sourceID, generation, directory)
+		if err != nil {
+			return err
+		}
+		if complete {
+			continue
+		}
 		parent := path.Dir(card.root)
 		if parent == "." || parent == "/" || parent == card.root {
 			continue

@@ -9,6 +9,26 @@ import (
 	"github.com/yexca/kikoto/backend/internal/openlist"
 )
 
+// catalogRootIncomplete reports an observation gap below one catalog root.
+// Retirement and missing-state decisions only apply to a range the current
+// generation fully observed: a failed, restricted, unconfirmed-empty or still
+// listing directory keeps every older card and file row it owns.
+func catalogRootIncomplete(ctx context.Context, tx *sql.Tx, sourceID, generation int64, root string) (bool, error) {
+	var incomplete int
+	err := tx.QueryRowContext(ctx, `SELECT EXISTS(
+		SELECT 1 FROM source_catalog_directory d
+		WHERE d.file_source_id=? AND d.generation=? AND d.status<>'complete'
+			AND (?='/' OR d.catalog_root=? OR d.path=? OR substr(d.path,1,length(?)+1)=? || '/')
+		UNION ALL
+		SELECT 1 FROM source_catalog_observation o
+		JOIN source_catalog_directory pd ON pd.file_source_id=o.file_source_id AND pd.path=o.directory_path
+		WHERE o.file_source_id=? AND pd.generation=? AND o.publish_pending=1
+			AND (?='/' OR pd.catalog_root=? OR substr(pd.path,1,length(?)+1)=? || '/')
+	)`, sourceID, generation, root, root, root, root, root, root,
+		sourceID, generation, root, root, root, root, root).Scan(&incomplete)
+	return incomplete != 0, err
+}
+
 func catalogFailureStatus(err error) string {
 	if errors.Is(err, openlist.ErrMaintenance) {
 		return "maintenance"
@@ -114,6 +134,27 @@ func (s *Server) settleCatalogLifecycleBatch(ctx context.Context, job workflowJo
 			continue
 		}
 		status := "missing"
+		if e.generation != job.RunID {
+			// An entry this generation did not see is only missing when the
+			// range that contains it was fully observed. A failed, restricted
+			// or unconfirmed-empty directory proves nothing about its files.
+			var base string
+			if err = tx.QueryRowContext(ctx, `SELECT CASE WHEN COALESCE(source_root,'')='' THEN root_path ELSE source_root END
+				FROM source_catalog_entry WHERE id=?`, e.id).Scan(&base); err != nil {
+				return false, err
+			}
+			var uncertain int
+			if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM source_catalog_directory d
+				WHERE d.file_source_id=? AND d.generation=? AND d.status IN ('failed','restricted','empty')
+					AND (d.path=? OR substr(d.path,1,length(?)+1)=? || '/'))`,
+				sourceID, job.RunID, base, base, base).Scan(&uncertain); err != nil {
+				return false, err
+			}
+			if uncertain != 0 {
+				cursor = e.id
+				continue
+			}
+		}
 		if e.generation == job.RunID {
 			status = "available"
 			if _, err = tx.ExecContext(ctx, `DELETE FROM source_catalog_relocation_candidate WHERE catalog_entry_id=?`, e.id); err != nil {
@@ -191,19 +232,39 @@ func (s *Server) cleanupCatalogPublishBatch(ctx context.Context, job workflowJob
 		return 0, 0, err
 	}
 	for _, id := range ids {
-		result, execErr := tx.ExecContext(ctx, `DELETE FROM source_catalog_file WHERE catalog_entry_id=? AND observed_generation<>?`, id, job.RunID)
-		if execErr != nil {
-			return 0, 0, execErr
+		var base string
+		if err = tx.QueryRowContext(ctx, `SELECT CASE WHEN COALESCE(source_root,'')='' THEN root_path ELSE source_root END
+			FROM source_catalog_entry WHERE id=?`, id).Scan(&base); err != nil {
+			return 0, 0, err
 		}
-		n, execErr := result.RowsAffected()
-		if execErr != nil {
-			return 0, 0, execErr
+		// A failed, restricted or unconfirmed-empty directory still proves
+		// nothing about its files. Deleting the older generation below it would
+		// hide tracks that the source never had a chance to republish. Keep the
+		// rows until a later scan completes that subtree.
+		var uncertain int
+		if base == "" || base == "/" {
+			uncertain = 1
+		} else if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM source_catalog_directory
+			WHERE file_source_id=? AND generation=? AND status IN ('failed','restricted','empty')
+				AND (path=? OR substr(path,1,length(?)+1)=? || '/'))`,
+			sourceID, job.RunID, base, base, base).Scan(&uncertain); err != nil {
+			return 0, 0, err
 		}
-		removed += n
+		if uncertain == 0 {
+			result, execErr := tx.ExecContext(ctx, `DELETE FROM source_catalog_file WHERE catalog_entry_id=? AND observed_generation<>?`, id, job.RunID)
+			if execErr != nil {
+				return 0, 0, execErr
+			}
+			n, execErr := result.RowsAffected()
+			if execErr != nil {
+				return 0, 0, execErr
+			}
+			removed += n
+		}
 		// A folder row that is now its own catalog entry belongs to that
 		// entry, not to the card above it. Keeping it makes the parent list a
 		// child work as one of its tracks.
-		result, execErr = tx.ExecContext(ctx, `DELETE FROM source_catalog_file
+		result, execErr := tx.ExecContext(ctx, `DELETE FROM source_catalog_file
 			WHERE catalog_entry_id=? AND relative_path IN (
 				SELECT substr(e.root_path,length(parent.root_path)+2)
 				FROM source_catalog_entry e
@@ -214,7 +275,7 @@ func (s *Server) cleanupCatalogPublishBatch(ctx context.Context, job workflowJob
 		if execErr != nil {
 			return 0, 0, execErr
 		}
-		n, execErr = result.RowsAffected()
+		n, execErr := result.RowsAffected()
 		if execErr != nil {
 			return 0, 0, execErr
 		}
@@ -230,23 +291,4 @@ func (s *Server) cleanupCatalogPublishBatch(ctx context.Context, job workflowJob
 		return 0, 0, err
 	}
 	return int64(len(ids)), removed, nil
-}
-
-// resetCatalogPublishCleanup restarts the cleanup cursor. Publishing order and
-// entry id order differ, so a cursor that advanced during publication can pass
-// an entry that is published later. The final pass starts from the beginning
-// once no directory or publish row remains.
-func (s *Server) resetCatalogPublishCleanup(ctx context.Context, job workflowJobRecord, sourceID int64) error {
-	tx, release, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
-	if err != nil {
-		return err
-	}
-	defer release()
-	if err = verifyCatalogLease(ctx, tx.Tx, job); err != nil {
-		return err
-	}
-	if _, err = tx.ExecContext(ctx, `UPDATE source_catalog_scan SET publish_cleanup_cursor=0,updated_at=CURRENT_TIMESTAMP WHERE file_source_id=?`, sourceID); err != nil {
-		return err
-	}
-	return tx.Commit()
 }

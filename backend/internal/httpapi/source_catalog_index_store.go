@@ -57,6 +57,13 @@ func (s *Server) persistCatalogPage(ctx context.Context, job workflowJobRecord, 
 	if revision != d.Revision {
 		return context.Canceled
 	}
+	// A backoff refusal happened before any request reached the source. It must
+	// not be counted as an attempt and must not mark the directory failed: the
+	// next pass retries the same page once the origin is allowed again.
+	var backoff sourceBackoffError
+	if errors.As(requestErr, &backoff) {
+		return backoff
+	}
 	if _, err = tx.ExecContext(ctx, `UPDATE source_catalog_scan SET requests=requests+1,updated_at=CURRENT_TIMESTAMP WHERE file_source_id=?`, sourceID); err != nil {
 		return err
 	}
@@ -471,8 +478,24 @@ ORDER BY o.directory_path,o.name LIMIT 100`, sourceID, job.RunID, sourceID, job.
 	}
 	firstSplit := map[string]int64{}
 	publishedIDs := []int64{}
+	// The configured source root has no directory name of its own. A card for
+	// files placed directly there is titled after the source, not "/".
+	rootTitle := ""
+	for _, p := range items {
+		if p.root == "/" {
+			if rootTitle == "" {
+				if err = tx.QueryRowContext(ctx, `SELECT display_name FROM file_source WHERE id=?`, sourceID).Scan(&rootTitle); err != nil {
+					return 0, err
+				}
+			}
+			break
+		}
+	}
 	for _, p := range items {
 		root, sourceRoot, title := p.root, "", path.Base(p.root)
+		if p.root == "/" {
+			title = rootTitle
+		}
 		if plan, ok := splitPlans[p.root]; ok && p.kind == "audio" {
 			// Direct audio and its format copy carry the same work prefix, so
 			// both belong to the split card. The shared plan keeps a nested
@@ -531,6 +554,20 @@ ORDER BY o.directory_path,o.name LIMIT 100`, sourceID, job.RunID, sourceID, job.
 			return 0, err
 		}
 	}
+	// Retirement is a property of a finished generation, not of one 100-row
+	// batch. Running it while other rows are still pending could delete the only
+	// playable copy of a group that a later batch is about to publish, and it
+	// made every publish batch scan the whole source. The final batch (or a
+	// final call with nothing left to publish) performs it once.
+	var stillPending int
+	if err = tx.QueryRowContext(ctx, `SELECT EXISTS(
+		SELECT 1 FROM source_catalog_observation o
+		JOIN source_catalog_directory d ON d.file_source_id=o.file_source_id AND d.path=o.directory_path AND d.revision=o.revision
+		WHERE o.file_source_id=? AND o.publish_pending=1 AND d.generation=? AND d.status='complete' AND d.catalog_root<>'')`,
+		sourceID, job.RunID).Scan(&stillPending); err != nil {
+		return 0, err
+	}
+	publishIdle := stillPending == 0
 	for root, plan := range splitPlans {
 		if parentNeeded[root] || len(plan.direct) == 0 {
 			continue
@@ -572,9 +609,19 @@ ORDER BY o.directory_path,o.name LIMIT 100`, sourceID, job.RunID, sourceID, job.
 		}
 	}
 	for root := range splitRoots {
+		if !publishIdle {
+			break
+		}
 		// A root that no longer splits (or now publishes fewer cards) must not
 		// leave the cards of an earlier generation visible. Cards that still
 		// belong to this generation, or carry a work/series/relocation, stay.
+		// The root must also be fully observed: an older card is the only
+		// playable copy while a child is still failed or unconfirmed.
+		if incomplete, err := catalogRootIncomplete(ctx, tx.Tx, sourceID, job.RunID, root); err != nil {
+			return 0, err
+		} else if incomplete {
+			continue
+		}
 		keep := map[int64]bool{}
 		rows, err := tx.QueryContext(ctx, `SELECT id FROM source_catalog_entry
 			WHERE file_source_id=? AND source_root=? AND last_seen_generation=?`,
@@ -602,8 +649,24 @@ ORDER BY o.directory_path,o.name LIMIT 100`, sourceID, job.RunID, sourceID, job.
 	}
 	// A root that is no longer split has a single card at parentRoot. Retire
 	// split cards from older generations that pointed at the same source root.
+	if !publishIdle {
+		// Format and split identities stay untouched until every row of this
+		// generation is published.
+		if err = markCatalogSidecarCandidatesTx(ctx, tx.Tx, publishedIDs, job.RunID); err != nil {
+			return 0, err
+		}
+		if err = tx.Commit(); err != nil {
+			return 0, err
+		}
+		return len(items), nil
+	}
 	for _, p := range items {
 		if p.split != "" && p.split != catalogWorkSplitSingle {
+			continue
+		}
+		if incomplete, err := catalogRootIncomplete(ctx, tx.Tx, sourceID, job.RunID, p.root); err != nil {
+			return 0, err
+		} else if incomplete {
 			continue
 		}
 		var exists int
@@ -620,7 +683,8 @@ ORDER BY o.directory_path,o.name LIMIT 100`, sourceID, job.RunID, sourceID, job.
 	// alias once the release card owns the audio. The scan below is independent
 	// of the split plans: a format directory is `single`, so it never enters the
 	// split loops, and its stale card would otherwise keep winning the
-	// admission check in every later generation.
+	// admission check in every later generation. Its own subtree must first be
+	// fully observed, or deleting its files would hide unrepublished audio.
 	if err = retireStaleFormatCardsTx(ctx, tx.Tx, sourceID, job.RunID); err != nil {
 		return 0, err
 	}
@@ -706,13 +770,11 @@ func (s *Server) sourceCatalogProgress(ctx context.Context, sourceID int64, page
 	return p, rows.Err()
 }
 
-// sourceCatalogSidecarFailures counts the cards that left the automatic
-// credit-file queue for a source. A stopped card is one the worker can no
-// longer pick up on its own: it records a failure and is not pending. Both
-// facts are required so an operator can tell a settled card from work that
-// still waits on a backoff. The categories follow the values written by
-// catalogSidecarFailureReason; the total also covers rows that stored an
-// unknown category, so the per-category list never has to explain a gap.
+// sourceCatalogSidecarFailures counts the cards the worker can no longer pick
+// up on its own. Eligibility is exactly the worker's predicate: pending, under
+// the permanent budget, and not waiting on a transient backoff that already
+// reached its stop threshold. A rescan leaves an exhausted card pending so it
+// keeps its identity, so "pending" alone cannot be read as "will be retried".
 func (s *Server) sourceCatalogSidecarFailures(ctx context.Context, sourceID int64) (catalogSidecarFailureCounts, error) {
 	var counts catalogSidecarFailureCounts
 	err := s.db.QueryRowContext(ctx, `SELECT count(*),
@@ -721,7 +783,9 @@ func (s *Server) sourceCatalogSidecarFailures(ctx context.Context, sourceID int6
 			coalesce(sum(sidecar_failure='request_budget'),0)
 		FROM source_catalog_entry
 		WHERE file_source_id=? AND relocated_to_id IS NULL
-			AND sidecar_failure<>'' AND sidecar_pending=0`,
-		sourceID).Scan(&counts.Stopped, &counts.TemporarilyUnavailable, &counts.Unreadable, &counts.RequestBudget)
+			AND sidecar_failure<>''
+			AND (sidecar_pending=0 OR sidecar_attempts>=?
+				OR (sidecar_transient_attempts>=? AND sidecar_failure='temporarily_unavailable'))`,
+		sourceID, catalogSidecarMaxAttempts, catalogSidecarTransientTries).Scan(&counts.Stopped, &counts.TemporarilyUnavailable, &counts.Unreadable, &counts.RequestBudget)
 	return counts, err
 }

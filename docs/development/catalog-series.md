@@ -13,8 +13,19 @@ provides source-local grouping evidence. Shared creators, similar titles,
 topics and numeric track names do not. Format and track subdirectories stay
 inside their episode. Duplicate episode numbers remain independent for review.
 A series contains at most 100 members; additional entries stay independent.
+A single-member series is not displayed as a series card: the entry keeps its
+own card until a second evidenced member exists, so an isolated `Episode 1`
+does not create a creator-named series.
 `ep` and `ep.` count as episode markers only at a word boundary. An `ep`
 inside an English word, as in `Deep 2` or `Step 2`, is not series evidence.
+
+A bare numbered label is not series evidence either. One source may publish
+`T001 …`, `T002 …`, `A89 …` and `B031 …` side by side, where the letter and
+number are a local catalogue convention for unrelated works. Such a label is
+neither a series name, nor an episode marker, nor an explicitly labelled series
+directory, and grouping on the shared prefix would mix different works
+(US-30). These entries stay independent; an editor groups the ones that really
+belong together through the preview and confirm flow described below (AC-14).
 
 A finite scan partitions a new root only when every playable file belongs to
 an evidenced direct child. Full indexing attaches membership in the same

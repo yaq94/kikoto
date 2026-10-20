@@ -24,8 +24,12 @@ func catalogContainerDirectory(name string) bool {
 		"tags", "tag", "标签", "分類", "分类":
 		return true
 	}
-	return strings.Contains(lower, "合集") || strings.Contains(lower, "collection") ||
-		strings.Contains(lower, "大杂烩") || strings.Contains(lower, "部分收集")
+	// A Chinese collection label is a suffix, not a substring of an arbitrary
+	// work title ("合集部屋" is still a collection, "My Collection" is a work).
+	// English titles legitimately contain the word, so only the exact names
+	// above count for English.
+	return strings.HasSuffix(lower, "合集") || strings.HasSuffix(lower, "合辑") ||
+		strings.HasSuffix(lower, "大杂烩") || strings.HasSuffix(lower, "部分收集")
 }
 
 // catalogAdmissionRoot chooses the playable container from the already-read
@@ -87,10 +91,19 @@ func catalogAdmissionRoot(directoryPath, parentRoot string, observed catalogDire
 }
 
 // catalogSelfWorkRoot reports a directory whose own contents make it playable
-// without a parent: a work code, direct audio, or nothing but format copies.
+// without a parent: a work code, direct audio, or nothing but format copies and
+// track containers. A release that only ships Disc 1/Disc 2 or MP3 files still
+// owns one identity; admitting the discs separately would create one card per
+// disc and break the "tracks do not become works" rule.
+//
+// Unknown subdirectories do not veto admission. A directory with audio-bearing
+// children is handled child by child, so admitting the parent only gives its own
+// files a card; it cannot swallow those children. The source root is admitted
+// too: audio placed directly at the configured root is still playable, and the
+// source display name supplies the card title.
 func catalogSelfWorkRoot(directoryPath string, observed catalogDirectorySummary) bool {
 	return catalogDirectoryCode(directoryPath) != "" || observed.Audio > 0 ||
-		(directoryPath != "/" && observed.FormatDirectories > 0 && observed.OtherDirectories == 0)
+		(observed.FormatDirectories > 0 || observed.TrackContainers > 0)
 }
 
 func catalogFormatDirectory(name string) bool {
@@ -157,9 +170,16 @@ func catalogWorkPartDirectory(name string) bool {
 // catalogTrackContainerDirectory reports a directory that groups the tracks of
 // one work. The names are the ones a release uses for discs, volumes and
 // format copies; they are not work titles.
+// catalogNumberedTrackContainer matches a numbered part of one work:
+// "Chapter 03", "Track 12", "Part 2". A bare word without a number stays a
+// title. Episode markers keep their own series path. Volumes are deliberately
+// absent: "Vol 1"/"Vol 2" names separate releases as often as parts of one, and
+// treating only the dotted spelling as separate was inconsistent.
+var catalogNumberedTrackContainer = regexp.MustCompile(`(?i)^(?:chapter|ch|track|scene|part)\s*[0-9]+(?:\b|$)`)
+
 func catalogTrackContainerDirectory(name string) bool {
 	lower := catalogDirectoryFormatName(name)
-	if catalogNonEpisode.MatchString(lower) {
+	if catalogNonEpisode.MatchString(lower) || catalogNumberedTrackContainer.MatchString(lower) {
 		return true
 	}
 	switch lower {
@@ -187,29 +207,25 @@ func catalogAuxiliaryDirectory(name string) bool {
 	return false
 }
 
+// catalogCodePattern finds a work code anywhere in a directory name, whatever
+// brackets or separators surround it: "[RJ00000001] Title", "(RJ00000001)
+// Title", "（RJ00000001）Title" and "RJ00000001Title" all name the same work.
+// The digit group is bounded so a longer number is not silently truncated.
+var catalogCodePattern = func() *regexp.Regexp {
+	prefixes := make([]string, 0, 8)
+	for _, prefix := range workcode.Prefixes() {
+		prefixes = append(prefixes, regexp.QuoteMeta(prefix))
+	}
+	return regexp.MustCompile(`(?i)((?:` + strings.Join(prefixes, "|") + `)[0-9]{5,8})(?:[^0-9]|$)`)
+}()
+
 func catalogDirectoryCode(root string) string {
 	name := path.Base(root)
-	for _, word := range strings.FieldsFunc(name, func(r rune) bool { return r == '[' || r == ']' || r == ' ' || r == '【' || r == '】' }) {
-		if code := normalizeWorkCode(word); code != "" {
+	if match := catalogCodePattern.FindStringSubmatch(name); match != nil {
+		if code := normalizeWorkCode(match[1]); code != "" {
 			return code
 		}
 	}
-	// Sources also prefix a code directly to a title, such as
-	// "RJ01075962妹妹的夜间侍奉". The code ends where the title starts, so a
-	// token split alone would miss every one of those works.
-	upper := strings.ToUpper(name)
-	for _, prefix := range workcode.Prefixes() {
-		if !strings.HasPrefix(upper, prefix) {
-			continue
-		}
-		digits := 0
-		for digits < len(upper)-len(prefix) && upper[len(prefix)+digits] >= '0' && upper[len(prefix)+digits] <= '9' {
-			digits++
-		}
-		if digits < 5 || digits > 8 {
-			return ""
-		}
-		return normalizeWorkCode(upper[:len(prefix)+digits])
-	}
+	// A bare code without a title still resolves through the shared parser.
 	return normalizeWorkCode(name)
 }

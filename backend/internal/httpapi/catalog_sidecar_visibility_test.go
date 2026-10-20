@@ -47,19 +47,21 @@ func TestSourceCatalogIndexReportsStoppedSidecarFailures(t *testing.T) {
 			(803,?,'/Waiting','Waiting card',NULL,'',1,0,1,'temporarily_unavailable'),
 			(804,?,'/Clean','Clean card',NULL,'',0,0,0,''),
 			(805,?,'/Moved','Moved card',NULL,'',0,5,0,'unreadable'),
+			(807,?,'/Spent but pending','Spent card',NULL,'',1,5,0,'unreadable'),
 			(806,?,'/Other source','Other source',NULL,'',0,5,0,'unreadable')`,
-		sourceID, sourceID, sourceID, sourceID, sourceID, otherSource)
+		sourceID, sourceID, sourceID, sourceID, sourceID, sourceID, otherSource)
 	metadataReviewExec(t, f.server.db, `UPDATE source_catalog_entry SET relocated_to_id=801 WHERE id=805;
 		INSERT INTO user_work_state(user_id,work_id,rating,note)
 			SELECT id,901,4,'Private note' FROM user_account WHERE username='synthetic-user';
 		INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes,observed_generation)
 			VALUES(801,'readme.txt','readme.txt','text',24,1),
 				(802,'readme.txt','readme.txt','text',24,1),
-				(803,'readme.txt','readme.txt','text',24,1);`)
+				(803,'readme.txt','readme.txt','text',24,1),
+				(807,'readme.txt','readme.txt','text',24,1);`)
 
 	progress := f.request(t, http.MethodGet, "/catalog/index", "", http.StatusOK)
 	counts := sidecarFailuresFrom(t, progress)
-	if counts["stopped"] != float64(2) || counts["temporarilyUnavailable"] != float64(1) || counts["unreadable"] != float64(1) {
+	if counts["stopped"] != float64(3) || counts["temporarilyUnavailable"] != float64(1) || counts["unreadable"] != float64(2) {
 		t.Fatalf("stopped counts = %#v", counts)
 	}
 	// A queued card, a clean card, a relocated card and another source's card
@@ -74,9 +76,9 @@ func TestSourceCatalogIndexReportsStoppedSidecarFailures(t *testing.T) {
 	reviewRequest(t, f.handler, listener, http.MethodGet, f.base+"/catalog/index", "", http.StatusForbidden)
 
 	reopened := f.request(t, http.MethodPost, "/catalog/sidecars/retry", `{}`, http.StatusOK)
-	// 801 and 802 are settled; 803 is still pending but records a failure, so
-	// the route reopens it as well. Only the stopped count is the UI signal.
-	if reopened["reopened"] != float64(3) {
+	// 801, 802 and 807 are settled; 803 is still pending but records a failure,
+	// so the route reopens it as well. Only the stopped count is the UI signal.
+	if reopened["reopened"] != float64(4) {
 		t.Fatalf("retry reopened = %#v", reopened)
 	}
 	after := sidecarFailuresFrom(t, f.request(t, http.MethodGet, "/catalog/index", "", http.StatusOK))

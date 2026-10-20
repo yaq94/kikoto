@@ -149,6 +149,82 @@ func TestSourceCatalogRetiredFormatCardKeepsPersonalReviewReadable(t *testing.T)
 	assertReview(t, detail, float64(4), "Example retained note")
 }
 
+// A release that only ships track containers is still one work. Disc and
+// chapter folders must not become one card each.
+func TestSourceCatalogTrackContainersStayInOneCard(t *testing.T) {
+	for name, children := range map[string][]string{
+		"Disc":    {"Disc 1", "Disc 2"},
+		"Chapter": {"Chapter 01", "Chapter 02"},
+	} {
+		container := make([]map[string]any, 0, len(children))
+		for _, child := range children {
+			container = append(container, looseDir(child))
+		}
+		tree := map[string][]map[string]any{
+			"/":                {looseDir("Creator")},
+			"/Creator":         {looseDir(name)},
+			"/Creator/" + name: container,
+		}
+		for _, child := range children {
+			tree["/Creator/"+name+"/"+child] = []map[string]any{looseAudio(child + ".mp3")}
+		}
+		t.Run(name, func(t *testing.T) {
+			f := newLooseWorkFixture(t, tree)
+			f.request(t, http.MethodPost, "/catalog/index", `{"intervalMs":100}`, 202)
+			if p := f.drain(t); p["status"] != "complete" {
+				t.Fatalf("scan = %#v", p)
+			}
+			cards := f.cards(t)
+			if len(cards) != 1 || cards[name] == nil {
+				t.Fatalf("cards = %#v, want one %q card", cards, name)
+			}
+			if got := countCatalogAudio(f.tracks(t, cards[name])); got != len(children) {
+				t.Fatalf("tracks = %d, want %d", got, len(children))
+			}
+		})
+	}
+}
+
+// A format directory that failed on this rescan has no current evidence that
+// its audio moved to the release. The old card keeps its files so a transient
+// upstream failure never hides playable tracks.
+func TestSourceCatalogFormatCardStaysWhenSubtreeFails(t *testing.T) {
+	tree := formatCardTree()
+	tree["/Creator/Release"] = append(tree["/Creator/Release"], looseAudio("00 intro.mp3"))
+	f := newLooseWorkFixture(t, tree)
+	sourceID := fixtureSourceID(t, f)
+	f.request(t, http.MethodPost, "/catalog/index", `{"intervalMs":100}`, 202)
+	if p := f.drain(t); p["status"] != "complete" {
+		t.Fatalf("first scan = %#v", p)
+	}
+	staleID := seedFormatCard(t, f.server.db, sourceID, "/Creator/Release/MP3", "MP3", 1, []string{"01 first.mp3", "02 second.mp3"})
+
+	next := formatCardTree()
+	next["/Creator/Release"] = append(next["/Creator/Release"], looseAudio("00 intro.mp3"))
+	delete(next, "/Creator/Release/MP3")
+	f.updates(next)
+
+	f.request(t, http.MethodPost, "/catalog/index", `{"intervalMs":100,"force":true}`, 202)
+	if p := f.drain(t); p["status"] != "partial" {
+		t.Fatalf("rescan = %#v, want partial", p)
+	}
+	var source sql.NullInt64
+	var relocated sql.NullInt64
+	if err := f.server.db.QueryRow(`SELECT file_source_id,relocated_to_id FROM source_catalog_entry WHERE id=?`, staleID).Scan(&source, &relocated); err != nil {
+		t.Fatal(err)
+	}
+	if !source.Valid || source.Int64 != sourceID || relocated.Valid {
+		t.Fatalf("stale card source=%v relocated=%v, want it kept for recovery", source, relocated)
+	}
+	var files int
+	if err := f.server.db.QueryRow(`SELECT count(*) FROM source_catalog_file WHERE catalog_entry_id=? AND kind='audio'`, staleID).Scan(&files); err != nil {
+		t.Fatal(err)
+	}
+	if files != 2 {
+		t.Fatalf("failed subtree lost %d of 2 audio rows", files)
+	}
+}
+
 // A card that already owns a work or a series episode is never retired
 // automatically; choosing a parent would merge two identities.
 func TestSourceCatalogFormatCardWithWorkOrSeriesIsNotRetired(t *testing.T) {

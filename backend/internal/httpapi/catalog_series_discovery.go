@@ -15,7 +15,7 @@ import (
 
 // Only authored episode markers or an explicitly labelled series directory are
 // evidence. A creator, topic, plain numeric track or format name is not.
-var catalogEpisodeMarker = regexp.MustCompile(`(?i)^(.*?)\s*(?:\bepisode\s*|\bep\.?\s*|第\s*)([0-9]{1,6})(?:\s*(?:集|話|话|回))?(?:\s*[-:：._ ]\s*.*)?$`)
+var catalogEpisodeMarker = regexp.MustCompile(`(?i)^(.*?)\s*(?:\bepisode\s*|\bep\.?\s*|第\s*)([0-9]{1,6})(?:\s*(?:集|話|话|回))?(?:\s*[-:：._]\s*|\s+)?(.*)$`)
 var catalogSeriesPrefix = regexp.MustCompile(`(?i)^(?:series|系列|シリーズ)\s*[:： -]\s*(.+)$`)
 var catalogSeriesSuffix = regexp.MustCompile(`(?i)^(.+?)\s*(?:系列|シリーズ|\sseries)$`)
 var catalogNonEpisode = regexp.MustCompile(`(?i)^(?:(?:mp3|flac|wav|m4a|ogg|opus|aac|aiff|dsd|ape|wma)(?:\s*\d+(?:k|bit|hz|kbps).*)?|tracks?|分轨|分軌|音轨|音軌|音声|音聲|audio|disc\s*\d+|cd\s*\d+)$`)
@@ -25,37 +25,63 @@ type catalogSeriesEvidence struct {
 	Position   int
 }
 
+// catalogSeriesLabel reads the explicit label on a directory: "Series: X",
+// "系列：X", "X Series" or "X系列". It is the only source of a series name; a
+// child marker never invents one.
+func catalogSeriesLabel(name string) string {
+	if m := catalogSeriesPrefix.FindStringSubmatch(name); m != nil {
+		return strings.TrimSpace(m[1])
+	}
+	if m := catalogSeriesSuffix.FindStringSubmatch(name); m != nil {
+		return strings.TrimSpace(m[1])
+	}
+	return ""
+}
+
+// catalogEpisodeEvidence resolves one directory to a series and an optional
+// position. The parent's explicit label owns the series identity for every
+// child, so an "Opening" without a marker and an "Episode 1" under the same
+// labelled directory share one series. An empty title means the caller should
+// use the source display name (the configured root has no directory name).
 func catalogEpisodeEvidence(root string) (catalogSeriesEvidence, bool) {
 	name := path.Base(root)
 	parent := path.Dir(root)
 	if catalogNonEpisode.MatchString(name) {
 		return catalogSeriesEvidence{}, false
 	}
+	seriesLabel := catalogSeriesLabel(path.Base(parent))
+	markerTitle, position := "", 0
 	if match := catalogEpisodeMarker.FindStringSubmatch(name); match != nil {
 		n, err := strconv.Atoi(match[2])
 		if err != nil || n <= 0 {
 			return catalogSeriesEvidence{}, false
 		}
-		title := strings.TrimSpace(match[1])
-		if title == "" {
-			title = path.Base(parent)
-		}
-		if title == "." || title == "/" || catalogNonEpisode.MatchString(title) {
+		// "Episode 1 MP3" is a format copy of episode 1, not a second episode.
+		if suffix := strings.TrimSpace(match[3]); suffix != "" &&
+			(catalogFormatDirectory(suffix) || catalogAuxiliaryDirectory(suffix)) {
 			return catalogSeriesEvidence{}, false
 		}
-		return catalogSeriesEvidence{Key: parent + "\n" + strings.ToLower(title), Title: title, Position: n}, true
+		markerTitle = strings.TrimSpace(match[1])
+		position = n
+	} else if seriesLabel == "" {
+		return catalogSeriesEvidence{}, false
 	}
 	title := ""
-	if m := catalogSeriesPrefix.FindStringSubmatch(path.Base(parent)); m != nil {
-		title = strings.TrimSpace(m[1])
+	if seriesLabel != "" {
+		// A labelled directory names the series for every child. Using the
+		// directory itself keeps an "Opening" track and "Episode 1" in the same
+		// series instead of two keys derived from different spellings.
+		title = path.Base(parent)
+	} else {
+		title = markerTitle
 	}
-	if m := catalogSeriesSuffix.FindStringSubmatch(path.Base(parent)); m != nil {
-		title = strings.TrimSpace(m[1])
+	if title == "" {
+		title = path.Base(parent)
 	}
-	if title != "" {
-		return catalogSeriesEvidence{Key: parent + "\n" + strings.ToLower(title), Title: title}, true
+	if title == "." || title == "/" {
+		title = ""
 	}
-	return catalogSeriesEvidence{}, false
+	return catalogSeriesEvidence{Key: parent + "\n" + strings.ToLower(title), Title: title, Position: position}, true
 }
 
 // splitCatalogEpisodeRoots partitions an unregistered finite scan only when
@@ -76,9 +102,13 @@ func splitCatalogEpisodeRoots(root string, files []openlist.File) map[string][]o
 		}
 		children[parts[0]] = true
 	}
-	if len(children) < 2 || len(children) > maxCatalogSeriesMembers {
+	if len(children) < 2 {
+		// A lone episode is not a series yet; the entry keeps its own card.
 		return nil
 	}
+	// More than maxCatalogSeriesMembers children are all split into independent
+	// entries. attachCatalogSeriesTx stops adding members at the limit, so the
+	// extra episodes stay addressable instead of collapsing into one root card.
 	result := map[string][]openlist.File{}
 	for child := range children {
 		for _, file := range files {
@@ -96,13 +126,13 @@ func splitCatalogEpisodeRoots(root string, files []openlist.File) map[string][]o
 // deliberately local: no provider calls, work registration or private writes.
 func attachCatalogSeriesTx(ctx context.Context, tx *sql.Tx, entryID int64) error {
 	var sourceID int64
-	var root, code string
-	if err := tx.QueryRowContext(ctx, `SELECT file_source_id,root_path,primary_code FROM source_catalog_entry WHERE id=?`, entryID).Scan(&sourceID, &root, &code); err != nil {
+	var root string
+	if err := tx.QueryRowContext(ctx, `SELECT file_source_id,root_path FROM source_catalog_entry WHERE id=?`, entryID).Scan(&sourceID, &root); err != nil {
 		return err
 	}
-	if code != "" {
-		return nil
-	}
+	// A published work code identifies the work; it does not override an
+	// explicit series directory. Series membership and work identity are
+	// independent levels.
 	evidence, ok := catalogEpisodeEvidence(root)
 	if !ok {
 		return nil
@@ -115,10 +145,22 @@ func attachCatalogSeriesTx(ctx context.Context, tx *sql.Tx, entryID int64) error
 	if !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
+	title := evidence.Title
+	if title == "" {
+		// Episodes placed directly at the configured root have no directory
+		// name to borrow; the source is the only stable label.
+		if err = tx.QueryRowContext(ctx, `SELECT display_name FROM file_source WHERE id=?`, sourceID).Scan(&title); err != nil {
+			return err
+		}
+		title = strings.TrimSpace(title)
+	}
+	if title == "" {
+		return nil
+	}
 	var seriesID int64
 	err = tx.QueryRowContext(ctx, `SELECT id FROM catalog_series WHERE source_id=? AND source_key=?`, sourceID, evidence.Key).Scan(&seriesID)
 	if errors.Is(err, sql.ErrNoRows) {
-		err = tx.QueryRowContext(ctx, `INSERT INTO catalog_series(title,source_id,source_key) VALUES(?,?,?) RETURNING id`, evidence.Title, sourceID, evidence.Key).Scan(&seriesID)
+		err = tx.QueryRowContext(ctx, `INSERT INTO catalog_series(title,source_id,source_key) VALUES(?,?,?) RETURNING id`, title, sourceID, evidence.Key).Scan(&seriesID)
 	}
 	if err != nil {
 		return err
@@ -134,8 +176,29 @@ func attachCatalogSeriesTx(ctx context.Context, tx *sql.Tx, entryID int64) error
 	if position == 0 {
 		position = maxPosition + 1
 	}
-	// Duplicate episode numbers are ambiguous editions, not permission to merge.
-	_, err = tx.ExecContext(ctx, `INSERT INTO catalog_series_member(series_id,catalog_entry_id,position,evidence) VALUES(?,?,?,'directory') ON CONFLICT DO NOTHING`, seriesID, entryID, position)
+	if evidence.Position > 0 {
+		// An explicitly numbered episode outranks a label-only child that took
+		// the slot while listings arrived in a different order. A second
+		// explicit episode with the same number is a genuine duplicate and stays
+		// independent for review.
+		var occupiedRoot string
+		err = tx.QueryRowContext(ctx, `SELECT e.root_path FROM catalog_series_member m
+			JOIN source_catalog_entry e ON e.id=m.catalog_entry_id
+			WHERE m.series_id=? AND m.position=?`, seriesID, position).Scan(&occupiedRoot)
+		switch {
+		case err == nil:
+			occupied, marked := catalogEpisodeEvidence(occupiedRoot)
+			if marked && occupied.Position != 0 {
+				return nil
+			}
+			if _, err = tx.ExecContext(ctx, `UPDATE catalog_series_member SET position=? WHERE series_id=? AND position=?`, maxPosition+1, seriesID, position); err != nil {
+				return err
+			}
+		case !errors.Is(err, sql.ErrNoRows):
+			return err
+		}
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO catalog_series_member(series_id,catalog_entry_id,position,evidence) VALUES(?,?,?,'directory')`, seriesID, entryID, position)
 	return err
 }
 

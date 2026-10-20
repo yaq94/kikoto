@@ -89,13 +89,14 @@ func (s *Server) executeSourceCatalogIndexJob(ctx context.Context, job workflowJ
 			// the entry. This runs for a partial run too: it only touches
 			// entries this generation published, never the whole source.
 			//
-			// A resumed generation may already have advanced its cursor, so
-			// the final pass starts from the beginning once.
-			if err = s.resetCatalogPublishCleanup(ctx, job, input.SourceID); err != nil {
-				return err
-			}
+			// The cursor only advances in this final pass and is reset when a
+			// new generation starts, so it is safe to resume across steps. Keep
+			// each invocation bounded; a source with more cards than one pass
+			// can retire continues on the next step instead of leaving the tail
+			// permanently uncleaned.
+			scanned := int64(0)
 			for pass := 0; pass < catalogPublishBatchesPerPass; pass++ {
-				scanned, _, err := s.cleanupCatalogPublishBatch(ctx, job, input.SourceID)
+				scanned, _, err = s.cleanupCatalogPublishBatch(ctx, job, input.SourceID)
 				if err != nil {
 					return err
 				}
@@ -103,12 +104,29 @@ func (s *Server) executeSourceCatalogIndexJob(ctx context.Context, job workflowJ
 					break
 				}
 			}
+			if scanned == 100 {
+				return s.settleCatalogBatch(ctx, job, input.SourceID, "queued", "")
+			}
 			p, err := s.sourceCatalogProgress(ctx, input.SourceID, 1)
 			if err != nil {
 				return err
 			}
 			status := "succeeded"
-			if p.Failed+p.Restricted+p.Empty > 0 {
+			// An unconfirmed-empty directory is a completed observation of zero
+			// files, not an unfinished range. It must not block retiring rows in
+			// ranges that were fully observed; settleCatalogLifecycleBatch still
+			// skips any entry whose own range contains an empty directory. A
+			// source root that itself came back empty means the whole listing is
+			// suspect, so no lifecycle pass runs in that case.
+			rootEmpty := false
+			if p.Empty > 0 {
+				if err = s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM source_catalog_directory
+					WHERE file_source_id=? AND generation=? AND status='empty' AND path='/')`,
+					input.SourceID, job.RunID).Scan(&rootEmpty); err != nil {
+					return err
+				}
+			}
+			if p.Failed+p.Restricted > 0 || rootEmpty {
 				status = "partial"
 			} else {
 				pending, err := s.settleCatalogLifecycleBatch(ctx, job, input.SourceID)

@@ -296,11 +296,13 @@ func matchWorkEvidence(a, b workMatchEvidence) workMatchCandidate {
 	return c
 }
 
-// sidecarCreditEvidence reports whether at least one side of the comparison
-// supplied the matching credit through a release sidecar rather than a work
-// row. It only gates the reason label; the equality check already ran.
+// sidecarCreditEvidence reports whether both sides published the same labelled
+// cast in a release sidecar. One readme plus a work row is not two independent
+// facts: the row and the readme can repeat the same source metadata, and a
+// single-sided readme must stay a review candidate.
 func sidecarCreditEvidence(a, b workMatchEvidence) bool {
-	return len(a.Sidecar.VoiceActors) > 0 || len(b.Sidecar.VoiceActors) > 0
+	left, right := uniqueSortedCatalogNames(a.Sidecar.VoiceActors), uniqueSortedCatalogNames(b.Sidecar.VoiceActors)
+	return len(left) > 0 && len(right) > 0 && equalCatalogSidecarNames(left, right)
 }
 
 func hasCatalogVoices(e workMatchEvidence) bool {
