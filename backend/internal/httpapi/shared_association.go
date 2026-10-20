@@ -331,6 +331,19 @@ func mergeAssociationReview(left, right associationReview) associationReview {
 }
 
 func registerAssociationObject(ctx context.Context, tx *sql.Tx, o *associationObject) error {
+	// Resolve before writing: a request that still names a retired catalog row
+	// must not attach the shared identity to that row's stale work.
+	subjectID := o.Subject.ID
+	if o.Subject.Kind == "catalog" {
+		entry, err := resolveCatalogEntry(ctx, tx, o.Subject.ID)
+		if errors.Is(err, sql.ErrNoRows) || (err == nil && entry.ID != o.Subject.ID) {
+			return errAssociationStale
+		}
+		if err != nil {
+			return err
+		}
+		subjectID = entry.ID
+	}
 	if o.WorkID != nil {
 		return nil
 	}
@@ -362,7 +375,7 @@ func registerAssociationObject(ctx context.Context, tx *sql.Tx, o *associationOb
 	}
 	switch o.Subject.Kind {
 	case "catalog":
-		if _, err := tx.ExecContext(ctx, `UPDATE source_catalog_entry SET work_id=? WHERE id=?`, id, o.Subject.ID); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE source_catalog_entry SET work_id=? WHERE id=?`, id, subjectID); err != nil {
 			return err
 		}
 	case "series":

@@ -44,7 +44,7 @@ func (s *Server) loadTranslationField(ctx context.Context, in contentTranslation
 			return readableTranslationField{Text: entry.Title, Original: entry.Title, Names: names}, nil
 		}
 		if in.Field == "directory" {
-			files, err := s.loadSourceCatalogFiles(ctx, in.CatalogEntryID)
+			files, err := s.loadSourceCatalogFiles(ctx, entry.ID)
 			if err != nil {
 				return readableTranslationField{}, err
 			}
@@ -106,17 +106,25 @@ func (s *Server) loadTranslationField(ctx context.Context, in contentTranslation
 				candidates = append(candidates, v.Description)
 			}
 		}
+		// An existing target-language text only answers the selection it came
+		// from. A title from another edition or a language manual is a separate
+		// source text and must not replace the text the caller selected.
 		if in.Field == "title" {
 			for _, choice := range work.TitleChoices {
 				candidates = append(candidates, choice.Title)
 			}
+			origin, _ := metadatatitles.ForLanguage(input.Variants, input.Manual, "origin", input.Fallback)
 			selected, found := metadatatitles.ForLanguage(input.Variants, input.Manual, in.Language, input.Fallback)
-			if found {
+			if found && (selected.Title == in.Text || in.Text == origin.Title) {
 				field.Existing = selected.Title
 			}
 		} else {
+			originDescription := metadatatitles.Original(input.Variants, input.Fallback).Description
 			for _, v := range input.Variants {
-				if v.Language == in.Language {
+				if v.Language != in.Language || v.Description == "" {
+					continue
+				}
+				if v.Description == in.Text || in.Text == originDescription {
 					field.Existing = v.Description
 					break
 				}
@@ -266,7 +274,11 @@ func (s *Server) loadRemoteTranslationField(ctx context.Context, in contentTrans
 		// language-edition title is its own content; replacing it with the
 		// current title would translate the wrong string and report a 409.
 		field.Original = in.Text
-		if in.Text == detail.Title || in.Text == work.Title {
+		// Only the work's own title can reuse a target-language edition. When
+		// another edition is selected, that edition is the source text and its
+		// siblings are not translations of it.
+		sourceTitle := in.Text == detail.Title || in.Text == work.Title
+		if sourceTitle {
 			field.Text = in.Text
 		}
 		for _, edition := range work.OtherLanguageEditions {
@@ -274,12 +286,12 @@ func (s *Server) loadRemoteTranslationField(ctx context.Context, in contentTrans
 				field.Text = in.Text
 				field.Original = in.Text
 			}
-			if normalizeRemotePresentationLanguage(edition.Language) == in.Language {
+			if normalizeRemotePresentationLanguage(edition.Language) == in.Language && (sourceTitle || edition.Title == in.Text) {
 				field.Existing = edition.Title
 			}
 		}
 		for _, edition := range normalizedRemoteLanguageEditions(work) {
-			if edition.Current && normalizeRemotePresentationLanguage(edition.Language) == in.Language {
+			if edition.Current && normalizeRemotePresentationLanguage(edition.Language) == in.Language && sourceTitle {
 				field.Existing = detail.Title
 			}
 		}

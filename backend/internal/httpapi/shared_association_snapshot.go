@@ -79,8 +79,21 @@ func loadAssociationObject(ctx context.Context, tx *sql.Tx, subject associationS
 	case "work":
 		err = tx.QueryRowContext(ctx, `SELECT title,primary_code,id FROM work WHERE id=?`, subject.ID).Scan(&o.Title, &o.Code, &o.WorkID)
 	case "catalog":
-		err = tx.QueryRowContext(ctx, `SELECT title,primary_code,work_id FROM source_catalog_entry WHERE id=?`, subject.ID).Scan(&o.Title, &o.Code, &o.WorkID)
-		if err == nil && o.WorkID == nil && o.Code != "" {
+		// A relocation retires the old row; its successor owns the work link and
+		// the review identity the user actually sees. Never build evidence from
+		// a retired row, even when the caller still holds the old URL id.
+		entry, resolveErr := resolveCatalogEntry(ctx, tx, subject.ID)
+		if errors.Is(resolveErr, sql.ErrNoRows) {
+			return o, errAssociationStale
+		}
+		if resolveErr != nil {
+			return o, resolveErr
+		}
+		if entry.ID != subject.ID {
+			return o, errAssociationStale
+		}
+		o.Title, o.Code, o.WorkID = entry.Title, entry.PrimaryCode, entry.WorkID
+		if o.WorkID == nil && o.Code != "" {
 			var id int64
 			err = tx.QueryRowContext(ctx, `SELECT COALESCE(l.canonical_work_id,w.id) FROM work w LEFT JOIN work_edition e ON e.work_id=w.id LEFT JOIN logical_work l ON l.id=e.logical_work_id WHERE w.primary_code=?`, o.Code).Scan(&id)
 			if err == nil {

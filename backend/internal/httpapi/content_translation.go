@@ -76,11 +76,17 @@ func (s *Server) translateContent(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, 409, "translation_content_changed", "Reload the content before translating.", false)
 		return
 	}
-	if field.Original != "" {
-		text = field.Original
+	// Original is presentation only: the canonical text behind "show original".
+	// The selected text is the only source that may reach the model or the cache
+	// key, so an edition or manual variant is never replaced by the canonical
+	// text and is never served another variant's cached result.
+	original := field.Original
+	if original == "" {
+		original = text
 	}
-	result := contentTranslationResponse{Text: text, Original: text, Language: in.Language, Status: "original"}
+	result := contentTranslationResponse{Text: text, Original: original, Language: in.Language, Status: "original"}
 	if in.Language == "origin" {
+		result.Text = original
 		writeJSON(w, 200, result)
 		return
 	}
