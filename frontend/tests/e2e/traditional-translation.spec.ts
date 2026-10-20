@@ -102,6 +102,12 @@ test("Traditional pending and failed generation keeps original, retries and cann
     .poll(async () => (await (await page.request.get(`${backend}/__fixture/state`)).json()).cancelled)
     .toBeGreaterThan(before.cancelled);
   await expect(hero).not.toContainText("聽見森林");
+  // The model is part of the translation cache identity. A queued generation can
+  // finish after the pending page was cancelled and leave a cached translation,
+  // so name a new model to force the failing attempt to reach the service.
+  await page.request.patch(`${backend}/api/settings/translation`, {
+    data: { model: `Example Traditional failure ${before.requests.length}` },
+  });
   await page.request.post(`${backend}/__fixture/mode`, { data: { mode: "fail" } });
   await chooseLanguage(page, "Traditional Chinese");
   await hero.scrollIntoViewIfNeeded();
