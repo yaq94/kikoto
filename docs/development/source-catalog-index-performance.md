@@ -37,7 +37,8 @@ The historical comparison on a 34 MB database with 3,917 directories and
 
 On a production-scale copy (14,459 current-generation directories, 14,459 audio
 roots, 266,296 rows left pending by an earlier generation) the current
-directory-first query returns a 50-row batch in 0.2 ms. The
+directory-first query returned a 100-row batch in 0.2 ms; the worker now asks
+for 50 rows with the same plan. The
 `WITH roots AS MATERIALIZED` query took 88.3 ms on the same copy, and a
 pending-first variant with `EXISTS` took 0.3 ms. `EXPLAIN QUERY PLAN` for the
 current query uses the directory primary key, seeks the pending partial index

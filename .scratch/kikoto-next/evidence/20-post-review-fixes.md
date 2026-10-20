@@ -100,6 +100,7 @@
 1. **清理游标的“回卷重试”没有达到契约。** 回卷只在一页以内、且下一次调用仍在同一 run 内发生时才被消费；恰好整页、跳过卡在前页、或本 pass 直接 `succeeded` 时，负值标记要么永不被消费，要么重复扫描。`catalogRangeUncertain` 只读当前 generation 的目录状态，这些状态在 publish 阶段已经固定，所以同一 run 内重扫不可能改变结论。现改为：
    - `cleanupCatalogPublishBatch` 不再写负值标记，游标保持单调前进；uncertain 范围保留上一代文件行，等后续 generation 完整观察后再删除。
    - 读取到旧版本写入的负游标时从 0 开始一次，随后继续前进。
+   - **resume 同一 generation 时把 `lifecycle_stage`、`lifecycle_cursor`、`publish_cleanup_cursor` 一并归零。** resume 会把 failed/restricted/empty 目录重新排队，因此可能发布上次已经越过的条目；只归零发布游标不够，lifecycle 若停在 `done` 会让这些条目永远没有 available/missing 状态。两项派生游标都从头重跑，操作幂等（只重写状态、只删上一代文件行）。新增 `TestSourceCatalogResumeRestartsDerivedState`、`TestSourceCatalogSucceededRunStartsANewGeneration`。
    - `source_catalog_index_worker.go` 的批次上限与 `scanned` 判断不变，一次 pass 必然终止。
    - 新增 `TestCatalogCleanupKeepsUncertainRowsAndAdvancesCursor`：3 张卡、其中一张子树 `failed`，断言 uncertain 卡保留旧行、其余删除、游标停在尾部、第二次调用扫描 0 行、旧版负游标被消费一次、子树恢复 complete 后旧行被删除。
 2. **默认扫描速率与 D-10 不一致。** `defaultCatalogIndexOptions` 恢复为并发 1、间隔 1000 ms，与规格 D-10 的“并发 1、每秒最多 1 次”一致；管理员仍可在 1–4 / 100–60000 ms 内上调。生产强制全量扫描按管理员显式参数运行，不用默认值。
@@ -112,3 +113,13 @@
 - 发布查询提取为 `catalogPublishQuery`，性能 harness 直接打印生产查询的计划，避免文档与实现再次分叉。
 
 复验：`go build ./...`、`go vet ./internal/httpapi`、`go test ./internal/httpapi -run TestCatalogCleanupKeepsUncertainRowsAndAdvancesCursor` 通过；文档链接检查 131 个文件全部解析。
+
+## 第四轮复审（2026-10-20 22:xx）
+
+复审确认三项：
+
+1. resume 路径不重置派生状态，已按上一节最后一条修复；两个新用例覆盖“resume 归零”和“succeeded 开新代”，均通过。
+2. `data-model.md` 中“resumed generation 复位游标”的表述已改成与实现一致：resume 归零，单次 attempt 内只前进。
+3. 性能文档里的 0.2 ms 实测是 `LIMIT 100`，现已注明当前批次为 50 行、查询计划相同；`evidence/20` 的表格保留原始测量条件。
+
+测试缺口（清理游标的整页 100、跨页 150、worker 直接 succeeded）不是缺陷：worker 只在 `failed+restricted==0` 且根目录非空时进入清理阶段，partial 运行不会推进游标；`TestCatalogCleanupKeepsUncertainRowsAndAdvancesCursor` 用三张卡直接覆盖“uncertain 保留 + 游标前进 + 二次调用 0 行 + 旧负游标消费一次 + 子树恢复后删除”，整页/跨页只改变批次数，不改变每次调用的判定。

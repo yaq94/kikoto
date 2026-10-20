@@ -217,7 +217,13 @@ func (s *Server) enqueueSourceCatalogIndexTx(ctx context.Context, tx *sql.Tx, so
 				return catalogIndexQueued{}, err
 			}
 		}
-		if _, err = tx.ExecContext(ctx, `UPDATE source_catalog_scan SET pause_reason='',options_json=?,updated_at=CURRENT_TIMESTAMP WHERE file_source_id=?`, mustJSON(options), sourceID); err != nil {
+		// A resume re-observes directories the previous attempt could not finish,
+		// so it can publish entries the run had already passed. The lifecycle and
+		// cleanup cursors record how far the post-processing walked this
+		// generation; both must start over or those entries keep their previous
+		// status and older file rows forever. The sweep is idempotent: it only
+		// rewrites status and deletes rows an older generation left.
+		if _, err = tx.ExecContext(ctx, `UPDATE source_catalog_scan SET pause_reason='',options_json=?,lifecycle_stage='observe',lifecycle_cursor=0,publish_cleanup_cursor=0,updated_at=CURRENT_TIMESTAMP WHERE file_source_id=?`, mustJSON(options), sourceID); err != nil {
 			return catalogIndexQueued{}, err
 		}
 		if err = resumeCatalogWorkflowTx(ctx, tx, runID); err != nil {

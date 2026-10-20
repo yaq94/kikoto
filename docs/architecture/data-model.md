@@ -967,11 +967,12 @@ continues.
 tracks how far the final cleanup pass has retired file rows left by an older
 generation. Cleanup visits only entries with
 `last_seen_generation = <current run>` and `id > cursor`, so an entry the
-current generation did not republish keeps its files. A resumed generation
-resets the cursor to zero once, after no directory and no publish row remains,
-because publication order differs from entry-id order. The cursor never
-rewinds: an entry under a failed, restricted or unconfirmed-empty subtree keeps
-its older file rows until a generation observes that subtree. `source_catalog_file_title`
+current generation did not republish keeps its files. Resuming the same
+generation resets both the lifecycle stage and the cleanup cursor to the start,
+because re-observed directories can publish entries the previous attempt had
+already passed. Within one attempt the cursor only moves forward: an entry under
+a failed, restricted or unconfirmed-empty subtree keeps its older file rows
+until a generation observes that subtree. `source_catalog_file_title`
 is an index on `source_catalog_file(catalog_entry_id, title)`: file-title
 search tests one candidate at a time, and the covered entry id lets the lookup
 answer from the index instead of reading the table row.
