@@ -47,8 +47,14 @@ test("display language translates public detail and dynamic directory while name
   await page.getByTestId("detail-hero").getByRole("button", { name: "Show original", exact: true }).click();
   await expect(page.getByTestId("detail-hero")).not.toContainText("ZH: Example title by Example Voice");
   await page.getByTestId("detail-hero").getByRole("button", { name: "Show translation", exact: true }).click();
-  await page.getByTestId("directory-file-row").scrollIntoViewIfNeeded();
-  await expect(page.getByTestId("directory-file-row")).toContainText("ZH: Example track.wav");
+  // The panel opens the only folder automatically. Step back to the work
+  // root and expand it again so the translated text is asserted after a real
+  // navigation, not only on first paint.
+  await page.getByRole("button", { name: "Parent folder", exact: true }).click();
+  const folder = page.getByRole("button", { name: "ZH: Example folder 1 audio", exact: true });
+  await expect(folder).toBeVisible();
+  await folder.click();
+  await expect(page.getByTestId("directory-file-row").filter({ hasText: "ZH: Example track.wav" })).toBeVisible();
   const state = await (await page.request.get(`${backend}/__fixture/state`)).json();
   expect(state.requests.length).toBeGreaterThan(2);
   expect(state.requests.join("\n")).not.toContain("Example Voice");

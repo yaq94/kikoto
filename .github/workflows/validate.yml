@@ -195,6 +195,9 @@ jobs:
             args: --group=mocked --shard=3/4
           - group: mocked-4/4
             args: --group=mocked --shard=4/4
+          # Ticket 19's mobile-only skeleton, shelf and cover-touch tests.
+          - group: mobile-shell
+            args: --group=mobile-shell
           # Fixture groups run in parallel; each owns its ports and database.
           - group: openlist
             args: --group=openlist

@@ -161,6 +161,16 @@ export const groups = [
     backendBinary: true,
   },
   {
+    // Ticket 19's mobile skeleton, favorites shelf and cover-touch flows are
+    // mobile-only. The mocked shard runs the desktop project, so these exact
+    // tests need their own bounded Playwright project.
+    name: "mobile-shell",
+    fixture: null,
+    specs: ["work-detail", "favorites-state", "player"],
+    grep: "@mobile-shell|reserves a structured directory skeleton|mobile favorites shows shelves|full player collapses from the upper content area|single touch on the full player cover|double-tapping the cover opens the work",
+    project: "mobile-chromium",
+  },
+  {
     // Everything else is a mocked-API browser test. It stays in this runner so
     // moving the fixture suites into CI does not drop the existing coverage.
     name: "mocked",
@@ -182,6 +192,7 @@ export const bundles = {
   "integrated-acceptance": ["integrated-acceptance"],
   "translation-settings": ["translation-settings"],
   mocked: ["mocked"],
+  "mobile-shell": ["mobile-shell"],
 };
 
 // Opt-in performance suites need their own harness and environment.
@@ -597,7 +608,7 @@ async function runGroup(group, options, usedPorts, backendBinary) {
     };
     const specs = group.playwrightShard
       ? await discoverMockedSpecs()
-      : [group.spec];
+      : (group.specs ?? [group.spec]);
     log(`${group.name}: playwright ${specs.join(", ")}`);
     const shardArgs =
       group.playwrightShard && options.shard
@@ -609,7 +620,8 @@ async function runGroup(group, options, usedPorts, backendBinary) {
         playwrightCli,
         "test",
         ...specs.map((name) => `tests/e2e/${name}.spec.ts`),
-        "--project=desktop-chromium",
+        `--project=${group.project ?? "desktop-chromium"}`,
+        ...(group.grep ? [`--grep=${group.grep}`] : []),
         // Keep traces and screenshots per group; concurrent local runs of this
         // script must not share Playwright's artifact directory.
         `--output=${path.join(logDir, "artifacts")}`,
@@ -679,7 +691,7 @@ export async function main(argv = process.argv.slice(2)) {
   if (options.list) {
     for (const group of groups) {
       process.stdout.write(
-        `${group.name}\t${group.fixture ?? "application"}\t${group.playwrightShard ? "(all mocked specs)" : group.spec}\n`,
+        `${group.name}\t${group.fixture ?? "application"}\t${group.playwrightShard ? "(all mocked specs)" : (group.specs ?? [group.spec]).join(", ")}\n`,
       );
     }
     process.stdout.write(`\nbundles:\n`);
@@ -733,7 +745,7 @@ export async function main(argv = process.argv.slice(2)) {
       failures.push(`${group.name}: ${error.message}`);
       summaries.push({
         group: group.name,
-        specs: group.playwrightShard ? "(all mocked specs)" : [group.spec],
+        specs: group.playwrightShard ? "(all mocked specs)" : (group.specs ?? [group.spec]),
         exitCode: 1,
         error: error.message,
       });
