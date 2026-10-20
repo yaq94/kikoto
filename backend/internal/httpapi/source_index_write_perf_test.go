@@ -30,8 +30,10 @@ import (
 // experiment reports how long that read waited, how many writers completed, and
 // how long the writers took to drain once the lock was free.
 //
-// It is a measurement, not a latency assertion: it prints its numbers for the
-// ticket evidence and fails only when a mode cannot make progress at all.
+// It is a measurement by default: it prints its numbers for the ticket evidence
+// and fails only when a mode cannot make progress at all. With
+// KIKOTO_SOURCE_INDEX_WRITE_PERF_ASSERT=1 it also checks the ticket's
+// bounded-write thresholds.
 func TestSourceIndexWriteContention(t *testing.T) {
 	if os.Getenv("KIKOTO_SOURCE_INDEX_WRITE_PERF") != "1" {
 		t.Skip("set KIKOTO_SOURCE_INDEX_WRITE_PERF=1 to measure index write contention")
@@ -57,11 +59,24 @@ func TestSourceIndexWriteContention(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	holdStarted := time.Now()
 	if _, err := held.Exec("UPDATE perf_work SET title = 'held' WHERE id = 1"); err != nil {
 		t.Fatal(err)
 	}
 
 	var completed, failed, starved atomic.Int64
+	// maxLockWait is the longest successful write call, including its wait for
+	// SQLite's write lock (and, in bounded mode, its internal retries).
+	var maxLockWait atomic.Int64
+	recordLockWait := func(started time.Time) {
+		waited := time.Since(started).Nanoseconds()
+		for {
+			current := maxLockWait.Load()
+			if waited <= current || maxLockWait.CompareAndSwap(current, waited) {
+				return
+			}
+		}
+	}
 	var writers sync.WaitGroup
 	writeStarted := time.Now()
 	for worker := 0; worker < writerCount; worker++ {
@@ -72,6 +87,7 @@ func TestSourceIndexWriteContention(t *testing.T) {
 			// an artificial failure count.
 			remaining := 20
 			for remaining > 0 {
+				lockStarted := time.Now()
 				var writeErr error
 				if mode == "bounded" {
 					_, writeErr = sqlutil.ExecBounded(context.Background(), db,
@@ -80,6 +96,7 @@ func TestSourceIndexWriteContention(t *testing.T) {
 					_, writeErr = db.Exec("UPDATE perf_work SET title = 'written' WHERE id = 1")
 				}
 				if writeErr == nil {
+					recordLockWait(lockStarted)
 					remaining--
 					completed.Add(1)
 					continue
@@ -103,9 +120,14 @@ func TestSourceIndexWriteContention(t *testing.T) {
 		starved.Add(1)
 	}
 
+	if remaining := holdFor - time.Since(holdStarted); remaining > 0 {
+		time.Sleep(remaining)
+	}
 	if err := held.Commit(); err != nil {
 		t.Fatal(err)
 	}
+	releasedAt := time.Now()
+	lockHold := releasedAt.Sub(holdStarted)
 	drained := make(chan struct{})
 	go func() { writers.Wait(); close(drained) }()
 	select {
@@ -114,17 +136,20 @@ func TestSourceIndexWriteContention(t *testing.T) {
 		t.Fatalf("writers did not drain: completed=%d failed=%d", completed.Load(), failed.Load())
 	}
 	total := time.Since(writeStarted)
+	drainAfterRelease := time.Since(releasedAt)
 
 	report := map[string]any{
 		"mode":                  mode,
-		"lock_hold_ms":          holdFor.Milliseconds(),
+		"lock_hold_ms":          lockHold.Milliseconds(),
 		"writers":               writerCount,
 		"reader_wait_ms":        readWait.Milliseconds(),
 		"reader_starved":        starved.Load() > 0,
 		"reader_error":          errorString(readErr),
 		"writes_completed":      completed.Load(),
 		"write_attempts_busy":   failed.Load(),
-		"drain_after_release_s": total.Seconds(),
+		"max_lock_wait_ms":      maxLockWait.Load() / int64(time.Millisecond),
+		"elapsed_total_s":       total.Seconds(),
+		"drain_after_release_s": drainAfterRelease.Seconds(),
 	}
 	encoded, err := json.MarshalIndent(report, "", "  ")
 	if err != nil {
@@ -133,6 +158,18 @@ func TestSourceIndexWriteContention(t *testing.T) {
 	fmt.Printf("KIKOTO_WRITE_PERF %s\n", encoded)
 	if readErr != nil {
 		t.Fatalf("read failed: %v", readErr)
+	}
+	if os.Getenv("KIKOTO_SOURCE_INDEX_WRITE_PERF_ASSERT") != "1" {
+		return
+	}
+	if busy := failed.Load(); busy != 0 {
+		t.Errorf("write_attempts_busy = %d, want 0", busy)
+	}
+	if waited := time.Duration(maxLockWait.Load()); waited >= 5*time.Second {
+		t.Errorf("max lock wait = %s, want < 5s", waited)
+	}
+	if drainAfterRelease >= 2*lockHold {
+		t.Errorf("drain_after_release = %s, want < 2 * lock_hold (%s)", drainAfterRelease, 2*lockHold)
 	}
 }
 
