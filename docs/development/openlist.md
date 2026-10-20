@@ -149,23 +149,26 @@ Publication reads the durable `publish_pending` queue:
   row per generation and root with at least one complete directory that has
   audio.
 
-The publisher materializes the generation's root set, seeks pending rows through
-the partial index and joins complete directories through the covering index,
-ordered by directory and name so a batch stops after rows it can publish.
-`refreshCatalogAudioRootTx` runs after each directory status change: it adds a
-root when a completed directory has audio and removes it when the last such
-directory becomes incomplete, so a rescan that deletes tracks retires the root.
+The publisher drives each batch from the generation's completed directories:
+a candidate needs a non-empty `catalog_root`, an audio root for the same
+generation, and a pending observation, which the partial index seeks. The
+directory primary key orders the scan and the observation primary key orders
+each directory's rows, so a batch stops after the rows it publishes and needs no
+temporary sort. `refreshCatalogAudioRootTx` runs after each directory status
+change: it adds a root when a completed directory has audio and removes it when
+the last such directory becomes incomplete, so a rescan that deletes tracks
+retires the root.
 
-The worker publishes at most four batches of 100 rows per invocation, so a long
+The worker publishes at most eight batches of 50 rows per invocation, so a long
 backlog does not hold the single SQLite writer across the whole scan; the
 remaining rows stay queued and the job returns to the workflow queue. An
 exhausted queue returns without another publication query. When no directory and
 no publish row remain, the cleanup pass visits only entries this generation
 republished and deletes file rows an older generation left there. It records
 progress in `source_catalog_scan.publish_cleanup_cursor`. The cursor only moves
-forward, so the tail is reached once; a card skipped because its subtree was
-failed, restricted or unconfirmed-empty is retried when the pass reaches the
-end of the cursor, which rewinds to the start.
+forward, so one pass terminates: a card whose subtree was failed, restricted or
+unconfirmed-empty keeps the rows an older generation left there, and a later
+generation that observes the subtree retires them.
 Routine tests use synthetic complete trees; a real index run must separately
 record its actual ranges, timestamps and unresolved directories.
 

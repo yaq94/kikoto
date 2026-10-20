@@ -12,7 +12,7 @@
 5. 有限扫描/刷新重写整个根后，未再出现的卡标为 `missing`，保留 id、work 关联与个人记录；再次出现恢复 `available`。
 6. 全量索引最终阶段退役“根不再拆分”的旧 split 卡；每批最多 100 个根，带 work/系列/别名的根跳过。
 7. 404/410 记为确定缺失（`empty` + `not_found`），不再让整源永久 `partial`；刷新路径同样标 `missing`。
-8. sidecar 证据只在该卡范围完整观察后清除；partial 扫描保留证据并清空失败/重试字段。队列查询使用 partial index，写入失败不再无 tick 空转；cleanup 游标在末尾回卷以重试 uncertain 卡；旧代 `source_catalog_audio_root` 回收。
+8. sidecar 证据只在该卡范围完整观察后清除；partial 扫描保留证据并清空失败/重试字段。队列查询使用 partial index，写入失败不再无 tick 空转；cleanup 游标只前进，uncertain 范围保留旧行直到后续 generation 完整观察；旧代 `source_catalog_audio_root` 回收。
 9. 目录页与 sidecar 共用同一 origin 速率令牌。
 10. `keep` 导入只写备份中确实存在的字段；同一 shared identity 的任一成员冲突保护整个身份。
 11. 翻译使用读者选中的 edition 文本，既有字段只在对应同一源文本时复用；catalog 翻译沿 `relocated_to_id` 读取 successor 文件。
@@ -61,10 +61,10 @@
 
 1. 批次常量与哨兵成对定义：发布 8 批 × 50 行（每 pass 仍 400 行），清理保持 4 批 × 100 行；`LIMIT` 与"队列已满"哨兵共用同一个常量。
 2. 每个写事务成功后让出 8ms 写锁；页面写同样暂停。`catalogIndexNoPacingKey` 仍可在契约测试中关闭。
-3. 扫描默认并发 2、间隔 500ms；UI 1–4 上限不变。
+3. 扫描默认值曾改为并发 2、间隔 500ms；第三轮审查后恢复为 D-10 的并发 1、间隔 1000ms，见下一节。UI 1–4 上限不变。
 4. 扫描开始前清除旧 generation 的 `publish_pending` 标志（只改标志，不动行、entry、file、个人记录），每次最多 16,000 行。
 5. `work_matching_worker` 三处状态写入改用 `sqlutil.ExecBounded`，锁冲突时归还连接。
-6. 清理游标在末页遇到不确定子树时标记一次重试（负值哨兵，下一次 pass 消费，新扫描归零）。
+6. 清理游标曾在末页写负值重试标记。第三轮审查确认该标记在整页、跨页或本 pass 直接成功时无法可靠消费，已按下一节改为只前进。
 7. 单次写事务超过 500ms 记录一条 Warn（kind、rows、elapsed_ms）。
 
 测试：
@@ -92,3 +92,23 @@
 发布几何保持施工单确认的 8 批 × 50 行（每 pass 400 行）。曾一度改回 4 × 100，依据是 -race 契约套件的 891s 与 846s 对比；复测后确认那 45s 差异来自每个事务的固定成本（当时的 88ms CTE 扫描），而不是批次大小，且 -race 本身放大约 5–10 倍。CTE 修掉后单批固定成本降到 0.2ms，更小的批次才真正缩短单次持锁时间，因此恢复 8 × 50。清理保持 4 × 100，避免把清理扫描量翻倍。
 
 `catalogSlowWriteThreshold` 随 `catalogIndexNoPacingKey` 一起关闭，避免 race 开销淹没真实信号。
+
+## 审查后修复（2026-10-20 21:xx）
+
+第三轮双轴审查发现两项必须修，均已修复：
+
+1. **清理游标的“回卷重试”没有达到契约。** 回卷只在一页以内、且下一次调用仍在同一 run 内发生时才被消费；恰好整页、跳过卡在前页、或本 pass 直接 `succeeded` 时，负值标记要么永不被消费，要么重复扫描。`catalogRangeUncertain` 只读当前 generation 的目录状态，这些状态在 publish 阶段已经固定，所以同一 run 内重扫不可能改变结论。现改为：
+   - `cleanupCatalogPublishBatch` 不再写负值标记，游标保持单调前进；uncertain 范围保留上一代文件行，等后续 generation 完整观察后再删除。
+   - 读取到旧版本写入的负游标时从 0 开始一次，随后继续前进。
+   - `source_catalog_index_worker.go` 的批次上限与 `scanned` 判断不变，一次 pass 必然终止。
+   - 新增 `TestCatalogCleanupKeepsUncertainRowsAndAdvancesCursor`：3 张卡、其中一张子树 `failed`，断言 uncertain 卡保留旧行、其余删除、游标停在尾部、第二次调用扫描 0 行、旧版负游标被消费一次、子树恢复 complete 后旧行被删除。
+2. **默认扫描速率与 D-10 不一致。** `defaultCatalogIndexOptions` 恢复为并发 1、间隔 1000 ms，与规格 D-10 的“并发 1、每秒最多 1 次”一致；管理员仍可在 1–4 / 100–60000 ms 内上调。生产强制全量扫描按管理员显式参数运行，不用默认值。
+
+文档同步：
+
+- `docs/development/openlist.md`：发布改为目录优先 + `EXISTS`，几何改为 8×50；删除“游标回卷重试”的错误描述。
+- `docs/architecture/data-model.md`：同一处发布查询与清理语义。
+- `docs/development/source-catalog-index-performance.md`：记录生产规模副本上 0.2 ms / 88.3 ms 的对比，并把旧的 4×100、物化 roots 描述标记为历史形态。
+- 发布查询提取为 `catalogPublishQuery`，性能 harness 直接打印生产查询的计划，避免文档与实现再次分叉。
+
+复验：`go build ./...`、`go vet ./internal/httpapi`、`go test ./internal/httpapi -run TestCatalogCleanupKeepsUncertainRowsAndAdvancesCursor` 通过；文档链接检查 131 个文件全部解析。

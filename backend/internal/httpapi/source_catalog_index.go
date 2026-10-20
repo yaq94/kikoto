@@ -47,7 +47,7 @@ type catalogIndexOptions struct {
 }
 
 func defaultCatalogIndexOptions() catalogIndexOptions {
-	return catalogIndexOptions{100, 8, 2, 500, openlist.MaxResponseBytes, 2 << 30, 10000}
+	return catalogIndexOptions{100, 8, 1, 1000, openlist.MaxResponseBytes, 2 << 30, 10000}
 }
 
 func (o catalogIndexOptions) validate() error {

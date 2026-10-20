@@ -104,15 +104,7 @@ func TestSourceCatalogPublishTailPerformance(t *testing.T) {
 	if legacy {
 		report["queryPlan"] = queryPlan(t, db, query, sourceID, runID, runID)
 	} else {
-		report["queryPlan"] = queryPlan(t, db, `WITH roots AS MATERIALIZED (
-			SELECT catalog_root FROM source_catalog_audio_root WHERE file_source_id=? AND generation=?
-		)
-		SELECT d.path,d.catalog_root,o.name,o.kind,o.size_bytes,o.content_hash
-		FROM source_catalog_observation o
-		JOIN source_catalog_directory d ON d.file_source_id=o.file_source_id AND d.path=o.directory_path AND d.revision=o.revision
-		JOIN roots r ON r.catalog_root=d.catalog_root
-		WHERE o.file_source_id=? AND o.publish_pending=1 AND d.generation=? AND d.status='complete' AND d.catalog_root<>''
-		ORDER BY o.directory_path,o.name LIMIT 100`, sourceID, runID, sourceID, runID)
+		report["queryPlan"] = queryPlan(t, db, catalogPublishQuery, sourceID, runID, catalogPublishRows)
 	}
 	encoded, err := json.Marshal(report)
 	if err != nil {

@@ -9,35 +9,45 @@ general write-lock policy is in
 
 ## Publisher query shape
 
-The publisher reads the durable `publish_pending` queue and joins each pending
-row to a complete directory through the covering root index, ordered by
-directory and name so a batch stops after rows it can publish. The cost then
-follows the rows a batch returns.
+The publisher drives each batch from the current generation's completed
+directories: a candidate needs a non-empty `catalog_root`, an audio root for the
+same generation, and a pending observation. The directory primary key orders the
+scan and the partial index over pending rows seeks the observations, so the cost
+follows the rows a batch returns and no temporary sort is needed.
 
-A query that filters complete directories with a correlated `EXISTS` over
-`source_catalog_directory` and `source_catalog_observation` costs one probe per
-candidate directory before `LIMIT 100` applies. With few matching rows, that
-probe covers the whole generation, and the audio-root check dominates the call.
-The measurements below compare that shape with the queue query.
-
-The root set is materialized per generation so a pending row resolves its
-audio root without re-reading the directory tree. The queue columns, indexes,
-root maintenance and batch drain are specified in
+Two earlier shapes are no longer used. Reading the pending queue first and
+joining a materialized root set with `WITH roots AS MATERIALIZED` scanned the
+whole root set per batch before `LIMIT` applied; filtering complete directories
+with a correlated `EXISTS` from the pending side still walked queued rows a
+purge had not cleared yet. The queue columns, indexes, root maintenance and
+batch drain are specified in
 [OpenList: Recoverable full index](openlist.md#recoverable-full-index).
 
 ## Measured result
 
+The historical comparison on a 34 MB database with 3,917 directories and
+47,670 observations measured the two earlier shapes:
+
 | Case | Correlated `EXISTS` query | Queue query |
 | --- | --- | --- |
-| Five-row tail, real 34 MB database | 36.1–36.9 s | 3.2–4.0 ms |
+| Five-row tail | 36.1–36.9 s | 3.2–4.0 ms |
 | Empty queue | first 100 unpublished, 0.3 ms | 0.0 s |
 | 3,000-directory synthetic tail | 36.5 s | about 5 ms |
 | Plan | correlated `EXISTS` per complete directory | partial index seek, root join, ordered limit |
 
-The measured copy is a 34 MB database with 3,917 directories and 47,670
-observations. `TestSourceCatalogPublishTailStaysBounded` asserts the bounded
-tail; `TestSourceCatalogPublishTailPerformance` and
-`make source-index-tail-performance` are the opt-in comparison.
+On a production-scale copy (14,459 current-generation directories, 14,459 audio
+roots, 266,296 rows left pending by an earlier generation) the current
+directory-first query returns a 50-row batch in 0.2 ms. The
+`WITH roots AS MATERIALIZED` query took 88.3 ms on the same copy, and a
+pending-first variant with `EXISTS` took 0.3 ms. `EXPLAIN QUERY PLAN` for the
+current query uses the directory primary key, seeks the pending partial index
+and probes the audio-root covering index, without a temporary sort or a scan of
+a materialized root set.
+
+`TestSourceCatalogPublishTailStaysBounded` asserts the bounded tail;
+`TestSourceCatalogPublishTailPerformance` and
+`make source-index-tail-performance` print the current plan and the legacy
+comparison.
 
 ## Guidance that applies here
 

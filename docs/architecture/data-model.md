@@ -953,13 +953,14 @@ completed pool waits, and metadata projection failures, recorded in
 `source_catalog_observation.publish_pending` is the publication queue for the
 recoverable full index. A staged observation is pending until its directory has
 completed and the publisher has written its card and file rows.
-`source_catalog_audio_root` holds the generations and roots that can publish, so
-the publisher joins a small set instead of evaluating a correlated `EXISTS` for
-every complete directory. A partial index over pending rows keeps the tail
-case, where only a few observations remain, independent of how many
-directories are already published. The worker drains at most four batches of
-100 rows per invocation and then returns the job to the queue, which bounds
-write-lock spans while the scan continues.
+`source_catalog_audio_root` holds the generations and roots that can publish.
+The publisher drives each batch from the current generation's complete
+directories and requires an audio root through `EXISTS`; the directory primary
+key orders the scan and the partial index over pending rows seeks the
+observations. An earlier materialized-roots join scanned the whole root set per
+batch. The worker drains at most eight batches of 50 rows per invocation and
+then returns the job to the queue, which bounds write-lock spans while the scan
+continues.
 
 `source_catalog_scan.publish_cleanup_cursor` (migration
 [`077_source_catalog_publish_cleanup.sql`](../../backend/migrations/077_source_catalog_publish_cleanup.sql))
@@ -968,7 +969,9 @@ generation. Cleanup visits only entries with
 `last_seen_generation = <current run>` and `id > cursor`, so an entry the
 current generation did not republish keeps its files. A resumed generation
 resets the cursor to zero once, after no directory and no publish row remains,
-because publication order differs from entry-id order. `source_catalog_file_title`
+because publication order differs from entry-id order. The cursor never
+rewinds: an entry under a failed, restricted or unconfirmed-empty subtree keeps
+its older file rows until a generation observes that subtree. `source_catalog_file_title`
 is an index on `source_catalog_file(catalog_entry_id, title)`: file-title
 search tests one candidate at a time, and the covered entry id lets the lookup
 answer from the index instead of reading the table row.

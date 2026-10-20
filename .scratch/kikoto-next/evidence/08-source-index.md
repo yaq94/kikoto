@@ -59,9 +59,11 @@ legacy query in that fixture still takes 36.5 s.
 | Query plan | correlated `EXISTS` per complete directory | partial index seek + root join |
 
 The worker no longer publishes after every 32-step batch. It drains at most
-four batches of 100 rows before the next page batch and returns the remaining
+400 rows per invocation before the next page batch and returns the remaining
 backlog to the workflow queue; an exhausted queue returns immediately instead
-of repeating the publication query 32 times.
+of repeating the publication query 32 times. The geometry was 4 × 100 when this
+evidence was recorded and is 8 × 50 after the write-contention work
+([20](20-post-review-fixes.md)); the 400-row pass total is unchanged.
 
 ## 未完成项
 

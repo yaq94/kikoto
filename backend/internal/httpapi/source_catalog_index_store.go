@@ -452,6 +452,29 @@ func refreshCatalogAudioRootTx(ctx context.Context, tx *sql.Tx, sourceID, genera
 	return err
 }
 
+// catalogPublishQuery drives one publication batch from this generation's
+// directories, not from the pending index: a materialized roots CTE made every
+// publish batch scan the whole audio-root set (88ms per batch on a
+// production-sized copy with zero rows to publish), and an observation-first
+// plan would walk any rows a purge has not reached. The directory primary key
+// orders the scan and the observation primary key orders each directory's rows,
+// so no temporary sort is needed. The LIMIT placeholder is
+// catalogPublishRows.
+const catalogPublishQuery = `SELECT d.path,d.catalog_root,o.name,o.kind,o.size_bytes,o.content_hash,o.modified_at,
+	-- The split decision belongs to the catalog root, so every row below
+	-- it must see the plan. A format child that read an empty mode used to
+	-- publish its own folder row into the creator card, which then could
+	-- never be retired.
+	COALESCE(rd.work_split,'')
+FROM source_catalog_directory d
+JOIN source_catalog_observation o ON o.file_source_id=d.file_source_id AND o.directory_path=d.path AND o.revision=d.revision
+LEFT JOIN source_catalog_directory rd ON rd.file_source_id=d.file_source_id AND rd.path=d.catalog_root AND rd.generation=d.generation
+WHERE d.file_source_id=? AND d.generation=? AND d.status='complete' AND d.catalog_root<>''
+	AND o.publish_pending=1
+	AND EXISTS(SELECT 1 FROM source_catalog_audio_root r
+		WHERE r.file_source_id=d.file_source_id AND r.generation=d.generation AND r.catalog_root=d.catalog_root)
+ORDER BY d.path,o.name LIMIT ?`
+
 // Publish a bounded number of validated observations. The first playable
 // observation creates a catalog identity; it never registers a library work.
 func (s *Server) publishCatalogBatch(ctx context.Context, job workflowJobRecord, sourceID int64) (int, error) {
@@ -466,26 +489,7 @@ func (s *Server) publishCatalogBatch(ctx context.Context, job workflowJobRecord,
 	if err = verifyCatalogLease(ctx, tx.Tx, job); err != nil {
 		return 0, err
 	}
-	// Drive from this generation's directories, not from the pending index: a
-	// materialized roots CTE made every publish batch scan the whole audio-root
-	// set (88ms per batch on a production-sized copy with zero rows to publish),
-	// and an observation-first plan would walk any rows a purge has not reached.
-	// The directory primary key orders the scan, and the observation primary key
-	// orders each directory's rows, so no temporary sort is needed.
-	rows, err := tx.QueryContext(ctx, `SELECT d.path,d.catalog_root,o.name,o.kind,o.size_bytes,o.content_hash,o.modified_at,
-		-- The split decision belongs to the catalog root, so every row below
-		-- it must see the plan. A format child that read an empty mode used to
-		-- publish its own folder row into the creator card, which then could
-		-- never be retired.
-		COALESCE(rd.work_split,'')
-FROM source_catalog_directory d
-JOIN source_catalog_observation o ON o.file_source_id=d.file_source_id AND o.directory_path=d.path AND o.revision=d.revision
-LEFT JOIN source_catalog_directory rd ON rd.file_source_id=d.file_source_id AND rd.path=d.catalog_root AND rd.generation=d.generation
-WHERE d.file_source_id=? AND d.generation=? AND d.status='complete' AND d.catalog_root<>''
-	AND o.publish_pending=1
-	AND EXISTS(SELECT 1 FROM source_catalog_audio_root r
-		WHERE r.file_source_id=d.file_source_id AND r.generation=d.generation AND r.catalog_root=d.catalog_root)
-ORDER BY d.path,o.name LIMIT ?`, sourceID, job.RunID, catalogPublishRows)
+	rows, err := tx.QueryContext(ctx, catalogPublishQuery, sourceID, job.RunID, catalogPublishRows)
 	if err != nil {
 		return 0, err
 	}

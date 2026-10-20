@@ -259,15 +259,12 @@ func (s *Server) cleanupCatalogPublishBatch(ctx context.Context, job workflowJob
 	if err = tx.QueryRowContext(ctx, `SELECT publish_cleanup_cursor FROM source_catalog_scan WHERE file_source_id=?`, sourceID).Scan(&cursor); err != nil {
 		return 0, 0, err
 	}
-	// A negative cursor is the durable "retry the skipped cards once" flag. It
-	// is reset to zero by every new scan, so a permanently unreadable subtree
-	// costs at most one extra sweep per run instead of a hot loop.
-	retrying := false
+	// Older builds stored a negative "sweep again" marker here. The sweep no
+	// longer rewinds, so a database written by one of those builds starts from
+	// the beginning once and then continues forward.
 	if cursor < 0 {
 		cursor = 0
-		retrying = true
 	}
-	uncertainSeen := false
 	rows, err := tx.QueryContext(ctx, `SELECT id FROM source_catalog_entry
 		WHERE file_source_id=? AND last_seen_generation=? AND id>?
 		ORDER BY id LIMIT ?`, sourceID, job.RunID, cursor, catalogCleanupRows)
@@ -308,9 +305,6 @@ func (s *Server) cleanupCatalogPublishBatch(ctx context.Context, job workflowJob
 		if uncertainErr != nil {
 			return 0, 0, uncertainErr
 		}
-		if uncertain {
-			uncertainSeen = true
-		}
 		if !uncertain {
 			result, execErr := tx.ExecContext(ctx, `DELETE FROM source_catalog_file WHERE catalog_entry_id=? AND observed_generation<>?`, id, job.RunID)
 			if execErr != nil {
@@ -347,16 +341,12 @@ func (s *Server) cleanupCatalogPublishBatch(ctx context.Context, job workflowJob
 		cursor = id
 	}
 	if len(ids) > 0 {
-		// A card skipped because its subtree was unreadable is not finished: the
-		// older rows it still lists can only be judged after that subtree
-		// completes. When the sweep reaches its last page, mark one retry; the
-		// next pass starts from the beginning and this flag is consumed, so the
-		// cursor cannot rewind forever. A partial page keeps its forward cursor.
-		if len(ids) < catalogCleanupRows {
-			if uncertainSeen && !retrying {
-				cursor = -1
-			}
-		}
+		// A card whose subtree is failed, restricted or unconfirmed-empty keeps
+		// the rows an older generation left there: the current generation never
+		// proved those files are gone. Retrying inside the same run cannot change
+		// that verdict, because it reads the same directory rows; a later
+		// generation that observes the subtree deletes them. The cursor still
+		// advances so one pass always terminates.
 		if _, err = tx.ExecContext(ctx, `UPDATE source_catalog_scan SET publish_cleanup_cursor=?,updated_at=CURRENT_TIMESTAMP WHERE file_source_id=?`, cursor, sourceID); err != nil {
 			return 0, 0, err
 		}
