@@ -239,18 +239,20 @@ func TestWorkMatchingPausesAfterDailyOperationBudget(t *testing.T) {
 }
 
 // Serialized candidate evidence is bounded at 2 MiB. A range that would exceed
-// it pauses instead of choosing a unique candidate from a truncated set.
+// it pauses instead of choosing a unique candidate from a truncated set. The
+// fixture crosses the ceiling with few, large candidates so the scan stays
+// inside the five-second evaluation budget even under the race detector.
 func TestWorkMatchingPausesAtEvidenceByteLimit(t *testing.T) {
 	db := openMigratedTestDB(t)
 	s := NewServer(db, config.Config{Mode: config.ModeProduction, RootUsername: "synthetic-editor", DataRoot: t.TempDir(), CacheRoot: t.TempDir()})
 	defer func() { _ = s.Shutdown(context.Background()) }()
 	createTestAdministrator(t, s, "synthetic-editor", "synthetic-password")
-	longTitle := strings.Repeat("x", 8<<10)
+	longTitle := strings.Repeat("x", 40<<10)
 	metadataReviewExec(t, db, `INSERT INTO work(id,primary_code,title,release_date) VALUES(11,'','`+longTitle+`','2020-01-02');
 	INSERT INTO person(id,display_name) VALUES(1,'Example Voice'); INSERT INTO work_credit(work_id,person_id,role) VALUES(11,1,'voice_actor');
-	WITH RECURSIVE n(x) AS (VALUES(12) UNION ALL SELECT x+1 FROM n WHERE x<311)
+	WITH RECURSIVE n(x) AS (VALUES(12) UNION ALL SELECT x+1 FROM n WHERE x<71)
 	INSERT INTO work(id,primary_code,title,release_date) SELECT x,'','`+longTitle+`','2020-01-02' FROM n;
-	INSERT INTO work_credit(work_id,person_id,role) SELECT id,1,'voice_actor' FROM work WHERE id BETWEEN 12 AND 311;`)
+	INSERT INTO work_credit(work_id,person_id,role) SELECT id,1,'voice_actor' FROM work WHERE id BETWEEN 12 AND 71;`)
 	app := httptest.NewServer(s.Routes())
 	defer app.Close()
 	cookie := workReferenceLogin(t, app, "synthetic-editor")
