@@ -7,6 +7,8 @@ import (
 	"errors"
 	"net/http"
 	"time"
+
+	"github.com/yexca/kikoto/backend/internal/sqlutil"
 )
 
 type workMatchingOptions struct {
@@ -183,12 +185,12 @@ func (s *Server) advanceWorkMatching(ctx context.Context, o workMatchingOptions)
 		return ctx.Err()
 	}
 	if err != nil && attempts < 2 {
-		_, saveErr := s.db.ExecContext(ctx, `UPDATE work_matching_control SET status='retrying',attempts=?,retry_after=?,error_code='matching_failed' WHERE revision=?`, attempts+1, s.catalogTime().Add(time.Duration(30*(1<<attempts))*time.Second).Unix(), revision)
+		_, saveErr := sqlutil.ExecBounded(ctx, s.db, `UPDATE work_matching_control SET status='retrying',attempts=?,retry_after=?,error_code='matching_failed' WHERE revision=?`, attempts+1, s.catalogTime().Add(time.Duration(30*(1<<attempts))*time.Second).Unix(), revision)
 		return saveErr
 	}
 	if err != nil {
 		raw := `{"status":"failed","rule":"matching_failed","candidates":[],"candidateCount":0}`
-		if _, saveErr := s.db.ExecContext(ctx, `INSERT INTO work_matching_result(kind,entity_id,result_json,revision) VALUES(?,?,?,?) ON CONFLICT(kind,entity_id) DO UPDATE SET result_json=excluded.result_json,revision=excluded.revision`, subject.Kind, subject.ID, raw, revision); saveErr != nil {
+		if _, saveErr := sqlutil.ExecBounded(ctx, s.db, `INSERT INTO work_matching_result(kind,entity_id,result_json,revision) VALUES(?,?,?,?) ON CONFLICT(kind,entity_id) DO UPDATE SET result_json=excluded.result_json,revision=excluded.revision`, subject.Kind, subject.ID, raw, revision); saveErr != nil {
 			return saveErr
 		}
 		result.Revision = revision
@@ -196,6 +198,6 @@ func (s *Server) advanceWorkMatching(ctx context.Context, o workMatchingOptions)
 	if result.Revision != revision {
 		subject = associationSubject{}
 	}
-	_, err = s.db.ExecContext(ctx, `UPDATE work_matching_control SET cursor_kind=?,cursor_id=?,scan_revision=?,attempts=0,retry_after=0,error_code='' WHERE revision=?`, subject.Kind, subject.ID, result.Revision, result.Revision)
+	_, err = sqlutil.ExecBounded(ctx, s.db, `UPDATE work_matching_control SET cursor_kind=?,cursor_id=?,scan_revision=?,attempts=0,retry_after=0,error_code='' WHERE revision=?`, subject.Kind, subject.ID, result.Revision, result.Revision)
 	return err
 }
