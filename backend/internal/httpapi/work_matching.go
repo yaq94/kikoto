@@ -256,7 +256,7 @@ func matchWorkEvidence(a, b workMatchEvidence) workMatchCandidate {
 	// Credits are comparable either as person rows or as the names a release
 	// sidecar publishes. Person rows remain authoritative when both sides have
 	// them; names are the only common form for an unregistered catalog card.
-	voiceMatch, voiceEvidence := matchCatalogCredits(a.Voices, b.Voices, a.VoiceNames, b.VoiceNames)
+	voiceMatch, voiceEvidence := matchCatalogCredits(a.Voices, b.Voices, a.VoiceNames, b.VoiceNames, "voice_actors")
 	if !voiceMatch {
 		// Only two present, different voice casts contradict each other. A
 		// missing cast on one side is absence of evidence, not a conflict: an
@@ -268,16 +268,20 @@ func matchWorkEvidence(a, b workMatchEvidence) workMatchCandidate {
 		return c
 	}
 	c.Reasons = append(c.Reasons, voiceEvidence)
-	if len(a.Circles) > 0 && len(b.Circles) > 0 {
-		if !slices.Equal(a.Circles, b.Circles) {
+	circleMatch, circleEvidence := matchCatalogCredits(a.Circles, b.Circles, a.CircleNames, b.CircleNames, "circles")
+	if hasCatalogCircles(a) && hasCatalogCircles(b) {
+		// Two present circles are a contradiction unless they agree. This also
+		// covers sidecar-only names: a title plus one shared voice actor cannot
+		// override a different labelled circle.
+		if !circleMatch {
 			c.Rule = "conflicting_evidence"
 			c.Reasons = append(c.Reasons, "circles")
 			return c
 		}
 		c.Rule = "title_voice_circle"
 		c.Confidence = "high"
-		c.Reasons = append(c.Reasons, "circles")
-	} else if circleMatch, circleEvidence := matchCatalogCredits(a.Circles, b.Circles, a.CircleNames, b.CircleNames); circleMatch {
+		c.Reasons = append(c.Reasons, circleEvidence)
+	} else if circleMatch {
 		c.Rule = "title_voice_circle"
 		c.Confidence = "high"
 		c.Reasons = append(c.Reasons, circleEvidence)
@@ -313,15 +317,19 @@ func hasCatalogVoices(e workMatchEvidence) bool {
 	return len(e.Voices) > 0 || len(uniqueSortedCatalogNames(e.VoiceNames)) > 0
 }
 
+func hasCatalogCircles(e workMatchEvidence) bool {
+	return len(e.Circles) > 0 || len(uniqueSortedCatalogNames(e.CircleNames)) > 0
+}
+
 // matchCatalogCredits compares credits when both sides provide them. Person ids
 // are used when both sides have them; otherwise the readable names are
 // compared. A missing credit set cannot create a match.
-func matchCatalogCredits(leftIDs, rightIDs []int64, leftNames, rightNames []string) (bool, string) {
+func matchCatalogCredits(leftIDs, rightIDs []int64, leftNames, rightNames []string, evidence string) (bool, string) {
 	if len(leftIDs) > 0 && len(rightIDs) > 0 {
 		if !slices.Equal(leftIDs, rightIDs) {
 			return false, ""
 		}
-		return true, "voice_actors"
+		return true, evidence
 	}
 	left, right := uniqueSortedCatalogNames(leftNames), uniqueSortedCatalogNames(rightNames)
 	if len(left) == 0 || len(right) == 0 {
@@ -330,7 +338,7 @@ func matchCatalogCredits(leftIDs, rightIDs []int64, leftNames, rightNames []stri
 	if !equalCatalogSidecarNames(left, right) {
 		return false, ""
 	}
-	return true, "voice_actors"
+	return true, evidence
 }
 
 func evaluateWorkMatchTx(ctx context.Context, tx *sql.Tx, subject associationSubject) (workMatchResult, error) {
