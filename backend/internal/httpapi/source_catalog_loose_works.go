@@ -1297,18 +1297,38 @@ func catalogCardFilesCoveredTx(ctx context.Context, tx *sql.Tx, staleID, ownerID
 	return missing == 0, err
 }
 
-// retireOrphanSplitRootsTx retires split cards whose root is no longer split
-// in the current generation. A full index only builds a plan for roots that
-// still split, so without this pass the cards of a former creator split would
-// keep their files and stay visible beside the single card that replaced them.
-// A card with a work, a series membership or an incoming alias is retained for
-// explicit review, and a root that is not fully observed is skipped.
-func retireOrphanSplitRootsTx(ctx context.Context, tx *sql.Tx, sourceID, generation int64) error {
-	rows, err := tx.QueryContext(ctx, `SELECT DISTINCT source_root FROM source_catalog_entry
-		WHERE file_source_id=? AND source_root<>'' AND relocated_to_id IS NULL AND last_seen_generation<>?`,
-		sourceID, generation)
+// retireOrphanSplitRootsBatch retires split cards whose root is no longer
+// split in the current generation. A full index only builds a plan for roots
+// that still split, so without this pass the cards of a former creator split
+// would keep their files and stay visible beside the single card that replaced
+// them. A card with a work, a series membership or an incoming alias is
+// retained for explicit review, and a root that is not fully observed is
+// skipped. Each call handles at most 100 roots so the write lock stays short
+// and the workflow can continue on the next invocation.
+func (s *Server) retireOrphanSplitRootsBatch(ctx context.Context, job workflowJobRecord, sourceID int64) (int, error) {
+	tx, release, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
 	if err != nil {
-		return err
+		return 0, err
+	}
+	defer release()
+	if err = verifyCatalogLease(ctx, tx.Tx, job); err != nil {
+		return 0, err
+	}
+	// A card that carries a work, a series membership or an alias is kept for
+	// explicit review. Such a root is skipped entirely; otherwise every batch
+	// would select it again and the job would never finish.
+	rows, err := tx.QueryContext(ctx, `SELECT DISTINCT e.source_root FROM source_catalog_entry e
+		WHERE e.file_source_id=? AND e.source_root<>'' AND e.relocated_to_id IS NULL
+			AND e.last_seen_generation<>?
+			AND NOT EXISTS(SELECT 1 FROM source_catalog_entry b
+				WHERE b.file_source_id=e.file_source_id AND b.source_root=e.source_root
+					AND (b.work_id IS NOT NULL
+						OR EXISTS(SELECT 1 FROM catalog_series_member m WHERE m.catalog_entry_id=b.id)
+						OR EXISTS(SELECT 1 FROM source_catalog_entry r WHERE r.relocated_to_id=b.id)))
+		ORDER BY e.source_root LIMIT 100`,
+		sourceID, job.RunID)
+	if err != nil {
+		return 0, err
 	}
 	roots := []string{}
 	for rows.Next() {
@@ -1321,11 +1341,12 @@ func retireOrphanSplitRootsTx(ctx context.Context, tx *sql.Tx, sourceID, generat
 	readErr := rows.Err()
 	_ = rows.Close()
 	if err != nil {
-		return err
+		return 0, err
 	}
 	if readErr != nil {
-		return readErr
+		return 0, readErr
 	}
+	generation := job.RunID
 	for _, root := range roots {
 		var status string
 		if err = tx.QueryRowContext(ctx, `SELECT status FROM source_catalog_directory
@@ -1333,14 +1354,14 @@ func retireOrphanSplitRootsTx(ctx context.Context, tx *sql.Tx, sourceID, generat
 			continue
 		}
 		if err != nil {
-			return err
+			return 0, err
 		}
 		if status != "complete" {
 			continue
 		}
-		incomplete, err := catalogRootIncomplete(ctx, tx, sourceID, generation, root)
+		incomplete, err := catalogRootIncomplete(ctx, tx.Tx, sourceID, generation, root)
 		if err != nil {
-			return err
+			return 0, err
 		}
 		if incomplete {
 			continue
@@ -1349,7 +1370,7 @@ func retireOrphanSplitRootsTx(ctx context.Context, tx *sql.Tx, sourceID, generat
 		rows, err := tx.QueryContext(ctx, `SELECT id FROM source_catalog_entry
 			WHERE file_source_id=? AND source_root=? AND last_seen_generation=?`, sourceID, root, generation)
 		if err != nil {
-			return err
+			return 0, err
 		}
 		for rows.Next() {
 			var id int64
@@ -1361,16 +1382,19 @@ func retireOrphanSplitRootsTx(ctx context.Context, tx *sql.Tx, sourceID, generat
 		readErr := rows.Err()
 		_ = rows.Close()
 		if err != nil {
-			return err
+			return 0, err
 		}
 		if readErr != nil {
-			return readErr
+			return 0, readErr
 		}
-		if err = retireStaleSplitCardsTx(ctx, tx, sourceID, generation, root, keep); err != nil {
-			return err
+		if err = retireStaleSplitCardsTx(ctx, tx.Tx, sourceID, generation, root, keep); err != nil {
+			return 0, err
 		}
 	}
-	return nil
+	if err = tx.Commit(); err != nil {
+		return 0, err
+	}
+	return len(roots), nil
 }
 
 // markStaleSnapshotCardsTx reports cards a finite scan no longer publishes as

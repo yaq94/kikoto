@@ -129,6 +129,16 @@ func (s *Server) executeSourceCatalogIndexJob(ctx context.Context, job workflowJ
 			if p.Failed+p.Restricted > 0 || rootEmpty {
 				status = "partial"
 			} else {
+				// Retire the split cards of roots that the current generation
+				// no longer splits. A batch keeps the write lock short; a full
+				// batch asks the workflow for another invocation.
+				retired, err := s.retireOrphanSplitRootsBatch(ctx, job, input.SourceID)
+				if err != nil {
+					return err
+				}
+				if retired == 100 {
+					return s.settleCatalogBatch(ctx, job, input.SourceID, "queued", "")
+				}
 				pending, err := s.settleCatalogLifecycleBatch(ctx, job, input.SourceID)
 				if err != nil {
 					return err
