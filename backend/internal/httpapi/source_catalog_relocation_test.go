@@ -176,7 +176,7 @@ func TestSourceCatalogRelocationCarriesSidecarEvidence(t *testing.T) {
 			Path string `json:"path"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&in)
-		items := []map[string]any{}
+		var items []map[string]any
 		switch {
 		case in.Path == "/":
 			name := "Original Work"

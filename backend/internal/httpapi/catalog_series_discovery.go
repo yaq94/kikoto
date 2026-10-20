@@ -110,7 +110,7 @@ func catalogEpisodeFormatCopy(name string) (string, bool) {
 	}
 	last := len(match) - 2
 	suffix := strings.TrimSpace(name[match[last]:match[last+1]])
-	if suffix == "" || !(catalogFormatDirectory(suffix) || catalogAuxiliaryDirectory(suffix)) {
+	if suffix == "" || (!catalogFormatDirectory(suffix) && !catalogAuxiliaryDirectory(suffix)) {
 		return "", false
 	}
 	// Everything before the format marker is the episode's own name, kept

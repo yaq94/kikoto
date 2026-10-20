@@ -103,7 +103,7 @@ func run() error {
 				w.WriteHeader(http.StatusBadRequest)
 				return
 			}
-			content := []map[string]any{}
+			var content []map[string]any
 			switch input.Path {
 			case "/Example Work":
 				content = []map[string]any{{"name": "listening wind.wav", "size": len(audio)}}
