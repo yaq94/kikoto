@@ -5,8 +5,9 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
-	"errors"
 	"fmt"
+	"path"
+	"strings"
 )
 
 func catalogFingerprintsTx(ctx context.Context, tx *sql.Tx, id, generation int64) (string, string, error) {
@@ -51,51 +52,76 @@ func catalogFingerprintsTx(ctx context.Context, tx *sql.Tx, id, generation int64
 // directory takes the next free position, so comparing positions would turn
 // every rename into a conflict. Two different series stay a review conflict.
 func catalogSeriesMembershipsCompatibleTx(ctx context.Context, tx *sql.Tx, oldID, targetID int64) (bool, error) {
-	type member struct {
-		series, position int64
-	}
-	read := func(id int64) (member, bool, error) {
-		var m member
-		err := tx.QueryRowContext(ctx, `SELECT series_id,position FROM catalog_series_member WHERE catalog_entry_id=?`, id).Scan(&m.series, &m.position)
-		if errors.Is(err, sql.ErrNoRows) {
-			return m, false, nil
-		}
-		return m, err == nil, err
-	}
-	oldMember, oldOK, err := read(oldID)
+	// Memberships may sit on an alias left by an older relocation, so both
+	// sides are read through their alias closure. A card claimed by two
+	// different series cannot be merged without an explicit review.
+	oldSeries, err := catalogSeriesMembersOfEntryTx(ctx, tx, oldID)
 	if err != nil {
 		return false, err
 	}
-	if !oldOK {
+	if len(oldSeries) == 0 {
 		return true, nil
 	}
-	targetMember, targetOK, err := read(targetID)
+	if len(oldSeries) > 1 {
+		return false, nil
+	}
+	targetSeries, err := catalogSeriesMembersOfEntryTx(ctx, tx, targetID)
 	if err != nil {
 		return false, err
 	}
-	if !targetOK {
+	if len(targetSeries) == 0 {
 		return true, nil
 	}
-	return oldMember.series == targetMember.series, nil
+	if len(targetSeries) > 1 {
+		return false, nil
+	}
+	return catalogSeriesRenameEvidenceTx(ctx, tx, oldSeries[0], targetSeries[0])
+}
+
+// catalogSeriesRenameMatchesEpisodeTx reports a single-file episode inside a
+// series directory that moved as a group: both cards belong to different
+// series that describe the same episode set, and the directory name is
+// unchanged. That group correspondence is the evidence a lone file lacks.
+func catalogSeriesRenameMatchesEpisodeTx(ctx context.Context, tx *sql.Tx, old, target catalogRelocationEntry) (bool, error) {
+	oldSeries, err := catalogSeriesMembersOfEntryTx(ctx, tx, old.id)
+	if err != nil || len(oldSeries) != 1 {
+		return false, err
+	}
+	targetSeries, err := catalogSeriesMembersOfEntryTx(ctx, tx, target.id)
+	if err != nil || len(targetSeries) != 1 || targetSeries[0] == oldSeries[0] {
+		return false, err
+	}
+	renamed, err := catalogSeriesRenameEvidenceTx(ctx, tx, oldSeries[0], targetSeries[0])
+	if err != nil || !renamed {
+		return false, err
+	}
+	return strings.EqualFold(path.Base(catalogEffectiveRoot(old.root, old.sourceRoot)), path.Base(catalogEffectiveRoot(target.root, target.sourceRoot))), nil
+}
+
+func catalogEffectiveRoot(root, sourceRoot string) string {
+	if sourceRoot != "" {
+		return sourceRoot
+	}
+	return root
 }
 
 type catalogRelocationEntry struct {
 	id                                            int64
 	root, sourceRoot, title, code, strong, layout string
 	workID                                        sql.NullInt64
-	discovered                                    int64
+	discovered, lastSeen                          int64
 }
 
 func reconcileCatalogEntryTx(ctx context.Context, tx *sql.Tx, sourceID, generation, id int64) error {
 	var old catalogRelocationEntry
-	err := tx.QueryRowContext(ctx, `SELECT id,root_path,source_root,title,primary_code,content_fingerprint,layout_fingerprint,work_id,discovered_generation FROM source_catalog_entry WHERE id=?`, id).Scan(&old.id, &old.root, &old.sourceRoot, &old.title, &old.code, &old.strong, &old.layout, &old.workID, &old.discovered)
+	err := tx.QueryRowContext(ctx, `SELECT id,root_path,source_root,title,primary_code,content_fingerprint,layout_fingerprint,work_id,discovered_generation,last_seen_generation FROM source_catalog_entry WHERE id=?`, id).Scan(&old.id, &old.root, &old.sourceRoot, &old.title, &old.code, &old.strong, &old.layout, &old.workID, &old.discovered, &old.lastSeen)
 	if err != nil {
 		return err
 	}
 	if _, err = tx.ExecContext(ctx, `DELETE FROM source_catalog_relocation_candidate WHERE catalog_entry_id=?`, id); err != nil {
 		return err
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT id,root_path,source_root,title,primary_code,content_fingerprint,layout_fingerprint,work_id,discovered_generation FROM source_catalog_entry
+	rows, err := tx.QueryContext(ctx, `SELECT id,root_path,source_root,title,primary_code,content_fingerprint,layout_fingerprint,work_id,discovered_generation,last_seen_generation FROM source_catalog_entry
 		WHERE file_source_id=? AND relocated_to_id IS NULL AND last_seen_generation=? AND id<>?
 		AND ((?<>'' AND content_fingerprint=?) OR (?<>'' AND layout_fingerprint=?) OR title=?) ORDER BY id LIMIT 9`, sourceID, generation, id, old.strong, old.strong, old.layout, old.layout, old.title)
 	if err != nil {
@@ -104,7 +130,7 @@ func reconcileCatalogEntryTx(ctx context.Context, tx *sql.Tx, sourceID, generati
 	var candidates []catalogRelocationEntry
 	for rows.Next() {
 		var item catalogRelocationEntry
-		if err = rows.Scan(&item.id, &item.root, &item.sourceRoot, &item.title, &item.code, &item.strong, &item.layout, &item.workID, &item.discovered); err != nil {
+		if err = rows.Scan(&item.id, &item.root, &item.sourceRoot, &item.title, &item.code, &item.strong, &item.layout, &item.workID, &item.discovered, &item.lastSeen); err != nil {
 			break
 		}
 		candidates = append(candidates, item)
@@ -146,7 +172,10 @@ func reconcileCatalogEntryTx(ctx context.Context, tx *sql.Tx, sourceID, generati
 			strongCount++
 			target = candidate
 		}
-		if old.strong == "" && old.layout != "" && candidate.layout == old.layout {
+		// A provider hash on both sides is the stronger evidence: a differing
+		// hash contradicts a matching manifest. When the renamed location has
+		// no hash, the manifest remains the only comparable evidence.
+		if old.layout != "" && candidate.layout == old.layout && (candidate.strong == "" || candidate.strong == old.strong) {
 			layoutCount++
 			layoutTarget = candidate
 		}
@@ -164,7 +193,11 @@ func reconcileCatalogEntryTx(ctx context.Context, tx *sql.Tx, sourceID, generati
 				return err
 			}
 			reason = "conflicting_identity"
-			if !target.workID.Valid && compatible && target.discovered == generation && old.code == target.code {
+			// The provisional card may have been published by an interrupted
+			// generation, so it is enough that it is newer than the card being
+			// replaced. Requiring this exact generation would lose a rename
+			// whenever the resume reuses an earlier published row.
+			if !target.workID.Valid && compatible && target.discovered >= old.lastSeen && old.code == target.code {
 				return relocateCatalogEntryTx(ctx, tx, old, target, generation)
 			}
 		}
@@ -183,21 +216,31 @@ func reconcileCatalogEntryTx(ctx context.Context, tx *sql.Tx, sourceID, generati
 		if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM source_catalog_entry WHERE file_source_id=? AND relocated_to_id IS NULL AND last_seen_generation<>? AND layout_fingerprint=?`, sourceID, generation, old.layout).Scan(&oldCount); err != nil {
 			return err
 		}
-		switch {
-		case layoutCount > 1 || oldCount > 1:
+		// A single same-sized file is not enough on its own to call this a
+		// rename: a replacement recording looks identical. Inside a series
+		// directory that moved as one group, the matching episode name is the
+		// additional evidence that this is the same episode.
+		singleFile := files < 2
+		if singleFile {
+			renamed, renameErr := catalogSeriesRenameMatchesEpisodeTx(ctx, tx, old, layoutTarget)
+			if renameErr != nil {
+				return renameErr
+			}
+			singleFile = !renamed
+		}
+		if layoutCount > 1 || oldCount > 1 {
 			reason = "ambiguous_evidence"
-		case files < 2:
-			// A single same-sized file is not enough to call this a rename.
+		} else if singleFile {
 			reason = "insufficient_evidence"
-		case len(candidates) >= 9:
+		} else if len(candidates) >= 9 {
 			reason = "ambiguous_evidence"
-		default:
+		} else {
 			compatible, err := catalogSeriesMembershipsCompatibleTx(ctx, tx, old.id, layoutTarget.id)
 			if err != nil {
 				return err
 			}
 			reason = "conflicting_identity"
-			if !layoutTarget.workID.Valid && compatible && layoutTarget.discovered == generation && old.code == layoutTarget.code {
+			if !layoutTarget.workID.Valid && compatible && layoutTarget.discovered >= old.lastSeen && old.code == layoutTarget.code {
 				return relocateCatalogEntryTx(ctx, tx, old, layoutTarget, generation)
 			}
 		}

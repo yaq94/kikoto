@@ -144,7 +144,7 @@ func (s *Server) settleCatalogLifecycleBatch(ctx context.Context, job workflowJo
 		rows, err := tx.QueryContext(ctx, `SELECT e.id FROM source_catalog_entry e
 			WHERE e.file_source_id=? AND e.relocated_to_id IS NULL AND e.last_seen_generation=?
 				AND e.content_fingerprint='' AND e.layout_fingerprint=''
-				AND EXISTS(SELECT 1 FROM source_catalog_file f WHERE f.catalog_entry_id=e.id AND f.kind='audio')
+				AND (SELECT count(*) FROM source_catalog_file f WHERE f.catalog_entry_id=e.id AND f.kind='audio') BETWEEN 1 AND 10000
 			ORDER BY e.id LIMIT ?`, sourceID, job.RunID, catalogLifecycleRows)
 		if err != nil {
 			return false, err
@@ -364,14 +364,20 @@ func (s *Server) cleanupCatalogPublishBatch(ctx context.Context, job workflowJob
 		// rtrim handles the configured root: "/" has no trailing component of
 		// its own, so the old prefix check never matched it and the root card
 		// kept a folder row for every child work.
+		// A split card records the real directory in source_root and keeps a
+		// synthetic root_path such as /Creator::key. The folder row in the card
+		// above names the real directory, so compare against source_root when
+		// it is present.
+		childRoot := `CASE WHEN e.source_root<>'' THEN e.source_root ELSE e.root_path END`
+		parentRoot := `CASE WHEN parent.source_root<>'' THEN parent.source_root ELSE parent.root_path END`
 		result, execErr := tx.ExecContext(ctx, `DELETE FROM source_catalog_file
 			WHERE catalog_entry_id=? AND relative_path IN (
-				SELECT substr(e.root_path,length(rtrim(parent.root_path,'/'))+2)
+				SELECT substr(`+childRoot+`,length(rtrim(`+parentRoot+`,'/'))+2)
 				FROM source_catalog_entry e
 				JOIN source_catalog_entry parent ON parent.id=?
 				WHERE e.file_source_id=parent.file_source_id
 					AND e.relocated_to_id IS NULL AND e.id<>parent.id
-					AND substr(e.root_path,1,length(rtrim(parent.root_path,'/'))+1)=rtrim(parent.root_path,'/') || '/')`, id, id)
+					AND substr(`+childRoot+`,1,length(rtrim(`+parentRoot+`,'/'))+1)=rtrim(`+parentRoot+`,'/') || '/')`, id, id)
 		if execErr != nil {
 			return 0, 0, execErr
 		}
