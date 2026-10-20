@@ -48,11 +48,33 @@ func catalogRangeUncertain(ctx context.Context, tx *sql.Tx, sourceID, generation
 	const uncertainStatus = ` status IN ('failed','restricted','empty','pending','listing_complete')
 		AND NOT (status='empty' AND error_code='not_found')`
 	var uncertain int
+	// The subtree predicate is a half-open path range so the directory
+	// primary key seeks it. A substr comparison scanned every directory of the
+	// generation for each card in a cleanup batch.
+	lower, upper := base+"/", base+"0"
+	if base == "/" {
+		lower, upper = "", ""
+	}
 	err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM source_catalog_directory d
 		WHERE d.file_source_id=? AND d.generation=? AND `+uncertainStatus+`
-			AND (?='/' OR d.path=? OR substr(d.path,1,length(?)+1)=? || '/'))`,
-		sourceID, generation, base, base, base, base).Scan(&uncertain)
+			AND (?='/' OR d.path=? OR (d.path>=? AND d.path<?)))`,
+		sourceID, generation, base, base, lower, upper).Scan(&uncertain)
 	return uncertain != 0, err
+}
+
+// catalogEntryHasChildTx reports whether another live entry sits below root.
+// The half-open path range uses the entry primary key; comparing a substr of
+// every entry for each parent made a cleanup batch quadratic.
+func catalogEntryHasChildTx(ctx context.Context, tx *sql.Tx, sourceID, parentID int64, root string) (bool, error) {
+	if root == "" || root == "/" {
+		return true, nil
+	}
+	var found int
+	err := tx.QueryRowContext(ctx, `SELECT EXISTS(
+		SELECT 1 FROM source_catalog_entry e
+		WHERE e.file_source_id=? AND e.id<>? AND e.relocated_to_id IS NULL
+			AND e.root_path>=? AND e.root_path<?)`, sourceID, parentID, root+"/", root+"0").Scan(&found)
+	return found != 0, err
 }
 
 func catalogFailureStatus(err error) string {
@@ -329,9 +351,9 @@ func (s *Server) cleanupCatalogPublishBatch(ctx context.Context, job workflowJob
 		return 0, 0, err
 	}
 	for _, id := range ids {
-		var base string
-		if err = tx.QueryRowContext(ctx, `SELECT `+catalogEffectiveRootSQL("source_catalog_entry")+`
-			FROM source_catalog_entry WHERE id=?`, id).Scan(&base); err != nil {
+		var base, rootPath string
+		if err = tx.QueryRowContext(ctx, `SELECT `+catalogEffectiveRootSQL("source_catalog_entry")+`,root_path
+			FROM source_catalog_entry WHERE id=?`, id).Scan(&base, &rootPath); err != nil {
 			return 0, 0, err
 		}
 		// A failed, restricted or unconfirmed-empty directory still proves
@@ -370,6 +392,20 @@ func (s *Server) cleanupCatalogPublishBatch(ctx context.Context, job workflowJob
 		// it is present.
 		childRoot := catalogEffectiveRootSQL("e")
 		parentRoot := catalogEffectiveRootSQL("parent")
+		// Cards without any live child cannot own a child folder row. Skip the
+		// correlated delete for them; only a split card, whose stored root
+		// differs from its synthetic path, keeps the full check.
+		hasChildren := true
+		if rootPath == base {
+			var childErr error
+			if hasChildren, childErr = catalogEntryHasChildTx(ctx, tx.Tx, sourceID, id, rootPath); childErr != nil {
+				return 0, 0, childErr
+			}
+		}
+		if !hasChildren {
+			cursor = id
+			continue
+		}
 		result, execErr := tx.ExecContext(ctx, `DELETE FROM source_catalog_file
 			WHERE catalog_entry_id=? AND relative_path IN (
 				SELECT substr(`+childRoot+`,length(rtrim(`+parentRoot+`,'/'))+2)
