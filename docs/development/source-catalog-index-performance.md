@@ -19,40 +19,24 @@ with a large backlog left by an earlier generation that plan sorts every queued
 row before `LIMIT` applies. A plan guard test asserts the directory search comes
 first and no temporary B-tree is used.
 
-Two earlier shapes are no longer used. Reading the pending queue first and
-joining a materialized root set with `WITH roots AS MATERIALIZED` scanned the
-whole root set per batch before `LIMIT` applied; filtering complete directories
-with a correlated `EXISTS` from the pending side still walked queued rows a
-purge had not cleared yet. The queue columns, indexes, root maintenance and
-batch drain are specified in
+The queue columns, indexes, root maintenance and batch drain are specified in
 [OpenList: Recoverable full index](openlist.md#recoverable-full-index).
 
-## Measured result
+## Repeated plan measurement
 
-The historical comparison on a 34 MB database with 3,917 directories and
-47,670 observations measured the two earlier shapes:
-
-| Case | Correlated `EXISTS` query | Queue query |
-| --- | --- | --- |
-| Five-row tail | 36.1–36.9 s | 3.2–4.0 ms |
-| Empty queue | first 100 unpublished, 0.3 ms | 0.0 s |
-| 3,000-directory synthetic tail | 36.5 s | about 5 ms |
-| Plan | correlated `EXISTS` per complete directory | partial index seek, root join, ordered limit |
-
-On a production-scale copy (14,459 current-generation directories, 14,459 audio
-roots, 266,296 rows left pending by an earlier generation) the current
-directory-first query returned a 100-row batch in 0.2 ms; the worker now asks
-for 50 rows with the same plan. The
-`WITH roots AS MATERIALIZED` query took 88.3 ms on the same copy, and a
-pending-first variant with `EXISTS` took 0.3 ms. `EXPLAIN QUERY PLAN` for the
-current query uses the directory primary key, seeks the pending partial index
-and probes the audio-root covering index, without a temporary sort or a scan of
-a materialized root set.
+The current directory-first query on a production-scale copy (14,459
+current-generation directories, 14,459 audio roots, 266,296 rows left pending
+by an earlier generation) returns a 100-row batch in 0.2 ms; the worker asks for
+50 rows with the same plan. A 34 MB synthetic database with 3,917 directories
+and 47,670 observations returns a five-row tail in 3.2–4.0 ms and a
+3,000-directory tail in about 5 ms. `EXPLAIN QUERY PLAN` uses the directory
+primary key, seeks the pending partial index and probes the audio-root covering
+index, without a temporary sort or a scan of a materialized root set.
 
 `TestSourceCatalogPublishTailStaysBounded` asserts the bounded tail;
 `TestSourceCatalogPublishTailPerformance` and
-`make source-index-tail-performance` print the current plan and the legacy
-comparison.
+`make source-index-tail-performance` print the current plan and the reference
+comparison from the calibration harness.
 
 ## Choosing the rate
 

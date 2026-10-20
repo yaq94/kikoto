@@ -218,15 +218,15 @@ independent sidecar worker continues the durable queue. Each pass is bounded by
 whole queue. A source that answers no file at all is not continued at once, so
 its normal retry delay applies. A definitively unreadable card is retried at
 most five times; a rescan does not reset that budget, so a deleted readme is
-not requested on every daily pass. Migration 081 stores the credit-file
-revision (`path|size|mtime`) beside the evidence; when that revision changes,
-the attempt budget is reset and the card is read again. A readme that a complete
+not requested on every daily pass. The credit-file revision (`path|size|mtime`)
+is stored beside the evidence; when that revision changes, the attempt budget
+resets and the card is read again. A readme that a complete
 snapshot no longer publishes clears the old evidence together with its failure
 and retry fields. A card republished while its readme's directory is still
 failed, restricted or unconfirmed-empty keeps its evidence: an incomplete range
 cannot prove that the file was deleted.
 
-Migration 082 separates two outcomes that used to share one counter. A
+Two failure classes have separate counters. A
 definitive answer - `404`/`410` for the object or its body, a body above the
 read limit, or an invalid object - is permanent and spends one of five
 `sidecar_attempts`. Anything else (connection failure, `5xx`, authentication

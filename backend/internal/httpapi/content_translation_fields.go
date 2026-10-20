@@ -133,11 +133,7 @@ func (s *Server) loadTranslationField(ctx context.Context, in contentTranslation
 			for _, choice := range work.TitleChoices {
 				candidates = append(candidates, choice.Title)
 			}
-			origin, _ := metadatatitles.ForLanguage(input.Variants, input.Manual, "origin", input.Fallback)
-			selected, found := metadatatitles.ForLanguage(input.Variants, input.Manual, in.Language, input.Fallback)
-			if found && (selected.Title == in.Text || in.Text == origin.Title) {
-				field.Existing = selected.Title
-			}
+			field.Existing = targetTitleFor(input, in.Text, in.Language, true)
 		} else {
 			originDescription := metadatatitles.Original(input.Variants, input.Fallback).Description
 			for _, v := range input.Variants {
@@ -225,15 +221,26 @@ func (s *Server) existingWorkTitle(ctx context.Context, workID int64, text, lang
 	if !ok {
 		return "", nil
 	}
+	return targetTitleFor(input, text, language, false), nil
+}
+
+// targetTitleFor returns the stored title in the requested language when the
+// selected text identifies the work's title. A work request may select a
+// translated edition as its own source text, so acceptSelected allows that;
+// a card can only stand in for the original title.
+func targetTitleFor(input workTitleInputs, text, language string, acceptSelected bool) string {
 	origin, _ := metadatatitles.ForLanguage(input.Variants, input.Manual, "origin", input.Fallback)
-	if origin.Title == "" || text != origin.Title {
-		return "", nil
+	if origin.Title == "" || text == "" {
+		return ""
 	}
 	selected, found := metadatatitles.ForLanguage(input.Variants, input.Manual, language, input.Fallback)
 	if !found {
-		return "", nil
+		return ""
 	}
-	return selected.Title, nil
+	if text == origin.Title || (acceptSelected && text == selected.Title) {
+		return selected.Title
+	}
+	return ""
 }
 
 // A catalog card and its directory names can mention the circle or a voice

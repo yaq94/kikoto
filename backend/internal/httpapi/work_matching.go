@@ -305,10 +305,6 @@ func matchWorkEvidence(a, b workMatchEvidence) workMatchCandidate {
 // source metadata and is not two independent facts, so that pair stays a
 // review candidate instead of an automatic association.
 func sidecarCreditEvidence(a, b workMatchEvidence) bool {
-	// Both sides need their own readme. A registered work's cast can be a copy
-	// of the same source metadata the readme repeats, so one labelled readme
-	// plus one authored row is not two independent facts; that pair stays a
-	// review candidate. Two readmes that agree are independent evidence.
 	left, right := uniqueSortedCatalogNames(a.Sidecar.VoiceActors), uniqueSortedCatalogNames(b.Sidecar.VoiceActors)
 	return len(left) > 0 && len(right) > 0 && equalCatalogSidecarNames(left, right)
 }

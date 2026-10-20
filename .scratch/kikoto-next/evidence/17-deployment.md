@@ -95,17 +95,15 @@ schema 68、quick_check ok、外键违规 0）及完整 config 目录；manifest
   702 张），含无发行编号作品（`primaryCode` 为空）与系列合并卡。
 - 搜索回读：`q=<示例关键词>` 命中 1（示例作品标题），搜索直接覆盖来源
   索引条目，未登记也可检索。
-- 媒体播放：既有作品 `/api/media/186/stream` Range `bytes=0-31` 返回
+- 媒体播放：一张既有作品的媒体流 Range `bytes=0-31` 返回
   HTTP 206、32 字节、M4A 文件头，证实部署后节目流路由与偏移读取正常。
 - 翻译服务：管理员配置入口与权限已验收（`sources:write` 才能保存，
-  普通用户 403）。2026-10-17 本会话完成生产配置：管理员保存
-  `baseUrl=http://127.0.0.1:<网关端口>/v1`（本机 sub2api 网关）、模型
-  `Index-Translate-35B-A3B` 与服务密钥（网关 80+ 把凭据中仅 group 18 一把
-  对目标模型返回 HTTP 200，已选该把；密钥值不写入本证据）。
+  普通用户 403）。管理员保存本机回环网关地址、模型
+  `Index-Translate-35B-A3B` 与服务密钥（密钥值不写入本证据）。
   保存后同页试译真实调用成功（HTTP 200、176 ms，日→简中
   「今天天气真好啊。我要和姐姐一起听音乐。」，`model=Index-Translate-35B-A3B`、
-  `templateVersion=index-user-v1`）；内容翻译对真实远程作品
-  catalog entry 12949 的 title 生效（zh-cn `translated/stored`，zh-tw
+  `templateVersion=index-user-v1`）；内容翻译对一张真实远程卡片
+  的 title 生效（zh-cn `translated/stored`，zh-tw
   复用简体缓存转换 `hit`），内容语言与 UI 语言独立。
 
 ## 真实来源索引（发布前同机构建族）

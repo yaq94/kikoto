@@ -725,8 +725,7 @@ func markCatalogSidecarCandidatesTx(ctx context.Context, tx *sql.Tx, ids []int64
 		// cannot be rebuilt until the source recovers.
 		var sourceID int64
 		var base string
-		if err = tx.QueryRowContext(ctx, `SELECT file_source_id,
-			CASE WHEN COALESCE(source_root,'')='' THEN root_path ELSE source_root END
+		if err = tx.QueryRowContext(ctx, `SELECT file_source_id,`+catalogEffectiveRootSQL("source_catalog_entry")+`
 			FROM source_catalog_entry WHERE id=?`, id).Scan(&sourceID, &base); err != nil {
 			return err
 		}

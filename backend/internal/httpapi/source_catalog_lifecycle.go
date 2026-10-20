@@ -215,7 +215,7 @@ func (s *Server) settleCatalogLifecycleBatch(ctx context.Context, job workflowJo
 			// range that contains it was fully observed. A failed, restricted
 			// or unconfirmed-empty directory proves nothing about its files.
 			var base string
-			if err = tx.QueryRowContext(ctx, `SELECT CASE WHEN COALESCE(source_root,'')='' THEN root_path ELSE source_root END
+			if err = tx.QueryRowContext(ctx, `SELECT `+catalogEffectiveRootSQL("source_catalog_entry")+`
 				FROM source_catalog_entry WHERE id=?`, e.id).Scan(&base); err != nil {
 				return false, err
 			}
@@ -245,7 +245,7 @@ func (s *Server) settleCatalogLifecycleBatch(ctx context.Context, job workflowJo
 			// be the only place an older file row can be confirmed, so keep the
 			// old rows until that subtree completes.
 			var base string
-			if err = tx.QueryRowContext(ctx, `SELECT CASE WHEN COALESCE(source_root,'')='' THEN root_path ELSE source_root END
+			if err = tx.QueryRowContext(ctx, `SELECT `+catalogEffectiveRootSQL("source_catalog_entry")+`
 				FROM source_catalog_entry WHERE id=?`, e.id).Scan(&base); err != nil {
 				return false, err
 			}
@@ -330,7 +330,7 @@ func (s *Server) cleanupCatalogPublishBatch(ctx context.Context, job workflowJob
 	}
 	for _, id := range ids {
 		var base string
-		if err = tx.QueryRowContext(ctx, `SELECT CASE WHEN COALESCE(source_root,'')='' THEN root_path ELSE source_root END
+		if err = tx.QueryRowContext(ctx, `SELECT `+catalogEffectiveRootSQL("source_catalog_entry")+`
 			FROM source_catalog_entry WHERE id=?`, id).Scan(&base); err != nil {
 			return 0, 0, err
 		}
@@ -368,8 +368,8 @@ func (s *Server) cleanupCatalogPublishBatch(ctx context.Context, job workflowJob
 		// synthetic root_path such as /Creator::key. The folder row in the card
 		// above names the real directory, so compare against source_root when
 		// it is present.
-		childRoot := `CASE WHEN e.source_root<>'' THEN e.source_root ELSE e.root_path END`
-		parentRoot := `CASE WHEN parent.source_root<>'' THEN parent.source_root ELSE parent.root_path END`
+		childRoot := catalogEffectiveRootSQL("e")
+		parentRoot := catalogEffectiveRootSQL("parent")
 		result, execErr := tx.ExecContext(ctx, `DELETE FROM source_catalog_file
 			WHERE catalog_entry_id=? AND relative_path IN (
 				SELECT substr(`+childRoot+`,length(rtrim(`+parentRoot+`,'/'))+2)
