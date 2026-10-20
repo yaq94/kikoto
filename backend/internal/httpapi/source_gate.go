@@ -203,9 +203,11 @@ func (t *sourceGateTransport) RoundTrip(request *http.Request) (*http.Response, 
 		release()
 		return nil, sourceBackoffError{Until: waitUntil}
 	}
-	if t.class == sourceRequestCatalogIndex {
+	if t.class == sourceRequestCatalogIndex || t.class == sourceRequestOpenList {
 		// Reserve distinct starts while holding one origin lock, so parallel
 		// metadata requests share one rate rather than bursting after a sleep.
+		// Catalog pages and credit files read the same source, so they share
+		// one token instead of each lane allowing its own request per second.
 		origin.mu.Lock()
 		if origin.catalogNext.After(waitUntil) {
 			waitUntil = origin.catalogNext

@@ -112,7 +112,7 @@ func (s *Server) refreshPendingCatalogSidecars(ctx context.Context) (bool, error
 	if reason := s.catalogIndexDiskPause(defaultCatalogIndexOptions()); reason != "" {
 		return false, nil
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT entry.file_source_id FROM source_catalog_entry entry
+	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT entry.file_source_id FROM source_catalog_entry entry INDEXED BY source_catalog_entry_sidecar_pending
 		JOIN file_source source ON source.id=entry.file_source_id
 		WHERE entry.relocated_to_id IS NULL AND entry.sidecar_pending=1 AND entry.sidecar_attempts<?
 			AND (entry.sidecar_retry_at='' OR entry.sidecar_retry_at<=CURRENT_TIMESTAMP)
