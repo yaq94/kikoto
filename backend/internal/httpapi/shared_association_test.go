@@ -20,6 +20,8 @@ func TestSharedAssociationWaitsForEachRecordOwner(t *testing.T) {
 	metadataReviewExec(t, db, `INSERT INTO file_source(id,code,display_name,source_type) VALUES(7,'example_a','Example A','openlist'),(8,'example_b','Example B','openlist');
 	INSERT INTO file_source_endpoint(file_source_id,api_url,base_url) VALUES(7,'https://a.example.invalid','https://a.example.invalid'),(8,'https://b.example.invalid','https://b.example.invalid');
 	INSERT INTO work(id,primary_code,title) VALUES(11,'','Example work A'),(12,'RJ00000000','Example work B');
+	INSERT INTO logical_work(id,canonical_work_id,canonical_code) VALUES(101,11,'EXAMPLE-A'),(102,12,'RJ00000000');
+	INSERT INTO work_edition(work_id,logical_work_id,primary_code,edition_label,is_canonical) VALUES(11,101,'','Original',1),(12,102,'RJ00000000','Translated',1);
 	INSERT INTO source_catalog_entry(id,file_source_id,root_path,title,work_id) VALUES(1,7,'/Example A','Example A',11),(2,8,'/Example B','Example B',12);`)
 	app := httptest.NewServer(s.Routes())
 	defer app.Close()
@@ -64,6 +66,18 @@ func TestSharedAssociationWaitsForEachRecordOwner(t *testing.T) {
 		workReferenceRequest(t, app, b, "GET", "/api/source-catalog/"+id, "", 200, &current)
 		assertReview(t, current, float64(2), "B resolved")
 	}
+	// Association is an identity operation. Each work keeps its own edition
+	// label and logical family instead of inheriting the other side's.
+	var labelA, labelB string
+	if err := db.QueryRow(`SELECT edition_label FROM work_edition WHERE work_id=11`).Scan(&labelA); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(`SELECT edition_label FROM work_edition WHERE work_id=12`).Scan(&labelB); err != nil {
+		t.Fatal(err)
+	}
+	if labelA != "Original" || labelB != "Translated" {
+		t.Fatalf("association rewrote editions: %q/%q", labelA, labelB)
+	}
 	workReferenceRequest(t, app, a, "PATCH", "/api/source-catalog/2/user-state", `{"note":"Shared update"}`, 200, nil)
 	workReferenceRequest(t, app, a, "GET", "/api/source-catalog/1", "", 200, &current)
 	assertReview(t, current, float64(4), "Shared update")
@@ -78,5 +92,30 @@ func TestSharedAssociationWaitsForEachRecordOwner(t *testing.T) {
 		if library["total"] != float64(1) {
 			t.Fatalf("shared identity count/search: %#v", library)
 		}
+	}
+}
+
+// Conflict fields are per field and per current user. A rating that agrees does
+// not hide a differing note, and an empty side does not count as a conflict.
+func TestSharedAssociationConflictFields(t *testing.T) {
+	one, two, five := int64(1), int64(2), int64(5)
+	cases := []struct {
+		name string
+		a, b associationReview
+		want string
+	}{
+		{"rating", associationReview{Rating: &one}, associationReview{Rating: &two}, "rating"},
+		{"note", associationReview{Note: "left"}, associationReview{Note: "right"}, "note"},
+		{"both", associationReview{Rating: &one, Note: "left"}, associationReview{Rating: &two, Note: "right"}, "rating,note"},
+		{"same", associationReview{Rating: &five, Note: "same"}, associationReview{Rating: &five, Note: "same"}, ""},
+		{"empty", associationReview{}, associationReview{Rating: &five, Note: "right"}, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := strings.Join(associationConflicts(tc.a, tc.b), ",")
+			if got != tc.want {
+				t.Fatalf("conflicts=%q want %q", got, tc.want)
+			}
+		})
 	}
 }
