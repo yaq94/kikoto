@@ -259,7 +259,14 @@ func (s *Server) cleanupCatalogPublishBatch(ctx context.Context, job workflowJob
 	if err = tx.QueryRowContext(ctx, `SELECT publish_cleanup_cursor FROM source_catalog_scan WHERE file_source_id=?`, sourceID).Scan(&cursor); err != nil {
 		return 0, 0, err
 	}
-	startCursor := cursor
+	// A negative cursor is the durable "retry the skipped cards once" flag. It
+	// is reset to zero by every new scan, so a permanently unreadable subtree
+	// costs at most one extra sweep per run instead of a hot loop.
+	retrying := false
+	if cursor < 0 {
+		cursor = 0
+		retrying = true
+	}
 	uncertainSeen := false
 	rows, err := tx.QueryContext(ctx, `SELECT id FROM source_catalog_entry
 		WHERE file_source_id=? AND last_seen_generation=? AND id>?
@@ -339,11 +346,13 @@ func (s *Server) cleanupCatalogPublishBatch(ctx context.Context, job workflowJob
 	if len(ids) > 0 {
 		// A card skipped because its subtree was unreadable is not finished: the
 		// older rows it still lists can only be judged after that subtree
-		// completes. Reaching the tail of the cursor rewinds it once, so the next
-		// pass revisits those cards instead of skipping them forever. A partial
-		// page keeps its forward cursor; the rewind happens when the scan ends.
-		if uncertainSeen && len(ids) < catalogCleanupRows && startCursor != 0 {
-			cursor = 0
+		// completes. When the sweep reaches its last page, mark one retry; the
+		// next pass starts from the beginning and this flag is consumed, so the
+		// cursor cannot rewind forever. A partial page keeps its forward cursor.
+		if len(ids) < catalogCleanupRows {
+			if uncertainSeen && !retrying {
+				cursor = -1
+			}
 		}
 		if _, err = tx.ExecContext(ctx, `UPDATE source_catalog_scan SET publish_cleanup_cursor=?,updated_at=CURRENT_TIMESTAMP WHERE file_source_id=?`, cursor, sourceID); err != nil {
 			return 0, 0, err
