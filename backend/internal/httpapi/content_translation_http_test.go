@@ -408,3 +408,42 @@ func TestContentTranslationReusesAWorkTitleOnACatalogCard(t *testing.T) {
 		t.Fatalf("catalog card did not reuse the work title: %#v calls=%d", result, calls.Load())
 	}
 }
+
+// An unregistered catalog card has no work row, but its release sidecar still
+// names the circle and cast. Those names are published identity and must not be
+// sent to the model inside a title.
+func TestContentTranslationProtectsSidecarNamesOfAnUnregisteredCard(t *testing.T) {
+	var calls atomic.Int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		var payload struct {
+			Messages []struct {
+				Content string `json:"content"`
+			} `json:"messages"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&payload)
+		prompt := payload.Messages[0].Content
+		if strings.Contains(prompt, "Example Circle") || strings.Contains(prompt, "Example Voice") {
+			t.Error("sidecar names reached the model")
+		}
+		parts := strings.SplitN(prompt, "\n\n", 2)
+		body, _ := json.Marshal(map[string]any{"choices": []any{map[string]any{"message": map[string]string{"content": parts[1]}, "finish_reason": "stop"}}})
+		_, _ = w.Write(body)
+	}))
+	defer upstream.Close()
+	s, host, admin, listener := translationHTTPFixture(t)
+	sidecar, _ := json.Marshal(map[string]any{"sidecars": []any{map[string]any{
+		"relativePath": "readme.txt", "size": 10, "voiceActors": []string{"Example Voice"},
+		"circles": []string{"Example Circle"}, "fetchedAt": "2026-01-01T00:00:00Z",
+	}}})
+	if _, err := s.db.Exec(`INSERT INTO file_source(id,code,display_name,source_type,enabled) VALUES(7,'example_remote_a','Example Remote A','openlist',1);
+		INSERT INTO source_catalog_entry(id,file_source_id,root_path,title,sidecar_json) VALUES(3,7,'/Example Work','A collection by Example Circle with Example Voice',?)`, string(sidecar)); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _ := json.Marshal(map[string]any{"baseUrl": upstream.URL, "minFreeBytes": 0})
+	translationRequest(t, host, admin, "PATCH", "/api/settings/translation", string(cfg), 200)
+	result := translationRequest(t, host, listener, "POST", "/api/content-translations", `{"catalogEntryId":3,"field":"title","text":"A collection by Example Circle with Example Voice","language":"zh-cn"}`, 200)
+	if result["status"] != "translated" || result["text"] != "A collection by Example Circle with Example Voice" || calls.Load() != 1 {
+		t.Fatalf("sidecar-protected title was not translated safely: %#v calls=%d", result, calls.Load())
+	}
+}

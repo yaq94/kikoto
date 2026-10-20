@@ -248,6 +248,17 @@ func targetTitleFor(input workTitleInputs, text, language string, acceptSelected
 func (s *Server) catalogEntryProtectedNames(ctx context.Context, entry catalogEntry) ([]string, error) {
 	names := []string{}
 	if entry.WorkID == nil {
+		// An unregistered card still carries the release credits the sidecar
+		// reader stored. Those names are published identity, not translatable
+		// prose, even though no work row exists yet.
+		cache, err := s.loadCatalogSidecars(ctx, entry)
+		if err != nil {
+			return nil, err
+		}
+		for _, sidecar := range cache.Sidecars {
+			names = append(names, sidecar.Circles...)
+			names = append(names, sidecar.VoiceActors...)
+		}
 		return names, nil
 	}
 	work, err := s.loadWorkDetail(ctx, 0, *entry.WorkID, false)
@@ -268,32 +279,46 @@ func (s *Server) catalogEntryProtectedNames(ctx context.Context, entry catalogEn
 // A series title belongs to the same work as its episodes, so every member's
 // circle and cast are protected names for that title.
 func (s *Server) catalogSeriesProtectedNames(ctx context.Context, seriesID int64) ([]string, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT COALESCE(e.work_id,0) FROM catalog_series_member m
+	rows, err := s.db.QueryContext(ctx, `SELECT m.catalog_entry_id,COALESCE(e.work_id,0) FROM catalog_series_member m
 		JOIN source_catalog_entry e ON e.id=m.catalog_entry_id
-		WHERE m.series_id=? AND e.work_id IS NOT NULL`, seriesID)
+		WHERE m.series_id=?`, seriesID)
 	if err != nil {
 		return nil, err
 	}
-	workIDs := []int64{}
+	type member struct{ entryID, workID int64 }
+	members := []member{}
 	for rows.Next() {
-		var workID int64
-		if err = rows.Scan(&workID); err != nil {
+		var item member
+		if err = rows.Scan(&item.entryID, &item.workID); err != nil {
 			_ = rows.Close()
 			return nil, err
 		}
-		workIDs = append(workIDs, workID)
+		members = append(members, item)
 	}
 	readErr := rows.Err()
 	_ = rows.Close()
 	if readErr != nil {
 		return nil, readErr
 	}
-	// Close the result set before loading each work. The caller may hold the
+	// Close the result set before loading each member. The caller may hold the
 	// only pooled connection, and a second query while a cursor is open would
 	// wait on itself.
 	names := []string{}
-	for _, workID := range workIDs {
-		work, loadErr := s.loadWorkDetail(ctx, 0, workID, false)
+	for _, item := range members {
+		if item.workID == 0 {
+			// An episode that is not registered yet still publishes its credits
+			// in the release sidecar. Those names must stay verbatim too.
+			cache, loadErr := s.loadCatalogSidecars(ctx, catalogEntry{ID: item.entryID})
+			if loadErr != nil {
+				return nil, loadErr
+			}
+			for _, sidecar := range cache.Sidecars {
+				names = append(names, sidecar.Circles...)
+				names = append(names, sidecar.VoiceActors...)
+			}
+			continue
+		}
+		work, loadErr := s.loadWorkDetail(ctx, 0, item.workID, false)
 		if loadErr != nil {
 			if errors.Is(loadErr, sql.ErrNoRows) {
 				continue
