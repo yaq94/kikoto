@@ -104,6 +104,27 @@ run 53 以并发 2、间隔 300 ms、批 32、页 500 运行；同时用 512 KiB
 2 vCPU 与 SQLite 单写者下的已知余量问题；未出现失败，也未改变播放或
 个人记录。生产仍维持并发 2、间隔 300 ms 的保守扫描配置。
 
+## 5. 收尾pass的成本（整棵树有失败目录时）
+
+整棵树只要有任意目录是 `failed`、`restricted`、`unconfirmed_empty` 或仍在
+`pending`，`catalogRangeUncertain("/")` 就为真，发布清理对每个条目都判定为
+「不确定」并保留旧行。判定本身要按来源与 generation 统计目录状态：
+
+| 场景 | 每条目成本 | 说明 |
+| --- | ---: | --- |
+| 全树完整观察 | 跳过判定，直接删旧行 | 只做两次按索引的范围删除 |
+| 全树存在失败目录 | 每条目一次目录状态 `EXISTS` 查询，另有根路径读取与两条删除 | 命中 `source_catalog_directory_pending` 索引；成本来自逐条查询与事务开销，不是缺索引 |
+
+生产 run 53 的收尾阶段因此出现 `cleanup_publish rows=100 elapsed_ms≈8200`。
+这是「 truthful partial 」的代价，不是数据错误：失败范围不该被当成完整覆盖。
+收尾按 10 万级条目计需要数十分钟到数小时；每日增量更新只处理新增与变化目录，
+不重复整棵树的收尾。
+
+生产索引 `source_catalog_directory_pending(file_source_id,generation,status,path)`
+已存在，`EXPLAIN QUERY PLAN` 显示全树判定与子树判定都使用它。如需继续压缩，可在
+每批开始时只判定一次「整棵树是否不确定」；整棵树不确定时所有基范围都不确定，
+可跳过逐条音频删除判定。本轮未改动该路径，避免在验收中途改变清理语义。
+
 ## 复现
 
 ```
