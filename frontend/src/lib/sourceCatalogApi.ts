@@ -132,6 +132,13 @@ export type CatalogIndexProgress = {
   partitionTotal: number;
   details: Array<{ path: string; status: string; nextPage: number; errorCode: string }>;
   detailsTotal: number;
+  /** Cards that left the automatic credit-file queue, split by stored category. */
+  sidecarFailures: {
+    stopped: number;
+    temporarilyUnavailable: number;
+    unreadable: number;
+    requestBudget: number;
+  };
 };
 
 export const sourceCatalogApi = {
@@ -174,6 +181,12 @@ export const sourceCatalogApi = {
     getJSON<CatalogIndexProgress>(`/api/remote-sources/${id}/catalog/index?page=${page}`, signal),
   startCatalogIndex: (id: number, options: Partial<CatalogIndexOptions>) =>
     postJSONBody<{ runId: number; existing: boolean }>(`/api/remote-sources/${id}/catalog/index`, options),
+  retryCatalogSidecars: (id: number, signal?: AbortSignal) =>
+    postJSONBody<{ sourceId: number; reopened: number }>(
+      `/api/remote-sources/${id}/catalog/sidecars/retry`,
+      {},
+      signal,
+    ),
   getWorkCatalogDirectories: (id: number, signal?: AbortSignal) =>
     getJSON<{ directories: CatalogDirectory[] }>(`/api/works/${id}/catalog-directories`, signal),
   prepareCatalogPlayback: (id: number, paths: string[], signal?: AbortSignal) =>

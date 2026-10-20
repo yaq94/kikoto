@@ -185,6 +185,14 @@ export const surfaceEnglish = {
     empty: "Unconfirmed empty",
     previous: "Previous page",
     next: "Next page",
+    sidecarStopped: "{{count}} credit file card(s) stopped automatic probing",
+    sidecarCategory: {
+      temporarilyUnavailable: "{{count}} temporarily unavailable",
+      unreadable: "{{count}} unreadable",
+      requestBudget: "{{count}} out of request budget",
+    },
+    sidecarReopen: "Reopen credit queue",
+    sidecarReopening: "Reopening…",
     field: {
       concurrency: "Metadata request concurrency",
       intervalMs: "Request interval (ms)",

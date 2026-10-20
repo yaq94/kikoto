@@ -3,7 +3,9 @@ import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useStableCallback } from "@/hooks/useStableCallback";
+import { useAuth } from "@/auth/AuthProvider";
 import { api, type CatalogIndexOptions, type CatalogIndexProgress } from "@/lib/api";
+import { sidecarFailureSummary } from "./sourceIndexSidecars";
 
 const fields: Array<{ key: keyof CatalogIndexOptions; min: number; max: number }> = [
   { key: "concurrency", min: 1, max: 4 },
@@ -17,12 +19,14 @@ const fields: Array<{ key: keyof CatalogIndexOptions; min: number; max: number }
 
 export function FullSourceIndex({ sourceId, onDone }: { sourceId: number; onDone: () => void }) {
   const { t } = useTranslation();
+  const auth = useAuth();
   const [progress, setProgress] = useState<CatalogIndexProgress | null>(null);
   const [options, setOptions] = useState<CatalogIndexOptions | null>(null);
   const [page, setPage] = useState(1);
   const [refresh, setRefresh] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(false);
+  const [reopening, setReopening] = useState(false);
   const indexed = useRef(-1);
   const notify = useStableCallback(onDone);
   const active = progress?.status === "queued" || progress?.status === "running";
@@ -73,8 +77,23 @@ export function FullSourceIndex({ sourceId, onDone }: { sourceId: number; onDone
       setBusy(false);
     }
   };
+  const reopen = async () => {
+    setBusy(true);
+    setReopening(true);
+    try {
+      await api.retryCatalogSidecars(sourceId);
+      setRefresh((n) => n + 1);
+    } catch {
+      setError(true);
+    } finally {
+      setReopening(false);
+      setBusy(false);
+    }
+  };
   const resume = progress && !["idle", "complete", "queued", "running"].includes(progress.status);
   const pages = progress ? Math.max(1, Math.ceil(Math.max(progress.partitionTotal, progress.detailsTotal) / 50)) : 1;
+  const stoppedSidecars = sidecarFailureSummary(progress?.sidecarFailures);
+  const canReopenSidecars = auth.hasPermission("sources:write") && Boolean(stoppedSidecars) && !busy;
   return (
     <section aria-label={t("sourceIndex.title")} className="w-full space-y-3 border-t border-border pt-3">
       <div className="flex flex-wrap items-center gap-2">
@@ -102,6 +121,20 @@ export function FullSourceIndex({ sourceId, onDone }: { sourceId: number; onDone
       )}
       {progress?.pauseReason && (
         <p className="text-sm text-muted-foreground">{t(`sourceIndex.reason.${progress.pauseReason}`)}</p>
+      )}
+      {stoppedSidecars && (
+        <div className="space-y-1 rounded-[var(--control-radius)] border border-border p-2 text-sm">
+          <p>
+            {t("sourceIndex.sidecarStopped", { count: stoppedSidecars.stopped })}
+            {stoppedSidecars.categories.length > 0 &&
+              ` · ${stoppedSidecars.categories
+                .map(([category, count]) => t(`sourceIndex.sidecarCategory.${category}`, { count }))
+                .join(" · ")}`}
+          </p>
+          <Button variant="outline" size="sm" disabled={!canReopenSidecars} onClick={() => void reopen()}>
+            {t(reopening ? "sourceIndex.sidecarReopening" : "sourceIndex.sidecarReopen")}
+          </Button>
+        </div>
       )}
       <details>
         <summary className="cursor-pointer text-sm">{t("sourceIndex.limits")}</summary>

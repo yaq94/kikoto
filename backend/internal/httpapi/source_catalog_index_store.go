@@ -689,3 +689,23 @@ func (s *Server) sourceCatalogProgress(ctx context.Context, sourceID int64, page
 	}
 	return p, rows.Err()
 }
+
+// sourceCatalogSidecarFailures counts the cards that left the automatic
+// credit-file queue for a source. A stopped card is one the worker can no
+// longer pick up on its own: it records a failure and is not pending. Both
+// facts are required so an operator can tell a settled card from work that
+// still waits on a backoff. The categories follow the values written by
+// catalogSidecarFailureReason; the total also covers rows that stored an
+// unknown category, so the per-category list never has to explain a gap.
+func (s *Server) sourceCatalogSidecarFailures(ctx context.Context, sourceID int64) (catalogSidecarFailureCounts, error) {
+	var counts catalogSidecarFailureCounts
+	err := s.db.QueryRowContext(ctx, `SELECT count(*),
+			coalesce(sum(sidecar_failure='temporarily_unavailable'),0),
+			coalesce(sum(sidecar_failure='unreadable'),0),
+			coalesce(sum(sidecar_failure='request_budget'),0)
+		FROM source_catalog_entry
+		WHERE file_source_id=? AND relocated_to_id IS NULL
+			AND sidecar_failure<>'' AND sidecar_pending=0`,
+		sourceID).Scan(&counts.Stopped, &counts.TemporarilyUnavailable, &counts.Unreadable, &counts.RequestBudget)
+	return counts, err
+}

@@ -177,6 +177,14 @@ export const surfaceHans = {
     empty: "待确认空目录",
     previous: "上一页",
     next: "下一页",
+    sidecarStopped: "{{count}} 张信用文件卡已停止自动探测",
+    sidecarCategory: {
+      temporarilyUnavailable: "{{count}} 张暂时不可用",
+      unreadable: "{{count}} 张无法读取",
+      requestBudget: "{{count}} 张请求预算耗尽",
+    },
+    sidecarReopen: "重开信用队列",
+    sidecarReopening: "正在重开…",
     field: {
       concurrency: "元数据请求并发数",
       intervalMs: "请求间隔（毫秒）",
