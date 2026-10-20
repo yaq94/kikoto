@@ -238,3 +238,57 @@ func assertUnlinkedMaintenanceCount(t *testing.T, db *sql.DB, query string, want
 		t.Fatalf("query %q count = %d, want %d", query, got, want)
 	}
 }
+
+// Imported listening totals, daily listening and an unmatched portable resume
+// point are personal records even though no session row exists. Cleanup must
+// keep the family and the files rather than cascade through the foreign key.
+func TestDeleteUnlinkedWorksRetainsImportedListeningAndPortableProgress(t *testing.T) {
+	db := openMigratedTestDB(t)
+	insertUnlinkedMaintenanceUser(t, db, 1)
+	dataRoot := t.TempDir()
+	mediaPath := filepath.Join(dataRoot, "RJ00000008", "track.mp3")
+	if err := os.MkdirAll(filepath.Dir(mediaPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(mediaPath, []byte("synthetic media"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`
+		INSERT INTO work (id, primary_code, title) VALUES
+			(131, 'RJ00000008', 'Imported history'),
+			(132, 'RJ00000009', 'Daily history'),
+			(133, 'RJ00000010', 'Portable progress');
+		INSERT INTO file_source (id, code, display_name, source_type) VALUES (31, 'test_local_b', 'Test local B', 'local_folder');
+		INSERT INTO user_listening_import (user_id, work_id, listened_seconds, listen_count) VALUES (1, 131, 120, 2);
+		INSERT INTO user_listening_day (user_id, work_id, day, listened_seconds, listen_count) VALUES (1, 132, '2026-10-01', 60, 1);
+		INSERT INTO personal_transfer_progress (user_id, work_id, progress_json) VALUES (1, 133, '{}');
+	`); err != nil {
+		t.Fatal(err)
+	}
+	server := NewServer(db, config.Config{DataRoot: dataRoot})
+	request := httptest.NewRequest(http.MethodPost, "/api/maintenance/unlinked-works/delete", strings.NewReader(`{"workIds":[131,132,133],"confirm":true}`))
+	request = request.WithContext(context.WithValue(request.Context(), currentUserKey, currentUser{ID: 1, Permissions: []string{"sources:write", "library:write"}}))
+	response := httptest.NewRecorder()
+
+	server.Routes().ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	var result unlinkedWorkDeleteResult
+	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.DeletedWorkCount != 0 || len(result.Skipped) != 3 {
+		t.Fatalf("result = %+v", result)
+	}
+	for _, skipped := range result.Skipped {
+		if skipped.Reason != "personal_records" {
+			t.Fatalf("skipped = %+v", result.Skipped)
+		}
+	}
+	assertUnlinkedMaintenanceCount(t, db, "SELECT COUNT(*) FROM work WHERE id IN (131,132,133)", 3)
+	assertUnlinkedMaintenanceCount(t, db, "SELECT COUNT(*) FROM user_listening_import WHERE work_id = 131", 1)
+	assertUnlinkedMaintenanceCount(t, db, "SELECT COUNT(*) FROM user_listening_day WHERE work_id = 132", 1)
+	assertUnlinkedMaintenanceCount(t, db, "SELECT COUNT(*) FROM personal_transfer_progress WHERE work_id = 133", 1)
+}

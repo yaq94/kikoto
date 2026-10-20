@@ -10,7 +10,10 @@ func workFamilyHasPersonalReferences(ctx context.Context, q unlinkedWorkQueryer,
 	}
 	p := sqlPlaceholders(len(ids))
 	args := int64Args(ids)
-	for _, table := range []string{"user_work_state", "favorite_list_item", "user_work_tag", "user_listening_session", "user_work_playback_cursor", "recommendation_event"} {
+	// Imported listening totals, their daily breakdown and an unmatched
+	// portable resume point are account-owned too; each cascades from work, so
+	// an unlisted table would let cleanup delete the user's history.
+	for _, table := range []string{"user_work_state", "favorite_list_item", "user_work_tag", "user_listening_session", "user_listening_import", "user_listening_day", "user_work_playback_cursor", "personal_transfer_progress", "recommendation_event"} {
 		var found bool
 		if err := q.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM "+table+" WHERE work_id IN ("+p+"))", args...).Scan(&found); err != nil {
 			return false, err
