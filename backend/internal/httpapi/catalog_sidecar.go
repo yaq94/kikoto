@@ -713,9 +713,30 @@ func markCatalogSidecarCandidatesTx(ctx context.Context, tx *sql.Tx, ids []int64
 	if evidenceErr != nil {
 		return evidenceErr
 	}
+	// Only a card that still carries stored evidence can lose it. Checking the
+	// root of every published id made a batch run one directory scan per row,
+	// including the thousands of new cards that never had a credit file.
+	evidenced := map[int64]bool{}
+	evidenceRows, err := tx.QueryContext(ctx, `SELECT id FROM source_catalog_entry WHERE id IN (`+placeholders+`) AND sidecar_json<>''`, int64Args(ids)...)
+	if err != nil {
+		return err
+	}
+	for evidenceRows.Next() {
+		var id int64
+		if err = evidenceRows.Scan(&id); err != nil {
+			_ = evidenceRows.Close()
+			return err
+		}
+		evidenced[id] = true
+	}
+	evidenceReadErr := evidenceRows.Err()
+	_ = evidenceRows.Close()
+	if evidenceReadErr != nil {
+		return evidenceReadErr
+	}
 	clearedIDs := []int64{}
 	for _, id := range ids {
-		if len(catalogSidecarFiles(byEntry[id])) != 0 {
+		if !evidenced[id] || len(catalogSidecarFiles(byEntry[id])) != 0 {
 			continue
 		}
 		// A card republished without its credit file only proves a deletion
