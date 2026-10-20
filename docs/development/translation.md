@@ -39,7 +39,9 @@ serialize `Config` into an API response.
 
 `POST /api/content-translations` requires an authenticated account with
 `library:read`. It accepts a resource selector (`workId`, a persisted `code`, or
-remote `sourceId` plus `code`), `field` (`title`, `description`, `tag`, `directory`),
+remote `sourceId` plus `code`), `field` (`title`, `description`, `tag`, `directory`; a
+remote work listing has no description, so `sourceId` with `description` is rejected as
+invalid input),
 `text`, and metadata `language` (`origin`, `zh-cn`, `zh-tw`, `en-us`, `ja-jp`,
 `ko-kr`). `mediaId` and `path` narrow directory selection. Numeric `workId`
 preserves the selected edition and does not require a product code.
@@ -141,7 +143,8 @@ Template `index-user-v1` uses one user message with automatic source language:
 The language names are 简体中文, 英语, 日语 and 韩语. This is the unconstrained
 single-user template from the [Index model card](https://huggingface.co/IndexTeam/Index-Translate-35B-A3B-preview)
 and [official client](https://github.com/bilibili/Index-Translate/blob/main/inference/llm/call_api.py).
-Requests set `temperature=0`, `max_tokens=1024`, and `stream=false`. The default
+Requests set `temperature=0`, `stream=false`, and a token budget derived from the
+input length: 256 for short text, up to 4096. The default
 `disableThinking=true` sends `chat_template_kwargs.enable_thinking=false`.
 Administrators may disable that extension for compatible services that reject it;
 there is no automatic parameter downgrade or repeated generation.

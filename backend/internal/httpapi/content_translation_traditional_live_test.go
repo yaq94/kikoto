@@ -18,14 +18,7 @@ func TestContentTranslationTraditionalLiveConfiguredService(t *testing.T) {
 	if raw == "" {
 		t.Skip("dedicated live configuration is not set")
 	}
-	var cfg struct {
-		BaseURL string `json:"baseUrl"`
-		APIKey  string `json:"apiKey"`
-		Model   string `json:"model"`
-	}
-	if json.Unmarshal([]byte(raw), &cfg) != nil || !strings.HasPrefix(cfg.BaseURL, "https://") || cfg.Model != "Index-Translate-35B-A3B" {
-		t.Fatal("invalid dedicated live configuration")
-	}
+	cfg := loadLiveTranslationConfig(t, raw)
 	s, host, admin, listener := translationHTTPFixture(t)
 	request := func(cookie *http.Cookie, method, path string, body any) map[string]any {
 		data, _ := json.Marshal(body)

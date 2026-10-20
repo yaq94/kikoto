@@ -319,3 +319,39 @@ func TestContentTranslationHandlesDescriptionTagsAndDirectoryWithoutChangingIden
 		t.Fatalf("field calls=%d", calls.Load())
 	}
 }
+
+// A remote work listing has no description field. The API must reject the
+// request as invalid input rather than reporting a stale-read conflict.
+func TestContentTranslationRejectsRemoteDescription(t *testing.T) {
+	_, host, admin, _ := translationHTTPFixture(t)
+	result := translationRequest(t, host, admin, "POST", "/api/content-translations", `{"sourceId":7,"code":"RJ00000000","field":"description","text":"Example","language":"zh-cn"}`, 400)
+	if result["code"] != "translation_invalid_input" {
+		t.Fatalf("remote description response: %#v", result)
+	}
+}
+
+// An edition that already carries a target-language description answers the
+// request without another model call.
+func TestContentTranslationReusesAnExistingEditionDescription(t *testing.T) {
+	var calls atomic.Int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		_, _ = io.WriteString(w, `{"choices":[{"message":{"content":"generated"},"finish_reason":"stop"}]}`)
+	}))
+	defer upstream.Close()
+	s, host, admin, listener := translationHTTPFixture(t)
+	if _, err := s.db.Exec(`INSERT INTO work(id,primary_code,title,description) VALUES(1,'RJ00000000','Example title','Example description'),(2,'RJ00000001','Example edition','Authored Chinese description');
+	INSERT INTO logical_work(id,canonical_work_id,canonical_code) VALUES(101,1,'RJ00000000');
+	INSERT INTO work_edition(work_id,logical_work_id,primary_code,metadata_language,edition_label,is_canonical) VALUES
+		(1,101,'RJ00000000','ja-jp','Original',1),(2,101,'RJ00000001','zh-cn','Translated',0);
+	INSERT INTO dlsite_metadata_variant(id,logical_work_id,work_id,provider_id,external_id,edition_language,title)
+	SELECT 1,101,2,id,'RJ00000001','zh-cn','Example edition' FROM metadata_provider WHERE code='dlsite';`); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _ := json.Marshal(map[string]any{"baseUrl": upstream.URL, "minFreeBytes": 0})
+	translationRequest(t, host, admin, "PATCH", "/api/settings/translation", string(cfg), 200)
+	result := translationRequest(t, host, listener, "POST", "/api/content-translations", `{"workId":2,"field":"description","text":"Authored Chinese description","language":"zh-cn"}`, 200)
+	if result["status"] != "existing" || result["text"] != "Authored Chinese description" || calls.Load() != 0 {
+		t.Fatalf("existing description was not reused: %#v calls=%d", result, calls.Load())
+	}
+}
