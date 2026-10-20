@@ -17,6 +17,39 @@ const maxCatalogSeriesMembers = 100
 
 var errCatalogGroupingConflict = errors.New("catalog grouping needs a fresh preview or conflict review")
 
+var errCatalogSeriesRetireConflict = errors.New("catalog series membership conflicts during retirement")
+
+// mergeCatalogSeriesMembershipTx moves the membership of a retired alias onto
+// the card that survives it. A duplicate member of the same series is dropped;
+// a successor already owned by a different series is left for review instead of
+// merging two evaluation levels silently.
+func mergeCatalogSeriesMembershipTx(ctx context.Context, tx *sql.Tx, fromID, toID int64) error {
+	if fromID == toID || toID == 0 {
+		return nil
+	}
+	var fromSeries, toSeries sql.NullInt64
+	err := tx.QueryRowContext(ctx, `SELECT series_id FROM catalog_series_member WHERE catalog_entry_id=?`, fromID).Scan(&fromSeries)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	err = tx.QueryRowContext(ctx, `SELECT series_id FROM catalog_series_member WHERE catalog_entry_id=?`, toID).Scan(&toSeries)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	if !toSeries.Valid {
+		_, err = tx.ExecContext(ctx, `UPDATE catalog_series_member SET catalog_entry_id=? WHERE catalog_entry_id=?`, toID, fromID)
+		return err
+	}
+	if toSeries.Int64 == fromSeries.Int64 {
+		_, err = tx.ExecContext(ctx, `DELETE FROM catalog_series_member WHERE catalog_entry_id=?`, fromID)
+		return err
+	}
+	return errCatalogSeriesRetireConflict
+}
+
 type catalogSeriesEpisode struct {
 	CatalogEntryID int64  `json:"catalogEntryId"`
 	Title          string `json:"title"`
@@ -70,19 +103,20 @@ func (s *Server) getCatalogSeries(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rows, err := s.db.QueryContext(r.Context(), `WITH grouped AS (
-		SELECT e.id,e.title,
-			COALESCE(NULLIF(e.file_source_id,0),successor.file_source_id,0) AS source_id,
-			COALESCE(fs.display_name,successor_fs.display_name,'') AS display_name,
-			e.primary_code,e.work_id,m.position,
+		SELECT COALESCE(successor.id,e.id) AS id,
+			COALESCE(NULLIF(successor.title,''),e.title) AS title,
+			COALESCE(NULLIF(successor.file_source_id,0),NULLIF(e.file_source_id,0),0) AS source_id,
+			COALESCE(successor_fs.display_name,fs.display_name,'') AS display_name,
+			COALESCE(successor.primary_code,e.primary_code) AS primary_code,
+			COALESCE(successor.work_id,e.work_id) AS work_id,m.position,
 		ROW_NUMBER() OVER(PARTITION BY COALESCE(identity.identity_work_id,-e.id) ORDER BY m.position,e.id) AS identity_rank
 		FROM catalog_series_member m JOIN source_catalog_entry e ON e.id=m.catalog_entry_id
 		LEFT JOIN source_catalog_entry successor ON successor.id=e.relocated_to_id
 		LEFT JOIN file_source fs ON fs.id=e.file_source_id
 		LEFT JOIN file_source successor_fs ON successor_fs.id=successor.file_source_id
-		LEFT JOIN shared_work_identity identity ON identity.work_id=e.work_id
-		WHERE ((e.relocated_to_id IS NULL AND e.availability_status<>'missing')
-			OR (e.relocated_to_id IS NOT NULL AND EXISTS(SELECT 1 FROM source_catalog_entry successor
-				WHERE successor.id=e.relocated_to_id AND successor.availability_status<>'missing')))
+		LEFT JOIN shared_work_identity identity ON identity.work_id=COALESCE(successor.work_id,e.work_id)
+		WHERE ((e.relocated_to_id IS NULL AND e.file_source_id IS NOT NULL AND e.availability_status<>'missing')
+			OR (e.relocated_to_id IS NOT NULL AND successor.file_source_id IS NOT NULL AND successor.availability_status<>'missing'))
 			AND m.series_id IN (SELECT related.id FROM catalog_series selected JOIN catalog_series related ON related.id=selected.id OR related.work_id IN (SELECT peer.work_id FROM shared_work_identity own JOIN shared_work_identity peer ON peer.identity_work_id=own.identity_work_id WHERE own.work_id=selected.work_id) WHERE selected.id=?))
 		SELECT id,title,source_id,display_name,primary_code,work_id,position FROM grouped WHERE identity_rank=1 ORDER BY position,id`, id)
 	if err != nil {

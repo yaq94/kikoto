@@ -228,9 +228,12 @@ func attachCatalogSeriesTx(ctx context.Context, tx *sql.Tx, entryID int64) error
 		case err == nil:
 			occupied, marked := catalogEpisodeEvidence(occupiedRoot)
 			if marked && occupied.Position != 0 {
-				return nil
-			}
-			if _, err = tx.ExecContext(ctx, `UPDATE catalog_series_member SET position=? WHERE series_id=? AND position=?`, maxPosition+1, seriesID, position); err != nil {
+				// Two distinct directories claim the same explicit number, such
+				// as 第1話 and 第1集 or the same label under different parents.
+				// They are separate episodes, so keep both addressable instead
+				// of dropping the later one from the series listing.
+				position = maxPosition + 1
+			} else if _, err = tx.ExecContext(ctx, `UPDATE catalog_series_member SET position=? WHERE series_id=? AND position=?`, maxPosition+1, seriesID, position); err != nil {
 				return err
 			}
 		case !errors.Is(err, sql.ErrNoRows):

@@ -136,6 +136,48 @@ func (s *Server) settleCatalogLifecycleBatch(ctx context.Context, job workflowJo
 	if stage == "done" {
 		return false, nil
 	}
+	if stage == "reconcile" {
+		// Reconciliation compares a stored manifest with the successor's
+		// manifest. A card published after the observe pass has no fingerprint
+		// yet, so finish that bounded work first; otherwise a real rename looks
+		// like insufficient evidence and the old card is marked missing.
+		rows, err := tx.QueryContext(ctx, `SELECT e.id FROM source_catalog_entry e
+			WHERE e.file_source_id=? AND e.relocated_to_id IS NULL AND e.last_seen_generation=?
+				AND e.content_fingerprint='' AND e.layout_fingerprint=''
+				AND EXISTS(SELECT 1 FROM source_catalog_file f WHERE f.catalog_entry_id=e.id AND f.kind='audio')
+			ORDER BY e.id LIMIT ?`, sourceID, job.RunID, catalogLifecycleRows)
+		if err != nil {
+			return false, err
+		}
+		ids := []int64{}
+		for rows.Next() {
+			var id int64
+			if err = rows.Scan(&id); err != nil {
+				break
+			}
+			ids = append(ids, id)
+		}
+		readErr := rows.Err()
+		_ = rows.Close()
+		if err != nil {
+			return false, err
+		}
+		if readErr != nil {
+			return false, readErr
+		}
+		for _, id := range ids {
+			strong, layout, err := catalogFingerprintsTx(ctx, tx.Tx, id, job.RunID)
+			if err != nil {
+				return false, err
+			}
+			if _, err = tx.ExecContext(ctx, `UPDATE source_catalog_entry SET content_fingerprint=?,layout_fingerprint=? WHERE id=?`, strong, layout, id); err != nil {
+				return false, err
+			}
+		}
+		if len(ids) > 0 {
+			return true, tx.Commit()
+		}
+	}
 	rows, err := tx.QueryContext(ctx, `SELECT id,last_seen_generation FROM source_catalog_entry WHERE file_source_id=? AND relocated_to_id IS NULL AND id>? ORDER BY id LIMIT ?`, sourceID, cursor, catalogLifecycleRows)
 	if err != nil {
 		return false, err

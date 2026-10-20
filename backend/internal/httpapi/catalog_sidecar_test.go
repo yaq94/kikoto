@@ -835,6 +835,27 @@ func TestWorkMatchingSidecarCreditsRejectDifferentCast(t *testing.T) {
 	}
 }
 
+// The same labelled cast with different circles is contradictory. A shared
+// voice actor alone must not auto-associate two releases from different circles.
+func TestWorkMatchingSidecarCreditsRejectDifferentCircles(t *testing.T) {
+	db := openMigratedTestDB(t)
+	s := NewServer(db, config.Config{Mode: config.ModeProduction, RootUsername: "synthetic-editor", DataRoot: t.TempDir(), CacheRoot: t.TempDir()})
+	defer func() { _ = s.Shutdown(context.Background()) }()
+	createTestAdministrator(t, s, "synthetic-editor", "synthetic-password")
+	metadataReviewExec(t, db, `INSERT INTO file_source(id,code,display_name,source_type) VALUES(7,'example_remote_a','Example Remote A','openlist');
+	INSERT INTO file_source_endpoint(file_source_id,api_url,base_url) VALUES(7,'https://source.example.invalid','https://source.example.invalid');
+	INSERT INTO source_catalog_entry(id,file_source_id,root_path,title,sidecar_json) VALUES(1,7,'/Example Work','Example Work','{"sidecars":[{"relativePath":"readme.txt","size":12,"voiceActors":["Example Voice"],"circles":["Example Circle A"],"fetchedAt":"2026-01-01T00:00:00Z"}]}');
+	INSERT INTO source_catalog_entry(id,file_source_id,root_path,title,sidecar_json) VALUES(2,7,'/Example Work Copy','Example Work','{"sidecars":[{"relativePath":"readme.txt","size":12,"voiceActors":["Example Voice"],"circles":["Example Circle B"],"fetchedAt":"2026-01-01T00:00:00Z"}]}');`)
+	app := httptest.NewServer(s.Routes())
+	defer app.Close()
+	cookie := workReferenceLogin(t, app, "synthetic-editor")
+	var result map[string]any
+	workReferenceRequest(t, app, cookie, "POST", "/api/work-matching", `{"kind":"catalog","id":1}`, 200, &result)
+	if result["status"] != "review" || result["rule"] != "conflicting_evidence" {
+		t.Fatalf("different circles matched: %#v", result)
+	}
+}
+
 // The index reads a readme through the bounded sidecar path, stores only
 // labelled credits, and never turns the text into an audio file.
 func TestSourceCatalogIndexStoresSidecarCredits(t *testing.T) {

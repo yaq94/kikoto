@@ -1072,6 +1072,14 @@ func retireCatalogSplitParentTx(ctx context.Context, tx *sql.Tx, sourceID int64,
 // references the alias stays resolvable; only the shared target changes.
 func retireCatalogCardTx(ctx context.Context, tx *sql.Tx, id, targetID int64) error {
 	if targetID != 0 && targetID != id {
+		if err := mergeCatalogSeriesMembershipTx(ctx, tx, id, targetID); err != nil {
+			if errors.Is(err, errCatalogSeriesRetireConflict) {
+				// Two different series claim one successor. Keeping the stale
+				// card addressable is safer than silently moving an episode.
+				return nil
+			}
+			return err
+		}
 		if _, err := tx.ExecContext(ctx, `UPDATE source_catalog_entry SET relocated_to_id=? WHERE relocated_to_id=? AND id<>?`, targetID, id, targetID); err != nil {
 			return err
 		}

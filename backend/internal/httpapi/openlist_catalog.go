@@ -375,7 +375,15 @@ func (s *Server) getSourceCatalogEntry(w http.ResponseWriter, r *http.Request) {
 		personalRating = rating.Int64
 	}
 	var seriesID *int64
-	if err = s.db.QueryRowContext(r.Context(), `SELECT series_id FROM catalog_series_member WHERE catalog_entry_id=?`, entry.ID).Scan(&seriesID); err != nil && !errors.Is(err, sql.ErrNoRows) {
+	// Membership normally lives on the surviving card. Historical aliases may
+	// still own it after a rename, so follow every alias of this successor
+	// instead of losing the "open series" path from an old link.
+	if err = s.db.QueryRowContext(r.Context(), `WITH RECURSIVE aliases(id) AS (
+		SELECT ?
+		UNION ALL
+		SELECT e.id FROM source_catalog_entry e JOIN aliases a ON e.relocated_to_id=a.id
+	)
+	SELECT series_id FROM catalog_series_member WHERE catalog_entry_id IN (SELECT id FROM aliases) LIMIT 1`, entry.ID).Scan(&seriesID); err != nil && !errors.Is(err, sql.ErrNoRows) {
 		writeError(w, err)
 		return
 	}

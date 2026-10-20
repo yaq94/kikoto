@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"errors"
 	"fmt"
 )
 
@@ -41,6 +42,41 @@ func catalogFingerprintsTx(ctx context.Context, tx *sql.Tx, id, generation int64
 		strong = hex.EncodeToString(content.Sum(nil))
 	}
 	return strong, hex.EncodeToString(layout.Sum(nil)), nil
+}
+
+// catalogSeriesMembershipsCompatibleTx reports whether two cards can be one
+// episode after a rename. A successor created by the same scan is attached to
+// the series before reconciliation, so requiring an empty membership would
+// reject every renamed episode. The series is the identity here: the renamed
+// directory takes the next free position, so comparing positions would turn
+// every rename into a conflict. Two different series stay a review conflict.
+func catalogSeriesMembershipsCompatibleTx(ctx context.Context, tx *sql.Tx, oldID, targetID int64) (bool, error) {
+	type member struct {
+		series, position int64
+	}
+	read := func(id int64) (member, bool, error) {
+		var m member
+		err := tx.QueryRowContext(ctx, `SELECT series_id,position FROM catalog_series_member WHERE catalog_entry_id=?`, id).Scan(&m.series, &m.position)
+		if errors.Is(err, sql.ErrNoRows) {
+			return m, false, nil
+		}
+		return m, err == nil, err
+	}
+	oldMember, oldOK, err := read(oldID)
+	if err != nil {
+		return false, err
+	}
+	if !oldOK {
+		return true, nil
+	}
+	targetMember, targetOK, err := read(targetID)
+	if err != nil {
+		return false, err
+	}
+	if !targetOK {
+		return true, nil
+	}
+	return oldMember.series == targetMember.series, nil
 }
 
 type catalogRelocationEntry struct {
@@ -81,6 +117,26 @@ func reconcileCatalogEntryTx(ctx context.Context, tx *sql.Tx, sourceID, generati
 	if readErr != nil {
 		return readErr
 	}
+	// The lifecycle cursor visits cards in id order, so a newly published
+	// successor is often reconciled before its own fingerprint pass stored the
+	// manifest. Compute the missing side from this generation's files instead
+	// of treating a real rename as insufficient evidence.
+	for i := range candidates {
+		candidate := &candidates[i]
+		if candidate.strong != "" && candidate.layout != "" {
+			continue
+		}
+		strong, layout, fingerprintErr := catalogFingerprintsTx(ctx, tx, candidate.id, generation)
+		if fingerprintErr != nil {
+			return fingerprintErr
+		}
+		if candidate.strong == "" {
+			candidate.strong = strong
+		}
+		if candidate.layout == "" {
+			candidate.layout = layout
+		}
+	}
 	strongCount := 0
 	layoutCount := 0
 	var layoutTarget catalogRelocationEntry
@@ -103,12 +159,12 @@ func reconcileCatalogEntryTx(ctx context.Context, tx *sql.Tx, sourceID, generati
 		}
 		reason = "ambiguous_evidence"
 		if strongCount == 1 && oldCount == 1 && len(candidates) < 9 {
-			var membership int
-			if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM catalog_series_member WHERE catalog_entry_id=?`, target.id).Scan(&membership); err != nil {
+			compatible, err := catalogSeriesMembershipsCompatibleTx(ctx, tx, old.id, target.id)
+			if err != nil {
 				return err
 			}
 			reason = "conflicting_identity"
-			if !target.workID.Valid && membership == 0 && target.discovered == generation && old.code == target.code {
+			if !target.workID.Valid && compatible && target.discovered == generation && old.code == target.code {
 				return relocateCatalogEntryTx(ctx, tx, old, target, generation)
 			}
 		}
@@ -136,12 +192,12 @@ func reconcileCatalogEntryTx(ctx context.Context, tx *sql.Tx, sourceID, generati
 		case len(candidates) >= 9:
 			reason = "ambiguous_evidence"
 		default:
-			var membership int
-			if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM catalog_series_member WHERE catalog_entry_id=?`, layoutTarget.id).Scan(&membership); err != nil {
+			compatible, err := catalogSeriesMembershipsCompatibleTx(ctx, tx, old.id, layoutTarget.id)
+			if err != nil {
 				return err
 			}
 			reason = "conflicting_identity"
-			if !layoutTarget.workID.Valid && membership == 0 && layoutTarget.discovered == generation && old.code == layoutTarget.code {
+			if !layoutTarget.workID.Valid && compatible && layoutTarget.discovered == generation && old.code == layoutTarget.code {
 				return relocateCatalogEntryTx(ctx, tx, old, layoutTarget, generation)
 			}
 		}
@@ -155,8 +211,15 @@ func reconcileCatalogEntryTx(ctx context.Context, tx *sql.Tx, sourceID, generati
 }
 
 func relocateCatalogEntryTx(ctx context.Context, tx *sql.Tx, old, target catalogRelocationEntry, generation int64) error {
-	// The provisional location becomes an alias; old links and the established
-	// work/media ids survive. No evaluation object is merged or re-registered.
+	// The established row keeps its id, work link, series membership and any
+	// personal record. The freshly discovered location is the provisional one,
+	// so it becomes the alias. Copying the new location onto the established
+	// row also keeps every old /catalog/<id> link stable.
+	if err := mergeCatalogSeriesMembershipTx(ctx, tx, target.id, old.id); err != nil {
+		return err
+	}
+	// Release the unique (source, root) key before the survivor takes the new
+	// path, and make the provisional row an alias in the same statement.
 	if _, err := tx.ExecContext(ctx, `UPDATE source_catalog_entry SET file_source_id=NULL,relocated_to_id=? WHERE id=?`, old.id, target.id); err != nil {
 		return err
 	}
@@ -168,10 +231,9 @@ func relocateCatalogEntryTx(ctx context.Context, tx *sql.Tx, old, target catalog
 		ON CONFLICT(catalog_entry_id,relative_path) DO UPDATE SET title=excluded.title,kind=excluded.kind,size_bytes=excluded.size_bytes,content_hash=excluded.content_hash,modified_at=excluded.modified_at,observed_generation=excluded.observed_generation`, old.id, target.id); err != nil {
 		return err
 	}
-	// The established card keeps its own credit evidence. The provisional
-	// target is being retired, so it must not overwrite the survivor. A missing
-	// sidecar on the survivor stays empty until its next bounded read.
-	if _, err := tx.ExecContext(ctx, `DELETE FROM source_catalog_file WHERE catalog_entry_id IN (?,?) AND (catalog_entry_id=? OR observed_generation<>?)`, old.id, target.id, target.id, generation); err != nil {
+	// The survivor keeps its own credit evidence. Only the alias's rows and the
+	// survivor's own stale rows are removed.
+	if _, err := tx.ExecContext(ctx, `DELETE FROM source_catalog_file WHERE catalog_entry_id=? OR (catalog_entry_id=? AND observed_generation<>?)`, target.id, old.id, generation); err != nil {
 		return err
 	}
 	return setCatalogEntryStatusTx(ctx, tx, old.id, "available")
