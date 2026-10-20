@@ -47,7 +47,25 @@ func TestCatalogDirectoryListingChecksUnknownAndStaleTabs(t *testing.T) {
 	defer cancel()
 	go f.server.RunCatalogAvailabilityWorker(ctx)
 
+	// A viewer without remote:track sees the recorded tabs and starts no
+	// outbound work, so an anonymous or read-only reader cannot drive fetches.
 	directories := reviewRequest(t, f.handler, f.cookies["user"], http.MethodGet, "/api/works/1/catalog-directories", "", http.StatusOK)["directories"].([]any)
+	if len(directories) != 2 {
+		t.Fatalf("directories = %#v", directories)
+	}
+	f.server.catalogAvailabilityMu.Lock()
+	queued := len(f.server.catalogAvailabilityQueued)
+	f.server.catalogAvailabilityMu.Unlock()
+	if queued != 0 {
+		t.Fatalf("read-only viewer queued %d background checks", queued)
+	}
+	time.Sleep(300 * time.Millisecond)
+	if calls.Load() != 0 {
+		t.Fatalf("read-only viewer started %d upstream checks", calls.Load())
+	}
+
+	// A viewer who may track remote sources starts the background check.
+	directories = reviewRequest(t, f.handler, f.cookies["contributor"], http.MethodGet, "/api/works/1/catalog-directories", "", http.StatusOK)["directories"].([]any)
 	if len(directories) != 2 {
 		t.Fatalf("directories = %#v", directories)
 	}

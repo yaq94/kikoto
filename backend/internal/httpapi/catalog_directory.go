@@ -149,6 +149,11 @@ func (s *Server) getWorkCatalogDirectories(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	defer func() { _ = rows.Close() }()
+	// Only a viewer who may track remote sources starts an outbound check.
+	// A read-only or anonymous viewer keeps the recorded result, so a GET
+	// never becomes upstream work without that capability.
+	viewer, viewerKnown := userFromContext(r.Context())
+	canCheckTabs := viewerKnown && userHasPermission(viewer, "remote:track")
 	directories := []map[string]any{}
 	for rows.Next() {
 		var entryID, sourceID int64
@@ -170,7 +175,7 @@ func (s *Server) getWorkCatalogDirectories(w http.ResponseWriter, r *http.Reques
 		if entryID == 0 {
 			directoryType = "remote"
 		}
-		if entryID > 0 && enabled && catalogDirectoryNeedsCheck(status, checkedAt, time.Now()) {
+		if entryID > 0 && enabled && canCheckTabs && catalogDirectoryNeedsCheck(status, checkedAt, time.Now()) {
 			s.enqueueCatalogDirectoryCheck(entryID)
 		}
 		directories = append(directories, map[string]any{"catalogEntryId": entryID, "sourceId": sourceID, "sourceName": sourceName, "title": title, "primaryCode": primaryCode, "workId": directoryWorkID, "directoryType": directoryType, "status": status, "checkedAt": checkedAt})

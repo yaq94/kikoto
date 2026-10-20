@@ -237,7 +237,9 @@ func (s *Server) catalogGroupingPreview(w http.ResponseWriter, r *http.Request) 
 		writeAPIError(w, 400, "invalid_request", "invalid preview id", false)
 		return
 	}
-	tx, err := s.db.BeginTx(r.Context(), nil)
+	// Reading a preview never writes it; only the confirmation inserts the
+	// series. A read-only transaction leaves SQLite's write lock to writers.
+	tx, err := s.db.BeginTx(r.Context(), &sql.TxOptions{ReadOnly: r.Method == http.MethodGet})
 	if err != nil {
 		writeError(w, err)
 		return
