@@ -177,6 +177,14 @@ export const surfaceHant = {
     empty: "待確認空目錄",
     previous: "上一頁",
     next: "下一頁",
+    sidecarStopped: "{{count}} 張信用檔案卡已停止自動探測",
+    sidecarCategory: {
+      temporarilyUnavailable: "{{count}} 張暫時無法使用",
+      unreadable: "{{count}} 張無法讀取",
+      requestBudget: "{{count}} 張請求預算耗盡",
+    },
+    sidecarReopen: "重新開啟信用佇列",
+    sidecarReopening: "正在重新開啟…",
     field: {
       concurrency: "中繼資料請求並行數",
       intervalMs: "請求間隔（毫秒）",

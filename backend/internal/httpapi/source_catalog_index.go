@@ -62,28 +62,40 @@ type catalogPartitionProgress struct {
 	Restricted  int    `json:"restricted"`
 	Empty       int    `json:"unconfirmedEmpty"`
 }
+
+// catalogSidecarFailureCounts is the operator's view of cards that left the
+// automatic credit-file queue. It is a projection only: the retry route owns
+// the bookkeeping and this query never writes.
+type catalogSidecarFailureCounts struct {
+	Stopped                int `json:"stopped"`
+	TemporarilyUnavailable int `json:"temporarilyUnavailable"`
+	Unreadable             int `json:"unreadable"`
+	RequestBudget          int `json:"requestBudget"`
+}
+
 type catalogIndexProgress struct {
-	RunID               int64                      `json:"runId"`
-	Status              string                     `json:"status"`
-	PauseReason         string                     `json:"pauseReason"`
-	Options             catalogIndexOptions        `json:"options"`
-	Requests            int                        `json:"requests"`
-	Directories         int                        `json:"directories"`
-	Completed           int                        `json:"completedDirectories"`
-	Pending             int                        `json:"pendingDirectories"`
-	Failed              int                        `json:"failedDirectories"`
-	Restricted          int                        `json:"restrictedDirectories"`
-	Empty               int                        `json:"unconfirmedEmptyDirectories"`
-	Observed            int                        `json:"observedEntries"`
-	Indexed             int                        `json:"indexedEntries"`
-	StagingDirectories  int                        `json:"stagingDirectories"`
-	StagingObservations int                        `json:"stagingObservations"`
-	StartedAt           string                     `json:"startedAt"`
-	UpdatedAt           string                     `json:"updatedAt"`
-	Partitions          []catalogPartitionProgress `json:"partitions"`
-	PartitionTotal      int                        `json:"partitionTotal"`
-	Details             []catalogDirectoryProgress `json:"details"`
-	DetailsTotal        int                        `json:"detailsTotal"`
+	RunID               int64                       `json:"runId"`
+	Status              string                      `json:"status"`
+	PauseReason         string                      `json:"pauseReason"`
+	Options             catalogIndexOptions         `json:"options"`
+	Requests            int                         `json:"requests"`
+	Directories         int                         `json:"directories"`
+	Completed           int                         `json:"completedDirectories"`
+	Pending             int                         `json:"pendingDirectories"`
+	Failed              int                         `json:"failedDirectories"`
+	Restricted          int                         `json:"restrictedDirectories"`
+	Empty               int                         `json:"unconfirmedEmptyDirectories"`
+	Observed            int                         `json:"observedEntries"`
+	Indexed             int                         `json:"indexedEntries"`
+	StagingDirectories  int                         `json:"stagingDirectories"`
+	StagingObservations int                         `json:"stagingObservations"`
+	StartedAt           string                      `json:"startedAt"`
+	UpdatedAt           string                      `json:"updatedAt"`
+	Partitions          []catalogPartitionProgress  `json:"partitions"`
+	PartitionTotal      int                         `json:"partitionTotal"`
+	Details             []catalogDirectoryProgress  `json:"details"`
+	DetailsTotal        int                         `json:"detailsTotal"`
+	SidecarFailures     catalogSidecarFailureCounts `json:"sidecarFailures"`
 }
 
 func (s *Server) catalogIndexSource(ctx context.Context, id int64) (remoteSourceForUse, error) {
@@ -246,14 +258,20 @@ func (s *Server) getSourceCatalogIndex(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, 400, "invalid_request", "invalid source id", false)
 		return
 	}
+	sidecarFailures, err := s.sourceCatalogSidecarFailures(r.Context(), id)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
 	progress, err := s.sourceCatalogProgress(r.Context(), id, max(1, queryInt(r, "page", 1)))
 	if errors.Is(err, sql.ErrNoRows) {
-		writeJSON(w, 200, catalogIndexProgress{Status: "idle", Options: defaultCatalogIndexOptions(), Partitions: []catalogPartitionProgress{}, Details: []catalogDirectoryProgress{}})
+		writeJSON(w, 200, catalogIndexProgress{Status: "idle", Options: defaultCatalogIndexOptions(), Partitions: []catalogPartitionProgress{}, Details: []catalogDirectoryProgress{}, SidecarFailures: sidecarFailures})
 		return
 	}
 	if err != nil {
 		writeError(w, err)
 		return
 	}
+	progress.SidecarFailures = sidecarFailures
 	writeJSON(w, 200, progress)
 }

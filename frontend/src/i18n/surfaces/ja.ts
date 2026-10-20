@@ -180,6 +180,14 @@ export const surfaceJapanese = {
     empty: "未確認の空フォルダー",
     previous: "前のページ",
     next: "次のページ",
+    sidecarStopped: "{{count}} 件のクレジットファイルカードが自動検出を停止しました",
+    sidecarCategory: {
+      temporarilyUnavailable: "{{count}} 件は一時的に利用不可",
+      unreadable: "{{count}} 件は読み取り不可",
+      requestBudget: "{{count}} 件はリクエスト上限に達しました",
+    },
+    sidecarReopen: "クレジットキューを再開",
+    sidecarReopening: "再開しています…",
     field: {
       concurrency: "メタデータ要求の並列数",
       intervalMs: "要求間隔（ミリ秒）",

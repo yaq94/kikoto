@@ -181,6 +181,14 @@ export const surfaceKorean = {
     empty: "미확인 빈 폴더",
     previous: "이전 페이지",
     next: "다음 페이지",
+    sidecarStopped: "{{count}}개의 크레딧 파일 카드가 자동 탐지를 중단했습니다",
+    sidecarCategory: {
+      temporarilyUnavailable: "{{count}}개 일시적 사용 불가",
+      unreadable: "{{count}}개 읽을 수 없음",
+      requestBudget: "{{count}}개 요청 한도 소진",
+    },
+    sidecarReopen: "크레딧 큐 다시 열기",
+    sidecarReopening: "다시 여는 중…",
     field: {
       concurrency: "메타데이터 요청 동시 수",
       intervalMs: "요청 간격(밀리초)",

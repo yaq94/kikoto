@@ -245,7 +245,8 @@ credit evidence, work associations and personal records are not touched. Use it
 after fixing a share password, DNS entry or upstream outage. Cards that were
 never attempted and have no failure are not reopened by this route; a full
 rebuild still uses a force index, and the daily pass keeps them queued on its
-own.
+own. The source index panel shows how many cards have stopped, split by
+category, and offers this retry as a button once the count is above zero.
 
 Only explicitly labelled lines become evidence. A line such as `配音：…`,
 `声优: …`, `CV：…` or `キャスト: …` names a voice actor; `社团：…`,
