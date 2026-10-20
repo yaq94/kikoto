@@ -55,10 +55,22 @@ export function ContentLanguageProvider({ children }: { children: ReactNode }) {
             language: value.metadataLanguages?.find((language) => language !== "origin") ?? "origin",
           });
       })
-      .catch(() => undefined);
+      .catch(() => {
+        // A transient read failure must not pin the reader to the origin
+        // language. Keep the last successful choice for this session; the next
+        // revision or a reload retries the request.
+        if (!controller.signal.aborted) {
+          setLoaded((current) =>
+            current.session === session ? current : { session, revision, language: "origin" },
+          );
+        }
+      });
     return () => controller.abort();
   }, [userId, demoMode, session, revision]);
-  const language = loaded.session === session && loaded.revision === revision ? loaded.language : "origin";
+  // The session key contains the account and the API session version, so a
+  // value from another session is never shown. A newer revision keeps the last
+  // successful language until its own read completes.
+  const language = loaded.session === session ? loaded.language : "origin";
   return (
     <LanguageContext.Provider value={{ language, session, revision, canRead: Boolean(userId && !demoMode) }}>
       {children}
