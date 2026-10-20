@@ -291,6 +291,17 @@ end-to-end regression `TestSourceCatalogFormatCopyDoesNotCreateACard` indexes
 card with both audio files; `TestSourceCatalogFormatDirectoryOrdinalIsNotSampleSpecific`
 pins the category boundary on both sides.
 
+A release that an older generation already published as its own format card
+keeps that card only until the release card exists again. Once a rescan
+publishes the parent, the stale format card becomes an alias of it: the id is
+kept, `relocated_to_id` points at the release, and its file rows are removed, so
+a saved link, personal review or import reference still resolves. A card that
+already owns a work, a series membership or an incoming relocation keeps its
+identity for explicit review instead of being merged into a guessed parent.
+`TestSourceCatalogStaleFormatCardRetiresToReleaseOnRescan` covers the
+retirement, and `TestSourceCatalogFormatCardWithWorkOrSeriesIsNotRetired` pins
+the retention guard.
+
 `GET /api/works/{id}/catalog-directories` projects catalog entries into the saved
 work's source tabs. Numeric references retain the exact edition; numbered
 references and unregistered numbered entries use existing canonical/alias
