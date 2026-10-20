@@ -1020,6 +1020,7 @@ func retireStaleFormatCardsTx(ctx context.Context, tx *sql.Tx, sourceID, generat
 	}
 	return nil
 }
+
 // retireStaleSplitCardsTx hides split cards for this root that the current
 // generation did not publish. A directory that used to hold separate works can
 // become one audiobook (or change its grouping); the old cards would otherwise

@@ -12,11 +12,11 @@ import (
 // format directory cannot be excused by direct audio above it.
 func formatCardTree() map[string][]map[string]any {
 	return map[string][]map[string]any{
-		"/":                     {looseDir("Creator")},
-		"/Creator":              {looseDir("Release")},
-		"/Creator/Release":      {looseDir("MP3"), looseDir("ART"), looseAudio("readme.txt")},
-		"/Creator/Release/MP3":  {looseAudio("01 first.mp3"), looseAudio("02 second.mp3")},
-		"/Creator/Release/ART":  {looseAudio("cover.jpg")},
+		"/":                    {looseDir("Creator")},
+		"/Creator":             {looseDir("Release")},
+		"/Creator/Release":     {looseDir("MP3"), looseDir("ART"), looseAudio("readme.txt")},
+		"/Creator/Release/MP3": {looseAudio("01 first.mp3"), looseAudio("02 second.mp3")},
+		"/Creator/Release/ART": {looseAudio("cover.jpg")},
 	}
 }
 
