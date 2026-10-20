@@ -262,20 +262,7 @@ matches the backup.
 | v0.8.0 | `059` | `059_v0.8.0.sql` |
 | v0.8.1, v0.8.2 | `066` | `066_v0.8.1.sql` |
 | v0.8.3 | `068` | `068_v0.8.3.sql` |
-| unreleased (Kikoto next) | `069` | Development baseline only; `compat/069_dev.sql` |
-| unreleased (Kikoto next) | `070` | Development baseline only; `compat/070_dev.sql` |
-| unreleased (Kikoto next) | `071` | Development baseline only; `compat/071_dev.sql` |
-| unreleased (Kikoto next) | `072` | Development baseline only; `compat/072_dev.sql` |
-| unreleased (Kikoto next) | `073` | Development baseline only; `compat/073_dev.sql` |
-| unreleased (Kikoto next) | `074` | Development baseline only; `compat/074_dev.sql` |
-| unreleased (Kikoto next) | `075` | Development baseline only; `compat/075_dev.sql` |
-| unreleased (Kikoto next) | `076` | Development baseline only; `compat/076_dev.sql` |
-| unreleased (Kikoto next) | `077` | Development baseline only; `compat/077_dev.sql` |
-| unreleased (Kikoto next) | `078` | Development baseline only; `compat/078_dev.sql` |
-| unreleased (Kikoto next) | `079` | Development baseline only; `compat/079_dev.sql` |
-| unreleased (Kikoto next) | `080` | Development baseline only; `compat/080_dev.sql` |
-| unreleased (Kikoto next) | `081` | Development baseline only; `compat/081_dev.sql` |
-| unreleased (Kikoto next) | `082` | Development baseline only; `compat/082_dev.sql` |
+| development build (unreleased) | `082` | Development baseline only; `compat/082_dev.sql` |
 
 Per-release upgrade steps are in the [release notes](../history/index.md).
 

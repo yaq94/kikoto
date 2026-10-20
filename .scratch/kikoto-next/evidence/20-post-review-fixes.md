@@ -267,3 +267,30 @@
 
 - `mobile-shell` 只保留文本、操作、请求与持久状态断言；新增 `work detail shows a directory skeleton while media loads`，用可见性与隐藏断言覆盖骨架同步，不测量高度。
 - 既有布局测试定义未修改，仍可在本地单独运行，但不作为 AC-28 证据或 Full CI 门禁。
+## 第四轮审查修复（2026-10-21）
+
+### 只读 GET 不再占用写锁（13/15）
+
+- `GET /api/shared-splits/{id}` 与 `GET /api/catalog-series/previews/{id}` 只读取快照，改用 `ReadOnly` 事务。生产 DSN 的 `_txlock=immediate` 会让未声明只读的事务执行 `BEGIN IMMEDIATE`，一个预览读取会阻塞目录发布等全部写入，直到 busy timeout。
+- 新增 `TestSharedSplitReadDoesNotWaitForTheWriteLock`：另一个连接持有写锁时，GET 在 2 秒内返回。用旧实现注入（`-overlay`，不写入仓库）运行，同一测试等待 30.1 秒后失败，证明测试能在缺陷存在时失败。
+- 预览确认仍是写事务，只在 `POST` 时使用。其余 `BeginTx(ctx, nil)` 的 handler 均为写操作。
+
+### catalog 标签检查只由可跟踪来源的查看者启动（05/AC-10）
+
+- 后台检查会抓取来源目录树（单卡最多 5 分钟），因此只在请求者具有 `remote:track` 时入队。匿名或只读查看者仍看到已记录状态；手动刷新入口原本就要求该权限。
+- `TestCatalogDirectoryListingChecksUnknownAndStaleTabs` 先以普通用户请求，断言队列与上游调用均为 0；再以 contributor 请求并等待两张卡被实际检查。
+- 该行为与 `docs/architecture/workflows.md` 的 "viewers with `remote:track`" 一致。
+
+### 竞争检测下的证据上限测试（14）
+
+- `TestWorkMatchingPausesAtEvidenceByteLimit` 原用 300 个 8 KiB 候选填充 2 MiB。race 检测下逐候选哈希超过 5 秒评估预算，`POST /api/work-matching` 返回 503；该测试是 Full CI `39472781603` 的唯一失败项。
+- 改用 60 个 40 KiB 候选，仍越过 2 MiB 上限，但把哈希工作量降低一个数量级。本地 `go test -race` 连续 8 次通过。
+
+### 共享 pinned 判定（08）
+
+- 三处相同的“目录已属于作品、系列或迁移目标”查询合并为 `catalogSplitPinnedSQL`，有限扫描与索引发布使用同一份谓词。
+- `TestRootCardDropsSplitChildFolder`、`TestCatalogSeriesFiniteRescanSplitsPublishedRoot` 通过。
+
+### 回滚文档
+
+- 删除 `release-rollback.md` 中引用具体旧镜像与提交的段落；兼容矩阵仍按当前支持关系陈述。
