@@ -222,6 +222,26 @@ func TestCatalogEpisodeFormatCopyStaysWithEpisode(t *testing.T) {
 			t.Fatalf("%q became episode evidence: %#v", name, evidence)
 		}
 	}
+	// The copy folds into the episode name the source actually published,
+	// including the CJK counters that are not interchangeable.
+	for name, want := range map[string]string{
+		"Episode 1 (MP3)":     "Episode 1",
+		"Episode 2 [FLAC]":    "Episode 2",
+		"Episode 3 - MP3":     "Episode 3",
+		"第1集 (MP3)":           "第1集",
+		"第2話 [FLAC]":          "第2話",
+		"Title Episode 4 MP3": "Title Episode 4",
+	} {
+		got, ok := catalogEpisodeFormatCopy(name)
+		if !ok || got != want {
+			t.Fatalf("%q folded to %q (ok=%v), want %q", name, got, ok, want)
+		}
+	}
+	for _, name := range []string{"Episode 1 Title", "第1集 特别篇", "Episode 1"} {
+		if _, ok := catalogEpisodeFormatCopy(name); ok {
+			t.Fatalf("%q has no format marker and must keep its own identity", name)
+		}
+	}
 }
 
 // A bare local code is the whole identity. T001 and T002 are two works even
@@ -395,5 +415,47 @@ func TestSourceCatalogRetiresOrphanSplitCards(t *testing.T) {
 	}
 	if live != 0 {
 		t.Fatalf("%d orphan split cards still have a source", live)
+	}
+}
+
+// A CJK episode copy folds into the episode that uses the same counter: the
+// series keeps two members, not three.
+func TestSourceCatalogCJKEpisodeFormatCopyStaysWithEpisode(t *testing.T) {
+	f := newLooseWorkFixture(t, map[string][]map[string]any{
+		"/":                    {looseDir("Series: 例")},
+		"/Series: 例":           {looseDir("第1集"), looseDir("第1集 (MP3)"), looseDir("第2集")},
+		"/Series: 例/第1集":       {looseAudio("audio.flac")},
+		"/Series: 例/第1集 (MP3)": {looseAudio("audio.mp3")},
+		"/Series: 例/第2集":       {looseAudio("audio.flac")},
+	})
+	f.request(t, http.MethodPost, "/catalog/index", `{"intervalMs":100}`, 202)
+	if p := f.drain(t); p["status"] != "complete" {
+		t.Fatalf("scan = %#v", p)
+	}
+	cards := f.cards(t)
+	if len(cards) != 1 || cards["Series: 例"] == nil {
+		t.Fatalf("cards=%v, want one series card", cards)
+	}
+	var seriesID float64
+	for _, raw := range f.request(t, http.MethodGet, "/works?pageSize=100", "", 200)["works"].([]any) {
+		card := raw.(map[string]any)
+		if id, ok := card["seriesId"].(float64); ok && id != 0 {
+			seriesID = id
+		}
+	}
+	if seriesID == 0 {
+		t.Fatalf("series card missing: %v", cards)
+	}
+	body := reviewRequest(t, f.handler, f.cookie, http.MethodGet, "/api/catalog-series/"+strconv.FormatInt(int64(seriesID), 10), "", 200)
+	if len(body["episodes"].([]any)) != 2 {
+		t.Fatalf("episodes=%v, want two members", body["episodes"])
+	}
+	var copyRoot int
+	if err := f.server.db.QueryRow(`SELECT count(*) FROM source_catalog_entry
+		WHERE root_path='/Series: 例/第1集 (MP3)' AND relocated_to_id IS NULL`).Scan(&copyRoot); err != nil {
+		t.Fatal(err)
+	}
+	if copyRoot != 0 {
+		t.Fatalf("format copy kept its own entry (%d)", copyRoot)
 	}
 }

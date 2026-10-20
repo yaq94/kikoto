@@ -97,28 +97,30 @@ func catalogEpisodeEvidence(root string) (catalogSeriesEvidence, bool) {
 // the episode name without the format marker so the copy can be folded into
 // the episode beside it.
 func catalogEpisodeFormatCopy(name string) (string, bool) {
-	match := catalogEpisodeMarker.FindStringSubmatch(name)
+	pattern := catalogEpisodeMarker
+	match := pattern.FindStringSubmatchIndex(name)
 	if match == nil {
-		match = catalogEpisodeMarkerCJK.FindStringSubmatch(name)
+		// The CJK marker has one more capture (its counter), so the suffix is
+		// always the last group of whichever pattern matched.
+		pattern = catalogEpisodeMarkerCJK
+		match = pattern.FindStringSubmatchIndex(name)
 	}
 	if match == nil {
 		return "", false
 	}
-	suffix := strings.TrimSpace(match[3])
+	last := len(match) - 2
+	suffix := strings.TrimSpace(name[match[last]:match[last+1]])
 	if suffix == "" || !(catalogFormatDirectory(suffix) || catalogAuxiliaryDirectory(suffix)) {
 		return "", false
 	}
-	// Rebuild the name from the episode marker alone: everything after the
-	// number is the format marker, and the part before it is the optional title.
-	prefix := strings.TrimSpace(match[1])
-	if prefix != "" {
-		prefix += " "
+	// Everything before the format marker is the episode's own name, kept
+	// verbatim so "第1集" only folds into "第1集", never into a rebuilt
+	// "Episode 1" that the source never published.
+	episode := strings.TrimRight(strings.TrimSpace(name[:match[last]]), " \t-:：._")
+	if episode == "" {
+		return "", false
 	}
-	episode := "Episode " + match[2]
-	if catalogEpisodeMarkerCJK.FindStringSubmatch(name) != nil {
-		episode = "第" + match[2] + "話"
-	}
-	return prefix + episode, true
+	return episode, true
 }
 
 // splitCatalogEpisodeRoots partitions an unregistered finite scan only when
