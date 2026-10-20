@@ -78,3 +78,15 @@
 - `TestSourceIndexWriteContention`（`KIKOTO_SOURCE_INDEX_WRITE_PERF_ASSERT=1` 时断言 busy=0、最长获锁 <5s、drain <2×持锁）
 
 本批无迁移，schema 仍为 82。
+
+补充测量（2026-10-20 20:xx，`.kikoto-work/probe-publish2.db`，14,459 个当前代目录 / 14,459 条 audio_root / 266,296 条旧代 pending）：
+
+| 发布查询形态 | LIMIT 100 |
+| --- | --- |
+| 原 `WITH roots AS MATERIALIZED` + JOIN | 88.3 ms |
+| 无 CTE、观察行优先 + EXISTS | 0.3 ms |
+| 目录优先 + EXISTS（采用） | 0.2 ms |
+
+`EXPLAIN QUERY PLAN` 显示原查询对每个候选目录扫一遍物化的 roots（`SCAN r`）并额外做临时排序；目录优先的形态用 `source_catalog_directory` 主键顺序，无需临时排序。schema 不变，仍为 82。
+
+同时修正两处判断：8 批 × 50 行的几何在 -race 契约套件上是 891s，4 批 × 100 行是 274s（同一测试树，基线 `e2ba6b96` 为 274.7s），固定成本主导，已恢复 4 × 100；`catalogSlowWriteThreshold` 随 `catalogIndexNoPacingKey` 一起关闭，避免 race 开销淹没真实信号。

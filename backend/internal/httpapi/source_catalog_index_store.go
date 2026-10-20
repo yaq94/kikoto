@@ -466,21 +466,26 @@ func (s *Server) publishCatalogBatch(ctx context.Context, job workflowJobRecord,
 	if err = verifyCatalogLease(ctx, tx.Tx, job); err != nil {
 		return 0, err
 	}
-	rows, err := tx.QueryContext(ctx, `WITH roots AS MATERIALIZED (
-	SELECT catalog_root FROM source_catalog_audio_root WHERE file_source_id=? AND generation=?
-)
-	SELECT d.path,d.catalog_root,o.name,o.kind,o.size_bytes,o.content_hash,o.modified_at,
+	// Drive from this generation's directories, not from the pending index: a
+	// materialized roots CTE made every publish batch scan the whole audio-root
+	// set (88ms per batch on a production-sized copy with zero rows to publish),
+	// and an observation-first plan would walk any rows a purge has not reached.
+	// The directory primary key orders the scan, and the observation primary key
+	// orders each directory's rows, so no temporary sort is needed.
+	rows, err := tx.QueryContext(ctx, `SELECT d.path,d.catalog_root,o.name,o.kind,o.size_bytes,o.content_hash,o.modified_at,
 		-- The split decision belongs to the catalog root, so every row below
 		-- it must see the plan. A format child that read an empty mode used to
 		-- publish its own folder row into the creator card, which then could
 		-- never be retired.
 		COALESCE(rd.work_split,'')
-FROM source_catalog_observation o
-JOIN source_catalog_directory d ON d.file_source_id=o.file_source_id AND d.path=o.directory_path AND d.revision=o.revision
+FROM source_catalog_directory d
+JOIN source_catalog_observation o ON o.file_source_id=d.file_source_id AND o.directory_path=d.path AND o.revision=d.revision
 LEFT JOIN source_catalog_directory rd ON rd.file_source_id=d.file_source_id AND rd.path=d.catalog_root AND rd.generation=d.generation
-JOIN roots r ON r.catalog_root=d.catalog_root
-WHERE o.file_source_id=? AND o.publish_pending=1 AND d.generation=? AND d.status='complete' AND d.catalog_root<>''
-ORDER BY o.directory_path,o.name LIMIT ?`, sourceID, job.RunID, sourceID, job.RunID, catalogPublishRows)
+WHERE d.file_source_id=? AND d.generation=? AND d.status='complete' AND d.catalog_root<>''
+	AND o.publish_pending=1
+	AND EXISTS(SELECT 1 FROM source_catalog_audio_root r
+		WHERE r.file_source_id=d.file_source_id AND r.generation=d.generation AND r.catalog_root=d.catalog_root)
+ORDER BY d.path,o.name LIMIT ?`, sourceID, job.RunID, catalogPublishRows)
 	if err != nil {
 		return 0, err
 	}
