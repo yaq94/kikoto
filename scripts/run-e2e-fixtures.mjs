@@ -161,13 +161,15 @@ export const groups = [
     backendBinary: true,
   },
   {
-    // Ticket 19's mobile skeleton, favorites shelf and cover-touch flows are
-    // mobile-only. The mocked shard runs the desktop project, so these exact
-    // tests need their own bounded Playwright project.
+    // Ticket 19's mobile skeleton, favorites navigation and cover-touch flows
+    // are mobile-only. The mocked shard runs the desktop project, so these
+    // tests need their own bounded Playwright project. AC-28 admits only
+    // text, operations, requests and persisted state here; the pre-existing
+    // visual definitions stay in their specs but are not this gate.
     name: "mobile-shell",
     fixture: null,
     specs: ["work-detail", "favorites-state", "player"],
-    grep: "@mobile-shell|reserves a structured directory skeleton|mobile favorites shows shelves|full player collapses from the upper content area|single touch on the full player cover|double-tapping the cover opens the work",
+    grep: "mobile footer Library and Favorites|returning through the mobile footer keeps the Sales sort|single touch on the full player cover|double-tapping the cover opens the work|shows a directory skeleton while media loads",
     project: "mobile-chromium",
   },
   {

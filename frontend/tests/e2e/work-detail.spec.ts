@@ -262,6 +262,37 @@ test("work detail reserves a structured directory skeleton until media is ready"
   await expect(skeleton).toBeHidden();
 });
 
+test("work detail shows a directory skeleton while media loads", async ({ page }) => {
+  const mediaItems = [mediaFixture(1, "track.mp3", "RJ00000000/track.mp3", "audio")];
+  let releaseMediaRequest = () => {};
+  const mediaRequestGate = new Promise<void>((resolve) => {
+    releaseMediaRequest = resolve;
+  });
+  let markMediaRequestStarted = () => {};
+  const mediaRequestStarted = new Promise<void>((resolve) => {
+    markMediaRequestStarted = resolve;
+  });
+  await mockApplication(page, undefined, false, 1, 0, mediaItems, undefined, {
+    authenticated: true,
+    onMediaRequest: async () => {
+      markMediaRequestStarted();
+      await mediaRequestGate;
+    },
+  });
+
+  const skeleton = page.getByTestId("directory-skeleton");
+  try {
+    await page.goto("/");
+    await page.getByText("Tagged mobile work", { exact: true }).click();
+    await mediaRequestStarted;
+    await expect(skeleton).toBeVisible();
+    await expect(page.getByText("Loading directory...", { exact: true })).toHaveCount(0);
+  } finally {
+    releaseMediaRequest();
+  }
+  await expect(skeleton).toBeHidden();
+});
+
 test("directory database contention preserves loaded work details", async ({ page }) => {
   await mockApplication(page, undefined, false, 1, 0, [], undefined, { authenticated: true, mediaBusy: true });
   await page.goto("/");
