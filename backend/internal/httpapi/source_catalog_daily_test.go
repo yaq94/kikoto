@@ -272,7 +272,7 @@ func TestSourceCatalogDailyJoinsQueuedRunningAndCancelledScansWithSavedBudget(t 
 	}
 }
 
-func TestSourceCatalogDailyDoesNotRetryIncompleteFirstCoverage(t *testing.T) {
+func TestSourceCatalogDailyReobservesAFinishedUnconfirmedEmptyGeneration(t *testing.T) {
 	var now atomic.Int64
 	now.Store(time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC).Unix())
 	f := newCatalogIndexFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -368,8 +368,14 @@ func TestSourceCatalogDailyDoesNotRetryALowDiskPause(t *testing.T) {
 	if _, err := f.server.db.Exec(`UPDATE source_catalog_scan SET pause_reason='low_disk_space' WHERE file_source_id=1`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.server.db.Exec(`DELETE FROM app_setting WHERE key=?`, catalogDailySettingPrefix+"1"); err != nil {
+	// Keep a due date left by an earlier successful scan. A low-disk pause
+	// must override it instead of silently retrying the paused run.
+	if _, err := f.server.db.Exec(`INSERT INTO app_setting(key,value_json) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json`, catalogDailySettingPrefix+"1", strconv.FormatInt(now.Load()-1, 10)); err != nil {
 		t.Fatal(err)
+	}
+	var scheduled int
+	if err := f.server.db.QueryRow(`SELECT count(*) FROM app_setting WHERE key=?`, catalogDailySettingPrefix+"1").Scan(&scheduled); err != nil || scheduled != 1 {
+		t.Fatalf("daily setting missing: %v", err)
 	}
 	now.Add(int64(48 * time.Hour / time.Second))
 	if err := f.server.dispatchDueCatalogUpdates(context.Background()); err != nil {

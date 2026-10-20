@@ -205,3 +205,61 @@ func TestSourceCatalogIndexConfiguredConcurrencyAndSharedRate(t *testing.T) {
 		})
 	}
 }
+
+// An unconfirmed empty child is not proof that the whole generation is
+// complete. Only a confirmed 404/410 range may be treated as missing.
+func TestSourceCatalogIndexNonRootUnconfirmedEmptyStaysPartial(t *testing.T) {
+	f := newCatalogIndexFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var input struct {
+			Path string `json:"path"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&input)
+		items := []map[string]any{}
+		switch input.Path {
+		case "/":
+			items = []map[string]any{{"name": "Work", "is_dir": true}, {"name": "Empty", "is_dir": true}}
+		case "/Work":
+			items = []map[string]any{{"name": "track.mp3", "size": 100}}
+		case "/Empty":
+			items = []map[string]any{}
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"code": 200, "data": map[string]any{"content": items, "total": len(items)}})
+	}))
+	f.request(t, http.MethodPost, "/catalog/index", `{"intervalMs":100}`, 202)
+	p := f.drain(t)
+	if p["status"] != "partial" || p["unconfirmedEmptyDirectories"] != float64(1) {
+		t.Fatalf("unconfirmed empty child was reported as complete: %#v", p)
+	}
+}
+
+// A resumed run with a publish backlog must not publish anything when the
+// disk is already below the floor. The check precedes the first publish call.
+func TestSourceCatalogIndexLowDiskBlocksTheFirstPublishOfAResumedRun(t *testing.T) {
+	f := newCatalogIndexFixture(t, emptyCatalogUpstream(t))
+	f.server.catalogDiskSpace = func(string) (diskSpaceSnapshot, error) { return diskSpaceSnapshot{Available: 0}, nil }
+	started := f.request(t, http.MethodPost, "/catalog/index", `{"intervalMs":100,"minFreeBytes":0}`, 202)
+	runID := int64(started["runId"].(float64))
+	metadataReviewExec(t, f.server.db, `INSERT INTO source_catalog_audio_root(file_source_id,generation,catalog_root)
+		VALUES(1,?,'/Example Work');
+	INSERT INTO source_catalog_directory(file_source_id,path,generation,partition_path,catalog_root,status,revision,next_page,expected_total)
+		VALUES(1,'/Example Work',?,'/Example Work','/Example Work','complete',1,2,1);
+	INSERT INTO source_catalog_observation(file_source_id,directory_path,name,revision,kind,size_bytes,publish_pending)
+		VALUES(1,'/Example Work','track.mp3',1,'audio',100,1);`, runID, runID)
+	if err := f.server.runNextQueuedWorkflowJob(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	p := f.request(t, http.MethodGet, "/catalog/index", "", 200)
+	if p["status"] != "paused" && p["status"] != "partial" || p["pauseReason"] != "low_disk_space" {
+		t.Fatalf("low disk did not stop the first publish: %#v", p)
+	}
+	var pending, entries int
+	if err := f.server.db.QueryRow(`SELECT publish_pending FROM source_catalog_observation WHERE file_source_id=1 AND name='track.mp3'`).Scan(&pending); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.server.db.QueryRow(`SELECT count(*) FROM source_catalog_entry`).Scan(&entries); err != nil {
+		t.Fatal(err)
+	}
+	if pending != 1 || entries != 0 {
+		t.Fatalf("low space published a backlog row: pending=%d entries=%d", pending, entries)
+	}
+}

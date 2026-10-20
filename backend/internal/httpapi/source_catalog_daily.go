@@ -38,10 +38,10 @@ func (s *Server) dispatchDueCatalogUpdates(ctx context.Context) error {
 			-- reason. It must still retry: its incomplete range otherwise
 			-- keeps matching paused forever. A low-disk pause is different:
 			-- it is not finished coverage and waits for the operator.
-			COALESCE(CAST(setting.value_json AS INTEGER),CASE
+			(CASE WHEN scan.pause_reason='low_disk_space' THEN NULL ELSE COALESCE(CAST(setting.value_json AS INTEGER),CASE
 				WHEN scan.pause_reason='' AND run.status IN ('succeeded','partial') THEN unixepoch(run.finished_at)+86400
 				WHEN run.status IN ('failed','cancelled') THEN unixepoch(run.finished_at)+86400
-			END)<=?
+			END) END)<=?
 		ORDER BY scan.file_source_id LIMIT 16`, catalogDailySettingPrefix, sourceTypeOpenList, now.Unix())
 	if err != nil {
 		return err
@@ -81,10 +81,10 @@ func (s *Server) dispatchCatalogUpdate(ctx context.Context, sourceID int64, now 
 	var saved string
 	var due sql.NullInt64
 	err = tx.QueryRowContext(ctx, `SELECT scan.options_json,
-			COALESCE(CAST(setting.value_json AS INTEGER),CASE
+			(CASE WHEN scan.pause_reason='low_disk_space' THEN NULL ELSE COALESCE(CAST(setting.value_json AS INTEGER),CASE
 				WHEN scan.pause_reason='' AND run.status IN ('succeeded','partial') THEN unixepoch(run.finished_at)+86400
 				WHEN run.status IN ('failed','cancelled') THEN unixepoch(run.finished_at)+86400
-			END)
+			END) END)
 		FROM source_catalog_scan scan JOIN workflow_run run ON run.id=scan.workflow_run_id
 		JOIN file_source source ON source.id=scan.file_source_id
 		LEFT JOIN app_setting setting ON setting.key=? || scan.file_source_id

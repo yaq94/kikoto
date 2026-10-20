@@ -83,6 +83,11 @@ func (s *Server) executeSourceCatalogIndexJob(ctx context.Context, job workflowJ
 		transport.concurrency = options.Concurrency
 	}
 	client := configuredOpenListClient(source, httpClient).WithResponseLimit(options.MaxResponseBytes)
+	// A low-space job must not publish even its first batch. The floor applies
+	// before any write, not only after the queue has been drained once.
+	if reason := s.catalogIndexDiskPause(options); reason != "" {
+		return s.settleCatalogBatch(ctx, job, input.SourceID, "partial", reason)
+	}
 	// The publish queue is drained before the next page batch, not on every
 	// step. A working tree always has another directory to expand or page, so a
 	// publish call after each write spends its transaction on rows the next
@@ -160,12 +165,12 @@ func (s *Server) executeSourceCatalogIndexJob(ctx context.Context, job workflowJ
 				return err
 			}
 			status := "succeeded"
-			// An unconfirmed-empty directory is a completed observation of zero
-			// files, not an unfinished range. It must not block retiring rows in
-			// ranges that were fully observed; settleCatalogLifecycleBatch still
-			// skips any entry whose own range contains an empty directory. A
-			// source root that itself came back empty means the whole listing is
-			// suspect, so no lifecycle pass runs in that case.
+			// An unconfirmed-empty directory is not proof that its range is
+			// complete, so it keeps the run partial. It does not block the
+			// lifecycle pass for ranges that were fully observed: other cards
+			// still need their own available/missing state. A failed,
+			// restricted or empty root is different: the whole listing is
+			// suspect and no lifecycle pass runs.
 			rootEmpty := false
 			if p.Empty > 0 {
 				if err = s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM source_catalog_directory
@@ -174,9 +179,18 @@ func (s *Server) executeSourceCatalogIndexJob(ctx context.Context, job workflowJ
 					return err
 				}
 			}
-			if p.Failed+p.Restricted > 0 || rootEmpty {
+			unconfirmedEmpty := 0
+			if p.Empty > 0 && !rootEmpty {
+				if err = s.db.QueryRowContext(ctx, `SELECT count(*) FROM source_catalog_directory
+					WHERE file_source_id=? AND generation=? AND status='empty' AND error_code<>'not_found'`,
+					input.SourceID, job.RunID).Scan(&unconfirmedEmpty); err != nil {
+					return err
+				}
+			}
+			if p.Failed+p.Restricted > 0 || rootEmpty || unconfirmedEmpty > 0 {
 				status = "partial"
-			} else {
+			}
+			if p.Failed+p.Restricted == 0 && !rootEmpty {
 				// Retire the split cards of roots that the current generation
 				// no longer splits. A batch keeps the write lock short; a full
 				// batch asks the workflow for another invocation.
