@@ -13,6 +13,11 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+// FilePoolSize bounds the connections shared by requests and background
+// workers. Readers hold a slot for the life of their cursor, so a pool sized
+// only for the write lock starves a writer while four readers are active.
+const FilePoolSize = 8
+
 func Open(path string) (*sql.DB, error) {
 	if !strings.HasPrefix(path, "file:") && path != ":memory:" {
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -28,8 +33,8 @@ func Open(path string) (*sql.DB, error) {
 		db.SetMaxOpenConns(1)
 		db.SetMaxIdleConns(1)
 	} else {
-		db.SetMaxOpenConns(8)
-		db.SetMaxIdleConns(8)
+		db.SetMaxOpenConns(FilePoolSize)
+		db.SetMaxIdleConns(FilePoolSize)
 		// File-backed connections are cheap to reopen. Bounding their idle and
 		// total lifetimes ensures that an unexpectedly contaminated connection
 		// cannot retain a SQLite lock indefinitely while sitting in the pool.

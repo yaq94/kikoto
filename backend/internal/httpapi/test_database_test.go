@@ -107,7 +107,7 @@ func TestMigratedTestDatabasesRemainIsolated(t *testing.T) {
 	if second.Stats().MaxOpenConnections != 1 {
 		t.Fatal("test database must use one connection to expose nested pool acquisition")
 	}
-	if production := openMigratedTestDBWithProductionPool(t); production.Stats().MaxOpenConnections != 4 {
+	if production := openMigratedTestDBWithProductionPool(t); production.Stats().MaxOpenConnections != storage.FilePoolSize {
 		t.Fatal("production-pool test database must retain the production connection pool")
 	}
 	// Startup must still accept the copied ledger and schema as an already
