@@ -74,7 +74,8 @@ func (s *Server) getCatalogSeries(w http.ResponseWriter, r *http.Request) {
 		ROW_NUMBER() OVER(PARTITION BY COALESCE(identity.identity_work_id,-e.id) ORDER BY m.position,e.id) AS identity_rank
 		FROM catalog_series_member m JOIN source_catalog_entry e ON e.id=m.catalog_entry_id
 		JOIN file_source fs ON fs.id=e.file_source_id LEFT JOIN shared_work_identity identity ON identity.work_id=e.work_id
-		WHERE m.series_id IN (SELECT related.id FROM catalog_series selected JOIN catalog_series related ON related.id=selected.id OR related.work_id IN (SELECT peer.work_id FROM shared_work_identity own JOIN shared_work_identity peer ON peer.identity_work_id=own.identity_work_id WHERE own.work_id=selected.work_id) WHERE selected.id=?))
+		WHERE e.relocated_to_id IS NULL AND e.availability_status<>'missing'
+			AND m.series_id IN (SELECT related.id FROM catalog_series selected JOIN catalog_series related ON related.id=selected.id OR related.work_id IN (SELECT peer.work_id FROM shared_work_identity own JOIN shared_work_identity peer ON peer.identity_work_id=own.identity_work_id WHERE own.work_id=selected.work_id) WHERE selected.id=?))
 		SELECT id,title,file_source_id,display_name,primary_code,work_id,position FROM grouped WHERE identity_rank=1 ORDER BY position,id`, id)
 	if err != nil {
 		writeError(w, err)

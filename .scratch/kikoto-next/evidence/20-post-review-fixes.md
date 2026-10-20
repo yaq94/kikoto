@@ -36,3 +36,18 @@
 - 真实 sources 上的分页/429/改名恢复未在本批重新构造；以现有 H/R 用例与部署后实跑为准。
 - 浏览器功能用例未在本批重跑；前端仅执行类型、静态、构建与 874 项纯逻辑测试。
 - 生产数据清理与索引终态在部署后记录于部署证据。
+
+## 收尾修复（2026-10-20 18:xx）
+
+14. `catalogRangeUncertain` 把配置根 `/`（以及空 base）按整棵树判断；根卡下的失败子目录不再让 lifecycle 误删旧文件。
+15. `cleanupCatalogPublishBatch` 对根卡复用同一范围谓词，不再因“根卡存在”永久跳过清理。
+16. `catalogRootIncomplete` 不再把 `empty + not_found` 当作未完成；确认 404 的格式卡可以退休，未确认空目录仍然保留。
+17. 格式目录质量后缀改为逐段解析，`FLAC 24bit 96kHz`、`FLAC 24bit/96kHz`、`WAV 24-96` 不再被当成标题。
+18. 系列详情过滤 `missing` 与已 relocated 的成员；单集重新发布后自动回到系列视图。
+
+新增回归：
+- `TestCatalogRangeUncertainAtConfiguredRoot`
+- `TestCatalogFormatDirectoryAcceptsMultipleQualitySuffixes`
+- `TestCatalogSeriesOmitsMissingEpisodesUntilRepublished`
+
+复验：后端 `go test ./...` exit 0；前端 typecheck/lint/build 与 155 文件、874 测试通过；`make backend-lint` 0 issues；`make sensitive-check` 通过。

@@ -13,10 +13,14 @@ import (
 // generation fully observed: a failed, restricted, unconfirmed-empty or still
 // listing directory keeps every older card and file row it owns.
 func catalogRootIncomplete(ctx context.Context, tx *sql.Tx, sourceID, generation int64, root string) (bool, error) {
+	if root == "" {
+		root = "/"
+	}
 	var incomplete int
 	err := tx.QueryRowContext(ctx, `SELECT EXISTS(
 		SELECT 1 FROM source_catalog_directory d
 		WHERE d.file_source_id=? AND d.generation=? AND d.status<>'complete'
+			AND NOT (d.status='empty' AND d.error_code='not_found')
 			AND (?='/' OR d.catalog_root=? OR d.path=? OR substr(d.path,1,length(?)+1)=? || '/')
 		UNION ALL
 		SELECT 1 FROM source_catalog_observation o
@@ -36,13 +40,16 @@ func catalogRangeUncertain(ctx context.Context, tx *sql.Tx, sourceID, generation
 	// status='empty' with error_code='not_found' is a definite 404/410 answer,
 	// not an unconfirmed listing. Treating it as uncertain kept the whole
 	// source partial and preserved rows a deleted directory no longer owns.
+	if base == "" {
+		base = "/"
+	}
 	const uncertainStatus = ` status IN ('failed','restricted','empty','pending','listing_complete')
 		AND NOT (status='empty' AND error_code='not_found')`
 	var uncertain int
 	err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM source_catalog_directory d
 		WHERE d.file_source_id=? AND d.generation=? AND `+uncertainStatus+`
-			AND (d.path=? OR substr(d.path,1,length(?)+1)=? || '/'))`,
-		sourceID, generation, base, base, base).Scan(&uncertain)
+			AND (?='/' OR d.path=? OR substr(d.path,1,length(?)+1)=? || '/'))`,
+		sourceID, generation, base, base, base, base, base).Scan(&uncertain)
 	return uncertain != 0, err
 }
 
@@ -277,20 +284,14 @@ func (s *Server) cleanupCatalogPublishBatch(ctx context.Context, job workflowJob
 		// nothing about its files. Deleting the older generation below it would
 		// hide tracks that the source never had a chance to republish. Keep the
 		// rows until a later scan completes that subtree.
-		uncertain := false
-		if base == "" || base == "/" {
-			// The configured root is a card only when audio sits directly in
-			// it. Otherwise its own entries decide, so a child failure does not
-			// block cleanup for an unrelated card.
-			var ownRows int
-			if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM source_catalog_entry
-				WHERE file_source_id=? AND last_seen_generation=? AND root_path='/')`,
-				sourceID, job.RunID).Scan(&ownRows); err != nil {
-				return 0, 0, err
-			}
-			uncertain = ownRows != 0
-		} else if uncertain, err = catalogRangeUncertain(ctx, tx.Tx, sourceID, job.RunID, base); err != nil {
-			return 0, 0, err
+		if base == "" {
+			base = "/"
+		}
+		// The configured root is the whole tree: a failure anywhere below it
+		// keeps older rows, while a fully observed root cleans them.
+		uncertain, uncertainErr := catalogRangeUncertain(ctx, tx.Tx, sourceID, job.RunID, base)
+		if uncertainErr != nil {
+			return 0, 0, uncertainErr
 		}
 		if uncertain {
 			uncertainSeen = true

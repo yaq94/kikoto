@@ -113,7 +113,8 @@ func catalogFormatDirectory(name string) bool {
 	// are all copies of the release audio. Comparing the compact form keeps the
 	// token check independent of punctuation.
 	compact := strings.NewReplacer("(", "", ")", "", "[", "", "]", "",
-		"（", "", "）", "", "【", "", "】", "", " ", "", "_", "", "-", "").Replace(lower)
+		"（", "", "）", "", "【", "", "】", "", " ", "", "_", "", "-", "",
+		"/", "", ",", "", ":", "").Replace(lower)
 	for _, token := range []string{"mp3", "flac", "wav", "ogg", "opus", "m4a", "aac",
 		"aiff", "aif", "wma", "dsd", "dsf", "dff", "ape", "alac", "wv", "tta"} {
 		if !strings.HasPrefix(compact, token) {
@@ -148,14 +149,34 @@ func catalogFormatQualityOnly(rest string) bool {
 	case "v0", "v2", "vbr", "cbr", "hires", "lossless":
 		return true
 	}
-	for len(rest) > 0 && rest[0] >= '0' && rest[0] <= '9' {
-		rest = rest[1:]
+	// A copy may carry several quality facts, for example "24bit96khz" or
+	// "320kbps". Consume one number and unit at a time so the whole suffix is
+	// recognised instead of only its first pair.
+	for rest != "" {
+		digits := 0
+		for digits < len(rest) && rest[digits] >= '0' && rest[digits] <= '9' {
+			digits++
+		}
+		if digits == 0 {
+			return false
+		}
+		rest = rest[digits:]
+		if rest == "" {
+			return true
+		}
+		unit := ""
+		for _, candidate := range []string{"kbps", "kbit", "mbit", "khz", "bit", "bps", "hz", "k", "m"} {
+			if strings.HasPrefix(rest, candidate) {
+				unit = candidate
+				break
+			}
+		}
+		if unit == "" {
+			return false
+		}
+		rest = rest[len(unit):]
 	}
-	switch rest {
-	case "", "k", "kbps", "bps", "bit", "khz", "hz", "kbit", "mbit":
-		return true
-	}
-	return false
+	return true
 }
 
 // catalogDirectoryFormatName removes a leading order marker from a directory
