@@ -13,7 +13,11 @@ The publisher drives each batch from the current generation's completed
 directories: a candidate needs a non-empty `catalog_root`, an audio root for the
 same generation, and a pending observation. The directory primary key orders the
 scan and the partial index over pending rows seeks the observations, so the cost
-follows the rows a batch returns and no temporary sort is needed.
+follows the rows a batch returns and no temporary sort is needed. The join is
+written as a `CROSS JOIN` so the planner cannot start from the pending index:
+with a large backlog left by an earlier generation that plan sorts every queued
+row before `LIMIT` applies. A plan guard test asserts the directory search comes
+first and no temporary B-tree is used.
 
 Two earlier shapes are no longer used. Reading the pending queue first and
 joining a materialized root set with `WITH roots AS MATERIALIZED` scanned the
@@ -49,6 +53,21 @@ a materialized root set.
 `TestSourceCatalogPublishTailPerformance` and
 `make source-index-tail-performance` print the current plan and the legacy
 comparison.
+
+## Choosing the rate
+
+The request rate is configured per source and the saved value wins over the
+built-in starting value. The starting value exists so an uncalibrated source
+cannot be flooded; it is not a ceiling and not a capacity answer. Measure the
+deployment host with `make source-index-performance`, then raise concurrency or
+shorten the interval until the origin rate limit or the host write capacity is
+the binding constraint. The option ranges and the measurement procedure are in
+[OpenList: Recoverable full index](openlist.md#recoverable-full-index).
+
+Bounding the rate matters for a different reason than throughput: an
+unbounded writer starves other SQLite writers regardless of how fast the source
+answers. The publisher therefore bounds each transaction and releases the write
+lock between them, so a higher rate does not turn into lock contention.
 
 ## Guidance that applies here
 

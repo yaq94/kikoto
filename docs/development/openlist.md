@@ -66,7 +66,7 @@ the next update for 24 hours later. Daily work uses the saved limits, existing
 source request policy and low-space pause, and only complete coverage reports
 success. Manual starts still require `sources:write`.
 
-| Option | Default | Accepted range |
+| Option | Starting value | Accepted range |
 | --- | --- | --- |
 | `concurrency` | 1 | 1–4 metadata requests within the single workflow executor |
 | `intervalMs` | 1000 | 100–60000 between metadata starts, shared per origin |
@@ -76,13 +76,20 @@ success. Manual starts still require `sources:write`.
 | `maxPagesPerDirectory` | 10000 | 1–100000; reaching the bound leaves an explicit retryable range |
 | `minFreeBytes` | 2147483648 | 0–1099511627776 |
 
-The defaults are the safe starting point, not a throughput recommendation for
-every host. The pacing options bound how often a metadata request may start and
-how many run at once; they do not bound database work. `make
-source-index-performance` measures the whole worker over a synthetic tree and
-reports completed directories per minute, connection-pool waits, refusals and
-process CPU for each option combination. Use it on the deployment host before
-changing the defaults.
+The values above are starting points for a source that has not been calibrated.
+They are not a ceiling and not a throughput recommendation for every host. A
+saved per-source value always wins over the starting value, so raising the rate
+for one source cannot silently change another. The pacing options bound how
+often a metadata request may start and how many run at once; they do not bound
+database work.
+
+`make source-index-performance` measures the whole worker over a synthetic tree
+and reports completed directories per minute, connection-pool waits, refusals
+and process CPU for each option combination. Measure on the deployment host,
+then raise concurrency or shorten the interval until the origin rate limit or
+the host write capacity is the binding constraint, and record the measurement
+next to the chosen value. Do not treat the starting value as the answer to a
+capacity question.
 
 On a 32-processor development host, a 965-directory tree completes at about
 352 directories per minute with concurrency 4, a 150 ms interval and 32 steps
@@ -151,10 +158,12 @@ Publication reads the durable `publish_pending` queue:
 
 The publisher drives each batch from the generation's completed directories:
 a candidate needs a non-empty `catalog_root`, an audio root for the same
-generation, and a pending observation, which the partial index seeks. The
-directory primary key orders the scan and the observation primary key orders
-each directory's rows, so a batch stops after the rows it publishes and needs no
-temporary sort. `refreshCatalogAudioRootTx` runs after each directory status
+generation, and a pending observation, which the partial index seeks. The join
+is forced to start from directories (`CROSS JOIN`); letting the planner start
+from the pending index sorts a large backlog from an earlier generation before
+`LIMIT` applies. The directory primary key orders the scan and the observation
+primary key orders each directory's rows, so a batch stops after the rows it
+publishes and needs no temporary sort. `refreshCatalogAudioRootTx` runs after each directory status
 change: it adds a root when a completed directory has audio and removes it when
 the last such directory becomes incomplete, so a rescan that deletes tracks
 retires the root.

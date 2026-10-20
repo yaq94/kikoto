@@ -467,7 +467,12 @@ const catalogPublishQuery = `SELECT d.path,d.catalog_root,o.name,o.kind,o.size_b
 	-- never be retired.
 	COALESCE(rd.work_split,'')
 FROM source_catalog_directory d
-JOIN source_catalog_observation o ON o.file_source_id=d.file_source_id AND o.directory_path=d.path AND o.revision=d.revision
+-- CROSS JOIN fixes the join order. Without it SQLite may start from the
+-- pending index and sort every queued row, which turned a 50-row batch into a
+-- multi-second statement on a source with a large backlog from an earlier
+-- generation. The directory primary key already provides the ORDER BY d.path
+-- prefix, so the batch stops as soon as it has enough rows.
+CROSS JOIN source_catalog_observation o ON o.file_source_id=d.file_source_id AND o.directory_path=d.path AND o.revision=d.revision
 LEFT JOIN source_catalog_directory rd ON rd.file_source_id=d.file_source_id AND rd.path=d.catalog_root AND rd.generation=d.generation
 WHERE d.file_source_id=? AND d.generation=? AND d.status='complete' AND d.catalog_root<>''
 	AND o.publish_pending=1

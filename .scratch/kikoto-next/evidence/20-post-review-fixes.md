@@ -103,7 +103,7 @@
    - **resume 同一 generation 时把 `lifecycle_stage`、`lifecycle_cursor`、`publish_cleanup_cursor` 一并归零。** resume 会把 failed/restricted/empty 目录重新排队，因此可能发布上次已经越过的条目；只归零发布游标不够，lifecycle 若停在 `done` 会让这些条目永远没有 available/missing 状态。两项派生游标都从头重跑，操作幂等（只重写状态、只删上一代文件行）。新增 `TestSourceCatalogResumeRestartsDerivedState`、`TestSourceCatalogSucceededRunStartsANewGeneration`。
    - `source_catalog_index_worker.go` 的批次上限与 `scanned` 判断不变，一次 pass 必然终止。
    - 新增 `TestCatalogCleanupKeepsUncertainRowsAndAdvancesCursor`：3 张卡、其中一张子树 `failed`，断言 uncertain 卡保留旧行、其余删除、游标停在尾部、第二次调用扫描 0 行、旧版负游标被消费一次、子树恢复 complete 后旧行被删除。
-2. **默认扫描速率与 D-10 不一致。** `defaultCatalogIndexOptions` 恢复为并发 1、间隔 1000 ms，与规格 D-10 的“并发 1、每秒最多 1 次”一致；管理员仍可在 1–4 / 100–60000 ms 内上调。生产强制全量扫描按管理员显式参数运行，不用默认值。
+2. **默认扫描速率与 D-10 不一致。** `defaultCatalogIndexOptions` 恢复为并发 1、间隔 1000 ms，与规格 D-10 当时的默认起点一致；管理员仍可在 1–4 / 100–60000 ms 内上调。生产强制全量扫描按管理员显式参数运行，不用默认值。规格随后修订：D-10 的目录扫描一行改为“按来源独立配置，内置值只作为未校准来源的起点”，并明确起点值不是性能上限，本条不再构成对实测调参的限制。
 
 文档同步：
 
@@ -123,3 +123,13 @@
 3. 性能文档里的 0.2 ms 实测是 `LIMIT 100`，现已注明当前批次为 50 行、查询计划相同；`evidence/20` 的表格保留原始测量条件。
 
 测试缺口（清理游标的整页 100、跨页 150、worker 直接 succeeded）不是缺陷：worker 只在 `failed+restricted==0` 且根目录非空时进入清理阶段，partial 运行不会推进游标；`TestCatalogCleanupKeepsUncertainRowsAndAdvancesCursor` 用三张卡直接覆盖“uncertain 保留 + 游标前进 + 二次调用 0 行 + 旧负游标消费一次 + 子树恢复后删除”，整页/跨页只改变批次数，不改变每次调用的判定。
+
+## 发布查询的联接顺序（2026-10-20 22:4x，部署后实跑发现）
+
+部署 `bd120ea6` 后以 `force:true`、页 500、批 32、并发 2、间隔 300 ms 启动 run 51。约 2 分钟内出现 27 条 `SQLITE_BUSY` / `context deadline`、连接池等待 25.1 s、`publish_batch` 单批 8–16 s，登录返回 503，索引速率约 14 目录/分钟。已在 47 请求处取消 run 51。
+
+原因：生产库上 `EXPLAIN QUERY PLAN` 选择了**观察行优先**的联接顺序，并对全部待发布观察做临时排序（`USE TEMP B-TREE FOR ORDER BY`）。上一代 run 50 留下 266,354 条 `publish_pending`，每批发布都会先排序整个积压，才会按 `LIMIT` 截断。审查阶段的探针库统计信息不同，因此当时看到的是目录优先计划，没有发现这个分支。
+
+修复：`catalogPublishQuery` 用 `CROSS JOIN` 固定「目录 → 观察」的联接顺序。目录主键 `(file_source_id,path)` 直接提供 `ORDER BY d.path` 前缀，观察行按 `(file_source_id,directory_path)` 与 pending 部分索引点查。生产库只读实测：同一批 50 行从数秒降到 10 ms。新增 `TestCatalogPublishQueryPlanStaysDirectoryDriven`：先造 400 条上一代 pending，再断言计划没有 `TEMP B-TREE`、且 `SEARCH d` 在 `SEARCH o` 之前；这个用例在旧写法下会失败。
+
+注意：这一批问题的触发条件是「上一代留下大批 pending」。新库或已清空积压的源上，旧写法也能通过功能测试，因此性能回归必须用计划断言而不是只看结果行数。
