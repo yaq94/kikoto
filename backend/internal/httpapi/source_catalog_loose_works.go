@@ -21,6 +21,17 @@ const (
 	catalogWorkSplitFile   = "file"
 )
 
+// catalogSplitPinnedSQL reports whether a directory already belongs to a
+// tracked work, a series, or a relocation target. Such a card keeps its
+// identity; only an unclaimed creator folder can be split into loose works.
+// The index scan and the finite scan both decide with this one predicate.
+const catalogSplitPinnedSQL = `SELECT EXISTS(
+		SELECT 1 FROM source_catalog_entry e
+		WHERE e.file_source_id=? AND e.root_path=? AND (
+			e.work_id IS NOT NULL
+			OR EXISTS(SELECT 1 FROM catalog_series_member m WHERE m.catalog_entry_id=e.id)
+			OR EXISTS(SELECT 1 FROM source_catalog_entry r WHERE r.relocated_to_id=e.id)))`
+
 // A creator folder can contain many independent works as loose audio files.
 // These patterns identify the numbering schemes those sources use. A code at
 // the start of a file name is a work number, not a track number.
@@ -979,12 +990,7 @@ func decideCatalogWorkSplitTx(ctx context.Context, tx *sql.Tx, sourceID, generat
 		return nil
 	}
 	var pinned int
-	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
-		SELECT 1 FROM source_catalog_entry e
-		WHERE e.file_source_id=? AND e.root_path=? AND (
-			e.work_id IS NOT NULL
-			OR EXISTS(SELECT 1 FROM catalog_series_member m WHERE m.catalog_entry_id=e.id)
-			OR EXISTS(SELECT 1 FROM source_catalog_entry r WHERE r.relocated_to_id=e.id)))`,
+	if err := tx.QueryRowContext(ctx, catalogSplitPinnedSQL,
 		sourceID, directoryPath).Scan(&pinned); err != nil {
 		return err
 	}
@@ -1523,12 +1529,7 @@ func (s *Server) catalogSnapshotSplitMode(ctx context.Context, sourceID int64, r
 		return catalogWorkSplitSingle, nil
 	}
 	var pinned int
-	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS(
-		SELECT 1 FROM source_catalog_entry e
-		WHERE e.file_source_id=? AND e.root_path=? AND (
-			e.work_id IS NOT NULL
-			OR EXISTS(SELECT 1 FROM catalog_series_member m WHERE m.catalog_entry_id=e.id)
-			OR EXISTS(SELECT 1 FROM source_catalog_entry r WHERE r.relocated_to_id=e.id)))`,
+	if err := s.db.QueryRowContext(ctx, catalogSplitPinnedSQL,
 		sourceID, root).Scan(&pinned); err != nil {
 		return "", err
 	}
@@ -1547,12 +1548,7 @@ func (s *Server) catalogSnapshotSplitMode(ctx context.Context, sourceID int64, r
 // refresh use; only its root-specific evidence differs.
 func (s *Server) catalogSplitPlanForRoot(ctx context.Context, tx *sql.Tx, sourceID, generation int64, root string) (catalogSplitPlan, bool, error) {
 	var pinned int
-	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
-		SELECT 1 FROM source_catalog_entry e
-		WHERE e.file_source_id=? AND e.root_path=? AND (
-			e.work_id IS NOT NULL
-			OR EXISTS(SELECT 1 FROM catalog_series_member m WHERE m.catalog_entry_id=e.id)
-			OR EXISTS(SELECT 1 FROM source_catalog_entry r WHERE r.relocated_to_id=e.id)))`,
+	if err := tx.QueryRowContext(ctx, catalogSplitPinnedSQL,
 		sourceID, root).Scan(&pinned); err != nil {
 		return catalogSplitPlan{}, false, err
 	}
