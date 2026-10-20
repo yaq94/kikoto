@@ -715,7 +715,7 @@ func TestOpenKeepsAConnectionForAWriterDuringFourReaders(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open() error = %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	if _, err := db.Exec(`CREATE TABLE probe (id INTEGER PRIMARY KEY, value INTEGER NOT NULL)`); err != nil {
 		t.Fatalf("create table: %v", err)
 	}
