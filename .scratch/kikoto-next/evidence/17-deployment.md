@@ -202,12 +202,8 @@ sha256 `3ea3c090…`、`7fc7ec19…`、`0231b88c…`。目录覆盖当时为
 
 ## 未完成项
 
-- 真实来源索引的 production 部署后终态。隔离实例的 schema 76 增量复测已收于
-  `partial`（14,460 complete、0 pending、4 条源站不可读目录、27 条未确认
-  空目录、4,254 张卡片），见
-  [08 真实增量复测](08-source-index.md#真实增量复测2026-10-17当前构建)；
-  production 当前实例是部署后新建的来源，不能把隔离实例的数字写成
-  production 全量结果。
+- 隔离实例 schema 76 的增量复测与 production 数字不能混写；production 的
+  当前状态见下方 run 47/run 49 记录。
 - ~~生产环境翻译服务地址/密钥由管理员保存后试译~~ 已于 2026-10-17 本会话
   完成（见上节），`hasApiKey=true`，真实模型调用与内容翻译缓存均验证通过。
 
@@ -280,10 +276,11 @@ ASCII 提示按整词匹配，`trackinfo.txt` 不进入候选；CJK 提示按包
 
 ## 收藏布局断言与 AC-28 的边界
 
-`favorites-state.spec.ts` 的 `boundingBox()` 保留：它读取元素矩形并比较数值，
-是 DOM 几何回归保护，不是截图或像素比对。工单 19 要求保留布局断言，
-AC-28 禁止的是以截图、像素或人工视觉作为门禁；本期运行仍启用
-`E2E_NO_ARTIFACTS=1`，不生成截图、trace 或视频。
+裁决与 [19 浏览器证据](19-ci-browser.md#布局断言与非视觉边界裁决2026-10-19) 一致：
+`favorites-state.spec.ts` 的 `boundingBox()` 及全仓既有套件中的同类元素矩形
+断言按原样保留，作为可用性回归保护；它们不计入 AC-26、AC-28 的验收证据。
+本期非视觉验收只引用文本、操作、请求、持久状态与媒体功能断言，运行设置
+`E2E_NO_ARTIFACTS=1` 关闭 trace、screenshot 与 video，也不新增几何或视觉断言。
 
 ## 独立审查修复与原状态
 
@@ -302,7 +299,7 @@ AC-28 禁止的是以截图、像素或人工视觉作为门禁；本期运行�
   再在同一事务退休旧卡。没有唯一继承者时保留旧卡交人工复核，不猜目标。
 - 旧卡有多个候选替换者时不迁移，避免把个人记录挂到无关作品。
 
-## 信用文件重试策略与 schema 082（未部署）
+## 信用文件重试策略与 schema 082（已部署）
 
 081 把暂时故障和永久缺失都记在同一个 `sidecar_attempts` 上：一次上游 503
 或凭据失效会消耗五次预算，恢复后卡片仍停在被耗尽的状态。082 将两类结果
@@ -315,7 +312,7 @@ AC-28 禁止的是以截图、像素或人工视觉作为门禁；本期运行�
   退避从 15 分钟开始、逐次翻倍、上限 24 小时；第 8 次后停止自动探测，
   由管理员重开。
 - 同一张卡既有已删除文件又有暂时故障时按暂时失败处理，避免一个删除的
-  readme 把仍可恢复的读取永久settle。
+  readme 把仍可恢复的读取永久 settle。
 - 重扫不是读取：revision 未变时保留 attempts、退避和停止状态；只有真正
   变化的 revision 自动重开。
 - `sidecar_retry_at` 由 SQLite `datetime('now','+N seconds')` 生成，与队列
@@ -323,6 +320,8 @@ AC-28 禁止的是以截图、像素或人工视觉作为门禁；本期运行�
 
 管理员入口为 `POST /api/remote-sources/{id}/catalog/sidecars/retry`
 （`sources:write`），只重置排队与计数，不改证据、作品关联和个人记录。
+UI 入口与停止计数见 [索引与组合负载校准](index-calibration.md) 与
+[OpenList 文档](../../../docs/development/openlist.md#reopening-the-credit-queue)。
 
 本地验证：`go test ./...` 全部通过；`go test -race ./internal/httpapi -run
 'TestCatalogSidecar|TestCatalog|TestSourceCatalogLooseWorks|TestRetire'`
@@ -331,4 +330,54 @@ AC-28 禁止的是以截图、像素或人工视觉作为门禁；本期运行�
 永久失败耗尽预算、混合失败保留退避、重扫不重启已停止的暂时卡、退避上限
 和管理员重开路由。
 
-该变更尚未部署到生产；生产仍为 schema 81、镜像 `kikoto:next-31db58af`。
+## 生产部署 5971912c（schema 82 首次上线，2026-10-20）
+
+- 部署镜像 `kikoto:next-5971912c`（镜像 ID `2c1dcb8e109d`），生产目录
+  `/root/kikoto`，DB `/root/kikoto/config/kikoto.db`，Docker 单容器 host
+  网络监听 127.0.0.1:7655。
+- 切换前备份 `rollbacks/pre-082-20261019T184014Z/`：schema 81、
+  `quick_check=ok`、外键违规 0、entries 71,315、files 107,822、
+  sha256 `e7460a91c22e5152194d7f2094e3b8724380784e6e62a3136bc7eea7dd9f36af`、
+  307,957,760 字节。
+- 部署后：`GET /health` 返回 `{"status":"ok","version":"v0.8.3"}`，schema 82，
+  `quick_check=ok`，外键违规 0，`relocated_to_id=id` 为 0。
+- `source_catalog_entry` 已存在 `sidecar_transient_attempts`、`sidecar_retry_at`、
+  `sidecar_failure`；`source_catalog_entry_sidecar_due` 索引存在。
+- 回滚镜像：`kikoto:next-31db58af`（schema 81）、`kikoto:next-30762a6b`（080）、
+  `kikoto:next-0f3cb4c4`（079）。`kikoto:next-be14c79f`（078）已删除，不能
+  再作为回滚指针。
+
+## 生产部署 c8c24605（格式目录修复，2026-10-20）
+
+- 部署镜像 `kikoto:next-c8c24605`（镜像 ID `793b23e9dcb5`），schema 保持 82。
+- 构建时通过 `--build-arg GOPROXY=https://goproxy.cn,direct` 覆盖模块代理
+  （默认 `proxy.golang.org` 在当前网络下 `go mod download` EOF 失败）。
+- 部署后 `GET /health` 200、`quick_check=ok`、外键违规 0、
+  `relocated_to_id=id` 为 0。
+- Full CI run `39314267229`（HEAD `c8c24605`）全绿。
+
+## run 47 与 run 49 的强制重扫
+
+run 47（镜像 `5971912c`，不含格式目录修复）与 run 49（镜像 `c8c24605`，
+含修复）都以 `force:true`、页 500、批 32、并发 2、间隔 300 ms 启动，
+`minFreeBytes` 2 GiB。两者都以 `partial` 收尾，失败与空目录集合相同：
+
+| 观察 | run 47 | run 49 |
+| --- | --- | --- |
+| 目录 | 14,491（14,460 complete、4 failed、27 empty） | 见下文收尾记录 |
+| 请求 | 14,561 | 见下文收尾记录 |
+| 失败目录 | 4 条，全部 `/asmr/橙澄子汉化组/...` 下 `upstream_unavailable` | 同 4 条，路径一致 |
+| 空目录 | 27 条未确认空 | 见下文收尾记录 |
+
+失败目录本轮逐条核对为 `/asmr/橙澄子汉化组` 下四个乱码子目录，上游未返回
+页面；不是权限拒绝或挑战页，也没有被当成完整覆盖。索引期间的
+`database is locked` 与 `context deadline exceeded` 出现在后台推荐/标签
+刷新，扫描本身以 `partial` 结束而不是伪报成功。
+
+## 未完成项与后续
+
+- run 49 终态（目录、请求、空目录、卡片数、格式目录卡是否清零）随本轮收尾补记。
+- 生产验收缺口：两用户冲突关联、关联/拆分重启恢复、时间过期预览、跨源共享、
+  登记不写受管理媒体的文件级核查、系列+两单集三对象完整回读、Favorites 跨源展示、
+  旧卡 `work_id`/series 重复查询。
+- 082 管理员 retry 路由与 UI 入口的生产调用证据。
