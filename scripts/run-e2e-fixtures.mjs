@@ -745,7 +745,9 @@ export async function main(argv = process.argv.slice(2)) {
       failures.push(`${group.name}: ${error.message}`);
       summaries.push({
         group: group.name,
-        specs: group.playwrightShard ? "(all mocked specs)" : (group.specs ?? [group.spec]),
+        specs: group.playwrightShard
+          ? "(all mocked specs)"
+          : (group.specs ?? [group.spec]),
         exitCode: 1,
         error: error.message,
       });
