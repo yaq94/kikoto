@@ -259,7 +259,7 @@ export function sourceProvidesDirectory(source: LibrarySource) {
  * never answered. Disabled sources stay untouched. */
 export function catalogDirectoryNeedsCheck(entry: Pick<CatalogDirectory, "status" | "checkedAt">, now = Date.now()) {
   if (entry.status === "disabled") return false;
-  if (entry.status === "unknown" || !entry.status) return true;
+  if (!entry.status) return true;
   const checked = Date.parse(entry.checkedAt ?? "");
   return !Number.isFinite(checked) || now - checked >= 24 * 60 * 60 * 1000;
 }
