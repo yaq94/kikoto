@@ -43,12 +43,6 @@ func (s *Server) translateContent(w http.ResponseWriter, r *http.Request) {
 		writeTranslationTrialError(w, &translation.Error{Code: "translation_invalid_input", Message: "Select a public content field."})
 		return
 	}
-	if in.SourceID > 0 && in.Field == "description" {
-		// A Kikoeru work listing has no description field. Rejecting it here is
-		// clearer than letting the field loader fall through to a stale-read 409.
-		writeTranslationTrialError(w, &translation.Error{Code: "translation_invalid_input", Message: "This source has no description to translate."})
-		return
-	}
 	targets := map[string]string{"en-us": "en", "zh-cn": "zh-Hans", "zh-tw": "zh-Hans", "ja-jp": "ja", "ko-kr": "ko"}
 	if in.Language != "origin" && in.Language != "zh-tw" && targets[in.Language] == "" {
 		writeTranslationTrialError(w, &translation.Error{Code: "translation_invalid_input", Message: "Select a supported display language."})
@@ -70,7 +64,9 @@ func (s *Server) translateContent(w http.ResponseWriter, r *http.Request) {
 	}
 	field, err := s.loadTranslationField(r.Context(), in)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+		if errors.Is(err, errFieldAbsent) {
+			writeTranslationTrialError(w, &translation.Error{Code: "translation_invalid_input", Message: "This source has no description to translate."})
+		} else if errors.Is(err, sql.ErrNoRows) {
 			writeAPIError(w, 404, "not_found", "Content is unavailable.", false)
 		} else {
 			writeAPIError(w, 503, "translation_content_unavailable", "Content is unavailable. Try reloading.", true)

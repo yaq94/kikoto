@@ -18,7 +18,19 @@ type readableTranslationField struct {
 	Names                    []string
 }
 
+// errFieldAbsent distinguishes a field the resource does not publish from a
+// stale selection or an unreachable source. The request names something that
+// cannot exist, so the caller reports invalid input instead of asking the
+// reader to reload.
+var errFieldAbsent = errors.New("content field does not exist for this resource")
+
 func (s *Server) loadTranslationField(ctx context.Context, in contentTranslationRequest) (readableTranslationField, error) {
+	// The source selector has no description field. Check before loading the
+	// remote listing so the answer does not depend on upstream availability,
+	// but only when no higher-priority resource was named.
+	if in.SourceID > 0 && in.SeriesID <= 0 && in.CatalogEntryID <= 0 && in.WorkID <= 0 && in.Field == "description" {
+		return readableTranslationField{}, errFieldAbsent
+	}
 	if in.SeriesID > 0 {
 		if s.cfg.IsDemo() || in.Field != "title" {
 			return readableTranslationField{}, sql.ErrNoRows
@@ -41,7 +53,15 @@ func (s *Server) loadTranslationField(ctx context.Context, in contentTranslation
 			return readableTranslationField{}, err
 		}
 		if in.Field == "title" {
-			return readableTranslationField{Text: entry.Title, Original: entry.Title, Names: names}, nil
+			field := readableTranslationField{Text: entry.Title, Original: entry.Title, Names: names}
+			if entry.WorkID != nil {
+				existing, err := s.existingWorkTitle(ctx, *entry.WorkID, entry.Title, in.Language)
+				if err != nil {
+					return readableTranslationField{}, err
+				}
+				field.Existing = existing
+			}
+			return field, nil
 		}
 		if in.Field == "directory" {
 			files, err := s.loadSourceCatalogFiles(ctx, entry.ID)
@@ -192,6 +212,30 @@ func (s *Server) loadTranslationField(ctx context.Context, in contentTranslation
 	return field, nil
 }
 
+// existingWorkTitle returns a stored target-language title only when the card's
+// text is the work's own origin title. A catalog name that differs from the
+// work title is separate source text, so another title in the same language
+// cannot answer it.
+func (s *Server) existingWorkTitle(ctx context.Context, workID int64, text, language string) (string, error) {
+	inputs, err := s.loadWorkTitleInputs(ctx, []int64{workID}, false)
+	if err != nil {
+		return "", err
+	}
+	input, ok := inputs[workID]
+	if !ok {
+		return "", nil
+	}
+	origin, _ := metadatatitles.ForLanguage(input.Variants, input.Manual, "origin", input.Fallback)
+	if origin.Title == "" || text != origin.Title {
+		return "", nil
+	}
+	selected, found := metadatatitles.ForLanguage(input.Variants, input.Manual, language, input.Fallback)
+	if !found {
+		return "", nil
+	}
+	return selected.Title, nil
+}
+
 // A catalog card and its directory names can mention the circle or a voice
 // actor. Those names stay as published, even when no work is registered yet.
 func (s *Server) catalogEntryProtectedNames(ctx context.Context, entry catalogEntry) ([]string, error) {
@@ -269,6 +313,11 @@ func (s *Server) loadRemoteTranslationField(ctx context.Context, in contentTrans
 	}
 	field := readableTranslationField{Names: append([]string{detail.Circle}, detail.VoiceActors...)}
 	switch in.Field {
+	case "description":
+		// A Kikoeru listing publishes no description. The request names a
+		// field this source cannot carry, so it is invalid input rather than a
+		// stale selection.
+		return readableTranslationField{}, errFieldAbsent
 	case "title":
 		// The Original is the text that is actually being translated. A
 		// language-edition title is its own content; replacing it with the

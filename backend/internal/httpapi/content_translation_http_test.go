@@ -355,3 +355,56 @@ func TestContentTranslationReusesAnExistingEditionDescription(t *testing.T) {
 		t.Fatalf("existing description was not reused: %#v calls=%d", result, calls.Load())
 	}
 }
+
+// A source context does not hide a higher-priority resource. When the request
+// also names a card, the card supplies the field.
+func TestContentTranslationRemoteDescriptionUsesAHigherPriorityResource(t *testing.T) {
+	var calls atomic.Int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		_, _ = io.WriteString(w, `{"choices":[{"message":{"content":"示例简介"},"finish_reason":"stop"}]}`)
+	}))
+	defer upstream.Close()
+	s, host, admin, listener := translationHTTPFixture(t)
+	if _, err := s.db.Exec(`INSERT INTO work(id,primary_code,title,description) VALUES(1,'RJ00000000','Example title','Example description');`); err != nil {
+		t.Fatal(err)
+	}
+	source := translationRequest(t, host, admin, "POST", "/api/file-sources", `{"displayName":"Example Remote A","sourceType":"openlist","enabled":true,"endpoint":{"apiUrl":"https://source.example.invalid","baseUrl":"https://source.example.invalid"}}`, 201)
+	sourceID := int64(source["id"].(float64))
+	if _, err := s.db.Exec(`INSERT INTO source_catalog_entry(id,file_source_id,root_path,title,work_id) VALUES(3,?,'/Example Work','Example title',1)`, sourceID); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _ := json.Marshal(map[string]any{"baseUrl": upstream.URL, "minFreeBytes": 0})
+	translationRequest(t, host, admin, "PATCH", "/api/settings/translation", string(cfg), 200)
+	result := translationRequest(t, host, listener, "POST", "/api/content-translations", `{"catalogEntryId":3,"sourceId":7,"workId":1,"field":"title","text":"Example title","language":"zh-cn"}`, 200)
+	if result["text"] != "示例简介" || calls.Load() != 1 {
+		t.Fatalf("higher-priority resource was not used: %#v calls=%d", result, calls.Load())
+	}
+}
+
+// A catalog card that carries the work's own title reuses the work's existing
+// target-language edition instead of paying for another model call.
+func TestContentTranslationReusesAWorkTitleOnACatalogCard(t *testing.T) {
+	var calls atomic.Int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		_, _ = io.WriteString(w, `{"choices":[{"message":{"content":"generated"},"finish_reason":"stop"}]}`)
+	}))
+	defer upstream.Close()
+	s, host, admin, listener := translationHTTPFixture(t)
+	if _, err := s.db.Exec(`INSERT INTO work(id,primary_code,title) VALUES(1,'RJ00000000','Example title'),(2,'RJ00000001','示例标题');
+		INSERT INTO logical_work(id,canonical_work_id,canonical_code) VALUES(101,1,'RJ00000000');
+		INSERT INTO work_edition(work_id,logical_work_id,primary_code,metadata_language,is_canonical) VALUES(1,101,'RJ00000000','ja-jp',1),(2,101,'RJ00000001','zh-cn',0);
+		INSERT INTO dlsite_metadata_variant(id,logical_work_id,work_id,provider_id,external_id,edition_language,title)
+		SELECT 1,101,2,id,'RJ00000001','zh-cn','示例标题' FROM metadata_provider WHERE code='dlsite';
+		INSERT INTO file_source(id,code,display_name,source_type,enabled) VALUES(7,'example_remote_a','Example Remote A','openlist',1);
+		INSERT INTO source_catalog_entry(id,file_source_id,root_path,title,work_id) VALUES(3,7,'/Example Work','Example title',1);`); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _ := json.Marshal(map[string]any{"baseUrl": upstream.URL, "minFreeBytes": 0})
+	translationRequest(t, host, admin, "PATCH", "/api/settings/translation", string(cfg), 200)
+	result := translationRequest(t, host, listener, "POST", "/api/content-translations", `{"catalogEntryId":3,"field":"title","text":"Example title","language":"zh-cn"}`, 200)
+	if result["status"] != "existing" || result["text"] != "示例标题" || calls.Load() != 0 {
+		t.Fatalf("catalog card did not reuse the work title: %#v calls=%d", result, calls.Load())
+	}
+}
