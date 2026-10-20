@@ -45,7 +45,7 @@ func (s *Server) pendingCatalogDirectories(ctx context.Context, sourceID, genera
 func (s *Server) persistCatalogPage(ctx context.Context, job workflowJobRecord, sourceID int64, d catalogScanDirectory, data openlist.Page, requestErr error, options catalogIndexOptions) error {
 	started := time.Now()
 	written := 0
-	defer func() { observeCatalogWrite("persist_page", started, written) }()
+	defer func() { observeCatalogWrite(ctx, "persist_page", started, written) }()
 	tx, release, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
 	if err != nil {
 		return err
@@ -457,7 +457,7 @@ func refreshCatalogAudioRootTx(ctx context.Context, tx *sql.Tx, sourceID, genera
 func (s *Server) publishCatalogBatch(ctx context.Context, job workflowJobRecord, sourceID int64) (int, error) {
 	started := time.Now()
 	published := 0
-	defer func() { observeCatalogWrite("publish_batch", started, published) }()
+	defer func() { observeCatalogWrite(ctx, "publish_batch", started, published) }()
 	tx, release, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
 	if err != nil {
 		return 0, err

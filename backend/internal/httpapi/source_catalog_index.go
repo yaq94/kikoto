@@ -18,7 +18,7 @@ const sourceCatalogIndexWorkerType = "source_catalog_index"
 const (
 	// 每批行数与“批次已满”哨兵必须成对修改。行数小于哨兵会让 worker
 	// 把未完成的队列判成空，且不报错。
-	catalogPublishRows   = 50
+	catalogPublishRows   = 100
 	catalogLifecycleRows = 100
 	catalogCleanupRows   = 100
 	catalogStagingRows   = 100
@@ -28,11 +28,11 @@ const (
 	// catalogPublishBatchesPerPass bounds publication work in one workflow
 	// invocation. Each batch holds the write lock for at most
 	// catalogPublishRows rows, and the remaining backlog returns to the
-	// durable queue. Eight batches keep the per-pass total at 400 rows.
-	catalogPublishBatchesPerPass = 8
-	// Cleanup keeps its own pass count so the smaller publish batch does not
-	// double the rows one pass scans for retirement.
-	catalogCleanupBatchesPerPass = 4
+	// durable queue. The contract suite measured a fixed per-transaction cost
+	// that dominated smaller batches, so the pass keeps the original geometry;
+	// the pause between transactions is what gives other writers the lock.
+	catalogPublishBatchesPerPass = 4
+	catalogCleanupBatchesPerPass = catalogPublishBatchesPerPass
 )
 
 type catalogIndexOptions struct {

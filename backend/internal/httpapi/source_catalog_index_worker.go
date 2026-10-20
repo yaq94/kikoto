@@ -36,7 +36,15 @@ func pauseCatalogWriter(ctx context.Context) error {
 
 const catalogSlowWriteThreshold = 500 * time.Millisecond
 
-func observeCatalogWrite(kind string, started time.Time, rows int) {
+// observeCatalogWrite reports a slow write once. The contract suite runs the
+// real worker inside -race, where every transaction is several times slower
+// than production; a warning there measures the race detector, not the
+// database, so the same no-pacing switch that removes artificial delays also
+// silences this report.
+func observeCatalogWrite(ctx context.Context, kind string, started time.Time, rows int) {
+	if ctx.Value(catalogIndexNoPacingKey{}) != nil {
+		return
+	}
 	if elapsed := time.Since(started); elapsed > catalogSlowWriteThreshold {
 		slog.Warn("catalog write transaction is slow", "kind", kind, "rows", rows, "elapsed_ms", elapsed.Milliseconds())
 	}

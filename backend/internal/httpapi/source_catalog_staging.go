@@ -11,7 +11,7 @@ import (
 func (s *Server) cleanupCatalogStagingBatch(ctx context.Context, job workflowJobRecord, sourceID int64) (int64, error) {
 	started := time.Now()
 	written := int64(0)
-	defer func() { observeCatalogWrite("cleanup_staging", started, int(written)) }()
+	defer func() { observeCatalogWrite(ctx, "cleanup_staging", started, int(written)) }()
 	tx, release, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
 	if err != nil {
 		return 0, err

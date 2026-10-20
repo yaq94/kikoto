@@ -85,7 +85,7 @@ func TestPublishCatalogQueueSentinelMatchesBatchRows(t *testing.T) {
 
 // TestPublishCatalogBatchLimitMatchesConstant seeds twice the batch size. A
 // literal LIMIT larger than catalogPublishRows would publish all of them and
-// break the 8 x 50 per-pass budget, so the row count itself is the assertion.
+// break the per-pass budget, so the row count itself is the assertion.
 func TestPublishCatalogBatchLimitMatchesConstant(t *testing.T) {
 	f := newCatalogIndexFixture(t, http.NotFoundHandler())
 	sourceID, err := strconv.ParseInt(path.Base(f.base), 10, 64)

@@ -119,7 +119,7 @@ func setCatalogEntryStatusTx(ctx context.Context, tx *sql.Tx, id int64, status s
 func (s *Server) settleCatalogLifecycleBatch(ctx context.Context, job workflowJobRecord, sourceID int64) (bool, error) {
 	started := time.Now()
 	observedCount := 0
-	defer func() { observeCatalogWrite("settle_lifecycle", started, observedCount) }()
+	defer func() { observeCatalogWrite(ctx, "settle_lifecycle", started, observedCount) }()
 	tx, release, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
 	if err != nil {
 		return false, err
@@ -246,7 +246,7 @@ func (s *Server) settleCatalogLifecycleBatch(ctx context.Context, job workflowJo
 // the run, without touching an entry this generation did not publish.
 func (s *Server) cleanupCatalogPublishBatch(ctx context.Context, job workflowJobRecord, sourceID int64) (scanned, removed int64, err error) {
 	started := time.Now()
-	defer func() { observeCatalogWrite("cleanup_publish", started, int(scanned)) }()
+	defer func() { observeCatalogWrite(ctx, "cleanup_publish", started, int(scanned)) }()
 	tx, release, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
 	if err != nil {
 		return 0, 0, err

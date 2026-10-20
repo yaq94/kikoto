@@ -24,6 +24,20 @@ var catalogPendingPurgePause = pauseCatalogWriter
 // catalogStalePendingPurge*catalogStalePendingPurgeBatch rows are cleared per
 // call; a remaining backlog is left for the next invocation.
 func (s *Server) purgeStaleCatalogPending(ctx context.Context, job workflowJobRecord, sourceID int64) error {
+	// The scan asks on every step, so the common "nothing stale" answer must
+	// not open a write transaction. This read uses the partial pending index
+	// and returns before any write lock is taken.
+	var stale int
+	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS(
+		SELECT 1 FROM source_catalog_observation o
+		JOIN source_catalog_directory d ON d.file_source_id=o.file_source_id AND d.path=o.directory_path
+		WHERE d.file_source_id=? AND d.generation<>? AND o.publish_pending=1)`,
+		sourceID, job.RunID).Scan(&stale); err != nil {
+		return err
+	}
+	if stale == 0 {
+		return nil
+	}
 	for batch := 0; batch < catalogStalePendingPurgeBatch; batch++ {
 		if err := ctx.Err(); err != nil {
 			return err
