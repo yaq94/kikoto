@@ -191,13 +191,15 @@ func (s Store) ImportWithRegistration(ctx context.Context, user int64, b Backup,
 				return result, err
 			}
 		}
-		keep := importKeep{review: !overwrite && plan.reviewConflicts[id], status: !overwrite && plan.statusConflict[id], progress: !overwrite && plan.progressConflict[id]}
+		identity := plan.identities[w.key()]
+		keep := importKeep{review: !overwrite && plan.reviewConflicts[identity], status: !overwrite && plan.statusConflict[id], progress: !overwrite && plan.progressConflict[id]}
 		if err = importWork(ctx, tx, user, id, plan.media[w.key()], w, overwrite, keep); err != nil {
 			return result, err
 		}
-		identity := plan.identities[w.key()]
-		if !keep.review {
-			appliedReviews[identity] = plan.reviews[identity]
+		// A keep import only carries review fields that were present in the
+		// backup. nil rating and an empty note mean "absent", not "clear".
+		if review := plan.reviews[identity]; !keep.review && (overwrite || review.Rating != nil || review.Note != "") {
+			appliedReviews[identity] = review
 		}
 		result.ImportedWorks++
 		if w.Progress != nil && plan.media[w.key()] == 0 {
@@ -205,7 +207,15 @@ func (s Store) ImportWithRegistration(ctx context.Context, user int64, b Backup,
 		}
 	}
 	for identity, review := range appliedReviews {
-		if _, err = tx.ExecContext(ctx, `INSERT INTO user_work_state(user_id,work_id,rating,note) VALUES(?,?,?,?) ON CONFLICT(user_id,work_id) DO UPDATE SET rating=excluded.rating,note=excluded.note,updated_at=CURRENT_TIMESTAMP`, user, identity, review.Rating, review.Note); err != nil {
+		switch {
+		case overwrite || (review.Rating != nil && review.Note != ""):
+			_, err = tx.ExecContext(ctx, `INSERT INTO user_work_state(user_id,work_id,rating,note) VALUES(?,?,?,?) ON CONFLICT(user_id,work_id) DO UPDATE SET rating=excluded.rating,note=excluded.note,updated_at=CURRENT_TIMESTAMP`, user, identity, review.Rating, review.Note)
+		case review.Rating != nil:
+			_, err = tx.ExecContext(ctx, `INSERT INTO user_work_state(user_id,work_id,rating) VALUES(?,?,?) ON CONFLICT(user_id,work_id) DO UPDATE SET rating=excluded.rating,updated_at=CURRENT_TIMESTAMP`, user, identity, review.Rating)
+		case review.Note != "":
+			_, err = tx.ExecContext(ctx, `INSERT INTO user_work_state(user_id,work_id,note) VALUES(?,?,?) ON CONFLICT(user_id,work_id) DO UPDATE SET note=excluded.note,updated_at=CURRENT_TIMESTAMP`, user, identity, review.Note)
+		}
+		if err != nil {
 			return result, err
 		}
 	}
@@ -264,7 +274,9 @@ type importKeep struct {
 }
 
 func importWork(ctx context.Context, tx *sql.Tx, user, id, media int64, w BackupWork, overwrite bool, keep importKeep) error {
-	if keep.status || w.ListeningStatus == "" {
+	// "none" is the export default and "" has always meant no status here.
+	// A keep import must not turn either into an explicit clear.
+	if keep.status || w.ListeningStatus == "" || (!overwrite && w.ListeningStatus == "none") {
 		_, err := tx.ExecContext(ctx, `INSERT INTO user_work_state (user_id,work_id) VALUES (?,?) ON CONFLICT(user_id,work_id) DO NOTHING`, user, id)
 		if err != nil {
 			return err

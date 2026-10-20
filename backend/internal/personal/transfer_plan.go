@@ -111,7 +111,10 @@ func buildImportPlan(ctx context.Context, tx *sql.Tx, user int64, b Backup) (imp
 				return p, err
 			}
 		}
-		p.reviewConflicts[id] = reviewConflict
+		// Rating and note live on the shared identity, not on one member. A
+		// conflict on any member must keep the existing identity review for the
+		// whole import; otherwise the non-conflicting member overwrites it.
+		p.reviewConflicts[identity] = p.reviewConflicts[identity] || reviewConflict
 		p.statusConflict[id] = statusConflict
 		p.progressConflict[id] = progressExists
 		p.conflicts[id] = reviewConflict || statusConflict || progressExists
