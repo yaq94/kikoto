@@ -208,7 +208,9 @@ func (s *Server) getSharedSplit(w http.ResponseWriter, r *http.Request) {
 		writeAssociationError(w, sql.ErrNoRows)
 		return
 	}
-	tx, err := s.db.BeginTx(r.Context(), nil)
+	// An immediate transaction takes SQLite's write lock even for this read,
+	// so the GET must declare itself read-only and leave writers unblocked.
+	tx, err := s.db.BeginTx(r.Context(), &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		writeError(w, err)
 		return
