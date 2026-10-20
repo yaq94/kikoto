@@ -289,8 +289,20 @@ func TestSourceCatalogDailyDoesNotRetryIncompleteFirstCoverage(t *testing.T) {
 	}
 	now.Add(int64(48 * time.Hour / time.Second))
 	f.server.Go(f.server.StartJobRunner)
-	time.Sleep(2200 * time.Millisecond)
-	p = f.request(t, http.MethodGet, "/catalog/index", "", 200)
+	// The resumed run passes through queued/running before it settles back to
+	// partial. Poll for the settled state instead of sampling one instant, so a
+	// loaded runner cannot turn a correct resume into a failure.
+	deadline := time.Now().Add(15 * time.Second)
+	for {
+		p = f.request(t, http.MethodGet, "/catalog/index", "", 200)
+		if p["runId"] == first && p["status"] == "partial" && p["requests"] != float64(1) {
+			break
+		}
+		if time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 	if p["runId"] != first || p["status"] != "partial" {
 		t.Fatal("daily timer replaced the first generation")
 	}
