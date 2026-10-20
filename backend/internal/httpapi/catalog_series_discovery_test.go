@@ -2,8 +2,10 @@ package httpapi
 
 import "testing"
 
-// Episode markers start a token. A title that merely ends in "ep" or
-// "episode" is not episode evidence, even when a number follows it.
+// Episode markers must start a token: whitespace, punctuation or the
+// beginning of the name. A marker glued to a preceding letter, digit or
+// underscore does not prove a series, and the spec asks uncertain content to
+// stay independent rather than be grouped on a truncated title.
 func TestCatalogSeriesEpisodeMarkerRequiresWordBoundary(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -28,6 +30,9 @@ func TestCatalogSeriesEpisodeMarkerRequiresWordBoundary(t *testing.T) {
 		{name: "prep ends in ep without separator", dir: "Prep5", ok: false},
 		{name: "word ends in episode", dir: "MyEpisode 1", ok: false},
 		{name: "lowercase word ends in episode", dir: "myepisode 2", ok: false},
+		{name: "marker glued to a work code", dir: "RJ123Episode 3", ok: false},
+		{name: "marker glued with an underscore", dir: "Creator_Ep 2", ok: false},
+		{name: "camel case marker", dir: "ExampleEpisode1", ok: false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
