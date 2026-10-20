@@ -120,7 +120,9 @@ func TestCatalogRangeUncertainAtConfiguredRoot(t *testing.T) {
 }
 
 func TestCatalogFormatDirectoryAcceptsMultipleQualitySuffixes(t *testing.T) {
-	for _, name := range []string{"FLAC 24bit 96kHz", "FLAC 24bit/96kHz", "WAV 24-96", "MP3 320kbps", "FLAC24bit"} {
+	// "/" is not allowed in a directory name, so the slash spelling is not a
+	// case: the scan splits it into two levels before this check runs.
+	for _, name := range []string{"FLAC 24bit 96kHz", "WAV 24-96", "MP3 320kbps", "FLAC24bit", "FLAC 44.1kHz", "Lossless", "MP3 VBR"} {
 		if !catalogFormatDirectory(name) {
 			t.Errorf("%q should be a format copy", name)
 		}

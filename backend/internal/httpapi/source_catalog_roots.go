@@ -114,7 +114,7 @@ func catalogFormatDirectory(name string) bool {
 	// token check independent of punctuation.
 	compact := strings.NewReplacer("(", "", ")", "", "[", "", "]", "",
 		"（", "", "）", "", "【", "", "】", "", " ", "", "_", "", "-", "",
-		"/", "", ",", "", ":", "").Replace(lower)
+		"/", "", ",", "", ":", "", ".", "").Replace(lower)
 	for _, token := range []string{"mp3", "flac", "wav", "ogg", "opus", "m4a", "aac",
 		"aiff", "aif", "wma", "dsd", "dsf", "dff", "ape", "alac", "wv", "tta"} {
 		if !strings.HasPrefix(compact, token) {
