@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/yexca/kikoto/backend/internal/openlist"
@@ -47,34 +48,20 @@ func catalogRangeUncertain(ctx context.Context, tx *sql.Tx, sourceID, generation
 	}
 	const uncertainStatus = ` status IN ('failed','restricted','empty','pending','listing_complete')
 		AND NOT (status='empty' AND error_code='not_found')`
+	query := `SELECT EXISTS(SELECT 1 FROM source_catalog_directory d
+		WHERE d.file_source_id=? AND d.generation=? AND ` + uncertainStatus
+	args := []any{sourceID, generation}
+	// The subtree predicate is a half-open path range so the directory index
+	// seeks it. A parameterised "base is /" branch made SQLite evaluate the
+	// range for every row of the generation instead of seeking it.
+	if base != "/" {
+		query += ` AND (d.path=? OR (d.path>=? AND d.path<?))`
+		args = append(args, base, base+"/", base+"0")
+	}
+	query += `)`
 	var uncertain int
-	// The subtree predicate is a half-open path range so the directory
-	// primary key seeks it. A substr comparison scanned every directory of the
-	// generation for each card in a cleanup batch.
-	lower, upper := base+"/", base+"0"
-	if base == "/" {
-		lower, upper = "", ""
-	}
-	err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM source_catalog_directory d
-		WHERE d.file_source_id=? AND d.generation=? AND `+uncertainStatus+`
-			AND (?='/' OR d.path=? OR (d.path>=? AND d.path<?)))`,
-		sourceID, generation, base, base, lower, upper).Scan(&uncertain)
+	err := tx.QueryRowContext(ctx, query, args...).Scan(&uncertain)
 	return uncertain != 0, err
-}
-
-// catalogEntryHasChildTx reports whether another live entry sits below root.
-// The half-open path range uses the entry primary key; comparing a substr of
-// every entry for each parent made a cleanup batch quadratic.
-func catalogEntryHasChildTx(ctx context.Context, tx *sql.Tx, sourceID, parentID int64, root string) (bool, error) {
-	if root == "" || root == "/" {
-		return true, nil
-	}
-	var found int
-	err := tx.QueryRowContext(ctx, `SELECT EXISTS(
-		SELECT 1 FROM source_catalog_entry e
-		WHERE e.file_source_id=? AND e.id<>? AND e.relocated_to_id IS NULL
-			AND e.root_path>=? AND e.root_path<?)`, sourceID, parentID, root+"/", root+"0").Scan(&found)
-	return found != 0, err
 }
 
 func catalogFailureStatus(err error) string {
@@ -351,9 +338,9 @@ func (s *Server) cleanupCatalogPublishBatch(ctx context.Context, job workflowJob
 		return 0, 0, err
 	}
 	for _, id := range ids {
-		var base, rootPath string
-		if err = tx.QueryRowContext(ctx, `SELECT `+catalogEffectiveRootSQL("source_catalog_entry")+`,root_path
-			FROM source_catalog_entry WHERE id=?`, id).Scan(&base, &rootPath); err != nil {
+		var base string
+		if err = tx.QueryRowContext(ctx, `SELECT `+catalogEffectiveRootSQL("source_catalog_entry")+`
+			FROM source_catalog_entry WHERE id=?`, id).Scan(&base); err != nil {
 			return 0, 0, err
 		}
 		// A failed, restricted or unconfirmed-empty directory still proves
@@ -383,37 +370,29 @@ func (s *Server) cleanupCatalogPublishBatch(ctx context.Context, job workflowJob
 		// A folder row that is now its own catalog entry belongs to that
 		// entry, not to the card above it. Keeping it makes the parent list a
 		// child work as one of its tracks.
-		// rtrim handles the configured root: "/" has no trailing component of
-		// its own, so the old prefix check never matched it and the root card
-		// kept a folder row for every child work.
 		// A split card records the real directory in source_root and keeps a
 		// synthetic root_path such as /Creator::key. The folder row in the card
-		// above names the real directory, so compare against source_root when
-		// it is present.
-		childRoot := catalogEffectiveRootSQL("e")
-		parentRoot := catalogEffectiveRootSQL("parent")
-		// Cards without any live child cannot own a child folder row. Skip the
-		// correlated delete for them; only a split card, whose stored root
-		// differs from its synthetic path, keeps the full check.
-		hasChildren := true
-		if rootPath == base {
-			var childErr error
-			if hasChildren, childErr = catalogEntryHasChildTx(ctx, tx.Tx, sourceID, id, rootPath); childErr != nil {
-				return 0, 0, childErr
-			}
+		// above names the real directory. Both forms are queried as half-open
+		// path ranges so the entry indexes seek the children. The previous
+		// prefix comparison made SQLite scan every live entry for every card.
+		parentRoot := strings.TrimRight(base, "/")
+		lower, upper := parentRoot+"/", parentRoot+"0"
+		if parentRoot == "" {
+			// The root card owns every top-level directory. UTF-8 cannot
+			// encode above this sentinel, so the range still covers all paths.
+			lower, upper = "", "\U0010FFFF"
 		}
-		if !hasChildren {
-			cursor = id
-			continue
-		}
+		offset := len(parentRoot) + 2
 		result, execErr := tx.ExecContext(ctx, `DELETE FROM source_catalog_file
 			WHERE catalog_entry_id=? AND relative_path IN (
-				SELECT substr(`+childRoot+`,length(rtrim(`+parentRoot+`,'/'))+2)
-				FROM source_catalog_entry e
-				JOIN source_catalog_entry parent ON parent.id=?
-				WHERE e.file_source_id=parent.file_source_id
-					AND e.relocated_to_id IS NULL AND e.id<>parent.id
-					AND substr(`+childRoot+`,1,length(rtrim(`+parentRoot+`,'/'))+1)=rtrim(`+parentRoot+`,'/') || '/')`, id, id)
+				SELECT substr(root_path,?) FROM source_catalog_entry
+				WHERE file_source_id=? AND id<>? AND relocated_to_id IS NULL
+					AND source_root='' AND root_path>=? AND root_path<?
+				UNION ALL
+				SELECT substr(source_root,?) FROM source_catalog_entry
+				WHERE file_source_id=? AND id<>? AND relocated_to_id IS NULL
+					AND source_root<>'' AND source_root>=? AND source_root<?
+			)`, id, offset, sourceID, id, lower, upper, offset, sourceID, id, lower, upper)
 		if execErr != nil {
 			return 0, 0, execErr
 		}

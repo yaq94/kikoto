@@ -34,6 +34,17 @@ index, without a temporary sort or a scan of a materialized root set.
 `make source-index-tail-performance` print the plan and timing on the
 calibration harness.
 
+## Cleanup pass
+
+After publication the lifecycle pass retires file rows from earlier generations
+and removes folder rows for directories that are now their own entry. Both
+lookups are per card, so they must seek rather than scan. The cleanup query
+orders the current generation's entries by id through the lifecycle index, and
+the child lookup uses two partial indexes: one for a plain card's `root_path`
+and one for a split card's `source_root`. The subtree predicate is a half-open
+path range in both cases; a `substr` prefix comparison cannot use either index
+and makes each card scan the live entry table.
+
 ## Choosing the rate
 
 The request rate is configured per source and the saved value wins over the

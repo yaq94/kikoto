@@ -262,13 +262,13 @@ matches the backup.
 | v0.8.0 | `059` | `059_v0.8.0.sql` |
 | v0.8.1, v0.8.2 | `066` | `066_v0.8.1.sql` |
 | v0.8.3 | `068` | `068_v0.8.3.sql` |
-| development build (unreleased) | `082` | Development baseline only; `compat/082_dev.sql` |
+| development build (unreleased) | `083` | Development baseline only; `compat/083_dev.sql` |
 
 Per-release upgrade steps are in the [release notes](../history/index.md).
 
 ## Kikoto-next Schema Additions
 
-Migrations `069` through `082` extend the source catalog, shared associations,
+Migrations `069` through `083` extend the source catalog, shared associations,
 personal transfer, and the recoverable index. Pending release notes and upgrade
 steps are in [Unreleased](../history/unreleased.md).
 
@@ -288,6 +288,7 @@ steps are in [Unreleased](../history/unreleased.md).
 | `080_source_catalog_sidecar_queue.sql` | `sidecar_pending`, `sidecar_attempts`, a partial queue index, and `modified_at` on observed and published files | Reads run after publication in a bounded pass; a failed read keeps its card and is retried up to five times |
 | `081_source_catalog_sidecar_revision.sql` | `source_catalog_entry.sidecar_revision` | A rescan compares the stored credit-file revision; an unchanged exhausted card stays settled, a replaced file resets its attempts |
 | `082_source_catalog_sidecar_retry.sql` | `sidecar_transient_attempts`, `sidecar_retry_at`, `sidecar_failure`, and a due-row index | A temporary outage waits on a bounded backoff instead of spending the five permanent attempts; a definitive 404/410 still settles, and an administrator can reopen the queue |
+| `083_source_catalog_cleanup_indexes.sql` | Partial indexes on the live `root_path` and on non-empty `source_root` | The cleanup pass seeks the entries below a card instead of scanning every live entry for each card |
 
 The Release To Schema Map above lists every numbered file. `069` rebuilds `work`
 and `logical_work` to relax code uniqueness and creates the catalog entry and
@@ -308,7 +309,10 @@ credit-file revision used to reopen an exhausted card when the file changes.
 `082` separates retry bookkeeping from the permanent budget: a transient
 failure records its category, a retry timestamp and a transient count, while a
 missing or oversized file still spends one of the five permanent attempts. The
-partial index keeps the worker from scanning settled rows.
+partial index keeps the worker from scanning settled rows. `083` adds the two
+partial indexes the cleanup pass uses to find child entries by their real root:
+one for plain cards and one for split cards. Each branch is a half-open path
+range, so the pass reads the subtree instead of the whole entry table.
 Every added column has a default, so an existing row stays readable; the queue
 starts empty and a later scan enqueues cards that publish credit files.
 

@@ -300,3 +300,11 @@
 - 现在先用主键查询筛出仍带 `sidecar_json` 的卡片，只对它们检查范围是否完整；没有证据的卡片没有可清除的内容。
 - 部署后实测：`publish_pending` 从 222,314 降到 208,464 用时 60 秒（约 230 文件/秒），3 分钟内 0 条 `SQLITE_BUSY`，慢批次告警不再出现。此前的 15 秒/50 行对应约 3.3 文件/秒。
 - 侧车套件 `TestCatalogSidecar*` 通过。
+### 清理子目录查询改为索引范围（08）
+
+- `cleanupCatalogPublishBatch` 对每张卡执行一次子目录删除，旧谓词对 `source_catalog_entry` 的每一行计算 `substr(CASE source_root...)`。生产副本上单卡子查询耗时 43–56 ms，100 行批次稳定 7.4–7.6 s，写锁占用期间其他写入持续 `SQLITE_BUSY`。
+- 迁移 `083` 增加两个部分索引：`source_catalog_entry_live_root(file_source_id,root_path) WHERE relocated_to_id IS NULL` 与 `source_catalog_entry_source_root(file_source_id,source_root) WHERE source_root<>''`。
+- 删除改用两个半开路径区间分支，按 `source_root` 是否存在选择真实根。同一生产副本上单卡子查询降到 0.2–0.3 ms。
+- `catalogRangeUncertain` 去掉参数化的 `base='/'` 分支，根目录直接不加路径条件，其他根使用索引可寻址的半开区间；生产副本单卡由 5.3 ms（冷）降到 9 µs（冷），热态 0.57 ms 降到 0.14 ms。
+- 新增 `TestCatalogCleanupRemovesFolderRowsThatBecameEntries`，覆盖 `source_root` 与 `root_path` 两种子目录形式，并确认只删除精确匹配的文件夹行。
+- 批次总耗时与 `SQLITE_BUSY` 计数在部署后重新测量，不以副本单查询替代。
