@@ -1655,13 +1655,21 @@ func catalogDuplicateDirectoryTx(ctx context.Context, tx *sql.Tx, sourceID int64
 	if len(parentSizes) < 20 {
 		return false, nil
 	}
+	sort.Slice(child, func(i, j int) bool { return child[i] < child[j] })
 	sort.Slice(parentSizes, func(i, j int) bool { return parentSizes[i] < parentSizes[j] })
+	// Match one parent file per child file. Counting every child against any
+	// parent with a similar size lets a few repeated sizes stand in for a whole
+	// copied tree and classifies an unrelated work as a format copy.
 	matched := 0
+	parentIndex := 0
 	for _, size := range child {
 		tolerance := max(int64(1024), size/1000)
-		index := sort.Search(len(parentSizes), func(i int) bool { return parentSizes[i] >= size-tolerance })
-		if index < len(parentSizes) && parentSizes[index] <= size+tolerance {
+		for parentIndex < len(parentSizes) && parentSizes[parentIndex] < size-tolerance {
+			parentIndex++
+		}
+		if parentIndex < len(parentSizes) && parentSizes[parentIndex] <= size+tolerance {
 			matched++
+			parentIndex++
 		}
 	}
 	// A folder with a handful of shared tracks is a real work with a reused
