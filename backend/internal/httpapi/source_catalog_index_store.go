@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"path"
 	"strings"
 	"time"
@@ -583,6 +584,22 @@ func (s *Server) expandCatalogDirectory(ctx context.Context, job workflowJobReco
 		if err = addCompletedDirectoryPublishPendingTx(ctx, tx.Tx, sourceID, job.RunID, p, change); err != nil {
 			return false, err
 		}
+		// Once the listing is complete the card's thresholds are stable
+		// enough to decide. Clearing a refused card here keeps the queue
+		// from accumulating rows the publisher can never select. An empty
+		// root means the directory has no card yet; it is not a grouping
+		// key and must not aggregate unrelated directories.
+		if root != "" {
+			observed, gateErr := catalogRootFullyObservedTx(ctx, tx.Tx, sourceID, job.RunID, root)
+			if gateErr != nil {
+				return false, gateErr
+			}
+			if observed {
+				if _, err = s.blockUnadmittedCatalogRootTx(ctx, tx.Tx, sourceID, job.RunID, root); err != nil {
+					return false, err
+				}
+			}
+		}
 		if err = resetCatalogPublishCursorTx(ctx, tx.Tx, sourceID, p, change.Inserted); err != nil {
 			return false, err
 		}
@@ -798,6 +815,12 @@ func (s *Server) publishCatalogBatch(ctx context.Context, job workflowJobRecord,
 	if err = verifyCatalogLease(ctx, tx.Tx, job); err != nil {
 		return 0, err
 	}
+	// Refuse cards that can never pass admission before selecting a batch.
+	// Without this prepass their rows stay pending forever and every later
+	// batch selects the same blocked card.
+	if _, err = s.blockUnadmittedCatalogRootsTx(ctx, tx.Tx, sourceID, job.RunID); err != nil {
+		return 0, err
+	}
 	// The cursor is durable on the scan row and the query reads it directly,
 	// so a restarted worker resumes at the exact (directory,name) pair the
 	// previous batch consumed.
@@ -865,7 +888,23 @@ func (s *Server) publishCatalogBatch(ctx context.Context, job workflowJobRecord,
 	// probe per distinct root rather than a count over the whole entry table.
 	seenRoots := map[string]int64{}
 	indexedDelta := 0
+	// Per-batch admission cache. The prepass already refuses fully observed
+	// cards; this guard covers a row that reached the batch by another path.
+	blockedRoots := map[string]bool{}
 	for _, p := range items {
+		if _, checked := blockedRoots[p.root]; !checked {
+			blocked, adm, checkErr := s.catalogRootBlockedTx(ctx, tx.Tx, sourceID, job.RunID, p.root)
+			if checkErr != nil {
+				return 0, checkErr
+			}
+			blockedRoots[p.root] = blocked
+			if blocked {
+				slog.Info("catalog publish refused an unqualified card",
+					"source_id", sourceID, "generation", job.RunID, "root", p.root,
+					"files", adm.Files, "audio", adm.Audio, "non_audio", adm.NonAudio,
+					"reason", adm.Reason)
+			}
+		}
 		root, sourceRoot, title := p.root, "", path.Base(p.root)
 		if p.root == "/" {
 			title = rootTitle
@@ -880,6 +919,16 @@ func (s *Server) publishCatalogBatch(ctx context.Context, job workflowJobRecord,
 			if target, ok := plan.targetFor(rel); ok {
 				root, sourceRoot, title = target.Root, target.SourceRoot, target.Title
 			}
+		}
+		if blockedRoots[p.root] {
+			// Consume the row without creating an identity. Publication is
+			// refused; the file rows never enter the card.
+			if _, err = tx.ExecContext(ctx, `UPDATE source_catalog_observation
+				SET published_generation=?,publish_pending=0
+				WHERE file_source_id=? AND directory_path=? AND name=?`, job.RunID, sourceID, p.dir, p.name); err != nil {
+				return 0, err
+			}
+			continue
 		}
 		if _, split := splitPlans[p.root]; split && !parentNeeded[p.root] && root == p.root && p.kind == "folder" {
 			// The creator card was retired in favour of split cards. A folder

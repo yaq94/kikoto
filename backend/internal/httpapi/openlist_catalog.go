@@ -407,6 +407,22 @@ func (s *Server) getSourceCatalogTracks(w http.ResponseWriter, r *http.Request) 
 		writeUpstreamError(w, err)
 		return
 	}
+	admission, err := catalogPublishedEntryAdmission(r.Context(), s.db, entry.ID)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	if !admission.Admitted() {
+		// The card exists for provenance but never passed the publish threshold.
+		// It has no playable tracks, so it must not answer a track request.
+		writeAPIErrorDetails(w, http.StatusNotFound, "not_found", "catalog entry is not available", map[string]any{
+			"reason":   admission.Reason,
+			"files":    admission.Files,
+			"audio":    admission.Audio,
+			"nonAudio": admission.NonAudio,
+		}, false)
+		return
+	}
 	id = entry.ID
 	query := r.URL.Query()
 	_, hasPath := query["path"]
@@ -788,20 +804,20 @@ func openListCatalogCardsQuery(sourceID int64, query string) (string, string, []
 		SELECT e.id,0 AS series_id,e.primary_code,e.title,e.work_id,e.updated_at,e.availability_status,
 			EXISTS(SELECT 1 FROM source_catalog_file f WHERE f.catalog_entry_id=e.id AND f.kind='audio') AS has_audio FROM source_catalog_entry e INDEXED BY source_catalog_entry_live_root
 		WHERE e.file_source_id=? AND e.relocated_to_id IS NULL AND NOT EXISTS(SELECT 1 FROM catalog_series_member m WHERE m.catalog_entry_id=e.id AND (SELECT COUNT(*) FROM catalog_series_member sibling WHERE sibling.series_id=m.series_id)>=2)
-			AND EXISTS(SELECT 1 FROM source_catalog_file f WHERE f.catalog_entry_id=e.id AND f.kind='audio')` + entrySearch + `
+			AND ` + catalogEntryAdmittedSQL("e") + entrySearch + `
 		UNION ALL
 		SELECT 0,s.id,'',s.title,s.work_id,s.created_at,CASE WHEN EXISTS(
 			SELECT 1 FROM catalog_series_member mm JOIN source_catalog_entry ee ON ee.id=mm.catalog_entry_id
 			JOIN source_catalog_file ff INDEXED BY source_catalog_file_parent ON ff.catalog_entry_id=ee.id AND ff.kind='audio'
-			WHERE mm.series_id=s.id AND ee.relocated_to_id IS NULL AND ee.availability_status='available'
+			WHERE mm.series_id=s.id AND ee.relocated_to_id IS NULL AND ee.availability_status='available' AND ` + catalogEntryAdmittedSQL("ee") + `
 		) THEN 'available' ELSE 'missing' END,EXISTS(
 			SELECT 1 FROM catalog_series_member mm JOIN source_catalog_entry ee ON ee.id=mm.catalog_entry_id
 			JOIN source_catalog_file ff INDEXED BY source_catalog_file_parent ON ff.catalog_entry_id=ee.id AND ff.kind='audio'
-			WHERE mm.series_id=s.id AND ee.relocated_to_id IS NULL
+			WHERE mm.series_id=s.id AND ee.relocated_to_id IS NULL AND ` + catalogEntryAdmittedSQL("ee") + `
 		) AS has_audio FROM catalog_series s
 		WHERE (SELECT COUNT(*) FROM catalog_series_member all_members WHERE all_members.series_id=s.id)>=2
 		AND EXISTS(SELECT 1 FROM catalog_series_member m JOIN source_catalog_entry e ON e.id=m.catalog_entry_id
-		WHERE m.series_id=s.id AND e.file_source_id=? AND e.relocated_to_id IS NULL` + seriesSearch + `)
+		WHERE m.series_id=s.id AND e.file_source_id=? AND e.relocated_to_id IS NULL AND ` + catalogEntryAdmittedSQL("e") + seriesSearch + `)
 	) AS candidates) AS cards WHERE identity_rank=1`
 	args = append(args, sourceID)
 	args = append(args, entryArgs...)
