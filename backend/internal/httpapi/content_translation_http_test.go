@@ -124,9 +124,11 @@ func TestContentTranslationSharesBudgetDeduplicatesAndCancelsQueue(t *testing.T)
 		t.Fatalf("queue state did not settle at %v: %#v", want, last)
 	}
 	waitQueue(1)
-	// queueLimit bounds the background lane. Interactive work has its own
-	// larger cap, so a page of titles is still admitted while a prefill pass
-	// would already be refused.
+	// queueLimit bounds the background lane only. Interactive work has its own
+	// fixed 256-slot cap, so a page of titles is still admitted while a prefill
+	// pass would already be refused. The interactive bound itself is covered by
+	// TestQueueRejectsWhenTheInteractiveLaneIsFull, where 256 pending jobs are
+	// cheap to construct without 256 HTTP clients.
 	thirdCtx, cancelThird := context.WithCancel(ctx)
 	defer cancelThird()
 	third := async(thirdCtx, `{"workId":3,"field":"title","text":"Third title","language":"zh-cn"}`)

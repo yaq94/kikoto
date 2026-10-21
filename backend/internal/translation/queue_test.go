@@ -208,3 +208,38 @@ func TestQueueRejectsWhenTheBackgroundLaneIsFull(t *testing.T) {
 		t.Fatalf("interactive call failed on a full background lane: %v", err)
 	}
 }
+
+// The interactive lane has its own 256-slot bound, independent of the
+// configurable background queue. Fill it exactly and prove the next click is
+// refused with the code a caller can retry on.
+func TestQueueRejectsWhenTheInteractiveLaneIsFull(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	q := NewQueue(ctx, Limits{Concurrency: 1, QueueLimit: 8}, queueTestRun)
+	release := make(chan struct{})
+	blocked := func(context.Context) (Result, error) {
+		<-release
+		return Result{Text: "ok"}, nil
+	}
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() { defer wg.Done(); _, _ = q.Do(ctx, "running", 10*time.Second, false, blocked) }()
+	waitQueueState(t, "the single running slot", func() bool { return q.Stats().Active == 1 })
+	for i := 0; i < interactiveQueueLimit; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			_, _ = q.Do(ctx, fmt.Sprintf("ui-%d", i), 10*time.Second, false, blocked)
+		}(i)
+	}
+	waitQueueState(t, "the interactive lane to fill", func() bool {
+		return q.Stats().Queued == interactiveQueueLimit
+	})
+	if _, err := q.Do(ctx, "overflow", 10*time.Second, false, blocked); err == nil {
+		t.Fatal("a request beyond the interactive bound was admitted")
+	} else if code := PublicError(err).Code; code != "translation_queue_full" {
+		t.Fatalf("overflow code = %q", code)
+	}
+	close(release)
+	wg.Wait()
+}
