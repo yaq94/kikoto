@@ -14,6 +14,11 @@ import (
 // client keeps a deterministic bound while still fitting a full prefetch batch.
 const contentTranslationBatchLimit = 200
 
+// A full page of production titles (about 20 characters each) is roughly
+// 20 KiB of JSON; long titles and optional paths need headroom. The batch gets
+// its own budget so the single-field limit stays tight.
+const contentTranslationBatchBodyLimit = 512 << 10
+
 type contentTranslationBatchItem struct {
 	Key string `json:"key"`
 	contentTranslationRequest
@@ -45,7 +50,7 @@ func (s *Server) translateContentBatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in contentTranslationBatchRequest
-	if decodeTranslationBody(w, r, &in) != nil {
+	if decodeTranslationBodyLimit(w, r, &in, contentTranslationBatchBodyLimit) != nil {
 		writeTranslationTrialError(w, &translation.Error{Code: "translation_invalid_input", Message: "Send a language and a list of fields."})
 		return
 	}

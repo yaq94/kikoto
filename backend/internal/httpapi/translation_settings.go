@@ -48,8 +48,18 @@ func (s *Server) updateTranslationSettings(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusOK, settings)
 }
 
+// translationBodyLimit bounds the single-field translation endpoints. A batch
+// page is much larger and uses decodeTranslationBodyLimit with its own budget.
+const translationBodyLimit = 16 << 10
+
 func decodeTranslationBody(w http.ResponseWriter, r *http.Request, target any) error {
-	data, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 16<<10))
+	return decodeTranslationBodyLimit(w, r, target, translationBodyLimit)
+}
+
+// decodeTranslationBodyLimit decodes one JSON object with strict field names.
+// Callers that accept a page of items pass their own size bound.
+func decodeTranslationBodyLimit(w http.ResponseWriter, r *http.Request, target any, limit int64) error {
+	data, err := io.ReadAll(http.MaxBytesReader(w, r.Body, limit))
 	if err != nil || !utf8.Valid(data) || !bytes.HasPrefix(bytes.TrimSpace(data), []byte("{")) {
 		return translation.ErrInvalidConfig
 	}

@@ -103,7 +103,20 @@ func (s *Server) translateContent(w http.ResponseWriter, r *http.Request) {
 		if errors.As(err, &public) {
 			result.Status = "failed"
 			result.Code = public.Code
+			// A stale selection is a client conflict, not a successful answer:
+			// the caller has to reload instead of rendering outdated text.
+			if public.Code == "translation_content_changed" {
+				writeAPIError(w, http.StatusConflict, public.Code, public.Message, false)
+				return
+			}
 			writeJSON(w, http.StatusOK, result)
+			return
+		}
+		// A field the resource never publishes is invalid input. Retrying or
+		// reloading cannot create it, so it must not be reported as an
+		// unavailable source.
+		if errors.Is(err, errFieldAbsent) {
+			writeAPIError(w, http.StatusBadRequest, "translation_invalid_input", "This source has no such field to translate.", false)
 			return
 		}
 		if errors.Is(err, sql.ErrNoRows) {
@@ -142,6 +155,23 @@ func (s *Server) translateContentField(ctx context.Context, in contentTranslatio
 		return result, "existing", nil
 	}
 	target := translationTargets[in.Language]
+	if in.Language == "zh-tw" {
+		// A reader who authored a Simplified title expects to see that title in
+		// Traditional, not a fresh model translation of the original. The
+		// selected text was already verified against the live field above, so
+		// the Simplified variant only supplies the display text.
+		authored := in
+		authored.Language = "zh-cn"
+		if simplified, loadErr := s.loadTranslationField(ctx, authored); loadErr == nil &&
+			simplified.Existing != "" && simplified.Text == text && simplified.Original == original {
+			converted, convErr := displayText(simplified.Existing, translation.SourceHans, target, field.Names)
+			if convErr != nil {
+				return result, "", convErr
+			}
+			result.Text = converted
+			return result, "translated", nil
+		}
+	}
 	kind, entityID, entityKey := translationEntity(in)
 	if kind == "" {
 		// A source-level field is not part of the searchable corpus. Translate
