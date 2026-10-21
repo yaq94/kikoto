@@ -25,10 +25,10 @@ func TestContentTranslationLimitsAndTimeoutAreObservableWithoutAutomaticRetry(t 
 		t.Fatal(err)
 	}
 	defaults := translationRequest(t, host, admin, "GET", "/api/settings/translation", "", 200)
-	if defaults["concurrency"] != float64(1) || defaults["queueLimit"] != float64(32) || defaults["cacheBytes"] != float64(256<<20) || defaults["minFreeBytes"] != float64(2<<30) {
+	if defaults["concurrency"] != float64(8) || defaults["queueLimit"] != float64(2048) || defaults["maxEntries"] != float64(0) || defaults["cacheBytes"] != float64(256<<20) || defaults["minFreeBytes"] != float64(2<<30) {
 		t.Fatalf("invalid defaults: %#v", defaults)
 	}
-	for _, patch := range []string{`{"concurrency":0}`, `{"queueLimit":257}`, `{"cacheBytes":4095}`, `{"minFreeBytes":-1}`, `{"timeoutSeconds":61}`} {
+	for _, patch := range []string{`{"concurrency":0}`, `{"concurrency":17}`, `{"queueLimit":4097}`, `{"maxEntries":-1}`, `{"maxEntries":2000001}`, `{"cacheBytes":4095}`, `{"minFreeBytes":-1}`, `{"timeoutSeconds":61}`} {
 		translationRequest(t, host, admin, "PATCH", "/api/settings/translation", patch, 400)
 	}
 	cfg, _ := json.Marshal(map[string]any{"baseUrl": model.URL, "timeoutSeconds": 1})
@@ -37,13 +37,25 @@ func TestContentTranslationLimitsAndTimeoutAreObservableWithoutAutomaticRetry(t 
 	if result["status"] != "failed" || result["code"] != "translation_timeout" || result["text"] != "Example title" || calls.Load() != 1 {
 		t.Fatalf("timeout outcome: %#v calls=%d", result, calls.Load())
 	}
+	// A failed call leaves no corpus row: the next request must reach the model.
+	var rows int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM content_translation`).Scan(&rows); err != nil {
+		t.Fatal(err)
+	}
+	if rows != 0 {
+		t.Fatalf("timeout wrote %d rows", rows)
+	}
 	runtime := translationRequest(t, host, admin, "GET", "/api/settings/translation/runtime", "", 200)
-	if runtime["cacheEntries"] != float64(0) {
-		t.Fatalf("timeout cached: %#v", runtime)
+	queue, ok := runtime["queue"].(map[string]any)
+	if !ok || queue["active"] != float64(0) || queue["queued"] != float64(0) {
+		t.Fatalf("runtime queue summary: %#v", runtime)
+	}
+	if _, ok := runtime["languages"]; !ok {
+		t.Fatalf("runtime lost the language summary: %#v", runtime)
 	}
 }
 
-func TestContentTranslationUsesNewDiskLimitForInFlightResults(t *testing.T) {
+func TestContentTranslationStoresInFlightResultsWhenTheSoftBudgetShrinks(t *testing.T) {
 	started := make(chan struct{}, 2)
 	release := make(chan struct{})
 	var once sync.Once
@@ -90,20 +102,28 @@ func TestContentTranslationUsesNewDiskLimitForInFlightResults(t *testing.T) {
 		}
 	}
 	runtime := translationRequest(t, host, admin, "GET", "/api/settings/translation/runtime", "", 200)
-	if runtime["active"] != float64(2) {
+	queue := runtime["queue"].(map[string]any)
+	if queue["active"] != float64(2) {
 		t.Fatalf("configured concurrency: %#v", runtime)
 	}
-	translationRequest(t, host, admin, "PATCH", "/api/settings/translation", `{"minFreeBytes":1099511627776,"cacheBytes":4096,"concurrency":1}`, 200)
+	// The soft budget may shrink while calls are in flight. It is an alert
+	// threshold, not an eviction or a write gate: completed rows are corpus.
+	translationRequest(t, host, admin, "PATCH", "/api/settings/translation", `{"cacheBytes":4096,"concurrency":1}`, 200)
 	once.Do(func() { close(release) })
 	for range 2 {
 		result := <-results
-		if result["cacheStatus"] != "paused_low_disk" || result["text"] != "Example result" {
-			t.Fatalf("in-flight result ignored current quota: %#v", result)
+		if result["cacheStatus"] != "stored" || result["text"] != "Example result" {
+			t.Fatalf("in-flight result was not stored: %#v", result)
 		}
 	}
 	runtime = translationRequest(t, host, admin, "GET", "/api/settings/translation/runtime", "", 200)
-	if runtime["cacheEntries"] != float64(0) {
-		t.Fatalf("paused quota wrote files: %#v", runtime)
+	languages := runtime["languages"].([]any)
+	if len(languages) != 1 {
+		t.Fatalf("language summary: %#v", runtime)
+	}
+	zh := languages[0].(map[string]any)
+	if zh["language"] != "zh-Hans" || zh["rows"] != float64(2) || zh["model"] != float64(2) || runtime["softBytes"] != float64(4096) {
+		t.Fatalf("soft budget reported as enforced: %#v", runtime)
 	}
 }
 

@@ -350,3 +350,56 @@ func joinIDs(ids []int64) string {
 	}
 	return strings.Join(parts, ",")
 }
+
+// The 1-2 character fallback cannot use the trigram index, so it must only
+// inspect a bounded window of the newest rows. A marker older than that window
+// is unreachable even though it is present in the table.
+func TestContentTranslationShortQueryStaysBounded(t *testing.T) {
+	s := openContentTranslationTestServer(t)
+	ctx := context.Background()
+	tx, err := s.db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stmt, err := tx.Prepare(`INSERT INTO content_translation(
+		cache_key, entity_kind, entity_id, field, language, source_text, translated_text, origin)
+		VALUES(?, 'entry', ?, 'title', 'zh-Hans', ?, ?, 'model')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stmt.Exec("oldest", 1, "远古标记", "远古标记"); err != nil {
+		t.Fatal(err)
+	}
+	for i := 2; i <= contentTranslationShortScanLimit; i++ {
+		if _, err := stmt.Exec(fmt.Sprintf("filler-%d", i), i, "", ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	newest := contentTranslationShortScanLimit + 1
+	if _, err := stmt.Exec("newest", newest, "近古标记", "近古标记"); err != nil {
+		t.Fatal(err)
+	}
+	if err := stmt.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	var total int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM content_translation`).Scan(&total); err != nil {
+		t.Fatal(err)
+	}
+	if total != contentTranslationShortScanLimit+1 {
+		t.Fatalf("seeded %d rows", total)
+	}
+	if ids, err := s.translatedEntityIDs(ctx, "zh-Hans", "entry", "远古", 10); err != nil {
+		t.Fatal(err)
+	} else if len(ids) != 0 {
+		t.Fatalf("short query reached past its window: %v", ids)
+	}
+	if ids, err := s.translatedEntityIDs(ctx, "zh-Hans", "entry", "近古", 10); err != nil {
+		t.Fatal(err)
+	} else if len(ids) != 1 || ids[0] != int64(newest) {
+		t.Fatalf("short query inside the window = %v", ids)
+	}
+}

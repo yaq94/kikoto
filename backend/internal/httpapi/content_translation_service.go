@@ -33,7 +33,7 @@ func (s *Server) translateStoredContent(ctx context.Context, in contentTranslati
 		if err = s.saveContentTranslations(ctx, []contentTranslationRow{row}); err != nil {
 			return translatedContent{}, "", err
 		}
-		display, err := displayText(text, nativeLanguage, target)
+		display, err := displayText(text, nativeLanguage, target, field.Names)
 		if err != nil {
 			return translatedContent{}, "", err
 		}
@@ -43,7 +43,7 @@ func (s *Server) translateStoredContent(ctx context.Context, in contentTranslati
 	key := contentTranslationCacheKey(kind, entityID, entityKey, in.Field, target.modelLanguage, text, "model", cfg.Model, cfg.BaseURL, translation.TemplateVersion, cfg.DisableThinking)
 	if rows, lookupErr := s.lookupContentTranslations(ctx, []string{key}); lookupErr == nil {
 		if row, ok := rows[key]; ok && row.Model == cfg.Model && row.TemplateVersion == translation.TemplateVersion {
-			display, convertErr := displayText(row.TranslatedText, row.Language, target)
+			display, convertErr := displayText(row.TranslatedText, row.Language, target, field.Names)
 			if convertErr != nil {
 				return translatedContent{}, "", convertErr
 			}
@@ -51,7 +51,12 @@ func (s *Server) translateStoredContent(ctx context.Context, in contentTranslati
 		}
 	}
 
-	translated, err := s.translateWithQueue(ctx, cfg, key, field.Names, text, target, in.Language)
+	// The model only writes Simplified, so the row stores the lane result
+	// unchanged. A Traditional viewer gets the conversion afterwards, inside
+	// the same name-protection boundary.
+	laneTarget := target
+	laneTarget.traditional = false
+	translated, err := s.translateWithQueue(ctx, cfg, key, field.Names, text, laneTarget, in.Language)
 	if err != nil {
 		return translatedContent{}, "", err
 	}
@@ -64,7 +69,11 @@ func (s *Server) translateStoredContent(ctx context.Context, in contentTranslati
 	if err = s.saveContentTranslations(ctx, []contentTranslationRow{row}); err != nil {
 		return translatedContent{}, "", err
 	}
-	return translatedContent{TranslatedText: translated, CacheStatus: "stored"}, "translated", nil
+	display, err := displayText(translated, target.modelLanguage, target, field.Names)
+	if err != nil {
+		return translatedContent{}, "", err
+	}
+	return translatedContent{TranslatedText: display, CacheStatus: "stored"}, "translated", nil
 }
 
 // nativeContentLanguage reports whether the stored text already is the target
@@ -85,11 +94,22 @@ func nativeContentLanguage(text string, target translationTarget) (string, bool)
 
 // displayText converts a Simplified row for a Traditional viewer. A row that
 // already holds Traditional text is returned unchanged.
-func displayText(text, language string, target translationTarget) (string, error) {
+// A stored row keeps the published spelling of circle and cast names, so the
+// script conversion has to run inside the same protection boundary as a model
+// call. Converting first and restoring afterwards leaves those names verbatim.
+func displayText(text, language string, target translationTarget, names []string) (string, error) {
 	if !target.traditional || language == translation.SourceHant {
 		return text, nil
 	}
-	return translation.Traditional(text)
+	protected, err := translation.Protect(text, names)
+	if err != nil {
+		return "", err
+	}
+	converted, err := translation.Traditional(protected.Text)
+	if err != nil {
+		return "", err
+	}
+	return protected.Restore(converted)
 }
 
 // translateWithQueue protects names, calls the model through the interactive
@@ -115,14 +135,17 @@ func (s *Server) translateWithQueue(ctx context.Context, cfg translation.Config,
 	if err != nil {
 		return "", err
 	}
-	restored, err := protected.Restore(result.Text)
-	if err != nil {
-		return "", err
-	}
+	// Convert the script while the protected names are still placeholders.
+	// Restoring first would hand a published circle or cast name to OpenCC and
+	// silently rewrite it.
+	output := result.Text
 	if target.traditional {
-		return translation.Traditional(restored)
+		output, err = translation.Traditional(output)
+		if err != nil {
+			return "", err
+		}
 	}
-	return restored, nil
+	return protected.Restore(output)
 }
 
 // translateThroughModel is the uncached path for a source-level field that has

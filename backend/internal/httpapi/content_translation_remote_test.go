@@ -64,7 +64,10 @@ func TestContentTranslationRemoteFieldsRecheckSourceBeforeCachedReads(t *testing
 		t.Fatal(err)
 	}
 	translationRequest(t, host, listener, "POST", "/api/content-translations", title, 503)
-	if modelCalls.Load() != 2 {
+	// A source-level field has no durable entity, so it is regenerated on each
+	// request: the title twice plus the directory. Catalogue cards, which do
+	// have an identity, are the ones that hit the store.
+	if modelCalls.Load() != 3 {
 		t.Fatalf("unexpected generations: %d", modelCalls.Load())
 	}
 }
