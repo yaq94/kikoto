@@ -1060,7 +1060,11 @@ func stats(values []float64) (min, max, median float64) {
 	}
 	sorted := append([]float64(nil), values...)
 	sort.Float64s(sorted)
-	return min, max, sorted[len(sorted)/2]
+	n := len(sorted)
+	if n%2 == 0 {
+		return min, max, (sorted[n/2-1] + sorted[n/2]) / 2
+	}
+	return min, max, sorted[n/2]
 }
 
 func msFloat(d time.Duration) float64 {
