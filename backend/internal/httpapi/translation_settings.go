@@ -45,7 +45,6 @@ func (s *Server) updateTranslationSettings(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	s.contentTranslationQueue(cfg).Configure(cfg.Limits)
-	s.contentTranslationCache().Stats(cfg)
 	writeJSON(w, http.StatusOK, settings)
 }
 

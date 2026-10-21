@@ -106,6 +106,8 @@ type Server struct {
 	translationConfigMu            sync.Mutex
 	translationCacheOnce           sync.Once
 	translationCache               *translation.Cache
+	translationPrefillMu           sync.Mutex
+	translationPrefillWrites       []time.Time
 	catalogDiskSpace               func(string) (diskSpaceSnapshot, error)
 	catalogNow                     func() time.Time
 	workMatchingMu                 sync.Mutex
@@ -351,8 +353,11 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/auth/me/preferences", s.getUserPreferences)
 	mux.HandleFunc("PATCH /api/auth/me/preferences", s.updateUserPreferences)
 	handleSlowFirstResponse("POST /api/content-translations", s.translateContent)
+	handleSlowFirstResponse("POST /api/content-translations/batch", s.translateContentBatch)
 	handleSlowFirstResponse("POST /api/settings/translation/test", s.testTranslation)
 	mux.HandleFunc("GET /api/settings/translation/runtime", s.getTranslationRuntime)
+	mux.HandleFunc("GET /api/settings/translation/prefill", s.getTranslationPrefill)
+	mux.HandleFunc("POST /api/settings/translation/prefill", s.setTranslationPrefill)
 	mux.HandleFunc("GET /api/settings/translation", s.getTranslationSettings)
 	mux.HandleFunc("PATCH /api/settings/translation", s.updateTranslationSettings)
 	mux.HandleFunc("GET /api/settings", s.getSettings)

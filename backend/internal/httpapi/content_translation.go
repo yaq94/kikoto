@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"net/http"
@@ -33,6 +34,41 @@ type contentTranslationResponse struct {
 	Code        string `json:"code,omitempty"`
 }
 
+// translationTarget maps a display language to the language the model writes
+// and, for Traditional Chinese, to the conversion applied after the model.
+type translationTarget struct {
+	modelLanguage string
+	traditional   bool
+}
+
+var translationTargets = map[string]translationTarget{
+	"en-us": {modelLanguage: translation.SourceEnglish},
+	"zh-cn": {modelLanguage: translation.SourceHans},
+	"zh-tw": {modelLanguage: translation.SourceHans, traditional: true},
+	"ja-jp": {modelLanguage: translation.SourceJapanese},
+	"ko-kr": {modelLanguage: translation.SourceKorean},
+}
+
+// translationEntity names the evaluation object a field belongs to. The key is
+// empty for titles and carries the sub-path for directories, so two folders of
+// one card do not share a row. A request that only names a source has no
+// object in the persistent store and is translated without one.
+func translationEntity(in contentTranslationRequest) (kind string, id int64, key string) {
+	switch {
+	case in.SeriesID > 0:
+		return "series", in.SeriesID, ""
+	case in.CatalogEntryID > 0:
+		if in.Field == "directory" {
+			return "entry", in.CatalogEntryID, in.Path
+		}
+		return "entry", in.CatalogEntryID, ""
+	case in.WorkID > 0:
+		return "work", in.WorkID, ""
+	default:
+		return "", 0, ""
+	}
+}
+
 func (s *Server) translateContent(w http.ResponseWriter, r *http.Request) {
 	if user, ok := userFromContext(r.Context()); !ok || user.ID <= 0 {
 		writeAPIError(w, 401, "authentication_required", "Sign in to translate content.", false)
@@ -43,8 +79,7 @@ func (s *Server) translateContent(w http.ResponseWriter, r *http.Request) {
 		writeTranslationTrialError(w, &translation.Error{Code: "translation_invalid_input", Message: "Select a public content field."})
 		return
 	}
-	targets := map[string]string{"en-us": "en", "zh-cn": "zh-Hans", "zh-tw": "zh-Hans", "ja-jp": "ja", "ko-kr": "ko"}
-	if in.Language != "origin" && in.Language != "zh-tw" && targets[in.Language] == "" {
+	if in.Language != "origin" && translationTargets[in.Language].modelLanguage == "" {
 		writeTranslationTrialError(w, &translation.Error{Code: "translation_invalid_input", Message: "Select a supported display language."})
 		return
 	}
@@ -62,92 +97,68 @@ func (s *Server) translateContent(w http.ResponseWriter, r *http.Request) {
 	if in.SeriesID <= 0 && in.CatalogEntryID <= 0 && in.SourceID <= 0 && !s.requireDemoWork(w, r, in.WorkID) {
 		return
 	}
-	field, err := s.loadTranslationField(r.Context(), in)
+	result, status, err := s.translateContentField(r.Context(), in)
 	if err != nil {
-		if errors.Is(err, errFieldAbsent) {
-			writeTranslationTrialError(w, &translation.Error{Code: "translation_invalid_input", Message: "This source has no description to translate."})
-		} else if errors.Is(err, sql.ErrNoRows) {
-			writeAPIError(w, 404, "not_found", "Content is unavailable.", false)
-		} else {
-			writeAPIError(w, 503, "translation_content_unavailable", "Content is unavailable. Try reloading.", true)
+		var public *translation.Error
+		if errors.As(err, &public) {
+			result.Status = "failed"
+			result.Code = public.Code
+			writeJSON(w, http.StatusOK, result)
+			return
 		}
+		if errors.Is(err, sql.ErrNoRows) {
+			writeAPIError(w, 404, "not_found", "Content is unavailable.", false)
+			return
+		}
+		writeAPIError(w, 503, "translation_content_unavailable", "Content is unavailable. Try reloading.", true)
 		return
+	}
+	result.Status = status
+	writeJSON(w, http.StatusOK, result)
+}
+
+// translateContentField is the shared body of the single and batch endpoints.
+// The status it returns is one of original, existing, native or translated.
+func (s *Server) translateContentField(ctx context.Context, in contentTranslationRequest) (contentTranslationResponse, string, error) {
+	field, err := s.loadTranslationField(ctx, in)
+	if err != nil {
+		return contentTranslationResponse{}, "", err
 	}
 	text := field.Text
 	if text == "" || text != in.Text {
-		writeAPIError(w, 409, "translation_content_changed", "Reload the content before translating.", false)
-		return
+		return contentTranslationResponse{}, "", &translation.Error{Code: "translation_content_changed", Message: "Reload the content before translating."}
 	}
-	// Original is presentation only: the canonical text behind "show original".
-	// The selected text is the only source that may reach the model or the cache
-	// key, so an edition or manual variant is never replaced by the canonical
-	// text and is never served another variant's cached result.
 	original := field.Original
 	if original == "" {
 		original = text
 	}
-	result := contentTranslationResponse{Text: text, Original: original, Language: in.Language, Status: "original"}
+	result := contentTranslationResponse{Text: text, Original: original, Language: in.Language}
 	if in.Language == "origin" {
 		result.Text = original
-		writeJSON(w, 200, result)
-		return
+		return result, "original", nil
 	}
 	if field.Existing != "" {
 		result.Text = field.Existing
-		result.Status = "existing"
-		writeJSON(w, 200, result)
-		return
+		return result, "existing", nil
 	}
-	source := text
-	authoredSimplified := false
-	if in.Language == "zh-tw" {
-		// Reuse the same field-selection rules as a Simplified request, including
-		// edition, remote title and system-tag choices. Recheck the resource.
-		simplifiedRequest := in
-		simplifiedRequest.Language = "zh-cn"
-		simplified, loadErr := s.loadTranslationField(r.Context(), simplifiedRequest)
-		if loadErr != nil || simplified.Text != in.Text || simplified.Original != field.Original {
-			writeAPIError(w, 409, "translation_content_changed", "Reload the content before translating.", false)
-			return
+	target := translationTargets[in.Language]
+	kind, entityID, entityKey := translationEntity(in)
+	if kind == "" {
+		// A source-level field is not part of the searchable corpus. Translate
+		// it on demand without persisting a row.
+		translated, err := s.translateThroughModel(ctx, in.SourceID, field, text, target, in.Language)
+		if err != nil {
+			return result, "", err
 		}
-		if simplified.Existing != "" {
-			source = simplified.Existing
-			authoredSimplified = true
-		}
+		result.Text = translated
+		result.CacheStatus = "uncached"
+		return result, "translated", nil
 	}
-	protected, err := translation.Protect(source, field.Names)
+	row, status, err := s.translateStoredContent(ctx, in, field, text, target, kind, entityID, entityKey)
 	if err != nil {
-		result.Status = "failed"
-		result.Code = translation.PublicError(err).Code
-		writeJSON(w, 200, result)
-		return
+		return result, "", err
 	}
-	translated := translation.Result{Text: protected.Text}
-	if !authoredSimplified {
-		cfg, loadErr := translation.NewStore(s.db).Load(r.Context())
-		if loadErr != nil {
-			writeTranslationSettingsError(w, loadErr)
-			return
-		}
-		input := translation.Input{Text: protected.Text, TargetLanguage: targets[in.Language]}
-		translated, err = s.cachedTranslation(r.Context(), cfg, input, text, protected)
-	}
-	if err == nil && in.Language == "zh-tw" {
-		translated.Text, err = translation.Traditional(translated.Text)
-	}
-	if err != nil {
-		result.Status = "failed"
-		result.Code = translation.PublicError(err).Code
-	} else {
-		restored, restoreErr := protected.Restore(translated.Text)
-		if restoreErr != nil {
-			result.Status = "failed"
-			result.Code = translation.PublicError(restoreErr).Code
-		} else {
-			result.Text = restored
-			result.Status = "translated"
-			result.CacheStatus = translated.CacheStatus
-		}
-	}
-	writeJSON(w, 200, result)
+	result.Text = row.TranslatedText
+	result.CacheStatus = row.CacheStatus
+	return result, status, nil
 }

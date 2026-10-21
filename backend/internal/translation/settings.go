@@ -19,14 +19,20 @@ var ErrInvalidConfig = errors.New("invalid translation configuration")
 
 // Config contains the secret and must never be serialized to an API response.
 type Limits struct {
-	Concurrency  int   `json:"concurrency"`
-	QueueLimit   int   `json:"queueLimit"`
+	Concurrency int `json:"concurrency"`
+	QueueLimit  int `json:"queueLimit"`
+	// MaxEntries is a soft row budget for the persistent translation table.
+	// Zero means unlimited: translations are corpus, not a cache, so a low
+	// bound would silently reduce search coverage over time.
+	MaxEntries   int   `json:"maxEntries"`
 	CacheBytes   int64 `json:"cacheBytes"`
 	MinFreeBytes int64 `json:"minFreeBytes"`
 }
 
 func DefaultLimits() Limits {
-	return Limits{Concurrency: 1, QueueLimit: 32, CacheBytes: 256 << 20, MinFreeBytes: 2 << 30}
+	// The measured model rate plateaus at eight concurrent calls; the queue
+	// covers a full backfill pass without rejecting interactive work.
+	return Limits{Concurrency: 8, QueueLimit: 2048, MaxEntries: 0, CacheBytes: 256 << 20, MinFreeBytes: 2 << 30}
 }
 
 type Config struct {
@@ -59,6 +65,7 @@ func (c Config) Settings() Settings {
 type Patch struct {
 	Concurrency     *int    `json:"concurrency"`
 	QueueLimit      *int    `json:"queueLimit"`
+	MaxEntries      *int    `json:"maxEntries"`
 	CacheBytes      *int64  `json:"cacheBytes"`
 	MinFreeBytes    *int64  `json:"minFreeBytes"`
 	BaseURL         *string `json:"baseUrl"`
@@ -88,6 +95,15 @@ func load(ctx context.Context, db queryer) (Config, error) {
 	}
 	if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
 		return Config{}, ErrInvalidConfig
+	}
+	// A configuration written before the persistent store still carries the old
+	// interactive defaults. Only that exact tuple is upgraded; a deliberate
+	// choice of the same three numbers is indistinguishable and follows the
+	// deployment default as well.
+	if cfg.Concurrency == 1 && cfg.QueueLimit == 32 && cfg.MaxEntries == 0 && cfg.CacheBytes == 256<<20 {
+		limits := DefaultLimits()
+		limits.CacheBytes, limits.MinFreeBytes = cfg.CacheBytes, cfg.MinFreeBytes
+		cfg.Limits = limits
 	}
 	return cfg, nil
 }
@@ -125,6 +141,9 @@ func (s *Store) Update(ctx context.Context, p Patch) (Settings, error) {
 	if p.QueueLimit != nil {
 		cfg.QueueLimit = *p.QueueLimit
 	}
+	if p.MaxEntries != nil {
+		cfg.MaxEntries = *p.MaxEntries
+	}
 	if p.CacheBytes != nil {
 		cfg.CacheBytes = *p.CacheBytes
 	}
@@ -149,7 +168,7 @@ func (s *Store) Update(ctx context.Context, p Patch) (Settings, error) {
 }
 
 func (c Config) Validate() error {
-	if c.Concurrency < 1 || c.Concurrency > 8 || c.QueueLimit < 0 || c.QueueLimit > 256 || c.CacheBytes < 4096 || c.CacheBytes > 4<<30 || c.MinFreeBytes < 0 || c.MinFreeBytes > 1<<40 {
+	if c.Concurrency < 1 || c.Concurrency > 16 || c.QueueLimit < 0 || c.QueueLimit > 4096 || c.MaxEntries < 0 || c.MaxEntries > 2_000_000 || c.CacheBytes < 4096 || c.CacheBytes > 4<<30 || c.MinFreeBytes < 0 || c.MinFreeBytes > 1<<40 {
 		return ErrInvalidConfig
 	}
 	if len(c.BaseURL) > 2048 || len(c.APIKey) > 4096 || strings.ContainsAny(c.APIKey, "\r\n") || strings.TrimSpace(c.Model) != c.Model || c.Model == "" || len(c.Model) > 256 || strings.ContainsAny(c.Model, "\r\n") || c.TimeoutSeconds < 1 || c.TimeoutSeconds > 60 {

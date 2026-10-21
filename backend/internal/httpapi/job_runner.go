@@ -52,7 +52,7 @@ func (s *Server) StartJobRunner(ctx context.Context) {
 	}()
 
 	var workers sync.WaitGroup
-	workers.Add(4)
+	workers.Add(5)
 	go func() {
 		defer workers.Done()
 		s.runLocalMediaProbeWorker(ctx)
@@ -68,6 +68,10 @@ func (s *Server) StartJobRunner(ctx context.Context) {
 	go func() {
 		defer workers.Done()
 		s.runMetadataTagQueueWorker(ctx)
+	}()
+	go func() {
+		defer workers.Done()
+		s.runTranslationPrefillWorker(ctx)
 	}()
 	workers.Add(1)
 	go func() {
