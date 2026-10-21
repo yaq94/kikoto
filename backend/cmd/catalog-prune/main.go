@@ -28,7 +28,7 @@ func main() {
 	reportPath := flag.String("report", "", "dry-run JSON report to verify before -apply")
 	jsonOut := flag.String("json", "catalog-prune-dry-run.json", "dry-run JSON output path")
 	mdOut := flag.String("md", "catalog-prune-dry-run.md", "dry-run Markdown output path")
-	whitelist := flag.String("whitelist", strings.Join(catalogprune.DefaultWhitelist, ","), "comma-separated paths that must survive")
+	whitelist := flag.String("whitelist", strings.Join(catalogprune.WhitelistFromEnv(), ","), "comma-separated paths that must survive")
 	limit := flag.Int("limit", 0, "limit the plan to the first N cards (tests only)")
 	note := flag.String("note", "", "note recorded in the dry-run report")
 	flag.Parse()

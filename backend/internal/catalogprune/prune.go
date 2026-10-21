@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"os"
 	"path"
 	"sort"
 	"strings"
@@ -16,9 +17,18 @@ import (
 	"github.com/yexca/kikoto/backend/internal/catalogadmission"
 )
 
-// DefaultWhitelist is the audio subtree that must survive deletion of its
-// parent card.
-var DefaultWhitelist = []string{"/asmr6/轩子/音频"}
+// WhitelistFromEnv reads the operator-supplied subtree that must survive a
+// parent-card deletion. The path belongs to one deployment, so it is not
+// committed: the CLI passes it explicitly or through this variable.
+func WhitelistFromEnv() []string {
+	var roots []string
+	for _, item := range strings.Split(os.Getenv("KIKOTO_CATALOG_PRUNE_WHITELIST"), ",") {
+		if item = strings.TrimSpace(item); item != "" {
+			roots = append(roots, item)
+		}
+	}
+	return roots
+}
 
 type Options struct {
 	Whitelist  []string
@@ -155,7 +165,10 @@ func BuildReport(ctx context.Context, db *sql.DB, options Options) (Report, erro
 	}
 	whitelist := normalizeRoots(options.Whitelist)
 	if len(whitelist) == 0 {
-		whitelist = normalizeRoots(DefaultWhitelist)
+		// A deployment that needs a protected subtree passes it explicitly; an
+		// empty whitelist protects nothing rather than baking one operator's
+		// path into the binary.
+		whitelist = normalizeRoots(WhitelistFromEnv())
 	}
 	report := Report{GeneratedAt: time.Now().UTC().Format(time.RFC3339), Whitelist: whitelist, Entries: []Entry{}, Skipped: []Skipped{}}
 

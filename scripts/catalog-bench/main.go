@@ -29,7 +29,7 @@ import (
 )
 
 const (
-	defaultRoot     = "/asmr6/轩子"
+	defaultRoot     = "/source/example"
 	publishRows     = 1000
 	cleanupCards    = 100
 	lifecycleRows   = 100
@@ -188,7 +188,7 @@ func main() {
 		writeDB     = flag.String("write-db", "", "disposable copy for write benchmarks; must differ from --db")
 		sourceID    = flag.Int64("source-id", 0, "source id; 0 auto-detects from --root")
 		generation  = flag.Int64("generation", 0, "scan generation; 0 reads source_catalog_scan")
-		root        = flag.String("root", defaultRoot, "root path for catalogRootIncomplete")
+		root        = flag.String("root", os.Getenv("KIKOTO_BENCH_ROOT"), "root path for catalogRootIncomplete")
 		runs        = flag.Int("runs", 3, "runs for read-only benchmarks")
 		writeRuns   = flag.Int("write-runs", 1, "runs for write-path benchmarks (each rolls back)")
 		logsPath    = flag.String("logs", "", "optional docker logs text file")
