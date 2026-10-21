@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -17,7 +16,7 @@ import (
 
 var numberedMigrationFilePattern = regexp.MustCompile(`^[0-9]{3}_[a-z0-9][a-z0-9_]*\.sql$`)
 
-const latestNumberedMigrationVersion = 88
+const latestNumberedMigrationVersion = 89
 
 // latestReleasedBaseline is the newest file in migrations/baseline/, which
 // production uses for a fresh database.
@@ -120,8 +119,8 @@ func TestMigrateUpgradesExistingDatabaseThroughNumberedChain(t *testing.T) {
 	if err := db.QueryRow("SELECT filename FROM schema_migration WHERE version = ?", latestNumberedMigrationVersion).Scan(&filename); err != nil {
 		t.Fatal(err)
 	}
-	if filename != "088_source_catalog_incremental_sync.sql" {
-		t.Fatalf("applied migration = %q, want 088_source_catalog_incremental_sync.sql", filename)
+	if filename != "089_work_primary_code_trimmed_unique.sql" {
+		t.Fatalf("applied migration = %q, want 089_work_primary_code_trimmed_unique.sql", filename)
 	}
 }
 
@@ -627,40 +626,47 @@ func openMigrationManagerDB(t *testing.T) *sql.DB {
 	return db
 }
 
-func copyNumberedMigrations(t *testing.T, sourceDir string) string {
-	t.Helper()
-	return copyNumberedMigrationsThrough(t, sourceDir, latestNumberedMigrationVersion)
-}
-
-// numberedMigrationSuffix builds the expected history tail from the migration
-// files actually packaged for this build. A hand-written list had to be edited
-// by every branch that added a migration, so merging two of them always
-// conflicted on the same line.
-func numberedMigrationSuffix(t *testing.T, sourceDir string, from int) string {
+// numberedMigrationSuffix returns the catalog's numbered files after the given
+// version, in the order the manager applies them. Deriving the list from the
+// packaged files keeps this assertion stable while independently developed
+// migrations merge or renumber; the manager still rejects a gap or duplicate.
+func numberedMigrationSuffix(t *testing.T, sourceDir string, afterVersion int) string {
 	t.Helper()
 	entries, err := os.ReadDir(sourceDir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	names := []string{}
+	type numbered struct {
+		version int
+		name    string
+	}
+	files := []numbered{}
 	for _, entry := range entries {
-		name := entry.Name()
-		if entry.IsDir() || !numberedMigrationFilePattern.MatchString(name) {
+		if entry.IsDir() || !numberedMigrationFilePattern.MatchString(entry.Name()) {
 			continue
 		}
-		version, err := strconv.Atoi(name[:3])
-		if err != nil {
-			t.Fatal(err)
+		var version int
+		if _, err := fmt.Sscanf(entry.Name(), "%03d_", &version); err != nil {
+			t.Fatalf("parse migration version from %q: %v", entry.Name(), err)
 		}
-		if version > from {
-			names = append(names, name)
+		if version > afterVersion {
+			files = append(files, numbered{version: version, name: entry.Name()})
 		}
 	}
-	sort.Strings(names)
+	sort.Slice(files, func(i, j int) bool { return files[i].version < files[j].version })
+	names := make([]string, 0, len(files))
+	for _, file := range files {
+		names = append(names, file.name)
+	}
 	if len(names) == 0 {
 		return ""
 	}
 	return "," + strings.Join(names, ",")
+}
+
+func copyNumberedMigrations(t *testing.T, sourceDir string) string {
+	t.Helper()
+	return copyNumberedMigrationsThrough(t, sourceDir, latestNumberedMigrationVersion)
 }
 
 func copyNumberedMigrationsThrough(t *testing.T, sourceDir string, version int) string {
