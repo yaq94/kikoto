@@ -48,12 +48,26 @@ func (s *Server) purgeStaleCatalogPending(ctx context.Context, job workflowJobRe
 	// The first call for a generation pays one indexed existence check. A
 	// non-empty queue then drains in bounded batches; a full final batch leaves
 	// the generation unmarked so the next invocation continues.
+	// An observation owns its directory through the (file_source_id,
+	// directory_path) foreign key, so a stale observation needs a stale
+	// directory. Driving the probe from the older directories turns the check
+	// into one index seek per stale directory instead of a walk over every
+	// pending row of the source.
+	// Each arm is a generation range so both sides of "<> this generation"
+	// seek the directory index; an OR in one predicate made the planner walk
+	// every directory of the source.
 	var stale int
 	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS(
-		SELECT 1 FROM source_catalog_observation o
-		JOIN source_catalog_directory d ON d.file_source_id=o.file_source_id AND d.path=o.directory_path
-		WHERE d.file_source_id=? AND d.generation<>? AND o.publish_pending=1)`,
-		sourceID, job.RunID).Scan(&stale); err != nil {
+		SELECT 1 FROM source_catalog_directory d
+		WHERE d.file_source_id=? AND d.generation<?
+			AND EXISTS(SELECT 1 FROM source_catalog_observation o
+				WHERE o.file_source_id=d.file_source_id AND o.directory_path=d.path AND o.publish_pending=1)
+		UNION ALL
+		SELECT 1 FROM source_catalog_directory d
+		WHERE d.file_source_id=? AND d.generation>?
+			AND EXISTS(SELECT 1 FROM source_catalog_observation o
+				WHERE o.file_source_id=d.file_source_id AND o.directory_path=d.path AND o.publish_pending=1)
+		LIMIT 1)`, sourceID, job.RunID, sourceID, job.RunID).Scan(&stale); err != nil {
 		return err
 	}
 	if stale == 0 {

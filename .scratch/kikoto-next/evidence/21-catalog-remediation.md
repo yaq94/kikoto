@@ -140,13 +140,13 @@ cp kikoto-before-17c4e5d4.db kikoto-write.db
 - `before-server-lifecycle3.json`（lifecycle，3 次）
 - `c-sqlite-crosscheck.txt`（C 交叉核对）
 
-## 4. G1–G17 验收表（after 2026-10-22，schema 84 副本）
+## 4. G1–G17 验收表（after 2026-10-22，schema 093 副本）
 
 | 编号 | 场景 | 目标 | before | after |
 | --- | --- | --- | --- | --- |
-| G1 | `sourceCatalogProgress`（`?exact=1`） | <20 ms | 504.9 ms | 604.7 ms；未达标。默认路径已改读 085 计数器，`?exact=1` 保留为对账查询，本副本无 085 数据 |
-| G2 | 空 pending 的 purge | <1 ms | 199.7 ms | 223.2 ms；未达标，测量为 schema 84 副本上的同一 SQL |
-| G3 | `catalogRootIncomplete('/source/example')` | <5 ms | 252.0 ms | 256.5 ms；未达标 |
+| G1 | `sourceCatalogProgress`（默认计数器路径） | <20 ms | 504.9 ms（`?exact=1`） | 12.103 ms（11.027–13.818）；达标。`?exact=1` 作为对账查询降到 127.528 ms |
+| G2 | 空 pending 的 purge | <1 ms | 199.7 ms | 0 ms（max 0.532）；达标，改由旧 generation 的目录索引驱动，只在旧目录有 pending 时才读 observation |
+| G3 | `catalogRootIncomplete('/source/example')` | <5 ms | 252.0 ms | 0 ms（max 0.538）；达标，两臂都改成半开路径区间 |
 | G4 | 发布 1,000 行 | <2 s | SELECT 5.1 ms；实际 0 行 27.8 ms | fixture 1,000 行 5.3 ms；真实 0 行 33.7 ms；达标 |
 | G5 | cleanup 100 卡（`--cleanup-cursor 1070887`） | <1 s | 2,446.8 ms（cursor 0）；生产日志 733–6,482 ms | 1.05 ms；达标（cursor 与 before 不同，见 §5） |
 | G6 | lifecycle 100 entry | <200 ms | 37.1 ms；partial 运行不进入 lifecycle | 43.7 ms；达标；partial 现在也进入 lifecycle |
@@ -165,10 +165,41 @@ cp kikoto-before-17c4e5d4.db kikoto-write.db
 ## 4.1 本轮 after 运行
 
 ```text
-catalog-bench-after.exe --db kikoto-before-17c4e5d4.db --write-db kikoto-write-after.db \n  --source-id 3 --generation 53 --root /source/example --label after-server-warm2 \n  --runs 5 --write-runs 3 --cleanup-cursor 1070887 --lifecycle-cursor 0
+# 1. 把 10-21 的生产快照副本迁移到当前 schema
+go run ./.kikoto-work/bench/migrate92 ../.kikoto-work/bench/bench-093.db
+# 2. 用当前 HEAD 构建 bench
+cd backend && go build -o ../.kikoto-work/bench/catalog-bench-093.exe ../scripts/catalog-bench/main.go
+# 3. 测量
+catalog-bench-093.exe --db bench-093.db --vacuum-to bench-093-vacuum.db --write-db bench-093-write.db --source-id 3 --generation 53 --root /source/example --label g1-g6 --runs 5 --write-runs 3 --cleanup-cursor 1070887 --lifecycle-cursor 0 --json-out after-093-all.json
 ```
 
-副本仍是 schema 84：085 的计数器列不存在，因此 G1–G3 测的是旧查询形状，不能当作计数器路径的 after。G4–G6 与 G12–G15 不依赖 085。
+结果（schema 093，modernc 驱动，Windows，5 读 / 3 写）：
+
+| 项 | median | min | max |
+| --- | ---: | ---: | ---: |
+| `progress_counter` | 12.103 ms | 11.027 | 13.818 |
+| `progress_exact` | 127.528 ms | 123.005 | 138.590 |
+| `purge_empty_pending` | 0 ms | 0 | 0.532 |
+| `root_incomplete` | 0 ms | 0 | 0.538 |
+| `publish_1000_rows`（SELECT） | 93.820 ms | 92.065 | 109.723 |
+| `publish_1000_rows_fixture` | 401.160 ms | 399.812 | 401.981 |
+| `cleanup_100_cards` | 0 ms | 0 | 0.636 |
+| `lifecycle_100_entries` | 35.017 ms | 33.465 | 35.268 |
+
+迁移前后行数一致：entry 114,081、observation 389,830、pending 171,604；
+085 回填的 observed/indexed 与精确聚合一致（389,823 / 41,569）。
+`PRAGMA user_version` 恒为 0，版本以 `schema_state.current_version` 为准。
+
+G1–G3 的达标来自三处改动，均已带测试：
+
+1. `093_source_catalog_partition_index.sql` 为 `(file_source_id, generation, partition_path)`
+   建覆盖索引，分区聚合与分区总数不再建临时 b-tree。
+2. 默认进度响应不再统计全源 staging 行（390k observation），改报本 generation 的计数器；
+   遗留行的对账仍走 `?exact=1`。
+3. purge 的存在性探测改由旧 generation 的目录索引驱动；root-incomplete 的两臂都改成
+   半开路径区间。bench 脚本此前仍在用旧的 `catalog_root`/`substr` 形式，已同步。
+
+G4–G6 与 G12–G15 不依赖上述改动。
 
 ## 4.2 G18–G28
 
@@ -182,13 +213,15 @@ catalog-bench-after.exe --db kikoto-before-17c4e5d4.db --write-db kikoto-write-a
 | G23 | sync 受维护锁与低空间约束 | 启动前与每批之间检查；命中即 `partial` 且不花请求，恢复时间写回 daily tick | `TestCatalogSyncPausesForMaintenanceAndRetriesAfterTheHold`、`TestCatalogSyncPausesOnLowDiskAndDoesNotSpendRequests` |
 | G24 | 崩溃后残留 running 行 | 启动清理为 failed，下一次当日即可运行，不等 6 小时 | `TestCatalogSyncStartupClearsAnInterruptedRun` |
 | G25 | 父卡跨排除目录 | 父卡位于排除路径之上时，其落在排除子目录的文件行仍被删除 | `TestSourceCatalogExclusionRemovesFilesOfAParentCard` |
+| G29 | 低空间时的播放与个人记录 | 扫描 `pauseReason=low_disk_space`、预填 `paused_low_disk`，同一时刻 Range 播放、目录列表与评分备注照常；空间恢复后两者继续 | H：`TestLowDiskPausesScanAndPrefillWithoutStoppingPlayback`；F：`source-resource-limits-live` |
+| G30 | G1–G3 的 schema 093 复测 | 12.103 / 0 / 0 ms，均达标；见 §4.1 | `after-093-all.json` |
 | G26 | 先排除后加白名单 | 建白名单时把桥接目录标记 changed 并启动一次 sync，重新发布音频 | `TestSourceCatalogWhitelistCreationSchedulesABridgeRelist` |
 | G27 | 繁体搜索同形字 | `zh-tw` 同时查 `zh-Hans` 与 `zh-Hant` | `TestTraditionalSearchKeepsSharedGlyphsInTheSimplifiedCorpus` |
 | G28 | sync 阶段计时 | scan/publish/lifecycle/settle 记在 sync 自己的 workflow_run 上，不污染 full generation | `TestCatalogSyncRecordsPhaseTimingsOnItsOwnRun` |
 
 ## 5. 已知限制与待确认
 
-- `publish_1000_rows` 只计 SELECT 阶段；完整发布事务还包含 entry/file/series 写入，G4 的写入成本不能用 5.1 ms 代替。需要 A/C 完成后用同一副本测完整批次。
+- `publish_1000_rows` 只计 SELECT 阶段；`publish_1000_rows_fixture` 补上了 1,000 行标记的写入阶段（401.2 ms，含事务回滚）。
 - cleanup 固定从 cursor 0 开始，生产 `publish_cleanup_cursor=1,070,887`；2.45 s 与日志的 733–6,482 ms 是不同窗口，不能直接当同一批次。after 必须用同一 cursor。
 - lifecycle 只看 observe 阶段；stage=reconcile 的 fingerprint/relocation 路径未计时。生产当前 stage=observe，所以可先覆盖该路径。
 - modernc 比 C SQLite 慢约 2–2.5 倍；before/after 必须同驱动、同机器、同 warm 条件。

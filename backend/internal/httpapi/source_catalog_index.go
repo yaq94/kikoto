@@ -122,9 +122,14 @@ type catalogIndexProgress struct {
 	// PublishPending counts only observations the publisher can select in
 	// this generation. Rows refused by admission are removed from the queue
 	// and never inflate this number.
-	PublishPending      int                         `json:"publishPending"`
-	StagingDirectories  int                         `json:"stagingDirectories"`
-	StagingObservations int                         `json:"stagingObservations"`
+	PublishPending int `json:"publishPending"`
+	// StagingDirectories and StagingObservations count the rows of every
+	// generation still held for this source, which is a reconciliation detail
+	// and not part of the generation this poll reports. They are only set by
+	// ?exact=1; the polling response omits them instead of reporting a zero it
+	// did not measure.
+	StagingDirectories  *int                        `json:"stagingDirectories,omitempty"`
+	StagingObservations *int                        `json:"stagingObservations,omitempty"`
 	StartedAt           string                      `json:"startedAt"`
 	UpdatedAt           string                      `json:"updatedAt"`
 	Partitions          []catalogPartitionProgress  `json:"partitions"`

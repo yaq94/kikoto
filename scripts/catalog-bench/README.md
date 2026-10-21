@@ -47,7 +47,7 @@ Useful flags:
 | `--logs` | `docker logs` text file |
 | `--json-out` | write the report to a file; stdout still receives it |
 
-Query names: `progress_exact`, `purge_empty_pending`, `root_incomplete`,
+Query names: `progress_counter`, `progress_exact`, `purge_empty_pending`, `root_incomplete`,
 `publish_1000_rows`, `publish_1000_rows_fixture`, `cleanup_100_cards`,
 `lifecycle_100_entries`.
 
@@ -57,10 +57,13 @@ refuses to run them so the source database stays read-only.
 
 ## What is measured
 
-- `progress_exact`: the six statements of `sourceCatalogProgress` (scan row,
-  staging counts, directory aggregates, observed/indexed join, partition page,
-  detail page), timed as one unit. Per-statement times are in
-  `details.breakdownMs`.
+- `progress_counter`: the shipped default of `sourceCatalogProgress` — the scan
+  row with its 085 counters, `count(DISTINCT partition_path)`, the partition
+  page and the detail page. Per-statement times are in `details.breakdownMs`.
+- `progress_exact`: the reconciliation aggregate behind `?exact=1` — staging
+  counts, directory aggregates and the observed/indexed join on top of the
+  scan row, plus both pages. It is deliberately slower than the default path
+  and exists to detect counter drift.
 - `purge_empty_pending`: the `EXISTS` probe at the start of
   `purgeStaleCatalogPending`.
 - `root_incomplete`: the exact two-arm query of `catalogRootIncomplete`.

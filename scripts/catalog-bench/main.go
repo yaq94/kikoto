@@ -68,6 +68,16 @@ const progressStagingSQL = `SELECT
 	(SELECT count(*) FROM source_catalog_directory WHERE file_source_id=?),
 	(SELECT count(*) FROM source_catalog_observation WHERE file_source_id=?)`
 
+// progressCounterProgressSQL mirrors the shipped `sourceCatalogProgress`
+// default: one row of 085 counters. The exact aggregate below stays as the
+// reconciliation reference.
+const progressCounterSQL = `SELECT scan.workflow_run_id,run.status,scan.pause_reason,scan.options_json,scan.requests,
+	scan.directories,scan.completed,scan.pending,scan.failed,scan.restricted,scan.empty,scan.observed,scan.indexed,
+	scan.publish_pending_remaining,scan.started_at,scan.updated_at
+	FROM source_catalog_scan scan JOIN workflow_run run ON run.id=scan.workflow_run_id WHERE scan.file_source_id=?`
+
+const progressPartitionTotalSQL = `SELECT count(DISTINCT partition_path) FROM source_catalog_directory WHERE file_source_id=? AND generation=?`
+
 const progressDirectorySQL = `SELECT count(*),
 	coalesce(sum(status='complete' OR (status='empty' AND error_code='not_found')),0),
 	coalesce(sum(status IN ('pending','listing_complete')),0),
@@ -90,16 +100,29 @@ GROUP BY partition_path ORDER BY partition_path LIMIT 50 OFFSET ?`
 const progressDetailsSQL = `SELECT path,status,next_page,error_code FROM source_catalog_directory
 WHERE file_source_id=? AND generation=? AND status<>'complete' ORDER BY path LIMIT 50 OFFSET ?`
 
+// purgeCheckSQL drives from the older directories: an observation owns its
+// directory by foreign key, so one index seek per stale directory replaces a
+// walk over every pending row of the source.
 const purgeCheckSQL = `SELECT EXISTS(
-	SELECT 1 FROM source_catalog_observation o
-	JOIN source_catalog_directory d ON d.file_source_id=o.file_source_id AND d.path=o.directory_path
-	WHERE d.file_source_id=? AND d.generation<>? AND o.publish_pending=1)`
+	SELECT 1 FROM source_catalog_directory d
+	WHERE d.file_source_id=? AND d.generation<?
+		AND EXISTS(SELECT 1 FROM source_catalog_observation o
+			WHERE o.file_source_id=d.file_source_id AND o.directory_path=d.path AND o.publish_pending=1)
+	UNION ALL
+	SELECT 1 FROM source_catalog_directory d
+	WHERE d.file_source_id=? AND d.generation>?
+		AND EXISTS(SELECT 1 FROM source_catalog_observation o
+			WHERE o.file_source_id=d.file_source_id AND o.directory_path=d.path AND o.publish_pending=1)
+	LIMIT 1)`
 
+// rootIncompleteSQL mirrors catalogRootIncompleteQuery: the subtree is a
+// half-open path range so both arms seek instead of testing every row.
 const rootIncompleteSQL = `SELECT EXISTS(
 	SELECT 1 FROM source_catalog_directory d
 	WHERE d.file_source_id=? AND d.generation=? AND d.status<>'complete'
 		AND NOT (d.status='empty' AND d.error_code='not_found')
-		AND (?='/' OR d.catalog_root=? OR d.path=? OR substr(d.path,1,length(?)+1)=? || '/')
+		AND d.path>=? AND d.path<?
+		AND (d.path=? OR d.path>=?)
 	UNION ALL
 	SELECT 1 FROM source_catalog_observation o
 	JOIN source_catalog_directory pd ON pd.file_source_id=o.file_source_id AND pd.path=o.directory_path AND o.revision=pd.revision
@@ -107,7 +130,8 @@ const rootIncompleteSQL = `SELECT EXISTS(
 		AND NOT (pd.status='empty' AND pd.error_code='not_found')
 		AND (o.kind='audio' OR EXISTS(SELECT 1 FROM source_catalog_audio_root r
 			WHERE r.file_source_id=pd.file_source_id AND r.generation=pd.generation AND r.catalog_root=pd.catalog_root))
-		AND (?='/' OR pd.catalog_root=? OR pd.path=? OR substr(pd.path,1,length(?)+1)=? || '/')
+		AND o.directory_path>=? AND o.directory_path<?
+		AND (o.directory_path=? OR o.directory_path>=?)
 )`
 
 const cleanupIDsSQL = `SELECT id FROM source_catalog_entry
@@ -291,6 +315,17 @@ func main() {
 		fatalf("cleanup_100_cards, lifecycle_100_entries and publish_1000_rows_fixture require --vacuum-to or --write-db")
 	}
 
+	if enabled("progress_counter") {
+		rep.Queries = append(rep.Queries, benchRead(ctx, "progress_counter", *runs, func(ctx context.Context) (map[string]any, error) {
+			return runProgressCounter(ctx, ro, sid, gen)
+		}, []planSpec{
+			{SQL: progressCounterSQL, Args: []any{sid}},
+			{SQL: progressPartitionTotalSQL, Args: []any{sid, gen}},
+			{SQL: progressPartitionsSQL, Args: []any{sid, gen, 0}},
+			{SQL: progressDetailsSQL, Args: []any{sid, gen, 0}},
+		}))
+	}
+
 	if enabled("progress_exact") {
 		rep.Queries = append(rep.Queries, benchRead(ctx, "progress_exact", *runs, func(ctx context.Context) (map[string]any, error) {
 			return runProgress(ctx, ro, sid, gen)
@@ -306,12 +341,12 @@ func main() {
 	if enabled("purge_empty_pending") {
 		rep.Queries = append(rep.Queries, benchRead(ctx, "purge_empty_pending", *runs, func(ctx context.Context) (map[string]any, error) {
 			var stale int
-			err := ro.QueryRowContext(ctx, purgeCheckSQL, sid, gen).Scan(&stale)
+			err := ro.QueryRowContext(ctx, purgeCheckSQL, sid, gen, sid, gen).Scan(&stale)
 			return map[string]any{"stale": stale}, err
-		}, []planSpec{{SQL: purgeCheckSQL, Args: []any{sid, gen}}}))
+		}, []planSpec{{SQL: purgeCheckSQL, Args: []any{sid, gen, sid, gen}}}))
 	}
 	if enabled("root_incomplete") {
-		args := []any{sid, gen, *root, *root, *root, *root, *root, sid, gen, *root, *root, *root, *root, *root}
+		args := []any{sid, gen, *root, *root + "0", *root, *root + "/", sid, gen, *root, *root + "0", *root, *root + "/"}
 		rep.Queries = append(rep.Queries, benchRead(ctx, "root_incomplete", *runs, func(ctx context.Context) (map[string]any, error) {
 			var incomplete int
 			err := ro.QueryRowContext(ctx, rootIncompleteSQL, args...).Scan(&incomplete)
@@ -527,6 +562,79 @@ func benchWrite(ctx context.Context, name, dbPath string, runs int, fn func(cont
 	m.MinMS, m.MaxMS, m.MedianMS = stats(times)
 	m.Plan = collectPlans(ctx, name, plans)
 	return m
+}
+
+// runProgressCounter replays the shipped default progress read: counters on
+// the scan row, the partition total and the two bounded pages.
+func runProgressCounter(ctx context.Context, db *sql.DB, sourceID, generation int64) (map[string]any, error) {
+	details := map[string]any{}
+	breakdown := map[string]float64{}
+	details["breakdownMs"] = breakdown
+	var runID, requests, directories, completed, pending, failed, restricted, empty, observed, indexed, publishPending int
+	var status, pauseReason, options, startedAt, updatedAt string
+	stepStarted := time.Now()
+	if err := db.QueryRowContext(ctx, progressCounterSQL, sourceID).Scan(&runID, &status, &pauseReason, &options, &requests,
+		&directories, &completed, &pending, &failed, &restricted, &empty, &observed, &indexed,
+		&publishPending, &startedAt, &updatedAt); err != nil {
+		return nil, err
+	}
+	breakdown["scanRow"] = msFloat(time.Since(stepStarted))
+	details["runId"] = runID
+	details["status"] = status
+	details["directories"] = directories
+	details["observed"] = observed
+	var partitions int
+	stepStarted = time.Now()
+	if err := db.QueryRowContext(ctx, progressPartitionTotalSQL, sourceID, runID).Scan(&partitions); err != nil {
+		return nil, err
+	}
+	breakdown["partitionTotal"] = msFloat(time.Since(stepStarted))
+	details["partitions"] = partitions
+	stepStarted = time.Now()
+	rows, err := db.QueryContext(ctx, progressPartitionsSQL, sourceID, runID, 0)
+	if err != nil {
+		return nil, err
+	}
+	partRows := 0
+	for rows.Next() {
+		var p string
+		var a, b, c, d, e int
+		if err := rows.Scan(&p, &a, &b, &c, &d, &e); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		partRows++
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	rows.Close()
+	details["partitionRows"] = partRows
+	breakdown["partitionPage"] = msFloat(time.Since(stepStarted))
+	stepStarted = time.Now()
+	rows, err = db.QueryContext(ctx, progressDetailsSQL, sourceID, runID, 0)
+	if err != nil {
+		return nil, err
+	}
+	detailRows := 0
+	for rows.Next() {
+		var p, s, code string
+		var next int
+		if err := rows.Scan(&p, &s, &next, &code); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		detailRows++
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	rows.Close()
+	details["detailRows"] = detailRows
+	breakdown["detailPage"] = msFloat(time.Since(stepStarted))
+	return details, nil
 }
 
 func runProgress(ctx context.Context, db *sql.DB, sourceID, generation int64) (map[string]any, error) {

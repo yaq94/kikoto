@@ -131,21 +131,30 @@ func TestSourceCatalogIndexNewGenerationReclaimsStagingButRetainsCards(t *testin
 	generation.Store(1)
 	f.request(t, http.MethodPost, "/catalog/index", `{}`, 202)
 	p := first
+	// Leftover rows of earlier generations are a reconciliation detail: the
+	// polling response omits the staging fields, and only ?exact=1 counts them.
+	staged := func() float64 {
+		return f.request(t, http.MethodGet, "/catalog/index?exact=1", "", 200)["stagingObservations"].(float64)
+	}
+	if _, reported := p["stagingObservations"]; reported {
+		t.Fatalf("polling response reported an unmeasured staging count: %#v", p)
+	}
 	for n := 0; n < 30; n++ {
-		before := p["stagingObservations"].(float64)
+		before := staged()
 		if err := f.server.runNextQueuedWorkflowJob(context.Background()); err != nil {
 			t.Fatal(err)
 		}
 		p = f.request(t, http.MethodGet, "/catalog/index", "", 200)
-		if before-p["stagingObservations"].(float64) > 100 {
+		if before-staged() > 100 {
 			t.Fatal("staging cleanup exceeded its batch bound")
 		}
 		if p["status"] == "complete" {
 			break
 		}
 	}
-	if p["status"] != "complete" || p["stagingDirectories"] != float64(2) || p["stagingObservations"] != float64(2) {
-		t.Fatalf("obsolete staging retained: %#v", p)
+	exact := f.request(t, http.MethodGet, "/catalog/index?exact=1", "", 200)
+	if p["status"] != "complete" || exact["stagingDirectories"] != float64(2) || exact["stagingObservations"] != float64(2) {
+		t.Fatalf("obsolete staging retained: %#v", exact)
 	}
 	if list = f.request(t, http.MethodGet, "/works", "", 200); list["total"] != float64(2) {
 		t.Fatal("staging cleanup removed retained cards")

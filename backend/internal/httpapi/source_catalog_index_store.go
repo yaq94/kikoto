@@ -1204,10 +1204,6 @@ func (s *Server) sourceCatalogProgress(ctx context.Context, sourceID int64, page
 	if p.Status == "succeeded" {
 		p.Status = "complete"
 	}
-	err = s.db.QueryRowContext(ctx, `SELECT (SELECT count(*) FROM source_catalog_directory WHERE file_source_id=?),(SELECT count(*) FROM source_catalog_observation WHERE file_source_id=?)`, sourceID, sourceID).Scan(&p.StagingDirectories, &p.StagingObservations)
-	if err != nil {
-		return p, err
-	}
 	if p.PauseReason != "" && p.Status == "partial" {
 		p.Status = "paused"
 	}
@@ -1266,10 +1262,11 @@ func (s *Server) sourceCatalogProgressExact(ctx context.Context, sourceID int64,
 	if p.Status == "succeeded" {
 		p.Status = "complete"
 	}
-	err = s.db.QueryRowContext(ctx, `SELECT (SELECT count(*) FROM source_catalog_directory WHERE file_source_id=?),(SELECT count(*) FROM source_catalog_observation WHERE file_source_id=?)`, sourceID, sourceID).Scan(&p.StagingDirectories, &p.StagingObservations)
-	if err != nil {
+	var stagingDirectories, stagingObservations int
+	if err = s.db.QueryRowContext(ctx, `SELECT (SELECT count(*) FROM source_catalog_directory WHERE file_source_id=?),(SELECT count(*) FROM source_catalog_observation WHERE file_source_id=?)`, sourceID, sourceID).Scan(&stagingDirectories, &stagingObservations); err != nil {
 		return p, err
 	}
+	p.StagingDirectories, p.StagingObservations = &stagingDirectories, &stagingObservations
 	if p.PauseReason != "" && p.Status == "partial" {
 		p.Status = "paused"
 	}
