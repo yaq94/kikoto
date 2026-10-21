@@ -161,16 +161,20 @@ function LyricsAttachmentsToggle({
   );
 }
 
-type DirectoryRouteBaseline = { root: TreeNode; directoryRoutingRules: DirectoryRoutingRule[] };
+// Only the routing rules form the route baseline. The tree grows when a
+// lazily loaded folder arrives; treating that as a new route reset the folder
+// the viewer had just opened back to the recommended one. Rules are compared by
+// content because the parent rebuilds the array on unrelated renders.
+type DirectoryRouteBaseline = { rulesKey: string };
 
 function directoryRouteBaselineChanged(
   baselineRef: RefObject<DirectoryRouteBaseline | null>,
-  root: TreeNode,
   directoryRoutingRules: DirectoryRoutingRule[],
 ) {
+  const rulesKey = JSON.stringify(directoryRoutingRules ?? []);
   const baseline = baselineRef.current;
-  baselineRef.current = { root, directoryRoutingRules };
-  return !baseline || baseline.root !== root || baseline.directoryRoutingRules !== directoryRoutingRules;
+  baselineRef.current = { rulesKey };
+  return !baseline || baseline.rulesKey !== rulesKey;
 }
 
 function recommendationReason(summary: DirectoryRouteMatch) {
@@ -377,7 +381,7 @@ export function DirectoryExplorer({
 
   useEffect(() => {
     // Routing rules can arrive after the route request; a reset must keep it.
-    const baselineChanged = directoryRouteBaselineChanged(pathBaselineRef, root, directoryRoutingRules);
+    const baselineChanged = directoryRouteBaselineChanged(pathBaselineRef, directoryRoutingRules);
     const requestedPath = routePath && nodeAtPath(root, routePath) ? routePath : null;
     const requestKey = requestedPath ? (routeRequestKey ?? requestedPath.join("\u0000")) : null;
     const requestPending = requestKey !== null && appliedRouteRequestKeyRef.current !== requestKey;

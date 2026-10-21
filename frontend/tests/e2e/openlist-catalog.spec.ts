@@ -35,6 +35,9 @@ test("OpenList catalog opens numberless tracks and persists a private review thr
     primaryCode: "",
     workId: null,
   });
+  // Browsing loads one level at a time: the card root lists its MP3 folder,
+  // and the track appears after that folder is opened.
+  await page.getByRole("navigation", { name: "Folders", exact: true }).getByRole("button", { name: /^MP3/ }).click();
   await page.getByRole("button", { name: /^01 opening\.wav/ }).click();
   await expect
     .poll(() =>
@@ -95,6 +98,9 @@ test("unregistered catalog translates titles and real-path directories without c
   expect((await page.request.post(`${backend}/api/remote-sources/1/catalog/scan`, { data: {} })).ok()).toBe(true);
   await page.goto("/library/source/example_remote_a");
   const cardTitle = page.getByRole("heading").filter({ hasText: "Translation Example" });
+  // Translation starts when the card becomes visible, so scroll to it instead
+  // of relying on the card sitting above the fold.
+  await cardTitle.scrollIntoViewIfNeeded();
   await expect(cardTitle).toContainText("Translated: Translation Example");
   await cardTitle.getByText("Translated: Translation Example", { exact: true }).click();
   await expect(page).toHaveURL(/\/catalog\/\d+$/);
@@ -106,7 +112,7 @@ test("unregistered catalog translates titles and real-path directories without c
   );
   await detail
     .getByRole("navigation", { name: "Folders", exact: true })
-    .getByRole("button", { name: /Translated: Example folder/ })
+    .getByRole("button", { name: /^Translated: Example folder/ })
     .click();
   await expect(detail.getByTestId("directory-file-row")).toContainText("Translated: 01 opening.wav");
   await expect(detail.getByTestId("directory-breadcrumb")).toContainText("Translated: Example folder");
