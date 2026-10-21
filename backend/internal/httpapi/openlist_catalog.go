@@ -311,7 +311,7 @@ func persistOpenListSnapshotTx(ctx context.Context, tx *sql.Tx, sourceID int64, 
 	if sourceRoot == "" {
 		// A split card is already one work; do not let a file title become
 		// episode evidence for a new series.
-		if err = attachCatalogSeriesTx(ctx, tx, id); err != nil {
+		if err = attachCatalogSeriesForRootTx(ctx, tx, id, sourceID, root); err != nil {
 			return 0, err
 		}
 	}

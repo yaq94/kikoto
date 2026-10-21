@@ -420,10 +420,24 @@ func TestSourceCatalogPublishIdleWaitsForTheLastRow(t *testing.T) {
 	if err := db.QueryRow(`SELECT file_source_id FROM source_catalog_entry WHERE id=?`, staleID).Scan(&fileSource); err != nil {
 		t.Fatal(err)
 	}
-	if fileSource.Valid {
-		t.Fatal("the final batch did not retire the stale format card")
-	}
 	if remaining := readCatalogStoredCounters(t, db, sourceID).publishPending; remaining != 0 {
 		t.Fatalf("final batch left %d publishable rows", remaining)
+	}
+	// Retirement is a separate bounded step now. The contract that matters is
+	// that it only acts once the queue is drained, so the publish batch must
+	// leave the card alone and the retire step must remove it.
+	if !fileSource.Valid {
+		t.Fatal("the publish batch retired the stale format card before its own step ran")
+	}
+	if _, done, err := server.retireCatalogCardsBatch(context.Background(), job, sourceID); err != nil {
+		t.Fatal(err)
+	} else if !done {
+		t.Fatal("retire step did not finish over a single stale card")
+	}
+	if err := db.QueryRow(`SELECT file_source_id FROM source_catalog_entry WHERE id=?`, staleID).Scan(&fileSource); err != nil {
+		t.Fatal(err)
+	}
+	if fileSource.Valid {
+		t.Fatal("the retire step did not retire the stale format card after the queue drained")
 	}
 }

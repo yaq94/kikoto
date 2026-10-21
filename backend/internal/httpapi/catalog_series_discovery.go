@@ -146,7 +146,7 @@ func splitCatalogEpisodeRoots(root string, files []openlist.File) map[string][]o
 		return nil
 	}
 	// More than maxCatalogSeriesMembers children are all split into independent
-	// entries. attachCatalogSeriesTx stops adding members at the limit, so the
+	// entries. attachCatalogSeriesForRootTx stops adding members at the limit, so the
 	// extra episodes stay addressable instead of collapsing into one root card.
 	result := map[string][]openlist.File{}
 	for child := range children {
@@ -159,19 +159,6 @@ func splitCatalogEpisodeRoots(root string, files []openlist.File) map[string][]o
 		}
 	}
 	return result
-}
-
-// attachCatalogSeriesTx is shared by finite and resumable publication. It is
-// deliberately local: no provider calls, work registration or private writes.
-// Callers that already know the published location should use
-// attachCatalogSeriesForRootTx to avoid a second read of the entry.
-func attachCatalogSeriesTx(ctx context.Context, tx *sql.Tx, entryID int64) error {
-	var sourceID int64
-	var root string
-	if err := tx.QueryRowContext(ctx, `SELECT file_source_id,root_path FROM source_catalog_entry WHERE id=?`, entryID).Scan(&sourceID, &root); err != nil {
-		return err
-	}
-	return attachCatalogSeriesForRootTx(ctx, tx, entryID, sourceID, root)
 }
 
 // attachCatalogSeriesForRootTx attaches an episode card using the location its

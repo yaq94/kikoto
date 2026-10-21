@@ -162,6 +162,23 @@ func (s *Server) executeSourceCatalogIndexJob(ctx context.Context, job workflowJ
 					return s.settleCatalogBatch(ctx, job, input.SourceID, "queued", "")
 				}
 			}
+			// Retire stale container and format cards as its own bounded step.
+			// It used to run inside the final publish transaction, where one
+			// root-completeness query per card held the writer for seconds.
+			if !rootEmpty {
+				retiredCards, done, err := s.retireCatalogCardsBatch(ctx, job, input.SourceID)
+				if err != nil {
+					return err
+				}
+				if retiredCards > 0 {
+					if err = pauseCatalogWriter(ctx); err != nil {
+						return err
+					}
+				}
+				if !done {
+					return s.settleCatalogBatch(ctx, job, input.SourceID, "queued", "")
+				}
+			}
 			// No directory is left to observe and the publish queue is empty,
 			// so the set of entries this generation republished is final.
 			// Retire the rows an older generation left on those entries now;

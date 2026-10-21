@@ -898,7 +898,7 @@ func (s *Server) publishCatalogBatch(ctx context.Context, job workflowJobRecord,
 		if sourceRoot == "" {
 			// A split card is already one work. Its title or file name is not
 			// episode evidence, so it must not create or join a series.
-			if err = attachCatalogSeriesTx(ctx, tx.Tx, id); err != nil {
+			if err = attachCatalogSeriesForRootTx(ctx, tx.Tx, id, sourceID, root); err != nil {
 				return 0, err
 			}
 		}
@@ -1077,21 +1077,10 @@ func (s *Server) publishCatalogBatch(ctx context.Context, job workflowJobRecord,
 	// Retire stale format cards once per final publish batch, not on every
 	// cleanup-only call: the scan below walks every stale card of the source and
 	// repeated calls would multiply that cost for no new evidence.
-	// A directory card whose audio now belongs to one deeper current card is
-	// the same work seen twice. Like the format pass this walks every stale
-	// card of the source, so it belongs to the final batch only.
-	if len(items) > 0 {
-		retireRan = true
-		if err = retireCoveredContainerCardsTx(ctx, tx.Tx, sourceID, job.RunID); err != nil {
-			return 0, err
-		}
-	}
-	if len(items) > 0 {
-		retireRan = true
-		if err = retireStaleFormatCardsTx(ctx, tx.Tx, sourceID, job.RunID); err != nil {
-			return 0, err
-		}
-	}
+	// Stale card retirement runs as its own workflow step. It walks every card
+	// of the source and decides per card with a root-completeness query, so
+	// keeping it here turned the final publish batch into a multi-second write
+	// transaction that blocked the writer and every reader behind it.
 	// Queue credit files in the same transaction that publishes the card, so a
 	// committed card is never forgotten between publication and the reader. The
 	// reads run after commit and never hold this write lock.
