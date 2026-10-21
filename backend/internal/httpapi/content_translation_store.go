@@ -181,7 +181,8 @@ func (s *Server) translatedEntityIDs(ctx context.Context, language, entityKind, 
 			WHERE content_translation_search MATCH ?
 			  AND t.language = ?
 			  AND t.entity_kind = ?
-			ORDER BY t.id DESC
+			-- No ORDER BY: FTS5 yields rowids in index order, so LIMIT stops
+			-- early. The caller sorts cards; sorting here would read every match.
 			LIMIT ?`, phrase, language, entityKind, limit)
 	} else {
 		rows, err = s.db.QueryContext(ctx, `
