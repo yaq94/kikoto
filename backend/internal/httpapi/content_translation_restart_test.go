@@ -15,7 +15,7 @@ import (
 	"github.com/yexca/kikoto/backend/internal/storage"
 )
 
-func TestContentTranslationCacheAndIndependentPreferencesSurviveRestart(t *testing.T) {
+func TestContentTranslationCorpusAndIndependentPreferencesSurviveRestart(t *testing.T) {
 	var calls atomic.Int32
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
@@ -58,7 +58,7 @@ func TestContentTranslationCacheAndIndependentPreferencesSurviveRestart(t *testi
 	start(true)
 	admin := loginTestSession(t, app.Routes(), "root", "root-password")
 	listener := loginTestSession(t, app.Routes(), "listener", "listener-password")
-	cfg, _ := json.Marshal(map[string]any{"baseUrl": upstream.URL, "minFreeBytes": int64(1 << 40)})
+	cfg, _ := json.Marshal(map[string]any{"baseUrl": upstream.URL})
 	translationRequest(t, host, admin, "PATCH", "/api/settings/translation", string(cfg), 200)
 	translationRequest(t, host, admin, "PATCH", "/api/auth/me/preferences", `{"metadataLanguages":["zh-cn","origin"]}`, 200)
 	translationRequest(t, host, admin, "PATCH", "/api/auth/me", `{"uiLocale":"en"}`, 200)
@@ -67,24 +67,29 @@ func TestContentTranslationCacheAndIndependentPreferencesSurviveRestart(t *testi
 	translationRequest(t, host, listener, "PATCH", "/api/works/1/user-state", `{"rating":4,"note":"Private note"}`, 200)
 	const body = `{"workId":1,"field":"title","text":"Example title","language":"zh-cn"}`
 	state := translationRequest(t, host, admin, "GET", "/api/settings/translation/runtime", "", 200)
-	if state["cacheStatus"] != "paused_low_disk" || state["cacheEntries"] != float64(0) {
-		t.Fatalf("cold cache did not report low space: %#v", state)
+	if languages, ok := state["languages"].([]any); !ok || len(languages) != 0 {
+		t.Fatalf("empty corpus summary: %#v", state)
 	}
-	paused := translationRequest(t, host, admin, "POST", "/api/content-translations", body, 200)
-	if paused["cacheStatus"] != "paused_low_disk" {
-		t.Fatalf("cold cache ignored low space: %#v", paused)
+	if state["softBytes"] != float64(256<<20) {
+		t.Fatalf("soft budget: %#v", state)
 	}
-	translationRequest(t, host, admin, "PATCH", "/api/settings/translation", `{"minFreeBytes":0}`, 200)
+	if _, ok := state["prefill"].(map[string]any); !ok {
+		t.Fatalf("runtime lost the prefill summary: %#v", state)
+	}
 	stored := translationRequest(t, host, admin, "POST", "/api/content-translations", body, 200)
-	if stored["cacheStatus"] != "stored" {
-		t.Fatalf("cold cache did not resume storage: %#v", stored)
+	if stored["cacheStatus"] != "stored" || stored["status"] != "translated" {
+		t.Fatalf("cold corpus did not store the translation: %#v", stored)
 	}
 	stop()
 	start(false)
 	defer stop()
 	cached := translationRequest(t, host, admin, "POST", "/api/content-translations", body, 200)
-	if cached["cacheStatus"] != "hit" || calls.Load() != 2 {
-		t.Fatalf("restart lost cache: %#v; calls=%d", cached, calls.Load())
+	if cached["cacheStatus"] != "hit" || calls.Load() != 1 {
+		t.Fatalf("restart lost the stored row: %#v; calls=%d", cached, calls.Load())
+	}
+	var origin string
+	if err := db.QueryRow(`SELECT origin FROM content_translation WHERE entity_kind='work' AND entity_id=1 AND field='title' AND language='zh-Hans'`).Scan(&origin); err != nil || origin != "model" {
+		t.Fatalf("stored row origin=%q err=%v", origin, err)
 	}
 	for _, user := range []struct {
 		cookie       *http.Cookie

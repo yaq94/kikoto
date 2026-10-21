@@ -72,7 +72,7 @@ func TestContentTranslationSharesBudgetDeduplicatesAndCancelsQueue(t *testing.T)
 	if _, err := s.db.Exec(`INSERT INTO work (id,primary_code,title) VALUES (1,'RJ00000000','Example title'),(2,'RJ00000001','Another title'),(3,'RJ00000002','Third title')`); err != nil {
 		t.Fatal(err)
 	}
-	cfg, _ := json.Marshal(map[string]any{"baseUrl": upstream.URL, "queueLimit": 1})
+	cfg, _ := json.Marshal(map[string]any{"baseUrl": upstream.URL, "concurrency": 1, "queueLimit": 1})
 	translationRequest(t, host, admin, "PATCH", "/api/settings/translation", string(cfg), 200)
 	firstBody := `{"workId":1,"field":"title","text":"Example title","language":"zh-cn"}`
 	async := func(ctx context.Context, body string) <-chan map[string]any {
@@ -112,20 +112,28 @@ func TestContentTranslationSharesBudgetDeduplicatesAndCancelsQueue(t *testing.T)
 	waitQueue := func(want float64) {
 		t.Helper()
 		deadline := time.Now().Add(2 * time.Second)
+		var last map[string]any
 		for time.Now().Before(deadline) {
 			state := translationRequest(t, host, admin, "GET", "/api/settings/translation/runtime", "", 200)
-			if state["queued"] == want {
+			last = state["queue"].(map[string]any)
+			if last["queued"] == want {
 				return
 			}
 			time.Sleep(10 * time.Millisecond)
 		}
-		t.Fatal("queue state did not settle")
+		t.Fatalf("queue state did not settle at %v: %#v", want, last)
 	}
 	waitQueue(1)
-	full := translationRequest(t, host, listener, "POST", "/api/content-translations", `{"workId":3,"field":"title","text":"Third title","language":"zh-cn"}`, 200)
-	if full["status"] != "failed" || full["code"] != "translation_queue_full" || full["text"] != "Third title" {
-		t.Fatalf("full queue did not preserve original: %#v", full)
-	}
+	// queueLimit bounds the background lane. Interactive work has its own
+	// larger cap, so a page of titles is still admitted while a prefill pass
+	// would already be refused.
+	thirdCtx, cancelThird := context.WithCancel(ctx)
+	defer cancelThird()
+	third := async(thirdCtx, `{"workId":3,"field":"title","text":"Third title","language":"zh-cn"}`)
+	waitQueue(2)
+	cancelThird()
+	<-third
+	waitQueue(1)
 	cancelQueued()
 	<-queued
 	waitQueue(0)
@@ -239,7 +247,7 @@ func TestContentTranslationProtectsNamesForCatalogAndSeries(t *testing.T) {
 	}
 }
 
-func TestContentTranslationCacheInvalidatesAndHonorsDiskBudget(t *testing.T) {
+func TestContentTranslationInvalidatesOnModelChangeAndReportsSoftBudget(t *testing.T) {
 	var calls atomic.Int32
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
@@ -247,7 +255,6 @@ func TestContentTranslationCacheInvalidatesAndHonorsDiskBudget(t *testing.T) {
 	}))
 	defer upstream.Close()
 	s, host, admin, listener := translationHTTPFixture(t)
-	s.cfg.CacheRoot = t.TempDir()
 	if _, err := s.db.Exec(`INSERT INTO work (id,primary_code,title) VALUES (1,'RJ00000000','Example title')`); err != nil {
 		t.Fatal(err)
 	}
@@ -266,27 +273,31 @@ func TestContentTranslationCacheInvalidatesAndHonorsDiskBudget(t *testing.T) {
 		t.Fatal("model change reused stale cache")
 	}
 	runtime := translationRequest(t, host, admin, "GET", "/api/settings/translation/runtime", "", 200)
-	if runtime["cacheEntries"] != float64(1) || runtime["cacheBytes"].(float64) > 4096 {
-		t.Fatalf("cache quota not enforced: %#v", runtime)
+	languages := runtime["languages"].([]any)
+	if len(languages) != 1 {
+		t.Fatalf("language summary: %#v", runtime)
 	}
-	translationRequest(t, host, admin, "PATCH", "/api/settings/translation", `{"minFreeBytes":1099511627776}`, 200)
-	// Existing entries remain readable, but new text cannot write under low space.
+	// The corpus keeps one row per model instead of overwriting a single cache
+	// entry, so the previous model's text stays searchable.
+	zh := languages[0].(map[string]any)
+	if zh["language"] != "zh-Hans" || zh["rows"] != float64(2) || zh["model"] != float64(2) || runtime["softBytes"] != float64(4096) {
+		t.Fatalf("soft budget reported as enforced: %#v", runtime)
+	}
+	translationRequest(t, host, admin, "PATCH", "/api/settings/translation", `{"minFreeBytes":1099511627776,"cacheBytes":4096}`, 200)
 	cached := translationRequest(t, host, listener, "POST", "/api/content-translations", body, 200)
 	if cached["cacheStatus"] != "hit" {
-		t.Fatalf("low disk lost cached text: %#v", cached)
+		t.Fatalf("soft budget lost a stored row: %#v", cached)
 	}
 	if _, err := s.db.Exec(`UPDATE work SET title='Changed title' WHERE id=1`); err != nil {
 		t.Fatal(err)
 	}
 	changed := translationRequest(t, host, listener, "POST", "/api/content-translations", strings.ReplaceAll(body, "Example title", "Changed title"), 200)
-	if changed["cacheStatus"] != "paused_low_disk" || changed["text"] != "示例译文" {
-		t.Fatalf("low disk did not report cache pause: %#v", changed)
+	if changed["cacheStatus"] != "stored" || changed["text"] != "示例译文" {
+		t.Fatalf("a soft budget blocked a write: %#v", changed)
 	}
 	translationRequest(t, host, listener, "GET", "/api/settings/translation/runtime", "", 403)
-	translationRequest(t, host, admin, "PATCH", "/api/settings/translation", `{"minFreeBytes":0}`, 200)
-	translationRequest(t, host, listener, "POST", "/api/content-translations", strings.ReplaceAll(body, "Example title", "Changed title"), 200)
-	if calls.Load() != 4 {
-		t.Fatalf("cache did not resume: calls=%d", calls.Load())
+	if calls.Load() != 3 {
+		t.Fatalf("unexpected generations: calls=%d", calls.Load())
 	}
 }
 

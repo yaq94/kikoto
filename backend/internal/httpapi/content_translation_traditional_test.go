@@ -28,12 +28,15 @@ func TestContentTranslationTraditionalSharesSimplifiedAndPreservesNames(t *testi
 			t.Error("model received the wrong language or a protected name")
 		}
 		_, text, _ := strings.Cut(prompt, "\n\n")
-		text = strings.ReplaceAll(text, "Example title", "风吹过森林，听见音乐")
+		text = strings.ReplaceAll(text, "サンプルタイトル", "风吹过森林，听见音乐")
 		_ = json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": map[string]string{"content": text}, "finish_reason": "stop"}}})
 	}))
 	defer model.Close()
 	s, host, admin, listener := translationHTTPFixture(t)
-	metadataReviewExec(t, s.db, `INSERT INTO work(id,primary_code,title) VALUES(1,'RJ00000000','Example title 示例社团 示例声优');
+	// Kana makes the source decisively Japanese. A title that is mostly Latin
+	// but contains Han characters is detected as zh-Hans and stored natively,
+	// so it never reaches the model or exercises name protection.
+	metadataReviewExec(t, s.db, `INSERT INTO work(id,primary_code,title) VALUES(1,'RJ00000000','サンプルタイトル 示例社团 示例声优');
 		INSERT INTO party(id,display_name) VALUES(1,'示例社团');
 		INSERT INTO work_party(work_id,party_id) VALUES(1,1);
 		INSERT INTO person(id,display_name) VALUES(1,'示例声优');
@@ -42,7 +45,7 @@ func TestContentTranslationTraditionalSharesSimplifiedAndPreservesNames(t *testi
 	translationRequest(t, host, admin, "PATCH", "/api/settings/translation", string(cfg), 200)
 	translationRequest(t, host, listener, "PATCH", "/api/works/1/user-state", `{"note":"个人备注听音乐"}`, 200)
 	translationRequest(t, host, listener, "PUT", "/api/works/1/tags", `{"tags":["个人标签听音乐"]}`, 200)
-	const original = "Example title 示例社团 示例声优"
+	const original = "サンプルタイトル 示例社团 示例声优"
 	for _, sample := range []struct{ language, text, cache string }{
 		{"zh-tw", "風吹過森林，聽見音樂 示例社团 示例声优", "stored"},
 		{"zh-cn", "风吹过森林，听见音乐 示例社团 示例声优", "hit"},
@@ -57,7 +60,7 @@ func TestContentTranslationTraditionalSharesSimplifiedAndPreservesNames(t *testi
 	if calls.Load() != 1 {
 		t.Fatalf("script switching generated %d times", calls.Load())
 	}
-	translationRequest(t, host, nil, "POST", "/api/content-translations", `{"workId":1,"field":"title","text":"Example title 示例社团 示例声优","language":"zh-tw"}`, 401)
+	translationRequest(t, host, nil, "POST", "/api/content-translations", `{"workId":1,"field":"title","text":"サンプルタイトル 示例社团 示例声优","language":"zh-tw"}`, 401)
 	translationRequest(t, host, listener, "POST", "/api/content-translations", `{"workId":1,"field":"tag","text":"个人标签听音乐","language":"zh-tw"}`, 409)
 	translationRequest(t, host, listener, "POST", "/api/content-translations", `{"workId":1,"field":"note","text":"个人备注听音乐","language":"zh-tw"}`, 400)
 	detail := translationRequest(t, host, listener, "GET", "/api/works/1?includeMedia=false", "", 200)
@@ -65,7 +68,7 @@ func TestContentTranslationTraditionalSharesSimplifiedAndPreservesNames(t *testi
 		t.Fatalf("conversion changed identity/private text or called model: %#v", detail)
 	}
 	translationRequest(t, host, admin, "PATCH", "/api/settings/translation", `{"model":"Example replacement model"}`, 200)
-	translationRequest(t, host, listener, "POST", "/api/content-translations", `{"workId":1,"field":"title","text":"Example title 示例社团 示例声优","language":"zh-tw"}`, 200)
+	translationRequest(t, host, listener, "POST", "/api/content-translations", `{"workId":1,"field":"title","text":"サンプルタイトル 示例社团 示例声优","language":"zh-tw"}`, 200)
 	if calls.Load() != 2 {
 		t.Fatal("Traditional reused a different model's Simplified translation")
 	}
@@ -160,7 +163,8 @@ func TestContentTranslationTraditionalAndSimplifiedShareInflightGeneration(t *te
 	deadline := time.Now().Add(2 * time.Second)
 	for {
 		stats := translationRequest(t, host, admin, "GET", "/api/settings/translation/runtime", "", 200)
-		if stats["readers"] == float64(2) && stats["active"] == float64(1) && stats["queued"] == float64(0) {
+		queue := stats["queue"].(map[string]any)
+		if queue["readers"] == float64(2) && queue["active"] == float64(1) && queue["queued"] == float64(0) {
 			break
 		}
 		if time.Now().After(deadline) {
