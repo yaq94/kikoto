@@ -300,7 +300,8 @@ func catalogFailureStatus(err error) string {
 
 func markCatalogRangeStatusTx(ctx context.Context, tx *sql.Tx, sourceID int64, root, status string) error {
 	_, err := tx.ExecContext(ctx, `UPDATE source_catalog_entry SET availability_status=?,status_checked_at=CURRENT_TIMESTAMP
-		WHERE file_source_id=? AND relocated_to_id IS NULL AND (?='/' OR root_path=? OR source_root=? OR substr(root_path,1,length(?)+2)=? || '::')`,
+		WHERE file_source_id=? AND relocated_to_id IS NULL AND availability_status<>'excluded'
+			AND (?='/' OR root_path=? OR source_root=? OR substr(root_path,1,length(?)+2)=? || '::')`,
 		status, sourceID, root, root, root, root, root)
 	return err
 }
@@ -478,6 +479,7 @@ func (s *Server) settleCatalogLifecycleBatch(ctx context.Context, job workflowJo
 		// like insufficient evidence and the old card is marked missing.
 		rows, err := tx.QueryContext(ctx, `SELECT e.id FROM source_catalog_entry e
 			WHERE e.file_source_id=? AND e.relocated_to_id IS NULL AND e.last_seen_generation=?
+				AND e.availability_status<>'excluded'
 				AND e.content_fingerprint='' AND e.layout_fingerprint=''
 				AND (SELECT count(*) FROM source_catalog_file f WHERE f.catalog_entry_id=e.id AND f.kind='audio') BETWEEN 1 AND 10000
 			ORDER BY e.id LIMIT ?`, sourceID, job.RunID, catalogLifecycleRows)
@@ -513,7 +515,12 @@ func (s *Server) settleCatalogLifecycleBatch(ctx context.Context, job workflowJo
 			return true, tx.Commit()
 		}
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT id,last_seen_generation FROM source_catalog_entry WHERE file_source_id=? AND relocated_to_id IS NULL AND id>? ORDER BY id LIMIT ?`, sourceID, cursor, catalogLifecycleRows)
+	// An excluded card is not missing: the operator removed it on purpose, and
+	// the next lifecycle pass must not rewrite that verdict as an availability
+	// answer derived from a directory it no longer indexes.
+	rows, err := tx.QueryContext(ctx, `SELECT id,last_seen_generation FROM source_catalog_entry
+		WHERE file_source_id=? AND relocated_to_id IS NULL AND availability_status<>'excluded' AND id>?
+		ORDER BY id LIMIT ?`, sourceID, cursor, catalogLifecycleRows)
 	if err != nil {
 		return false, err
 	}
