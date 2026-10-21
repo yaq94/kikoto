@@ -41,6 +41,44 @@ func queueTestWorks(t *testing.T, count int) (*sql.DB, []int64) {
 	return db, ids
 }
 
+// An empty metadata-tag queue must be detected before a write transaction is
+// opened. The test holds the only writer lock, so any write attempt would hit
+// the context deadline instead of returning zero.
+func TestMetadataTagQueueEmptyQueueSkipsWriteTransaction(t *testing.T) {
+	db, _ := queueTestWorks(t, 0)
+	if _, err := db.Exec("DELETE FROM work_metadata_tag_dirty"); err != nil {
+		t.Fatal(err)
+	}
+	db.SetMaxOpenConns(2)
+	conn, err := db.Conn(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close() }()
+	if _, err = conn.ExecContext(context.Background(), "BEGIN IMMEDIATE"); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _, _ = conn.ExecContext(context.Background(), "ROLLBACK") }()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	count, err := processMetadataTagQueue(ctx, db, 8, nil, time.Now(), 5*time.Second)
+	if err != nil || count != 0 {
+		t.Fatalf("empty metadata queue = %d, %v; want no write attempt", count, err)
+	}
+}
+
+// A contended write lock backs off instead of retrying every two seconds with
+// the same five-second write wait.
+func TestMetadataTagQueueBusyBackoffIncreases(t *testing.T) {
+	want := []time.Duration{5 * time.Second, 10 * time.Second, 20 * time.Second, 40 * time.Second, time.Minute, time.Minute}
+	for index, expected := range want {
+		if got := metadataTagBusyDelay(index + 1); got != expected {
+			t.Fatalf("backoff attempt %d = %v, want %v", index+1, got, expected)
+		}
+	}
+}
+
 func TestSnapshotTriggersOnlyQueueExistingWorksAndAllowOrphans(t *testing.T) {
 	db, ids := queueTestWorks(t, 2)
 	ctx := context.Background()
