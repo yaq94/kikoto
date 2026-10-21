@@ -35,6 +35,15 @@ export function CatalogSourceDirectory({
   const [status, setStatus] = useState(entry.status);
   useEffect(() => setStatus(entry.status), [entry.status, entry.catalogEntryId]);
   const request = useRef<AbortController | null>(null);
+  const refreshRequest = useRef<AbortController | null>(null);
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      refreshRequest.current?.abort();
+    };
+  }, []);
   useEffect(() => {
     const controller = new AbortController();
     request.current = controller;
@@ -66,24 +75,35 @@ export function CatalogSourceDirectory({
   };
   const refresh = async () => {
     if (refreshing) return;
-    const signal = request.current?.signal;
+    // A refresh writes source state, so it needs its own lifetime. Reusing the
+    // track-loading signal cancelled it whenever a failed refresh moved the
+    // panel to another tab, which unmounts this component: the request never
+    // reached the caller and the outcome was lost even though the server had
+    // already recorded it.
+    refreshRequest.current?.abort();
+    const controller = new AbortController();
+    refreshRequest.current = controller;
+    const signal = controller.signal;
     setRefreshing(true);
     try {
       if (auth.hasPermission("sources:write")) await api.refreshCatalogDirectory(entry.catalogEntryId, signal);
       const result = await api.getCatalogTracks(entry.catalogEntryId, { depth: 1 }, signal);
-      if (signal?.aborted) return;
+      if (signal.aborted || !mounted.current) return;
       setTracks(result.tracks);
       setError("");
     } catch (error) {
-      if (!signal?.aborted) setError(error instanceof Error ? error.message : t("errors.unavailable"));
+      if (!signal.aborted && mounted.current) {
+        setError(error instanceof Error ? error.message : t("errors.unavailable"));
+      }
     } finally {
       try {
         const detail = await api.getCatalogEntry(entry.catalogEntryId, signal);
-        if (!signal?.aborted) setStatus(detail.status ?? entry.status);
+        if (!signal.aborted && mounted.current) setStatus(detail.status ?? entry.status);
       } catch {
         // Keep the last known status when even the saved detail is unavailable.
       }
-      if (!signal?.aborted) setRefreshing(false);
+      if (!signal.aborted && mounted.current) setRefreshing(false);
+      if (refreshRequest.current === controller) refreshRequest.current = null;
     }
   };
   const play = async (files: Parameters<typeof catalogPlaybackQueue>[1], locationId: number) => {

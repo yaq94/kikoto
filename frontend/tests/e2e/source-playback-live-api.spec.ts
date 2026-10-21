@@ -109,14 +109,23 @@ test("catalog tabs preserve exact playback identity across registered and standa
   await page.getByRole("button", { name: "Collapse player", exact: true }).click();
   await expect(page.getByRole("button", { name: /^catalog-a\.wav .*MB$/ })).toBeVisible();
   await page.request.post(`${backend}/__fixture/catalog-revise`);
-  await page.getByRole("button", { name: /^Check sources/ }).click();
-  await expect(page.getByText("catalog-updated.wav", { exact: true })).toBeVisible();
-  await page.request.post(`${backend}/__fixture/catalog-fail`);
-  const failedRefresh = page.waitForResponse(
-    (response) => response.url().endsWith("/source-catalog/2/refresh") && response.status() === 502,
+  // Wait for the refresh call itself before looking for its result: the click
+  // only schedules a request, and a slow first request on a cold CI runner used
+  // to spend the whole element timeout before the server had answered.
+  const revisedRefresh = page.waitForResponse(
+    (response) => response.url().endsWith("/source-catalog/2/refresh") && response.ok(),
   );
   await page.getByRole("button", { name: /^Check sources/ }).click();
-  await failedRefresh;
+  await revisedRefresh;
+  await expect(page.getByText("catalog-updated.wav", { exact: true })).toBeVisible();
+  await page.request.post(`${backend}/__fixture/catalog-fail`);
+  await page.getByRole("button", { name: /^Check sources/ }).click();
+  // The requirement is that a failed refresh keeps the previous snapshot. Wait
+  // for the user-visible failure instead of one response object: a failure can
+  // switch the panel away, and the browser may drop the response of the
+  // request that triggered it.
+  await expect(page.getByRole("button", { name: /^Example Catalog A Source temporarily unavailable/ })).toBeVisible();
+  await page.getByRole("button", { name: /^Example Catalog A/ }).click();
   await expect(page.getByText("catalog-updated.wav", { exact: true })).toBeVisible();
   expect(translations).toEqual(
     expect.arrayContaining([expect.objectContaining({ catalogEntryId: 2, path: "catalog-a.wav" })]),
