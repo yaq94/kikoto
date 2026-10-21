@@ -505,7 +505,9 @@ func (s *Server) getSourceCatalogTracks(w http.ResponseWriter, r *http.Request) 
 const (
 	catalogTrackDefaultLimit     = 5000
 	catalogTrackLimitCap         = 20000
-	catalogTrackSummaryThreshold = 5000
+	// Admission caps a card at 5,000 files, so the summary must start lower:
+	// 1,000 rows of JSON already exceed the 200 KiB first-screen budget.
+	catalogTrackSummaryThreshold = 1000
 	catalogTrackSummaryPreview   = 200
 	maxCatalogTrackDepth         = 8
 )

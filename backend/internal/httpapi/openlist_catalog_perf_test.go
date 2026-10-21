@@ -295,7 +295,9 @@ func TestOpenListCatalogTracksLargeCardSummary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for index := 0; index < 87000; index++ {
+	// Admission caps a card at 5,000 files, so the summary has to be proven on a
+	// card that can actually exist.
+	for index := 0; index < 4900; index++ {
 		if _, err = statement.Exec(fmt.Sprintf("track-%05d.mp3", index), fmt.Sprintf("Track %d", index)); err != nil {
 			t.Fatal(err)
 		}
@@ -322,7 +324,7 @@ func TestOpenListCatalogTracksLargeCardSummary(t *testing.T) {
 	if err = json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
 		t.Fatal(err)
 	}
-	if payload["total"] != float64(87000) || payload["summary"] != true || payload["truncated"] != true {
+	if payload["total"] != float64(4900) || payload["summary"] != true || payload["truncated"] != true {
 		t.Fatalf("large card summary = %#v", payload)
 	}
 	if len(payload["tracks"].([]any)) != catalogTrackSummaryPreview {
