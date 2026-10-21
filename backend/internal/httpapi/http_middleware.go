@@ -125,11 +125,22 @@ func writeUpstreamError(w http.ResponseWriter, err error) {
 }
 
 func writeAPIError(w http.ResponseWriter, status int, code string, message string, retryable bool) {
-	writeJSON(w, status, map[string]any{
+	writeAPIErrorDetails(w, status, code, message, nil, retryable)
+}
+
+// writeAPIErrorDetails adds a structured payload to an error response when the
+// caller can act on more than the message, such as the admission reason for a
+// card that exists but must not be played.
+func writeAPIErrorDetails(w http.ResponseWriter, status int, code string, message string, details any, retryable bool) {
+	body := map[string]any{
 		"error":     message,
 		"code":      code,
 		"retryable": retryable,
-	})
+	}
+	if details != nil {
+		body["details"] = details
+	}
+	writeJSON(w, status, body)
 }
 
 // jsonBodyErrorMessage describes why a JSON request body could not be decoded.
