@@ -17,10 +17,115 @@ type catalogScanDirectory struct {
 	Revision, Page, Expected, Attempts int
 }
 
-func enqueueCatalogDirectoryTx(ctx context.Context, tx *sql.Tx, sourceID, generation int64, p, partition, root string) error {
-	_, err := tx.ExecContext(ctx, `INSERT INTO source_catalog_directory(file_source_id,path,generation,partition_path,catalog_root) VALUES(?,?,?,?,?)
-	ON CONFLICT(file_source_id,path) DO UPDATE SET generation=excluded.generation,partition_path=excluded.partition_path,catalog_root=excluded.catalog_root,revision=source_catalog_directory.revision+1,next_page=1,expected_total=-1,children_cursor='',status='pending',attempts=0,error_code='',completed_at=NULL WHERE source_catalog_directory.generation<>excluded.generation`, sourceID, p, generation, partition, root)
+// catalogDirectoryCounterClass is the single classification shared by the
+// incremental counters and the exact reconciliation query. A confirmed
+// 404/410 is completed coverage; an unconfirmed empty directory is not.
+func catalogDirectoryCounterClass(status, errorCode string) string {
+	switch {
+	case status == "complete" || (status == "empty" && errorCode == "not_found"):
+		return "completed"
+	case status == "failed":
+		return "failed"
+	case status == "restricted":
+		return "restricted"
+	case status == "empty":
+		return "empty"
+	default:
+		return "pending"
+	}
+}
+
+// moveCatalogDirectoryCountersTx records one status transition on the scan
+// row inside the same transaction that changed the directory. Rows counted by
+// the projection always belong to the scan's current generation; a caller that
+// moves a row out of the current generation must not use this helper.
+func moveCatalogDirectoryCountersTx(ctx context.Context, tx *sql.Tx, sourceID int64, fromStatus, fromCode, toStatus, toCode string) error {
+	from, to := catalogDirectoryCounterClass(fromStatus, fromCode), catalogDirectoryCounterClass(toStatus, toCode)
+	if from == to {
+		return nil
+	}
+	updates := []string{from + "=" + from + "-1", to + "=" + to + "+1"}
+	_, err := tx.ExecContext(ctx, `UPDATE source_catalog_scan SET `+strings.Join(updates, ",")+`,updated_at=CURRENT_TIMESTAMP WHERE file_source_id=?`, sourceID)
 	return err
+}
+
+func addCatalogDirectoryCountersTx(ctx context.Context, tx *sql.Tx, sourceID int64) error {
+	_, err := tx.ExecContext(ctx, `UPDATE source_catalog_scan SET directories=directories+1,pending=pending+1,updated_at=CURRENT_TIMESTAMP WHERE file_source_id=?`, sourceID)
+	return err
+}
+
+func addCatalogObservationCountersTx(ctx context.Context, tx *sql.Tx, sourceID int64, observed, indexed int) error {
+	if observed == 0 && indexed == 0 {
+		return nil
+	}
+	_, err := tx.ExecContext(ctx, `UPDATE source_catalog_scan SET observed=max(0,observed+?),indexed=max(0,indexed+?),updated_at=CURRENT_TIMESTAMP WHERE file_source_id=?`, observed, indexed, sourceID)
+	return err
+}
+
+// reconcileCatalogIndexedTx restores the one counter a retirement can lower.
+// Retiring a card clears file_source_id, so only this column needs a recount
+// after such a pass; observed and the directory classes are unchanged.
+func reconcileCatalogIndexedTx(ctx context.Context, tx *sql.Tx, sourceID, generation int64) error {
+	_, err := tx.ExecContext(ctx, `UPDATE source_catalog_scan SET indexed=(SELECT count(*) FROM source_catalog_entry WHERE file_source_id=? AND last_seen_generation=?) WHERE file_source_id=?`, sourceID, generation, sourceID)
+	return err
+}
+
+func addCatalogPublishPendingTx(ctx context.Context, tx *sql.Tx, sourceID int64, delta int) error {
+	if delta == 0 {
+		return nil
+	}
+	_, err := tx.ExecContext(ctx, `UPDATE source_catalog_scan SET publish_pending_remaining=max(0,publish_pending_remaining+?),updated_at=CURRENT_TIMESTAMP WHERE file_source_id=?`, delta, sourceID)
+	return err
+}
+
+// seedCatalogCountersTx recomputes the projection once for a generation. It is
+// used when a generation starts or resumes: both events rewrite statuses or
+// revisions, and a full recount there is cheaper and safer than tracking every
+// row the rewrite touches.
+func seedCatalogCountersTx(ctx context.Context, tx *sql.Tx, sourceID int64) error {
+	_, err := tx.ExecContext(ctx, `UPDATE source_catalog_scan SET
+		directories=(SELECT count(*) FROM source_catalog_directory d
+			WHERE d.file_source_id=source_catalog_scan.file_source_id AND d.generation=source_catalog_scan.workflow_run_id),
+		completed=(SELECT count(*) FROM source_catalog_directory d
+			WHERE d.file_source_id=source_catalog_scan.file_source_id AND d.generation=source_catalog_scan.workflow_run_id
+				AND (d.status='complete' OR (d.status='empty' AND d.error_code='not_found'))),
+		pending=(SELECT count(*) FROM source_catalog_directory d
+			WHERE d.file_source_id=source_catalog_scan.file_source_id AND d.generation=source_catalog_scan.workflow_run_id
+				AND d.status IN ('pending','listing_complete')),
+		failed=(SELECT count(*) FROM source_catalog_directory d
+			WHERE d.file_source_id=source_catalog_scan.file_source_id AND d.generation=source_catalog_scan.workflow_run_id AND d.status='failed'),
+		restricted=(SELECT count(*) FROM source_catalog_directory d
+			WHERE d.file_source_id=source_catalog_scan.file_source_id AND d.generation=source_catalog_scan.workflow_run_id AND d.status='restricted'),
+		empty=(SELECT count(*) FROM source_catalog_directory d
+			WHERE d.file_source_id=source_catalog_scan.file_source_id AND d.generation=source_catalog_scan.workflow_run_id
+				AND d.status='empty' AND d.error_code<>'not_found'),
+		observed=(SELECT count(*) FROM source_catalog_directory d
+			JOIN source_catalog_observation o ON o.file_source_id=d.file_source_id AND o.directory_path=d.path AND o.revision=d.revision
+			WHERE d.file_source_id=source_catalog_scan.file_source_id AND d.generation=source_catalog_scan.workflow_run_id),
+		indexed=(SELECT count(*) FROM source_catalog_entry e
+			WHERE e.file_source_id=source_catalog_scan.file_source_id AND e.last_seen_generation=source_catalog_scan.workflow_run_id),
+		publish_pending_remaining=(SELECT count(*) FROM source_catalog_directory d
+			JOIN source_catalog_observation o ON o.file_source_id=d.file_source_id AND o.directory_path=d.path AND o.revision=d.revision
+			WHERE d.file_source_id=source_catalog_scan.file_source_id AND d.generation=source_catalog_scan.workflow_run_id
+				AND d.status='complete' AND d.catalog_root<>'' AND o.publish_pending=1
+				AND EXISTS(SELECT 1 FROM source_catalog_audio_root r
+					WHERE r.file_source_id=d.file_source_id AND r.generation=d.generation AND r.catalog_root=d.catalog_root)),
+		updated_at=CURRENT_TIMESTAMP
+	WHERE source_catalog_scan.file_source_id=?`, sourceID)
+	return err
+}
+
+// enqueueCatalogDirectoryTx reports whether the path entered the current
+// generation. A row already in this generation is left untouched, so the
+// caller must not add a directory counter for it.
+func enqueueCatalogDirectoryTx(ctx context.Context, tx *sql.Tx, sourceID, generation int64, p, partition, root string) (bool, error) {
+	result, err := tx.ExecContext(ctx, `INSERT INTO source_catalog_directory(file_source_id,path,generation,partition_path,catalog_root) VALUES(?,?,?,?,?)
+	ON CONFLICT(file_source_id,path) DO UPDATE SET generation=excluded.generation,partition_path=excluded.partition_path,catalog_root=excluded.catalog_root,revision=source_catalog_directory.revision+1,next_page=1,expected_total=-1,children_cursor='',status='pending',attempts=0,error_code='',completed_at=NULL WHERE source_catalog_directory.generation<>excluded.generation`, sourceID, p, generation, partition, root)
+	if err != nil {
+		return false, err
+	}
+	changed, err := result.RowsAffected()
+	return changed > 0, err
 }
 
 func (s *Server) pendingCatalogDirectories(ctx context.Context, sourceID, generation int64, limit int) ([]catalogScanDirectory, error) {
@@ -45,6 +150,7 @@ func (s *Server) pendingCatalogDirectories(ctx context.Context, sourceID, genera
 func (s *Server) persistCatalogPage(ctx context.Context, job workflowJobRecord, sourceID int64, d catalogScanDirectory, data openlist.Page, requestErr error, options catalogIndexOptions) error {
 	started := time.Now()
 	written := 0
+	observedDelta := 0
 	defer func() { observeCatalogWrite(ctx, "persist_page", started, written) }()
 	tx, release, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
 	if err != nil {
@@ -114,10 +220,18 @@ func (s *Server) persistCatalogPage(ctx context.Context, job workflowJobRecord, 
 				status, errorCode = "failed", "path_limit"
 				break
 			}
-			_, err = tx.ExecContext(ctx, `INSERT INTO source_catalog_observation(file_source_id,directory_path,name,revision,kind,size_bytes,content_hash,modified_at,publish_pending) VALUES(?,?,?,?,?,?,?,?,1) ON CONFLICT(file_source_id,directory_path,name) DO UPDATE SET revision=excluded.revision,kind=excluded.kind,size_bytes=excluded.size_bytes,content_hash=excluded.content_hash,modified_at=excluded.modified_at,published_generation=0,publish_pending=1 WHERE source_catalog_observation.revision<>excluded.revision`, sourceID, d.Path, obj.Name, d.Revision, openlist.Kind(obj.Name, obj.IsDir), obj.Size, obj.ContentHash(), obj.Modified)
-			if err != nil {
-				return err
+			result, writeErr := tx.ExecContext(ctx, `INSERT INTO source_catalog_observation(file_source_id,directory_path,name,revision,kind,size_bytes,content_hash,modified_at,publish_pending) VALUES(?,?,?,?,?,?,?,?,1) ON CONFLICT(file_source_id,directory_path,name) DO UPDATE SET revision=excluded.revision,kind=excluded.kind,size_bytes=excluded.size_bytes,content_hash=excluded.content_hash,modified_at=excluded.modified_at,published_generation=0,publish_pending=1 WHERE source_catalog_observation.revision<>excluded.revision`, sourceID, d.Path, obj.Name, d.Revision, openlist.Kind(obj.Name, obj.IsDir), obj.Size, obj.ContentHash(), obj.Modified)
+			if writeErr != nil {
+				return writeErr
 			}
+			// The upsert only touches a row whose revision differs from this
+			// directory revision, and exactly those rows enter the observed
+			// projection. An unchanged row reports zero.
+			changed, writeErr := result.RowsAffected()
+			if writeErr != nil {
+				return writeErr
+			}
+			observedDelta += int(changed)
 		}
 		// A rescan can remove names or replace a page revision. Rows that no
 		// longer belong to the directory revision must not stay in the pending
@@ -169,8 +283,23 @@ func (s *Server) persistCatalogPage(ctx context.Context, job workflowJobRecord, 
 	if err != nil {
 		return err
 	}
-	if err = refreshCatalogAudioRootTx(ctx, tx.Tx, sourceID, job.RunID, d.Path); err != nil {
+	// The row was selected as pending, so its previous class is always
+	// pending; failed, restricted, empty and listing_complete all leave it.
+	if err = moveCatalogDirectoryCountersTx(ctx, tx.Tx, sourceID, "pending", "", status, errorCode); err != nil {
 		return err
+	}
+	if err = addCatalogObservationCountersTx(ctx, tx.Tx, sourceID, observedDelta, 0); err != nil {
+		return err
+	}
+	change, err := refreshCatalogAudioRootStateTx(ctx, tx.Tx, sourceID, job.RunID, d.Path)
+	if err != nil {
+		return err
+	}
+	if change.Deleted {
+		// Deleting the root makes every pending row below it ineligible.
+		if err = addCatalogPublishPendingTx(ctx, tx.Tx, sourceID, -change.Pending); err != nil {
+			return err
+		}
 	}
 	written = len(data.Content)
 	return tx.Commit()
@@ -405,8 +534,14 @@ func (s *Server) expandCatalogDirectory(ctx context.Context, job workflowJobReco
 		if p == "/" {
 			part = child
 		}
-		if err = enqueueCatalogDirectoryTx(ctx, tx.Tx, sourceID, job.RunID, child, part, root); err != nil {
-			return false, err
+		added, addErr := enqueueCatalogDirectoryTx(ctx, tx.Tx, sourceID, job.RunID, child, part, root)
+		if addErr != nil {
+			return false, addErr
+		}
+		if added {
+			if addErr = addCatalogDirectoryCountersTx(ctx, tx.Tx, sourceID); addErr != nil {
+				return false, addErr
+			}
 		}
 		cursor = name
 	}
@@ -418,37 +553,177 @@ func (s *Server) expandCatalogDirectory(ctx context.Context, job workflowJobReco
 	if err != nil {
 		return false, err
 	}
-	if err = refreshCatalogAudioRootTx(ctx, tx.Tx, sourceID, job.RunID, p); err != nil {
+	if status == "complete" {
+		if err = moveCatalogDirectoryCountersTx(ctx, tx.Tx, sourceID, "listing_complete", "", "complete", ""); err != nil {
+			return false, err
+		}
+	}
+	change, err := refreshCatalogAudioRootStateTx(ctx, tx.Tx, sourceID, job.RunID, p)
+	if err != nil {
 		return false, err
+	}
+	if status == "complete" {
+		if err = addCompletedDirectoryPublishPendingTx(ctx, tx.Tx, sourceID, job.RunID, p, change); err != nil {
+			return false, err
+		}
+		if err = resetCatalogPublishCursorTx(ctx, tx.Tx, sourceID, p, change.Inserted); err != nil {
+			return false, err
+		}
+	} else if change.Deleted {
+		if err = addCatalogPublishPendingTx(ctx, tx.Tx, sourceID, -change.Pending); err != nil {
+			return false, err
+		}
 	}
 	return true, tx.Commit()
 }
 
+// catalogAudioRootChange describes how one directory update changed the
+// publishable root set. Pending is the number of rows whose eligibility
+// changed: they entered the set on an insert and left it on a delete.
+type catalogAudioRootChange struct {
+	Root     string
+	Present  bool
+	Inserted bool
+	Deleted  bool
+	Pending  int
+}
+
 // refreshCatalogAudioRootTx keeps the publisher's join set exactly equal to
-// "a complete directory with audio exists for this root". Call it after the
-// directory status changes, so a rescan that removes the last audio row also
-// removes the root from the publish queue.
+// "a complete directory with audio exists for this root". It is a thin wrapper
+// for callers that do not need the row delta.
 func refreshCatalogAudioRootTx(ctx context.Context, tx *sql.Tx, sourceID, generation int64, directoryPath string) error {
-	var root string
-	err := tx.QueryRowContext(ctx, `SELECT catalog_root FROM source_catalog_directory WHERE file_source_id=? AND generation=? AND path=?`, sourceID, generation, directoryPath).Scan(&root)
+	_, err := refreshCatalogAudioRootStateTx(ctx, tx, sourceID, generation, directoryPath)
+	return err
+}
+
+// refreshCatalogAudioRootStateTx inserts the root directly when the directory
+// is complete and holds audio. Only an insert pays for counting the rows that
+// become publishable; an already present root costs one primary-key probe.
+// A directory that stopped being complete removes the root only when no other
+// complete directory of the generation still has audio for it.
+func refreshCatalogAudioRootStateTx(ctx context.Context, tx *sql.Tx, sourceID, generation int64, directoryPath string) (catalogAudioRootChange, error) {
+	var root, status string
+	err := tx.QueryRowContext(ctx, `SELECT catalog_root,status FROM source_catalog_directory WHERE file_source_id=? AND generation=? AND path=?`, sourceID, generation, directoryPath).Scan(&root, &status)
 	if errors.Is(err, sql.ErrNoRows) || root == "" {
-		return nil
+		return catalogAudioRootChange{}, nil
 	}
 	if err != nil {
-		return err
+		return catalogAudioRootChange{}, err
 	}
+	change := catalogAudioRootChange{Root: root}
+	if status == "complete" {
+		var audio int
+		if err = tx.QueryRowContext(ctx, `SELECT EXISTS(
+			SELECT 1 FROM source_catalog_observation b
+			JOIN source_catalog_directory a ON a.file_source_id=b.file_source_id AND a.path=b.directory_path AND a.revision=b.revision
+			WHERE a.file_source_id=? AND a.generation=? AND a.path=? AND b.kind='audio')`,
+			sourceID, generation, directoryPath).Scan(&audio); err != nil {
+			return change, err
+		}
+		if audio != 0 {
+			result, execErr := tx.ExecContext(ctx, `INSERT INTO source_catalog_audio_root(file_source_id,generation,catalog_root) VALUES(?,?,?) ON CONFLICT DO NOTHING`, sourceID, generation, root)
+			if execErr != nil {
+				return change, execErr
+			}
+			inserted, execErr := result.RowsAffected()
+			if execErr != nil {
+				return change, execErr
+			}
+			change.Present = true
+			change.Inserted = inserted > 0
+			if change.Inserted {
+				// The root was absent, so every pending row below it becomes
+				// publishable now, not only the rows of this directory.
+				if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM source_catalog_directory d
+					JOIN source_catalog_observation o ON o.file_source_id=d.file_source_id AND o.directory_path=d.path AND o.revision=d.revision
+					WHERE d.file_source_id=? AND d.generation=? AND d.catalog_root=? AND d.status='complete' AND o.publish_pending=1`,
+					sourceID, generation, root).Scan(&change.Pending); err != nil {
+					return change, err
+				}
+			}
+			return change, nil
+		}
+		// A complete directory without audio neither adds nor removes a root:
+		// another directory may already own it.
+		var present int
+		if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM source_catalog_audio_root WHERE file_source_id=? AND generation=? AND catalog_root=?)`,
+			sourceID, generation, root).Scan(&present); err != nil {
+			return change, err
+		}
+		change.Present = present != 0
+		return change, nil
+	}
+	// The directory is no longer complete (cleared, failed, restricted or
+	// unconfirmed empty). Its own audio no longer proves the root.
 	var present int
+	if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM source_catalog_audio_root WHERE file_source_id=? AND generation=? AND catalog_root=?)`,
+		sourceID, generation, root).Scan(&present); err != nil {
+		return change, err
+	}
+	if present == 0 {
+		return change, nil
+	}
+	var used int
 	if err = tx.QueryRowContext(ctx, `SELECT EXISTS(
 		SELECT 1 FROM source_catalog_directory a
 		JOIN source_catalog_observation b ON b.file_source_id=a.file_source_id AND b.directory_path=a.path AND b.revision=a.revision
-		WHERE a.file_source_id=? AND a.generation=? AND a.catalog_root=? AND a.status='complete' AND b.kind='audio')`, sourceID, generation, root).Scan(&present); err != nil {
+		WHERE a.file_source_id=? AND a.generation=? AND a.catalog_root=? AND a.status='complete' AND b.kind='audio')`,
+		sourceID, generation, root).Scan(&used); err != nil {
+		return change, err
+	}
+	if used != 0 {
+		change.Present = true
+		return change, nil
+	}
+	// Count the rows that stop being eligible before deleting the root; the
+	// predicate needs the root row to exist.
+	if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM source_catalog_directory d
+		JOIN source_catalog_observation o ON o.file_source_id=d.file_source_id AND o.directory_path=d.path AND o.revision=d.revision
+		WHERE d.file_source_id=? AND d.generation=? AND d.catalog_root=? AND d.status='complete' AND o.publish_pending=1`,
+		sourceID, generation, root).Scan(&change.Pending); err != nil {
+		return change, err
+	}
+	if _, err = tx.ExecContext(ctx, `DELETE FROM source_catalog_audio_root WHERE file_source_id=? AND generation=? AND catalog_root=?`, sourceID, generation, root); err != nil {
+		return change, err
+	}
+	change.Deleted = true
+	return change, nil
+}
+
+// addCompletedDirectoryPublishPendingTx records the rows that became
+// publishable when a directory reached status='complete'. An inserted root
+// already counted every row below it, so only its total is added.
+func addCompletedDirectoryPublishPendingTx(ctx context.Context, tx *sql.Tx, sourceID, generation int64, directoryPath string, change catalogAudioRootChange) error {
+	if change.Root == "" {
+		return nil
+	}
+	if change.Inserted {
+		return addCatalogPublishPendingTx(ctx, tx, sourceID, change.Pending)
+	}
+	if !change.Present {
+		return nil
+	}
+	var pending int
+	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM source_catalog_observation o
+		JOIN source_catalog_directory d ON d.file_source_id=o.file_source_id AND d.path=o.directory_path AND d.revision=o.revision
+		WHERE d.file_source_id=? AND d.generation=? AND d.path=? AND o.publish_pending=1`,
+		sourceID, generation, directoryPath).Scan(&pending); err != nil {
 		return err
 	}
-	if present == 1 {
-		_, err = tx.ExecContext(ctx, `INSERT INTO source_catalog_audio_root(file_source_id,generation,catalog_root) VALUES(?,?,?) ON CONFLICT DO NOTHING`, sourceID, generation, root)
+	return addCatalogPublishPendingTx(ctx, tx, sourceID, pending)
+}
+
+// resetCatalogPublishCursorTx rewinds the keyset cursor when rows behind its
+// current position can still become publishable in this generation: a
+// directory completed at or before the cursor, or a newly publishable root.
+// Rewinding costs a scan over the pending index only; published rows keep
+// publish_pending=0 and are not selected again.
+func resetCatalogPublishCursorTx(ctx context.Context, tx *sql.Tx, sourceID int64, before string, force bool) error {
+	if force {
+		_, err := tx.ExecContext(ctx, `UPDATE source_catalog_scan SET publish_cursor_path='',publish_cursor_name='' WHERE file_source_id=? AND (publish_cursor_path<>'' OR publish_cursor_name<>'')`, sourceID)
 		return err
 	}
-	_, err = tx.ExecContext(ctx, `DELETE FROM source_catalog_audio_root WHERE file_source_id=? AND generation=? AND catalog_root=?`, sourceID, generation, root)
+	_, err := tx.ExecContext(ctx, `UPDATE source_catalog_scan SET publish_cursor_path='',publish_cursor_name='' WHERE file_source_id=? AND publish_cursor_path<>'' AND ?<=publish_cursor_path`, sourceID, before)
 	return err
 }
 
@@ -474,11 +749,18 @@ FROM source_catalog_directory d
 -- prefix, so the batch stops as soon as it has enough rows.
 CROSS JOIN source_catalog_observation o ON o.file_source_id=d.file_source_id AND o.directory_path=d.path AND o.revision=d.revision
 LEFT JOIN source_catalog_directory rd ON rd.file_source_id=d.file_source_id AND rd.path=d.catalog_root AND rd.generation=d.generation
-WHERE d.file_source_id=? AND d.generation=? AND d.status='complete' AND d.catalog_root<>''
+WHERE d.file_source_id=?1 AND d.generation=?2 AND d.status='complete' AND d.catalog_root<>''
+	-- Keyset pagination. The comparison uses the same BINARY collation pair
+	-- as ORDER BY d.path,o.name, so a batch never skips a name inside a
+	-- directory or repeats one across a restart. An empty cursor sorts before
+	-- every path, which always starts with '/'.
+	AND (d.path>(SELECT publish_cursor_path FROM source_catalog_scan WHERE file_source_id=?1)
+		OR (d.path=(SELECT publish_cursor_path FROM source_catalog_scan WHERE file_source_id=?1)
+			AND o.name>(SELECT publish_cursor_name FROM source_catalog_scan WHERE file_source_id=?1)))
 	AND o.publish_pending=1
 	AND EXISTS(SELECT 1 FROM source_catalog_audio_root r
 		WHERE r.file_source_id=d.file_source_id AND r.generation=d.generation AND r.catalog_root=d.catalog_root)
-ORDER BY d.path,o.name LIMIT ?`
+ORDER BY d.path,o.name LIMIT ?3`
 
 // Publish a bounded number of validated observations. The first playable
 // observation creates a catalog identity; it never registers a library work.
@@ -492,6 +774,13 @@ func (s *Server) publishCatalogBatch(ctx context.Context, job workflowJobRecord,
 	}
 	defer release()
 	if err = verifyCatalogLease(ctx, tx.Tx, job); err != nil {
+		return 0, err
+	}
+	// The cursor is durable on the scan row and the query reads it directly,
+	// so a restarted worker resumes at the exact (directory,name) pair the
+	// previous batch consumed.
+	var remaining int
+	if err = tx.QueryRowContext(ctx, `SELECT publish_pending_remaining FROM source_catalog_scan WHERE file_source_id=?`, sourceID).Scan(&remaining); err != nil {
 		return 0, err
 	}
 	rows, err := tx.QueryContext(ctx, catalogPublishQuery, sourceID, job.RunID, catalogPublishRows)
@@ -549,6 +838,11 @@ func (s *Server) publishCatalogBatch(ctx context.Context, job workflowJobRecord,
 			break
 		}
 	}
+	// indexed counts entries last seen in this generation. A root enters the
+	// count once, on its first row of this batch; the lookup is one primary-key
+	// probe per distinct root rather than a count over the whole entry table.
+	seenRoots := map[string]int64{}
+	indexedDelta := 0
 	for _, p := range items {
 		root, sourceRoot, title := p.root, "", path.Base(p.root)
 		if p.root == "/" {
@@ -578,6 +872,13 @@ func (s *Server) publishCatalogBatch(ctx context.Context, job workflowJobRecord,
 			}
 			continue
 		}
+		if _, seen := seenRoots[root]; !seen {
+			var priorGeneration int64
+			if err = tx.QueryRowContext(ctx, `SELECT COALESCE((SELECT last_seen_generation FROM source_catalog_entry WHERE file_source_id=? AND root_path=?),0)`, sourceID, root).Scan(&priorGeneration); err != nil {
+				return 0, err
+			}
+			seenRoots[root] = priorGeneration
+		}
 		var id int64
 		// The code is derived from the root name on every generation. An
 		// entry published before code parsing understood a prefix keeps its
@@ -586,6 +887,10 @@ func (s *Server) publishCatalogBatch(ctx context.Context, job workflowJobRecord,
 		err = tx.QueryRowContext(ctx, `INSERT INTO source_catalog_entry(file_source_id,root_path,source_root,primary_code,title,last_seen_generation,discovered_generation) VALUES(?,?,?,?,?,?,?) ON CONFLICT(file_source_id,root_path) DO UPDATE SET source_root=excluded.source_root,primary_code=excluded.primary_code,title=excluded.title,last_seen_generation=excluded.last_seen_generation,availability_status='available',status_checked_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP RETURNING id`, sourceID, root, sourceRoot, catalogEntryCode(root), title, job.RunID, job.RunID).Scan(&id)
 		if err != nil {
 			return 0, err
+		}
+		if seenRoots[root] != job.RunID {
+			indexedDelta++
+			seenRoots[root] = job.RunID
 		}
 		if root != p.root && firstSplit[p.root] == 0 {
 			firstSplit[p.root] = id
@@ -619,17 +924,30 @@ func (s *Server) publishCatalogBatch(ctx context.Context, job workflowJobRecord,
 	// playable copy of a group that a later batch is about to publish, and it
 	// made every publish batch scan the whole source. The final batch (or a
 	// final call with nothing left to publish) performs it once.
-	var stillPending int
-	if err = tx.QueryRowContext(ctx, `SELECT EXISTS(
-		SELECT 1 FROM source_catalog_observation o
-		JOIN source_catalog_directory d ON d.file_source_id=o.file_source_id AND d.path=o.directory_path AND d.revision=o.revision
-		WHERE o.file_source_id=? AND o.publish_pending=1 AND d.generation=? AND d.status='complete' AND d.catalog_root<>''
-			AND (o.kind='audio' OR EXISTS(SELECT 1 FROM source_catalog_audio_root r
-				WHERE r.file_source_id=d.file_source_id AND r.generation=d.generation AND r.catalog_root=d.catalog_root)))`,
-		sourceID, job.RunID).Scan(&stillPending); err != nil {
+	// Every selected row was publishable and is now consumed, so the stored
+	// remainder drops by the batch size. The final-batch decision reads this
+	// projection instead of scanning every pending observation before commit.
+	if len(items) > 0 {
+		if err = addCatalogPublishPendingTx(ctx, tx.Tx, sourceID, -len(items)); err != nil {
+			return 0, err
+		}
+		last := items[len(items)-1]
+		if _, err = tx.ExecContext(ctx, `UPDATE source_catalog_scan SET publish_cursor_path=?,publish_cursor_name=? WHERE file_source_id=?`, last.dir, last.name, sourceID); err != nil {
+			return 0, err
+		}
+		remaining -= len(items)
+	}
+	if remaining < 0 {
+		remaining = 0
+	}
+	if err = addCatalogObservationCountersTx(ctx, tx.Tx, sourceID, 0, indexedDelta); err != nil {
 		return 0, err
 	}
-	publishIdle := stillPending == 0
+	publishIdle := remaining == 0
+	// Retiring a card clears its file_source_id, which removes it from the
+	// indexed projection. Recompute that one column when a pass retired
+	// anything; all other increments stay incremental.
+	retireRan := false
 	for root, plan := range splitPlans {
 		if parentNeeded[root] || len(plan.direct) == 0 {
 			continue
@@ -666,6 +984,7 @@ func (s *Server) publishCatalogBatch(ctx context.Context, job workflowJobRecord,
 				return 0, err
 			}
 		}
+		retireRan = true
 		if err = retireCatalogSplitParentTx(ctx, tx.Tx, sourceID, root, targetID); err != nil {
 			return 0, err
 		}
@@ -705,6 +1024,7 @@ func (s *Server) publishCatalogBatch(ctx context.Context, job workflowJobRecord,
 		if err != nil {
 			return 0, err
 		}
+		retireRan = true
 		if err = retireStaleSplitCardsTx(ctx, tx.Tx, sourceID, job.RunID, root, keep); err != nil {
 			return 0, err
 		}
@@ -714,6 +1034,11 @@ func (s *Server) publishCatalogBatch(ctx context.Context, job workflowJobRecord,
 	if !publishIdle {
 		// Format and split identities stay untouched until every row of this
 		// generation is published.
+		if retireRan {
+			if err = reconcileCatalogIndexedTx(ctx, tx.Tx, sourceID, job.RunID); err != nil {
+				return 0, err
+			}
+		}
 		if err = markCatalogSidecarCandidatesTx(ctx, tx.Tx, publishedIDs, job.RunID); err != nil {
 			return 0, err
 		}
@@ -737,6 +1062,7 @@ func (s *Server) publishCatalogBatch(ctx context.Context, job workflowJobRecord,
 			return 0, err
 		}
 		if exists != 0 {
+			retireRan = true
 			if err = retireStaleSplitCardsTx(ctx, tx.Tx, sourceID, job.RunID, p.root, map[int64]bool{}); err != nil {
 				return 0, err
 			}
@@ -755,11 +1081,13 @@ func (s *Server) publishCatalogBatch(ctx context.Context, job workflowJobRecord,
 	// the same work seen twice. Like the format pass this walks every stale
 	// card of the source, so it belongs to the final batch only.
 	if len(items) > 0 {
+		retireRan = true
 		if err = retireCoveredContainerCardsTx(ctx, tx.Tx, sourceID, job.RunID); err != nil {
 			return 0, err
 		}
 	}
 	if len(items) > 0 {
+		retireRan = true
 		if err = retireStaleFormatCardsTx(ctx, tx.Tx, sourceID, job.RunID); err != nil {
 			return 0, err
 		}
@@ -767,6 +1095,11 @@ func (s *Server) publishCatalogBatch(ctx context.Context, job workflowJobRecord,
 	// Queue credit files in the same transaction that publishes the card, so a
 	// committed card is never forgotten between publication and the reader. The
 	// reads run after commit and never hold this write lock.
+	if retireRan {
+		if err = reconcileCatalogIndexedTx(ctx, tx.Tx, sourceID, job.RunID); err != nil {
+			return 0, err
+		}
+	}
 	if err = markCatalogSidecarCandidatesTx(ctx, tx.Tx, publishedIDs, job.RunID); err != nil {
 		return 0, err
 	}
@@ -777,7 +1110,75 @@ func (s *Server) publishCatalogBatch(ctx context.Context, job workflowJobRecord,
 	return published, nil
 }
 
+// sourceCatalogProgress reads the counters maintained in the same
+// transactions as the rows they describe. ?exact=1 stays available through
+// sourceCatalogProgressExact for reconciliation after a manual repair.
 func (s *Server) sourceCatalogProgress(ctx context.Context, sourceID int64, page int) (catalogIndexProgress, error) {
+	p := catalogIndexProgress{Partitions: []catalogPartitionProgress{}, Details: []catalogDirectoryProgress{}}
+	var options string
+	err := s.db.QueryRowContext(ctx, `SELECT scan.workflow_run_id,run.status,scan.pause_reason,scan.options_json,scan.requests,
+		scan.directories,scan.completed,scan.pending,scan.failed,scan.restricted,scan.empty,scan.observed,scan.indexed,
+		scan.started_at,scan.updated_at
+		FROM source_catalog_scan scan JOIN workflow_run run ON run.id=scan.workflow_run_id WHERE scan.file_source_id=?`, sourceID).Scan(
+		&p.RunID, &p.Status, &p.PauseReason, &options, &p.Requests,
+		&p.Directories, &p.Completed, &p.Pending, &p.Failed, &p.Restricted, &p.Empty, &p.Observed, &p.Indexed,
+		&p.StartedAt, &p.UpdatedAt)
+	if err != nil {
+		return p, err
+	}
+	if err = json.Unmarshal([]byte(options), &p.Options); err != nil {
+		return p, err
+	}
+	if p.Status == "succeeded" {
+		p.Status = "complete"
+	}
+	err = s.db.QueryRowContext(ctx, `SELECT (SELECT count(*) FROM source_catalog_directory WHERE file_source_id=?),(SELECT count(*) FROM source_catalog_observation WHERE file_source_id=?)`, sourceID, sourceID).Scan(&p.StagingDirectories, &p.StagingObservations)
+	if err != nil {
+		return p, err
+	}
+	if p.PauseReason != "" && p.Status == "partial" {
+		p.Status = "paused"
+	}
+	p.DetailsTotal = p.Directories - p.Completed
+	if err = s.db.QueryRowContext(ctx, `SELECT count(DISTINCT partition_path) FROM source_catalog_directory WHERE file_source_id=? AND generation=?`, sourceID, p.RunID).Scan(&p.PartitionTotal); err != nil {
+		return p, err
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT partition_path,count(*),sum(status='complete' OR (status='empty' AND error_code='not_found')),sum(status='failed'),sum(status='restricted'),sum(status='empty' AND error_code<>'not_found') FROM source_catalog_directory WHERE file_source_id=? AND generation=? GROUP BY partition_path ORDER BY partition_path LIMIT 50 OFFSET ?`, sourceID, p.RunID, (page-1)*50)
+	if err != nil {
+		return p, err
+	}
+	for rows.Next() {
+		var x catalogPartitionProgress
+		if err = rows.Scan(&x.Path, &x.Directories, &x.Completed, &x.Failed, &x.Restricted, &x.Empty); err != nil {
+			break
+		}
+		p.Partitions = append(p.Partitions, x)
+	}
+	if err == nil {
+		err = rows.Err()
+	}
+	_ = rows.Close()
+	if err != nil {
+		return p, err
+	}
+	rows, err = s.db.QueryContext(ctx, `SELECT path,status,next_page,error_code FROM source_catalog_directory WHERE file_source_id=? AND generation=? AND status<>'complete' ORDER BY path LIMIT 50 OFFSET ?`, sourceID, p.RunID, (page-1)*50)
+	if err != nil {
+		return p, err
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var x catalogDirectoryProgress
+		if err = rows.Scan(&x.Path, &x.Status, &x.NextPage, &x.ErrorCode); err != nil {
+			return p, err
+		}
+		p.Details = append(p.Details, x)
+	}
+	return p, rows.Err()
+}
+
+// sourceCatalogProgressExact is the original aggregate. It is the
+// reconciliation path behind ?exact=1 and never writes.
+func (s *Server) sourceCatalogProgressExact(ctx context.Context, sourceID int64, page int) (catalogIndexProgress, error) {
 	p := catalogIndexProgress{Partitions: []catalogPartitionProgress{}, Details: []catalogDirectoryProgress{}}
 	var options string
 	err := s.db.QueryRowContext(ctx, `SELECT scan.workflow_run_id,run.status,scan.pause_reason,scan.options_json,scan.requests,scan.started_at,scan.updated_at FROM source_catalog_scan scan JOIN workflow_run run ON run.id=scan.workflow_run_id WHERE scan.file_source_id=?`, sourceID).Scan(&p.RunID, &p.Status, &p.PauseReason, &options, &p.Requests, &p.StartedAt, &p.UpdatedAt)

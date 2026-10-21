@@ -226,6 +226,17 @@ func (s *Server) enqueueSourceCatalogIndexTx(ctx context.Context, tx *sql.Tx, so
 		if _, err = tx.ExecContext(ctx, `UPDATE source_catalog_scan SET pause_reason='',options_json=?,lifecycle_stage='observe',lifecycle_cursor=0,publish_cleanup_cursor=0,orphan_cleanup_cursor=0,updated_at=CURRENT_TIMESTAMP WHERE file_source_id=?`, mustJSON(options), sourceID); err != nil {
 			return catalogIndexQueued{}, err
 		}
+		// The status reset above and the revision bumps can change every
+		// counter, and a re-observed directory may publish rows behind the
+		// current cursor. Rewind the cursor and recount once instead of
+		// tracking every row the resume touched. Published rows keep
+		// publish_pending=0, so the replay cannot publish them twice.
+		if _, err = tx.ExecContext(ctx, `UPDATE source_catalog_scan SET publish_cursor_path='',publish_cursor_name='' WHERE file_source_id=?`, sourceID); err != nil {
+			return catalogIndexQueued{}, err
+		}
+		if err = seedCatalogCountersTx(ctx, tx, sourceID); err != nil {
+			return catalogIndexQueued{}, err
+		}
 		if err = resumeCatalogWorkflowTx(ctx, tx, runID); err != nil {
 			return catalogIndexQueued{}, err
 		}
@@ -248,11 +259,17 @@ func (s *Server) enqueueSourceCatalogIndexTx(ctx context.Context, tx *sql.Tx, so
 	if err != nil {
 		return catalogIndexQueued{}, err
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO source_catalog_scan(file_source_id,workflow_run_id,options_json) VALUES(?,?,?) ON CONFLICT(file_source_id) DO UPDATE SET workflow_run_id=excluded.workflow_run_id,options_json=excluded.options_json,pause_reason='',requests=0,lifecycle_stage='observe',lifecycle_cursor=0,publish_cleanup_cursor=0,orphan_cleanup_cursor=0,started_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP`, sourceID, runID, mustJSON(options))
+	_, err = tx.ExecContext(ctx, `INSERT INTO source_catalog_scan(file_source_id,workflow_run_id,options_json) VALUES(?,?,?) ON CONFLICT(file_source_id) DO UPDATE SET workflow_run_id=excluded.workflow_run_id,options_json=excluded.options_json,pause_reason='',requests=0,lifecycle_stage='observe',lifecycle_cursor=0,publish_cleanup_cursor=0,orphan_cleanup_cursor=0,directories=0,completed=0,pending=0,failed=0,restricted=0,empty=0,observed=0,indexed=0,publish_cursor_path='',publish_cursor_name='',publish_pending_remaining=0,started_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP`, sourceID, runID, mustJSON(options))
 	if err != nil {
 		return catalogIndexQueued{}, err
 	}
-	if err = enqueueCatalogDirectoryTx(ctx, tx, sourceID, runID, "/", "/", ""); err != nil {
+	if _, err = enqueueCatalogDirectoryTx(ctx, tx, sourceID, runID, "/", "/", ""); err != nil {
+		return catalogIndexQueued{}, err
+	}
+	// A new generation starts from this run's rows only. The seed runs after
+	// the configured root exists, so it also covers a database upgraded while
+	// a scan was in flight.
+	if err = seedCatalogCountersTx(ctx, tx, sourceID); err != nil {
 		return catalogIndexQueued{}, err
 	}
 	return catalogIndexQueued{runID, false}, nil
@@ -285,7 +302,12 @@ func (s *Server) getSourceCatalogIndex(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	progress, err := s.sourceCatalogProgress(r.Context(), id, max(1, queryInt(r, "page", 1)))
+	var progress catalogIndexProgress
+	if queryInt(r, "exact", 0) == 1 {
+		progress, err = s.sourceCatalogProgressExact(r.Context(), id, max(1, queryInt(r, "page", 1)))
+	} else {
+		progress, err = s.sourceCatalogProgress(r.Context(), id, max(1, queryInt(r, "page", 1)))
+	}
 	if errors.Is(err, sql.ErrNoRows) {
 		writeJSON(w, 200, catalogIndexProgress{Status: "idle", Options: defaultCatalogIndexOptions(), Partitions: []catalogPartitionProgress{}, Details: []catalogDirectoryProgress{}, SidecarFailures: sidecarFailures})
 		return
