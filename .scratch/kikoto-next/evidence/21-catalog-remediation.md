@@ -132,7 +132,7 @@ cd E:/项目/服务器/.kikoto-work/bench
   --json-out before.json
 ```
 
-脚本输出每个查询的 median/min/max、结果计数、`EXPLAIN QUERY PLAN`，以及 slow/busy 统计。`--vacuum-to` 可一次生成副本；不传则只读打开 `--db`。写路径每次都回滚。基线 JSON 存在 `scripts/catalog-bench/baseline/`：
+脚本输出每个查询的 median/min/max、结果计数、`EXPLAIN QUERY PLAN`，以及 slow/busy 统计。写路径查询（`publish_1000_rows_fixture`、`cleanup_100_cards`、`lifecycle_100_entries`）必须提供 `--vacuum-to`；缺少副本时脚本拒绝执行，保证 `--db` 始终只读。`--vacuum-to` 可一次生成副本；不传则只读打开 `--db`。写路径每次都回滚。基线 JSON 存在 `scripts/catalog-bench/baseline/`：
 
 - `before-server-warm.json`（读查询，5 次）
 - `before-server-cleanup3.json`（cleanup，3 次）
