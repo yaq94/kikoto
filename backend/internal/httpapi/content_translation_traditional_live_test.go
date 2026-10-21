@@ -45,8 +45,19 @@ func TestContentTranslationTraditionalLiveConfiguredService(t *testing.T) {
 	}
 	request(admin, "PATCH", "/api/settings/translation", map[string]any{"baseUrl": cfg.BaseURL, "apiKey": cfg.APIKey, "model": cfg.Model, "minFreeBytes": 0})
 	metadataReviewExec(t, s.db, `INSERT INTO party(id,display_name) VALUES(1,'示例社团'); INSERT INTO person(id,display_name) VALUES(1,'示例声优');`)
-	samples := []string{"今日はいい天気です。示例声优と示例社团の音楽を聞きます。", "风吹过森林，示例社团和示例声优一起听音乐。"}
-	for i, original := range samples {
+	// Sample 0 is Japanese, so both scripts go through the model once. Sample 1
+	// is already Simplified Chinese: the model language of a zh-tw request is
+	// zh-Hans, so the card is native for both scripts and only the display text
+	// is converted. Both shapes are part of the contract.
+	samples := []struct {
+		text       string
+		wantStatus string
+	}{
+		{"今日はいい天気です。示例声优と示例社团の音楽を聞きます。", "translated"},
+		{"风吹过森林，示例社团和示例声优一起听音乐。", "native"},
+	}
+	for i, sample := range samples {
+		original := sample.text
 		id := i + 1
 		metadataReviewExec(t, s.db, `INSERT INTO work(id,primary_code,title) VALUES(?,?,?)`, id, fmt.Sprintf("RJ0000000%d", i), original)
 		metadataReviewExec(t, s.db, `INSERT INTO work_party(work_id,party_id) VALUES(?,1)`, id)
@@ -59,20 +70,29 @@ func TestContentTranslationTraditionalLiveConfiguredService(t *testing.T) {
 		cached := request(listener, "POST", "/api/content-translations", map[string]any{"workId": id, "field": "title", "text": original, "language": "zh-tw"})
 		for _, result := range []map[string]any{traditional, simplified, cached} {
 			text, ok := result["text"].(string)
-			if !ok || result["status"] != "translated" || result["original"] != original || !strings.Contains(text, "示例声优") || !strings.Contains(text, "示例社团") {
+			if !ok || result["status"] != sample.wantStatus || result["original"] != original || !strings.Contains(text, "示例声优") || !strings.Contains(text, "示例社团") {
 				t.Fatalf("live conversion incomplete: status=%v code=%v", result["status"], result["code"])
 			}
 			if (cfg.APIKey != "" && strings.Contains(text, cfg.APIKey)) || strings.Contains(text, cfg.BaseURL) {
 				t.Fatal("live response contained configuration details")
 			}
 		}
-		if traditional["cacheStatus"] != "stored" || simplified["cacheStatus"] != "hit" || cached["cacheStatus"] != "hit" || cached["text"] != traditional["text"] || traditional["text"] == simplified["text"] {
-			t.Fatal("live script switching did not reuse a distinct Simplified result")
+		if traditional["text"] == simplified["text"] {
+			t.Fatal("Traditional and Simplified display text were identical")
 		}
-		t.Logf("LIVE sample=%d model=%s original=%q simplified=%q traditional=%q generatedRequests=1 cachedRequests=2 generationAndConversionMs=%d cachedSwitchesMs=%d", id, cfg.Model, original, simplified["text"], traditional["text"], generationElapsed, time.Since(start).Milliseconds())
+		if sample.wantStatus == "translated" {
+			if traditional["cacheStatus"] != "stored" || simplified["cacheStatus"] != "hit" || cached["cacheStatus"] != "hit" {
+				t.Fatal("live script switching did not reuse one model result")
+			}
+		} else if cached["text"] != traditional["text"] || simplified["cacheStatus"] != "stored" {
+			t.Fatal("native Simplified text did not convert consistently")
+		}
+		t.Logf("LIVE sample=%d model=%s status=%s original=%q simplified=%q traditional=%q generationAndConversionMs=%d cachedSwitchesMs=%d", id, cfg.Model, sample.wantStatus, original, simplified["text"], traditional["text"], generationElapsed, time.Since(start).Milliseconds())
 	}
 	stats := request(admin, "GET", "/api/settings/translation/runtime", nil)
-	if stats["cacheEntries"] != float64(2) || stats["readers"] != float64(0) {
-		t.Fatal("live requests did not settle within the expected cache budget")
+	queue, _ := stats["queue"].(map[string]any)
+	languages, _ := stats["languages"].([]any)
+	if queue["readers"] != float64(0) || len(languages) != 1 {
+		t.Fatalf("live requests did not settle into one Simplified corpus: %#v", stats)
 	}
 }
