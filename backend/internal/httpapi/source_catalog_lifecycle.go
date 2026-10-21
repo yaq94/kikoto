@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"path"
 	"strings"
 	"time"
 
@@ -35,6 +36,45 @@ func catalogRootIncomplete(ctx context.Context, tx *sql.Tx, sourceID, generation
 	return incomplete != 0, err
 }
 
+// catalogBaseObservedTx reports whether the current generation observed the
+// directory base well enough to judge what it contains. A path that this
+// generation never listed keeps the row of the generation that did, so a
+// missing row is not proof of deletion by itself: the nearest observed ancestor
+// decides. A complete listing (or a confirmed 404/410) of that ancestor proves
+// the path gone; an unconfirmed-empty, failed, restricted or pending ancestor
+// proves nothing and keeps the caller's old rows.
+func catalogBaseObservedTx(ctx context.Context, tx *sql.Tx, sourceID, generation int64, base string) (bool, error) {
+	if base == "" {
+		base = "/"
+	}
+	for {
+		var status, code string
+		err := tx.QueryRowContext(ctx, `SELECT status,error_code FROM source_catalog_directory
+			WHERE file_source_id=? AND path=? AND generation=?`, sourceID, base, generation).Scan(&status, &code)
+		if errors.Is(err, sql.ErrNoRows) {
+			if base == "/" {
+				// Without any row for the configured root nothing below it was
+				// observed, so no deletion can be proven.
+				return false, nil
+			}
+			parent := path.Dir(base)
+			if parent == "." || parent == base {
+				return false, nil
+			}
+			base = parent
+			continue
+		}
+		if err != nil {
+			return false, err
+		}
+		if status == "complete" {
+			return true, nil
+		}
+		// A definite 404/410 is a completed observation: the directory is gone.
+		return status == "empty" && code == "not_found", nil
+	}
+}
+
 // catalogRangeUncertain reports a directory below base that the current
 // generation could not observe. An unconfirmed-empty, failed, restricted or
 // still-pending directory proves nothing about deletion, so callers keep the
@@ -45,6 +85,13 @@ func catalogRangeUncertain(ctx context.Context, tx *sql.Tx, sourceID, generation
 	// source partial and preserved rows a deleted directory no longer owns.
 	if base == "" {
 		base = "/"
+	}
+	observed, err := catalogBaseObservedTx(ctx, tx, sourceID, generation, base)
+	if err != nil {
+		return false, err
+	}
+	if !observed {
+		return true, nil
 	}
 	const uncertainStatus = ` status IN ('failed','restricted','empty','pending','listing_complete')
 		AND NOT (status='empty' AND error_code='not_found')`
@@ -60,7 +107,7 @@ func catalogRangeUncertain(ctx context.Context, tx *sql.Tx, sourceID, generation
 	}
 	query += `)`
 	var uncertain int
-	err := tx.QueryRowContext(ctx, query, args...).Scan(&uncertain)
+	err = tx.QueryRowContext(ctx, query, args...).Scan(&uncertain)
 	return uncertain != 0, err
 }
 
@@ -211,6 +258,22 @@ func (s *Server) settleCatalogLifecycleBatch(ctx context.Context, job workflowJo
 	for _, e := range entries {
 		if stage == "reconcile" {
 			if e.generation != job.RunID {
+				// Relocation compares an old card with a successor. A range the
+				// current generation never observed cannot prove a rename; moving
+				// the card there would be a guess based on stale evidence.
+				var base string
+				if err = tx.QueryRowContext(ctx, `SELECT `+catalogEffectiveRootSQL("source_catalog_entry")+`
+					FROM source_catalog_entry WHERE id=?`, e.id).Scan(&base); err != nil {
+					return false, err
+				}
+				uncertain, checkErr := catalogRangeUncertain(ctx, tx.Tx, sourceID, job.RunID, base)
+				if checkErr != nil {
+					return false, checkErr
+				}
+				if uncertain {
+					cursor = e.id
+					continue
+				}
 				if err = reconcileCatalogEntryTx(ctx, tx.Tx, sourceID, job.RunID, e.id); err != nil {
 					return false, err
 				}

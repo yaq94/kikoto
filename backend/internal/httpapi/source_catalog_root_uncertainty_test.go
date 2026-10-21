@@ -139,3 +139,64 @@ func TestCatalogFormatDirectoryAcceptsMultipleQualitySuffixes(t *testing.T) {
 		t.Error("a format-led directory must stay a work part")
 	}
 }
+
+// A child path the current generation never listed keeps the row of the
+// generation that did. Its absence is only a deletion when the nearest observed
+// ancestor completed its listing; an unconfirmed-empty or failed parent proves
+// nothing about the child.
+func TestCatalogRangeUncertainWalksToObservedAncestor(t *testing.T) {
+	db := openMigratedTestDB(t)
+	metadataReviewExec(t, db, `INSERT INTO file_source(id,code,display_name,source_type)
+		VALUES(7,'example_remote_a','Example Remote A','openlist')`)
+	metadataReviewExec(t, db, `INSERT INTO source_catalog_directory
+		(file_source_id,path,generation,partition_path,catalog_root,status,error_code)
+		VALUES(7,'/',9,'','','complete',''),
+		      (7,'/A',9,'','','empty',''),
+		      (7,'/A/B',8,'','','complete',''),
+		      (7,'/C',9,'','','complete',''),
+		      (7,'/C/D',8,'','','complete','')`)
+	tx, err := db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	ctx := context.Background()
+
+	uncertain, err := catalogRangeUncertain(ctx, tx, 7, 9, "/A/B")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !uncertain {
+		t.Fatal("a child of an unconfirmed-empty parent was treated as confirmed missing")
+	}
+	// /C completed its listing this generation, so /C/D is genuinely gone.
+	uncertain, err = catalogRangeUncertain(ctx, tx, 7, 9, "/C/D")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if uncertain {
+		t.Fatal("a child absent from a complete listing must stay a confirmed deletion")
+	}
+	// A confirmed 404 of the parent is a completed observation too.
+	if _, err = tx.Exec(`UPDATE source_catalog_directory SET status='empty',error_code='not_found' WHERE path='/A'`); err != nil {
+		t.Fatal(err)
+	}
+	uncertain, err = catalogRangeUncertain(ctx, tx, 7, 9, "/A/B")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if uncertain {
+		t.Fatal("a confirmed 404 of the parent must stay a completed observation")
+	}
+	// No observed ancestor at all cannot prove deletion.
+	if _, err = tx.Exec(`DELETE FROM source_catalog_directory WHERE path='/'`); err != nil {
+		t.Fatal(err)
+	}
+	uncertain, err = catalogRangeUncertain(ctx, tx, 7, 9, "/Unobserved/Child")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !uncertain {
+		t.Fatal("a path without any observed ancestor was treated as confirmed")
+	}
+}

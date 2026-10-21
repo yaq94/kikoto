@@ -133,3 +133,35 @@ func TestSourceCatalogLifecycleUniqueHashRenameKeepsReviewAndPlaybackIdentity(t 
 		t.Fatalf("old queue failed to resolve new path: status %d", response.Code)
 	}
 }
+
+// An empty listing does not enumerate children, so a card below it keeps the
+// last observation. The run stays partial and the card must not become missing.
+func TestSourceCatalogLifecycleKeepsChildOfUnconfirmedEmpty(t *testing.T) {
+	f := newLooseWorkFixture(t, map[string][]map[string]any{
+		"/":    {looseDir("A")},
+		"/A":   {looseDir("B")},
+		"/A/B": {looseAudio("track.mp3")},
+	})
+	f.request(t, http.MethodPost, "/catalog/index", `{"intervalMs":100}`, 202)
+	if p := f.drain(t); p["status"] != "complete" {
+		t.Fatalf("first scan = %#v", p)
+	}
+	var entryID int64
+	if err := f.server.db.QueryRow(`SELECT id FROM source_catalog_entry WHERE root_path='/A/B'`).Scan(&entryID); err != nil {
+		t.Fatal(err)
+	}
+	// /A now answers with an empty listing. It is not expanded, so /A/B is
+	// never re-observed in this generation.
+	f.updates(map[string][]map[string]any{"/": {looseDir("A")}, "/A": {}})
+	f.request(t, http.MethodPost, "/catalog/index", `{"intervalMs":100,"force":true}`, 202)
+	if p := f.drain(t); p["status"] != "partial" {
+		t.Fatalf("second scan = %#v, want partial", p)
+	}
+	var status string
+	if err := f.server.db.QueryRow(`SELECT availability_status FROM source_catalog_entry WHERE id=?`, entryID).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status == "missing" {
+		t.Fatal("a card below an unconfirmed-empty directory was marked missing")
+	}
+}
