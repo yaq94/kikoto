@@ -247,6 +247,7 @@ func (s *Server) executeCatalogIncrementalSync(ctx context.Context, runID, sourc
 	// durable: a restart re-lists from the beginning, and the listing digest
 	// makes an unchanged directory cheap.
 	listingCursor := ""
+	listingPasses := 0
 	scanStarted := time.Now()
 	for {
 		if err = ctx.Err(); err != nil {
@@ -300,7 +301,26 @@ func (s *Server) executeCatalogIncrementalSync(ctx context.Context, runID, sourc
 			return queryErr
 		}
 		if len(changedDirs) == 0 {
-			break
+			// A listing can insert a child directory that sorts before the last
+			// path already consumed. One extra pass sees those leftovers; a row
+			// that fails to list stays 'changed' and must not spin the worker,
+			// so the retry count is bounded and the run reports partial.
+			var remaining int
+			if err = s.db.QueryRowContext(ctx, `SELECT count(*) FROM source_catalog_directory
+				WHERE file_source_id=? AND generation=? AND sync_state='changed'`, sourceID, generation).Scan(&remaining); err != nil {
+				return err
+			}
+			if remaining == 0 {
+				break
+			}
+			if listingPasses >= 2 {
+				state.Note = appendCatalogSyncNote(state.Note, fmt.Sprintf("%d changed directories remained unlisted", remaining))
+				failed = true
+				break
+			}
+			listingPasses++
+			listingCursor = ""
+			continue
 		}
 		listingCursor = changedDirs[len(changedDirs)-1].Path
 		for _, dir := range changedDirs {

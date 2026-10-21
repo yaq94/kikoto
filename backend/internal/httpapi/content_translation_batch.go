@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"net/http"
 	"slices"
@@ -102,8 +103,14 @@ func (s *Server) translateBatchItem(ctx context.Context, language string, item c
 	}
 	request, err := s.resolveTranslationResource(ctx, request)
 	if err != nil {
+		// Keep the single-item distinction: an unknown code is a 404 and a
+		// malformed identity is a rejected request, not a source outage.
 		result.Status = "failed"
-		result.Code = "translation_content_unavailable"
+		if errors.Is(err, sql.ErrNoRows) {
+			result.Code = "not_found"
+		} else {
+			result.Code = "translation_invalid_input"
+		}
 		return result
 	}
 	if request.SeriesID <= 0 && request.CatalogEntryID <= 0 && request.SourceID <= 0 {

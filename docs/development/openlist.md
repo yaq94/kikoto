@@ -48,12 +48,22 @@ same scan without discarding its published catalog or private reviews.
 The path must be absolute, below `/`, and free of `..`; repeated slashes are
 normalized. An exclusion covers the path and every descendant.
 
+`mode` is `whole` (default) or `whitelist`. A whitelist is a subtree exception
+inside an excluded tree: it defeats a whole rule only when it is at least as
+specific as that rule and still covers the path, so an outer exclusion keeps its
+other children excluded. Its own files, directory rows, observations and audio
+roots are kept and stay playable; ancestors on the way to it are kept as a
+bridge that the next incremental sync may list. Creating a whitelist after a
+whole rule deleted its rows marks the bridge as changed and starts a sync, so
+the exception is republished instead of staying empty.
+
 `DELETE /api/remote-sources/{id}/catalog/exclusions/{exclusionId}` removes one
-rule by the id returned from the list. Deletion restores the entry to a
-discoverable state; the next scan decides whether the files are available.
-Existing entries and every work, review, series and relocation reference are
-retained. Only catalog files, observations, directory rows and audio roots below
-the excluded path are removed.
+rule by the id returned from the list. Deleting a whitelist re-applies the whole
+rule above it; deleting a whole rule restores the entry to a discoverable state
+and the next scan decides whether the files are available. Existing entries and
+every work, review, series and relocation reference are retained. Only catalog
+files, observations, directory rows and audio roots that remain excluded are
+removed, including files of a parent card that fall inside the excluded path.
 
 The Library source panel shows index status, counts, timestamps, partition
 coverage and unresolved directories. **Index limits** configures the next start

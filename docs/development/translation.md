@@ -22,14 +22,21 @@ Administrator routes require `sources:write`:
   model name, template version and elapsed milliseconds.
 - `GET /api/settings/translation/runtime` returns per-language corpus counts,
   the soft byte budget, the prefill view and the queue counters.
+- `GET /api/content-translations/version` returns the opaque `version` string
+  the translation responses embed. It is readable by any `library:read` caller
+  and lets the browser reject a cached row from another model, endpoint,
+  reasoning switch or prompt template before the first translation of a
+  session. Every single, batch and trial response carries the same `version`;
+  the browser stores it with the row and deletes a row whose version differs.
 - `GET /api/settings/translation/prefill` returns the durable prefill cursor,
   per-language coverage, the night-window flag, the recent rate and the last
   error. `POST` the same route with `{"status":"running"|"paused"}` pauses or
   resumes the pass.
 - `POST /api/content-translations/batch` accepts a display `language` and up to
   200 items, each with a client `key` and the same selector as the single
-  endpoint. Every item reports its own `status` and `code`; one failure does not
-  cancel the rest.
+  endpoint, including `code`. Every item reports its own `status` and `code`;
+  one failure does not cancel the rest, and an unknown code reports `not_found`
+  rather than a source outage.
 
 Configuration is persisted transactionally in `app_setting.translation_service`.
 The secret is stored with the other private server data; it is not encrypted by

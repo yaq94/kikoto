@@ -514,8 +514,9 @@ func (s *Server) translationPrefillFields(ctx context.Context, cfg translation.C
 }
 
 // catalogEntryProtectedNamesForPrefill reuses the same protected-name rules as
-// an interactive request. A failure keeps the title translatable: the names are
-// protection, not a precondition for the row.
+// an interactive request. A failure is returned to the caller, which skips the
+// entry: sending a title without its names would hand a published circle or
+// cast name to the model.
 func (s *Server) catalogEntryProtectedNamesForPrefill(ctx context.Context, entryID int64) ([]string, error) {
 	entry, _, err := s.loadSourceCatalogEntry(ctx, entryID)
 	if err != nil {

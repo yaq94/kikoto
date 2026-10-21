@@ -60,7 +60,7 @@ func TestContentTranslationSearchRemoteLanguageStrict(t *testing.T) {
 	insertCatalogPlanAudio(t, db, 1, "01.mp3", "rain")
 	insertCatalogPlanEntry(t, db, 2, "Yoru no Omoide", "")
 	insertCatalogPlanAudio(t, db, 2, "01.mp3", "rain")
-	insertCatalogPlanEntry(t, db, 3, "雨夜の物語", "RJ90000001")
+	insertCatalogPlanEntry(t, db, 3, "雨夜の物語", "RJ00000003")
 	insertCatalogPlanAudio(t, db, 3, "01.mp3", "rain")
 	insertCatalogPlanEntry(t, db, 4, "Yoru Koi Uta", "")
 	insertCatalogPlanAudio(t, db, 4, "01.mp3", "rain")

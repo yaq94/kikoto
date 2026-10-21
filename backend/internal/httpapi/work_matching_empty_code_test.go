@@ -197,8 +197,8 @@ func TestMigration089AllowsBlankCodesAndRejectsDuplicates(t *testing.T) {
 
 func TestMigration089RejectsLegacyDuplicateBeforeIndex(t *testing.T) {
 	for _, codes := range [][2]string{
-		{"RJ00000892", "RJ00000892"},
-		{" RJ00000892 ", "RJ00000892"},
+		{"RJ00000092", "RJ00000092"},
+		{" RJ00000092 ", "RJ00000092"},
 	} {
 		t.Run(strings.TrimSpace(codes[0])+"_"+strings.TrimSpace(codes[1]), func(t *testing.T) {
 			sourceDir := filepath.Join("..", "..", "migrations")
@@ -241,13 +241,13 @@ func TestMigration089NormalDataCreatesIndex(t *testing.T) {
 	if !strings.Contains(sqlText, "ON work(trim(primary_code))") || !strings.Contains(sqlText, "WHERE trim(primary_code) <> ''") {
 		t.Fatalf("089 index = %s", sqlText)
 	}
-	if _, err := db.Exec(`INSERT INTO work(primary_code,title) VALUES('RJ00000893','Normal')`); err != nil {
+	if _, err := db.Exec(`INSERT INTO work(primary_code,title) VALUES('RJ00000093','Normal')`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec(`INSERT INTO work(primary_code,title) VALUES('  RJ00000894  ','Padded')`); err != nil {
+	if _, err := db.Exec(`INSERT INTO work(primary_code,title) VALUES('  RJ00000094  ','Padded')`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec(`INSERT INTO work(primary_code,title) VALUES('RJ00000894','Duplicate after trim')`); err == nil {
+	if _, err := db.Exec(`INSERT INTO work(primary_code,title) VALUES('RJ00000094','Duplicate after trim')`); err == nil {
 		t.Fatal("089 accepted a code that duplicates another code after trim")
 	}
 }

@@ -38,7 +38,7 @@ Useful flags:
 | `--vacuum-to` | optional consistent copy; refuses to overwrite without `--force` |
 | `--write-db` | disposable copy for write benchmarks; must differ from `--db`; falls back to `--vacuum-to` |
 | `--source-id`, `--generation` | override auto-detection |
-| `--root` | root for `catalogRootIncomplete`, default `/source/example` |
+| `--root` | root for `catalogRootIncomplete`; default is `KIKOTO_BENCH_ROOT`, or empty when unset |
 | `--runs` | read benchmark repetitions |
 | `--write-runs` | write-path repetitions, each rolled back |
 | `--cleanup-cursor` | starting entry id for the 100-card cleanup replay |
