@@ -306,6 +306,52 @@ func TestCatalogSidecarRescanKeepsExhaustedAttempts(t *testing.T) {
 	}
 }
 
+// A publish batch can name one split card several times. The candidate marker
+// must visit the entry once so its revision lookup and update are not repeated.
+func TestCatalogSidecarCandidateIDsDedupeInOrder(t *testing.T) {
+	got := dedupeCatalogSidecarIDs([]int64{4, 2, 4, 4, 2, 3})
+	want := []int64{4, 2, 3}
+	if len(got) != len(want) {
+		t.Fatalf("deduped ids = %v, want %v", got, want)
+	}
+	for index := range want {
+		if got[index] != want[index] {
+			t.Fatalf("deduped ids = %v, want %v", got, want)
+		}
+	}
+}
+
+func TestCatalogSidecarRepeatedPublishedIDProcessesOnce(t *testing.T) {
+	f := newCatalogIndexFixture(t, emptyCatalogUpstream(t))
+	metadataReviewExec(t, f.server.db, `INSERT INTO source_catalog_entry(id,file_source_id,root_path,title,sidecar_attempts,sidecar_revision)
+		VALUES(80,1,'/Example Work','Example Work',0,'');
+		INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes,observed_generation)
+		VALUES(80,'readme.txt','readme.txt','text',24,1);
+		CREATE TABLE sidecar_candidate_updates(n INTEGER NOT NULL);
+		INSERT INTO sidecar_candidate_updates VALUES(0);
+		CREATE TRIGGER count_sidecar_candidate_update AFTER UPDATE ON source_catalog_entry
+		WHEN NEW.id=80 BEGIN UPDATE sidecar_candidate_updates SET n=n+1; END;`)
+	tx, err := f.server.db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = markCatalogSidecarCandidatesTx(context.Background(), tx, []int64{80, 80, 80, 80, 80}, 1); err != nil {
+		_ = tx.Rollback()
+		t.Fatal(err)
+	}
+	if err = tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	var updates, pending int
+	if err = f.server.db.QueryRow(`SELECT (SELECT n FROM sidecar_candidate_updates),
+		(SELECT sidecar_pending FROM source_catalog_entry WHERE id=80)`).Scan(&updates, &pending); err != nil {
+		t.Fatal(err)
+	}
+	if updates != 1 || pending != 1 {
+		t.Fatalf("repeated candidate updates=%d pending=%d, want one update and one queued card", updates, pending)
+	}
+}
+
 // A card that never produced evidence has an empty sidecar_revision. The next
 // rescan must treat that as "no earlier revision", not as a change, otherwise
 // the five-attempt budget restarts forever and the source is read every day.

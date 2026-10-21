@@ -50,6 +50,13 @@ func refreshTitleLanguages(ctx context.Context, db *sql.DB) error {
 }
 
 func refreshTitleLanguageBatch(ctx context.Context, db *sql.DB, limit int) (int, error) {
+	// The queue is usually empty between metadata edits. Check before taking the
+	// writer lock so an idle worker does not contend with readers and other
+	// writers on every poll.
+	var pending bool
+	if err := db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM work_title_language_dirty)`).Scan(&pending); err != nil || !pending {
+		return 0, err
+	}
 	tx, release, err := sqlutil.BeginBoundedTx(ctx, db)
 	if err != nil {
 		return 0, err

@@ -101,6 +101,14 @@ func (s *Server) backfillSnapshotCardSummaries(ctx context.Context, limit int) (
 		return 0, nil
 	}
 	version := library.SnapshotCardSummaryVersion
+	// The summary and dirty tables are empty on every fresh or already-drained
+	// library. The self-join below would still take the writer lock on each
+	// coordinator tick, so skip it before any write when there is nothing to do.
+	var queued bool
+	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM metadata_snapshot_card_summary_dirty)
+		OR EXISTS(SELECT 1 FROM metadata_snapshot_card_summary WHERE version < ? OR version > ?)`, version, version).Scan(&queued); err != nil || !queued {
+		return 0, err
+	}
 	if err := withDatabaseBusyRetry(ctx, func() error {
 		_, err := s.db.ExecContext(ctx, `
 			INSERT INTO metadata_snapshot_card_summary_dirty (snapshot_id)

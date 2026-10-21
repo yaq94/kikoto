@@ -675,10 +675,30 @@ func sameCatalogSidecarEvidence(left, right string) bool {
 	return normalize(left) == normalize(right)
 }
 
+// dedupeCatalogSidecarIDs removes repeated published ids while retaining the
+// order of their first appearance. A publish batch can repeat an entry when
+// several observations map to the same split card.
+func dedupeCatalogSidecarIDs(ids []int64) []int64 {
+	if len(ids) < 2 {
+		return ids
+	}
+	seen := make(map[int64]struct{}, len(ids))
+	result := make([]int64, 0, len(ids))
+	for _, id := range ids {
+		if _, exists := seen[id]; exists {
+			continue
+		}
+		seen[id] = struct{}{}
+		result = append(result, id)
+	}
+	return result
+}
+
 // markCatalogSidecarCandidatesTx queues cards in this publication transaction
 // and clears evidence for a readme the release no longer publishes. A card is
 // queued only when it contains a file whose role can carry credits.
 func markCatalogSidecarCandidatesTx(ctx context.Context, tx *sql.Tx, ids []int64, generation int64) error {
+	ids = dedupeCatalogSidecarIDs(ids)
 	if len(ids) == 0 {
 		return nil
 	}

@@ -367,7 +367,7 @@ func (s *Server) settleCatalogBatch(ctx context.Context, job workflowJobRecord, 
 		return err
 	}
 	checkpoint := mustJSON(map[string]any{"phase": status, "detail": map[string]any{"sourceId": sourceID, "generation": job.RunID}, "progressCurrent": progress.Completed, "progressTotal": 0})
-	if _, err = tx.ExecContext(ctx, `UPDATE workflow_job SET status=?,checkpoint_json=?,progress_current=?,progress_total=0,error_message=?,locked_by='',locked_at=NULL,heartbeat_at=NULL,available_at=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='running' AND locked_by=?`, status, checkpoint, progress.Completed, reason, job.ID, job.LockedBy); err != nil {
+	if _, err = tx.ExecContext(ctx, `UPDATE workflow_job SET status=?,checkpoint_json=?,progress_current=?,progress_total=0,error_message=?,locked_by='',locked_at=NULL,heartbeat_at=NULL,available_at=CASE WHEN ?='queued' THEN CURRENT_TIMESTAMP ELSE NULL END,updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='running' AND locked_by=?`, status, checkpoint, progress.Completed, reason, status, job.ID, job.LockedBy); err != nil {
 		return err
 	}
 	if _, err = tx.ExecContext(ctx, `UPDATE workflow_node_run SET status=?,output_json=?,error_message=?,finished_at=CASE WHEN ?='queued' THEN NULL ELSE CURRENT_TIMESTAMP END WHERE id=?`, status, mustJSON(progress), reason, status, job.NodeRunID); err != nil {
