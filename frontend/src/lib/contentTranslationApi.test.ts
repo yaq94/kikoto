@@ -86,13 +86,17 @@ describe("contentTranslationApi.translateBatch", () => {
 
   it("keeps source-level identity for uncached translations", async () => {
     sendJSONBody.mockImplementation(async (_method, _path, body) => echoResponse(body));
-    await contentTranslationApi.translateBatch([{ sourceId: 4, code: "RJ123", field: "title", text: "x", language: "ko" }]);
+    await contentTranslationApi.translateBatch([
+      { sourceId: 4, code: "RJ123", field: "title", text: "x", language: "ko" },
+    ]);
 
     expect(sendJSONBody.mock.calls[0][2].items[0]).toMatchObject({ sourceId: 4, code: "RJ123" });
   });
 
   it("reports a 400 as an identifiable batch error", async () => {
-    sendJSONBody.mockRejectedValue(new ApiError("A batch accepts between 1 and 200 items.", 400, "translation_invalid_input"));
+    sendJSONBody.mockRejectedValue(
+      new ApiError("A batch accepts between 1 and 200 items.", 400, "translation_invalid_input"),
+    );
 
     await expect(contentTranslationApi.translateBatch([input(1)])).rejects.toMatchObject({
       name: "ContentTranslationBatchError",
@@ -128,6 +132,44 @@ describe("contentTranslationApi.translateBatch", () => {
     expect(sendJSONBody).toHaveBeenCalledTimes(1);
     expect(sendJSONBody.mock.calls[0][2].items).toHaveLength(1);
     expect(first.text).toBe(second.text);
+  });
+
+  it("aborts a coalesced batch once every reader of that frame has left", async () => {
+    let signal: AbortSignal | undefined;
+    sendJSONBody.mockImplementation((_method, _path, _body, options) => {
+      signal = options?.signal;
+      return new Promise((_resolve, reject) => {
+        options?.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")));
+      }) as never;
+    });
+    const controller = new AbortController();
+    const pending = translateCoalesced(input(1), controller.signal).catch((error) => error);
+
+    await vi.waitFor(() => expect(sendJSONBody).toHaveBeenCalled());
+    controller.abort();
+    await pending;
+
+    expect(signal?.aborted).toBe(true);
+  });
+
+  it("keeps a coalesced batch running while another field still waits", async () => {
+    let signal: AbortSignal | undefined;
+    let release!: (value: unknown) => void;
+    sendJSONBody.mockImplementation((_method, _path, body, options) => {
+      signal = options?.signal;
+      return new Promise((resolve) => (release = () => resolve(echoResponse(body)))) as never;
+    });
+    const left = new AbortController();
+    const first = translateCoalesced(input(1), left.signal).catch((error) => error);
+    const second = translateCoalesced(input(2));
+
+    await vi.waitFor(() => expect(sendJSONBody).toHaveBeenCalled());
+    left.abort();
+    await first;
+    expect(signal?.aborted).toBe(false);
+
+    release();
+    await expect(second).resolves.toMatchObject({ status: "translated" });
   });
 
   it("clears in-flight markers when a request settles", async () => {
