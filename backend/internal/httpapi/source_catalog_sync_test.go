@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"sort"
@@ -26,12 +27,13 @@ type catalogSyncTestTree struct {
 	mu       sync.Mutex
 	entries  map[string][]catalogSyncTestEntry
 	dirsFail map[string]bool
+	listFail map[string]bool
 	listHits map[string]int
 	dirsHits map[string]int
 }
 
 func newCatalogSyncTestTree() *catalogSyncTestTree {
-	return &catalogSyncTestTree{entries: map[string][]catalogSyncTestEntry{}, dirsFail: map[string]bool{}, listHits: map[string]int{}, dirsHits: map[string]int{}}
+	return &catalogSyncTestTree{entries: map[string][]catalogSyncTestEntry{}, dirsFail: map[string]bool{}, listFail: map[string]bool{}, listHits: map[string]int{}, dirsHits: map[string]int{}}
 }
 
 func (tree *catalogSyncTestTree) set(path string, entries ...catalogSyncTestEntry) {
@@ -116,6 +118,11 @@ func (tree *catalogSyncTestTree) handler(t *testing.T) http.Handler {
 			_ = json.NewEncoder(w).Encode(map[string]any{"code": 200, "data": items})
 		case "/api/fs/list":
 			tree.listHits[input.Path]++
+			if tree.listFail[input.Path] {
+				tree.mu.Unlock()
+				http.Error(w, "synthetic listing failure", http.StatusInternalServerError)
+				return
+			}
 			entries := append([]catalogSyncTestEntry{}, tree.entries[input.Path]...)
 			tree.mu.Unlock()
 			items := make([]map[string]any, 0, len(entries))
@@ -604,6 +611,39 @@ func TestCatalogSyncPausesOnLowDiskAndDoesNotSpendRequests(t *testing.T) {
 	}
 	if remaining := due - time.Now().Unix(); remaining < 50*60 || remaining > 70*60 {
 		t.Fatalf("daily due in %d seconds, want about an hour", remaining)
+	}
+}
+
+// A failed listing must not stop the directories behind it. The path cursor
+// moves on, so one broken directory costs one request instead of hiding the
+// rest of the tree.
+func TestCatalogSyncContinuesPastAFailedListing(t *testing.T) {
+	tree := newCatalogSyncTestTree()
+	tree.set("/", catalogSyncTestEntry{Name: "P1", IsDir: true, Modified: "a"})
+	works := make([]catalogSyncTestEntry, 0, 40)
+	for i := range 40 {
+		name := fmt.Sprintf("W%02d", i)
+		works = append(works, catalogSyncTestEntry{Name: name, IsDir: true, Modified: "w"})
+		tree.set("/P1/"+name, catalogSyncTestEntry{Name: "01.mp3", Size: 100, Modified: "f"})
+	}
+	tree.set("/P1", works...)
+	f := newCatalogSyncFixture(t, tree)
+	if p := f.runFullScan(t, ""); p["status"] != "complete" {
+		t.Fatalf("full scan did not complete: %#v", p)
+	}
+	// Force a second pass over the whole tree with one early failure.
+	tree.mu.Lock()
+	tree.listFail["/P1/W00"] = true
+	tree.mu.Unlock()
+	state := f.runCatalogSync(t, true)
+	if state.Status != "partial" {
+		t.Fatalf("sync with one failed listing = %q/%q", state.Status, state.Note)
+	}
+	if !strings.Contains(state.Note, "/P1/W00") {
+		t.Fatalf("note does not name the failed directory: %q", state.Note)
+	}
+	if tree.listCount("/P1/W39") == 0 {
+		t.Fatal("a failed listing hid the directories behind it")
 	}
 }
 

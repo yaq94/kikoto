@@ -241,7 +241,10 @@ func (s *Server) executeCatalogIncrementalSync(ctx context.Context, runID, sourc
 	}()
 
 	failed := false
-	attempted := map[string]bool{}
+	// listingCursor advances over changed directories in path order. It is not
+	// durable: a restart re-lists from the beginning, and the listing digest
+	// makes an unchanged directory cheap.
+	listingCursor := ""
 	scanStarted := time.Now()
 	for {
 		if err = ctx.Err(); err != nil {
@@ -285,29 +288,20 @@ func (s *Server) executeCatalogIncrementalSync(ctx context.Context, runID, sourc
 			continue
 		}
 
-		changedDirs, queryErr := s.pendingCatalogSyncListings(ctx, sourceID, generation)
+		// A path cursor walks each changed directory exactly once. A failed
+		// listing keeps its row for the next daily run; retrying it inside this
+		// run would either spin or force a full-table read per batch. Child
+		// directories sort after their parent, so rows inserted by this pass
+		// are still ahead of the cursor.
+		changedDirs, queryErr := s.pendingCatalogSyncListings(ctx, sourceID, generation, listingCursor, catalogSyncBatch)
 		if queryErr != nil {
 			return queryErr
 		}
-		// A failed listing keeps its row in 'changed' state, so the attempted
-		// set is what stops this run from retrying it forever. Only one batch
-		// of new work is spent per pass: the hold and disk checks above then
-		// run again instead of after a whole tree of requests.
-		unattempted := make([]catalogSyncDirectoryState, 0, catalogSyncBatch)
-		for _, dir := range changedDirs {
-			if attempted[dir.Path] {
-				continue
-			}
-			unattempted = append(unattempted, dir)
-			if len(unattempted) == catalogSyncBatch {
-				break
-			}
-		}
-		if len(unattempted) == 0 {
+		if len(changedDirs) == 0 {
 			break
 		}
-		for _, dir := range unattempted {
-			attempted[dir.Path] = true
+		listingCursor = changedDirs[len(changedDirs)-1].Path
+		for _, dir := range changedDirs {
 			entries, pages, requestErr := s.fetchCatalogSyncListing(ctx, client, dir, options)
 			state.Requests += pages
 			if requestErr != nil {
@@ -453,16 +447,14 @@ func (s *Server) pendingCatalogSyncProbes(ctx context.Context, sourceID, generat
 	return dirs, rows.Err()
 }
 
-// pendingCatalogSyncListings returns every directory still waiting for a
-// listing. The result is bounded by the size of the source tree, not by a
-// separate cap: the caller walks the whole set and decides per pass how many
-// requests to spend, because a cap here would hide rows behind an already
-// attempted path.
-func (s *Server) pendingCatalogSyncListings(ctx context.Context, sourceID, generation int64) ([]catalogSyncDirectoryState, error) {
+// pendingCatalogSyncListings returns the next page of changed directories
+// after the given path. The caller advances the cursor to the last row, so one
+// run reads every row once even on a 14k-directory source.
+func (s *Server) pendingCatalogSyncListings(ctx context.Context, sourceID, generation int64, after string, limit int) ([]catalogSyncDirectoryState, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT path,partition_path,catalog_root,revision,status,sync_state,observed_version,listing_digest
 		FROM source_catalog_directory
-		WHERE file_source_id=? AND generation=? AND sync_state='changed'
-		ORDER BY path`, sourceID, generation)
+		WHERE file_source_id=? AND generation=? AND sync_state='changed' AND path>?
+		ORDER BY path LIMIT ?`, sourceID, generation, after, limit)
 	if err != nil {
 		return nil, err
 	}
