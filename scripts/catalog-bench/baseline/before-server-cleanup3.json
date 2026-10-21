@@ -1,0 +1,52 @@
+{
+  "generatedAt": "2026-10-21T10:16:18Z",
+  "label": "before-server-cleanup3",
+  "driver": "modernc.org/sqlite",
+  "database": "/tmp/kikoto-bench-before.db",
+  "databaseBytes": 366694400,
+  "schemaVersion": 84,
+  "counts": {
+    "publishPending": 171604,
+    "sourceCatalogDirectory": 14496,
+    "sourceCatalogEntry": 114081,
+    "sourceCatalogFile": 224395,
+    "sourceCatalogObservation": 389830
+  },
+  "source": {
+    "directories": 14494,
+    "generation": 53,
+    "id": 3,
+    "root": "/asmr6/轩子"
+  },
+  "root": "/asmr6/轩子",
+  "queries": [
+    {
+      "name": "cleanup_100_cards",
+      "runs": 3,
+      "medianMs": 2690.106,
+      "minMs": 2678.042,
+      "maxMs": 2695.325,
+      "details": {
+        "cursorFrom": 0,
+        "directoryCards": 31,
+        "removedFiles": 0,
+        "scanned": 100,
+        "uncertainCards": 0
+      },
+      "plan": [
+        "#1 SEARCH source_catalog_entry USING COVERING INDEX source_catalog_entry_lifecycle (file_source_id=? AND last_seen_generation=? AND id\u003e?)",
+        "#2 SEARCH source_catalog_file USING INDEX source_catalog_file_title (catalog_entry_id=?)",
+        "#3 SCAN CONSTANT ROW",
+        "#3 SCALAR SUBQUERY 1",
+        "#3 SEARCH source_catalog_file USING INDEX source_catalog_file_title (catalog_entry_id=?)",
+        "#4 SEARCH source_catalog_file USING COVERING INDEX sqlite_autoindex_source_catalog_file_1 (catalog_entry_id=? AND relative_path=?)",
+        "#4 LIST SUBQUERY 2",
+        "#4 COMPOUND QUERY",
+        "#4 LEFT-MOST SUBQUERY",
+        "#4 SEARCH source_catalog_entry USING INDEX source_catalog_entry_relocated (relocated_to_id=?)",
+        "#4 UNION ALL",
+        "#4 SEARCH source_catalog_entry USING INDEX source_catalog_entry_relocated (relocated_to_id=?)"
+      ]
+    }
+  ]
+}

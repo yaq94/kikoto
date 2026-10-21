@@ -1,0 +1,155 @@
+{
+  "generatedAt": "2026-10-21T10:15:59Z",
+  "label": "before-server-warm",
+  "driver": "modernc.org/sqlite",
+  "database": "/tmp/kikoto-bench-before.db",
+  "databaseBytes": 366694400,
+  "schemaVersion": 84,
+  "counts": {
+    "publishPending": 171604,
+    "sourceCatalogDirectory": 14496,
+    "sourceCatalogEntry": 114081,
+    "sourceCatalogFile": 224395,
+    "sourceCatalogObservation": 389830
+  },
+  "source": {
+    "directories": 14494,
+    "generation": 53,
+    "id": 3,
+    "root": "/asmr6/轩子"
+  },
+  "root": "/asmr6/轩子",
+  "queries": [
+    {
+      "name": "progress_exact",
+      "runs": 5,
+      "medianMs": 543.85,
+      "minMs": 539.98,
+      "maxMs": 561.82,
+      "details": {
+        "breakdownMs": {
+          "detailPage": 8.18,
+          "directoryAggregates": 19.281,
+          "observedJoin": 472.283,
+          "partitionPage": 19.272,
+          "scanRow": 0.121,
+          "stagingCounts": 42.654
+        },
+        "completed": 14463,
+        "detailRows": 31,
+        "directories": 14494,
+        "failed": 4,
+        "indexed": 41569,
+        "observed": 389823,
+        "partitionRows": 8,
+        "partitions": 8,
+        "pauseReason": "",
+        "pending": 0,
+        "requests": 14657,
+        "restricted": 0,
+        "runId": 53,
+        "stagingDirectories": 14496,
+        "stagingObservations": 389830,
+        "status": "partial",
+        "unconfirmedEmpty": 27
+      },
+      "plan": [
+        "#1 SCAN scan",
+        "#1 SEARCH run USING INTEGER PRIMARY KEY (rowid=?)",
+        "#2 SCAN CONSTANT ROW",
+        "#2 SCALAR SUBQUERY 1",
+        "#2 SEARCH source_catalog_directory USING COVERING INDEX sqlite_autoindex_source_catalog_directory_1 (file_source_id=?)",
+        "#2 SCALAR SUBQUERY 2",
+        "#2 SEARCH source_catalog_observation USING COVERING INDEX source_catalog_observation_revision (file_source_id=?)",
+        "#3 USE TEMP B-TREE FOR count(DISTINCT)",
+        "#3 SEARCH source_catalog_directory USING INDEX source_catalog_directory_root (file_source_id=? AND generation=?)",
+        "#4 SCAN CONSTANT ROW",
+        "#4 SCALAR SUBQUERY 1",
+        "#4 SEARCH o USING COVERING INDEX source_catalog_observation_revision (file_source_id=?)",
+        "#4 SEARCH d USING INDEX sqlite_autoindex_source_catalog_directory_1 (file_source_id=? AND path=?)",
+        "#4 SCALAR SUBQUERY 2",
+        "#4 SEARCH source_catalog_entry USING COVERING INDEX source_catalog_entry_lifecycle (file_source_id=? AND last_seen_generation=?)",
+        "#5 SEARCH source_catalog_directory USING INDEX source_catalog_directory_root (file_source_id=? AND generation=?)",
+        "#5 USE TEMP B-TREE FOR GROUP BY",
+        "#6 SEARCH source_catalog_directory USING INDEX sqlite_autoindex_source_catalog_directory_1 (file_source_id=?)"
+      ]
+    },
+    {
+      "name": "purge_empty_pending",
+      "runs": 5,
+      "medianMs": 204.614,
+      "minMs": 200.123,
+      "maxMs": 207.66,
+      "details": {
+        "stale": 0
+      },
+      "plan": [
+        "#1 SCAN CONSTANT ROW",
+        "#1 SCALAR SUBQUERY 1",
+        "#1 SEARCH o USING COVERING INDEX source_catalog_observation_pending (file_source_id=?)",
+        "#1 SEARCH d USING INDEX sqlite_autoindex_source_catalog_directory_1 (file_source_id=? AND path=?)"
+      ]
+    },
+    {
+      "name": "root_incomplete",
+      "runs": 5,
+      "medianMs": 262.016,
+      "minMs": 260.166,
+      "maxMs": 268.492,
+      "details": {
+        "incomplete": 0,
+        "root": "/asmr6/轩子"
+      },
+      "plan": [
+        "#1 SCAN CONSTANT ROW",
+        "#1 SCALAR SUBQUERY 3",
+        "#1 COMPOUND QUERY",
+        "#1 LEFT-MOST SUBQUERY",
+        "#1 SEARCH d USING INDEX source_catalog_directory_root (file_source_id=? AND generation=?)",
+        "#1 UNION ALL",
+        "#1 SEARCH o USING INDEX source_catalog_observation_pending (file_source_id=?)",
+        "#1 SEARCH pd USING INDEX sqlite_autoindex_source_catalog_directory_1 (file_source_id=? AND path=?)",
+        "#1 CORRELATED SCALAR SUBQUERY 2",
+        "#1 SEARCH r USING COVERING INDEX sqlite_autoindex_source_catalog_audio_root_1 (file_source_id=? AND generation=? AND catalog_root=?)"
+      ]
+    },
+    {
+      "name": "publish_1000_rows",
+      "runs": 5,
+      "medianMs": 31.785,
+      "minMs": 31.732,
+      "maxMs": 31.843,
+      "details": {
+        "rows": 0
+      },
+      "plan": [
+        "#1 SEARCH d USING INDEX sqlite_autoindex_source_catalog_directory_1 (file_source_id=?)",
+        "#1 SEARCH o USING INDEX source_catalog_observation_pending (file_source_id=? AND directory_path=?)",
+        "#1 SEARCH r EXISTS USING COVERING INDEX sqlite_autoindex_source_catalog_audio_root_1 (file_source_id=? AND generation=? AND catalog_root=?)",
+        "#1 SEARCH rd USING INDEX sqlite_autoindex_source_catalog_directory_1 (file_source_id=? AND path=?) LEFT-JOIN"
+      ]
+    },
+    {
+      "name": "publish_1000_rows_fixture",
+      "runs": 5,
+      "medianMs": 5.196,
+      "minMs": 5.05,
+      "maxMs": 5.328,
+      "details": {
+        "markedPending": 1000,
+        "rows": 1000
+      },
+      "plan": [
+        "#1 SEARCH source_catalog_observation USING INTEGER PRIMARY KEY (rowid=?)",
+        "#1 LIST SUBQUERY 2",
+        "#1 SEARCH o USING INDEX source_catalog_observation_revision (file_source_id=?)",
+        "#1 SEARCH d USING INDEX sqlite_autoindex_source_catalog_directory_1 (file_source_id=? AND path=?)",
+        "#1 SEARCH r EXISTS USING COVERING INDEX sqlite_autoindex_source_catalog_audio_root_1 (file_source_id=? AND generation=? AND catalog_root=?)",
+        "#2 SEARCH d USING INDEX sqlite_autoindex_source_catalog_directory_1 (file_source_id=?)",
+        "#2 SEARCH o USING INDEX source_catalog_observation_pending (file_source_id=? AND directory_path=?)",
+        "#2 SEARCH r EXISTS USING COVERING INDEX sqlite_autoindex_source_catalog_audio_root_1 (file_source_id=? AND generation=? AND catalog_root=?)",
+        "#2 SEARCH rd USING INDEX sqlite_autoindex_source_catalog_directory_1 (file_source_id=? AND path=?) LEFT-JOIN"
+      ]
+    }
+  ]
+}
