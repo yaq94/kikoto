@@ -4,7 +4,10 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"net/http"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -16,9 +19,10 @@ import (
 // several nights, and the cursor is committed after each batch so a restart
 // resumes instead of starting over.
 const (
-	translationPrefillBatchSize = 50
-	translationPrefillInterval  = 15 * time.Second
-	translationPrefillParallel  = 8
+	translationPrefillBatchSize   = 50
+	translationPrefillInterval    = 15 * time.Second
+	translationPrefillParallel    = 8
+	translationPrefillFailureStop = 3
 )
 
 // prefillLanguages are the languages the model can produce. Traditional
@@ -47,8 +51,9 @@ type translationPrefillView struct {
 	RatePerMinute float64                      `json:"ratePerMinute"`
 }
 
-// translationPrefillStatus reads the durable cursor and per-language coverage.
-func (s *Server) translationPrefillStatus(ctx context.Context) (translationPrefillView, error) {
+// translationPrefillState reads only the durable cursor/status row. The worker
+// uses this projection so a 15-second tick never scans the whole corpus.
+func (s *Server) translationPrefillState(ctx context.Context) (translationPrefillView, error) {
 	view := translationPrefillView{Status: "idle", Languages: []translationPrefillLanguage{}}
 	var updated string
 	err := s.db.QueryRowContext(ctx, `SELECT cursor_entry_id,status,last_error,updated_at FROM translation_prefill_state WHERE id=1`).Scan(&view.Cursor, &view.Status, &view.LastError, &updated)
@@ -58,6 +63,17 @@ func (s *Server) translationPrefillStatus(ctx context.Context) (translationPrefi
 		return view, err
 	}
 	view.UpdatedAt = updated
+	return view, nil
+}
+
+// translationPrefillStatus reads the durable cursor and per-language coverage.
+// It is the operator view; the background worker must use
+// translationPrefillState instead.
+func (s *Server) translationPrefillStatus(ctx context.Context) (translationPrefillView, error) {
+	view, err := s.translationPrefillState(ctx)
+	if err != nil {
+		return view, err
+	}
 	view.NightWindow = translation.IsNightWindow(time.Now())
 	view.RatePerMinute = s.translationPrefillRate()
 	if err = s.db.QueryRowContext(ctx, `SELECT count(*) FROM source_catalog_entry
@@ -85,7 +101,7 @@ func (s *Server) translationPrefillStatus(ctx context.Context) (translationPrefi
 	for _, language := range append(prefillLanguages, translation.SourceHant) {
 		view.Languages = append(view.Languages, translationPrefillLanguage{Language: language, Rows: byLanguage[language], Missing: max64(view.Total-byLanguage[language], 0)})
 	}
-	return view, rows.Err()
+	return view, nil
 }
 
 func max64(a, b int64) int64 {
@@ -132,6 +148,32 @@ func (s *Server) noteTranslationPrefillWrite(count int) {
 	s.translationPrefillWrites = kept
 }
 
+// noteTranslationPrefillFailure counts consecutive batches in which at least
+// one language for the entry failed. A later batch with no failure clears it.
+func (s *Server) noteTranslationPrefillFailure(entryID int64) int {
+	s.translationPrefillMu.Lock()
+	defer s.translationPrefillMu.Unlock()
+	if s.translationPrefillFailures == nil {
+		s.translationPrefillFailures = map[int64]int{}
+	}
+	s.translationPrefillFailures[entryID]++
+	return s.translationPrefillFailures[entryID]
+}
+
+func (s *Server) clearTranslationPrefillFailure(entryID int64) {
+	s.translationPrefillMu.Lock()
+	defer s.translationPrefillMu.Unlock()
+	delete(s.translationPrefillFailures, entryID)
+}
+
+func (s *Server) clearTranslationPrefillFailures(entryIDs []int64) {
+	s.translationPrefillMu.Lock()
+	defer s.translationPrefillMu.Unlock()
+	for _, entryID := range entryIDs {
+		delete(s.translationPrefillFailures, entryID)
+	}
+}
+
 // runTranslationPrefillWorker is started with the other background workers.
 // It idles when the corpus is complete and resumes automatically when a new
 // entry needs rows.
@@ -152,7 +194,7 @@ func (s *Server) runTranslationPrefillWorker(ctx context.Context) {
 // runTranslationPrefillBatch fills one bounded batch. It returns whether more
 // rows remain.
 func (s *Server) runTranslationPrefillBatch(ctx context.Context) (bool, error) {
-	state, err := s.translationPrefillStatus(ctx)
+	state, err := s.translationPrefillState(ctx)
 	if err != nil {
 		return false, err
 	}
@@ -167,21 +209,111 @@ func (s *Server) runTranslationPrefillBatch(ctx context.Context) (bool, error) {
 		_, err = s.db.ExecContext(ctx, `UPDATE translation_prefill_state SET status='complete', last_error='', updated_at=CURRENT_TIMESTAMP WHERE id=1`)
 		return false, err
 	}
+	lastID := entries[len(entries)-1].id
+	// A skipped entry can fall back into the window when a lower failure pulls
+	// the cursor back. Do not spend the batch on it again; the count already
+	// proved it is not making progress.
+	active := make([]translationPrefillEntry, 0, len(entries))
+	alreadySkipped := []int64{}
+	for _, entry := range entries {
+		if s.translationPrefillFailureCount(entry.id) >= translationPrefillFailureStop {
+			alreadySkipped = append(alreadySkipped, entry.id)
+			continue
+		}
+		active = append(active, entry)
+	}
 	cfg, err := translation.NewStore(s.db).Load(ctx)
 	if err != nil {
 		return false, err
 	}
-	written, runErr := s.translationPrefillFields(ctx, cfg, entries)
-	lastID := entries[len(entries)-1].id
-	status := "running"
-	if runErr != nil {
-		status = "running"
+	written := 0
+	var failed map[int64]error
+	var runErr error
+	if len(active) > 0 {
+		written, failed, runErr = s.translationPrefillFields(ctx, cfg, active)
 	}
-	if _, err = s.db.ExecContext(ctx, `UPDATE translation_prefill_state SET cursor_entry_id=?, status=?, last_error=?, updated_at=CURRENT_TIMESTAMP WHERE id=1`, lastID, status, errorText(runErr)); err != nil {
+	cursor := lastID
+	message := ""
+	if runErr != nil {
+		// A batch-level failure was not attributed to an entry. Keep the
+		// cursor before this batch so the next tick retries it.
+		cursor = active[0].id - 1
+		message = errorText(runErr)
+	} else {
+		retrying := []int64{}
+		skipped := append([]int64(nil), alreadySkipped...)
+		failedIDs := make([]int64, 0, len(failed))
+		for id := range failed {
+			failedIDs = append(failedIDs, id)
+		}
+		sort.Slice(failedIDs, func(i, j int) bool { return failedIDs[i] < failedIDs[j] })
+		for _, id := range failedIDs {
+			attempts := s.noteTranslationPrefillFailure(id)
+			if attempts < translationPrefillFailureStop {
+				retrying = append(retrying, id)
+				if id-1 < cursor {
+					cursor = id - 1
+				}
+				continue
+			}
+			skipped = append(skipped, id)
+		}
+		for _, entry := range active {
+			if _, ok := failed[entry.id]; !ok {
+				s.clearTranslationPrefillFailure(entry.id)
+			}
+		}
+		sort.Slice(skipped, func(i, j int) bool { return skipped[i] < skipped[j] })
+		message = translationPrefillFailureMessage(failed, retrying, skipped)
+	}
+	if _, err = s.db.ExecContext(ctx, `UPDATE translation_prefill_state SET cursor_entry_id=?, status='running', last_error=?, updated_at=CURRENT_TIMESTAMP WHERE id=1`, cursor, message); err != nil {
 		return false, err
 	}
 	s.noteTranslationPrefillWrite(written)
 	return len(entries) == translationPrefillBatchSize, runErr
+}
+
+// translationPrefillFailureCount is the process-local consecutive-failure
+// count for one entry.
+func (s *Server) translationPrefillFailureCount(entryID int64) int {
+	s.translationPrefillMu.Lock()
+	defer s.translationPrefillMu.Unlock()
+	return s.translationPrefillFailures[entryID]
+}
+
+// translationPrefillFailureMessage keeps skipped ids/count at the front so
+// truncation to the column's 300-byte budget never hides what was skipped.
+func translationPrefillFailureMessage(failed map[int64]error, retrying, skipped []int64) string {
+	parts := []string{}
+	if len(skipped) > 0 {
+		ids := make([]string, 0, len(skipped))
+		for _, id := range skipped {
+			ids = append(ids, fmt.Sprintf("%d", id))
+		}
+		parts = append(parts, fmt.Sprintf("skipped %d entries after %d failures: %s", len(skipped), translationPrefillFailureStop, strings.Join(ids, ",")))
+		for _, id := range skipped {
+			if err := failed[id]; err != nil {
+				parts = append(parts, fmt.Sprintf("entry %d: %v", id, err))
+				break
+			}
+		}
+	}
+	if len(retrying) > 0 {
+		reasons := make([]string, 0, len(retrying))
+		for _, id := range retrying {
+			if err := failed[id]; err != nil {
+				reasons = append(reasons, fmt.Sprintf("entry %d: %v", id, err))
+			}
+		}
+		if len(reasons) > 0 {
+			parts = append(parts, "retrying "+strings.Join(reasons, "; "))
+		}
+	}
+	text := strings.Join(parts, "; ")
+	if len(text) > 300 {
+		text = text[:300]
+	}
+	return text
 }
 
 func errorText(err error) string {
@@ -222,33 +354,45 @@ func (s *Server) translationPrefillEntries(ctx context.Context, after int64) ([]
 
 // translationPrefillFields writes the native row and queues the missing model
 // rows for one batch. The work is bounded and shares the background lane, so a
-// viewer's request is never queued behind a whole backfill.
-func (s *Server) translationPrefillFields(ctx context.Context, cfg translation.Config, entries []translationPrefillEntry) (int, error) {
+// viewer's request is never queued behind a whole backfill. The returned map is
+// the set of entries with at least one failed language; the batch caller owns
+// cursor movement and retry accounting.
+func (s *Server) translationPrefillFields(ctx context.Context, cfg translation.Config, entries []translationPrefillEntry) (int, map[int64]error, error) {
+	type entryTasks struct {
+		entry translationPrefillEntry
+		once  sync.Once
+		names []string
+	}
 	type task struct {
-		entry    translationPrefillEntry
+		work     *entryTasks
 		language string
 		key      string
 	}
 	tasks := []task{}
+	failed := map[int64]error{}
 	written := 0
 	for _, entry := range entries {
 		detected := translation.DetectSourceLanguage(entry.title)
+		work := &entryTasks{entry: entry}
 		for _, language := range prefillLanguages {
 			if detected == language {
 				key := contentTranslationCacheKey("entry", entry.id, "", "title", language, entry.title, "native", "", "", "", false)
 				row := contentTranslationRow{CacheKey: key, EntityKind: "entry", EntityID: entry.id, Field: "title", Language: language, SourceText: entry.title, TranslatedText: entry.title, Origin: "native"}
 				if err := s.saveContentTranslations(ctx, []contentTranslationRow{row}); err != nil {
-					return written, err
+					if _, ok := failed[entry.id]; !ok {
+						failed[entry.id] = err
+					}
+					continue
 				}
 				written++
 				continue
 			}
 			key := contentTranslationCacheKey("entry", entry.id, "", "title", language, entry.title, "model", cfg.Model, cfg.BaseURL, translation.TemplateVersion, cfg.DisableThinking)
-			tasks = append(tasks, task{entry: entry, language: language, key: key})
+			tasks = append(tasks, task{work: work, language: language, key: key})
 		}
 	}
 	if len(tasks) == 0 {
-		return written, nil
+		return written, failed, nil
 	}
 	keys := make([]string, 0, len(tasks))
 	for _, item := range tasks {
@@ -256,12 +400,21 @@ func (s *Server) translationPrefillFields(ctx context.Context, cfg translation.C
 	}
 	existing, err := s.lookupContentTranslations(ctx, keys)
 	if err != nil {
-		return written, err
+		return written, failed, err
 	}
 	sem := make(chan struct{}, translationPrefillParallel)
 	var wg sync.WaitGroup
 	var mu sync.Mutex
-	var firstErr error
+	recordFailure := func(entryID int64, err error) {
+		if err == nil {
+			return
+		}
+		mu.Lock()
+		if _, ok := failed[entryID]; !ok {
+			failed[entryID] = err
+		}
+		mu.Unlock()
+	}
 	for _, item := range tasks {
 		if _, ok := existing[item.key]; ok {
 			continue
@@ -271,27 +424,22 @@ func (s *Server) translationPrefillFields(ctx context.Context, cfg translation.C
 		go func(item task) {
 			defer wg.Done()
 			defer func() { <-sem }()
-			names, namesErr := s.catalogEntryProtectedNamesForPrefill(ctx, item.entry.id)
-			if namesErr != nil {
-				names = nil
-			}
-			target := translationTarget{modelLanguage: item.language}
-			text, translateErr := s.translateWithQueue(ctx, cfg, item.key, names, item.entry.title, target, "")
-			if translateErr != nil {
-				mu.Lock()
-				if firstErr == nil {
-					firstErr = translateErr
+			item.work.once.Do(func() {
+				names, namesErr := s.catalogEntryProtectedNamesForPrefill(ctx, item.work.entry.id)
+				if namesErr != nil {
+					names = nil
 				}
-				mu.Unlock()
+				item.work.names = names
+			})
+			target := translationTarget{modelLanguage: item.language}
+			text, translateErr := s.translateWithQueue(ctx, cfg, item.key, item.work.names, item.work.entry.title, target, "")
+			if translateErr != nil {
+				recordFailure(item.work.entry.id, translateErr)
 				return
 			}
-			row := contentTranslationRow{CacheKey: item.key, EntityKind: "entry", EntityID: item.entry.id, Field: "title", Language: item.language, SourceText: item.entry.title, TranslatedText: text, Origin: "model", Model: cfg.Model, TemplateVersion: translation.TemplateVersion}
+			row := contentTranslationRow{CacheKey: item.key, EntityKind: "entry", EntityID: item.work.entry.id, Field: "title", Language: item.language, SourceText: item.work.entry.title, TranslatedText: text, Origin: "model", Model: cfg.Model, TemplateVersion: translation.TemplateVersion}
 			if saveErr := s.saveContentTranslations(ctx, []contentTranslationRow{row}); saveErr != nil {
-				mu.Lock()
-				if firstErr == nil {
-					firstErr = saveErr
-				}
-				mu.Unlock()
+				recordFailure(item.work.entry.id, saveErr)
 				return
 			}
 			mu.Lock()
@@ -300,7 +448,7 @@ func (s *Server) translationPrefillFields(ctx context.Context, cfg translation.C
 		}(item)
 	}
 	wg.Wait()
-	return written, firstErr
+	return written, failed, nil
 }
 
 // catalogEntryProtectedNamesForPrefill reuses the same protected-name rules as
@@ -372,4 +520,7 @@ func (s *Server) noteCatalogEntriesPublished(ctx context.Context, entryIDs []int
 			status=CASE WHEN status='complete' THEN 'running' ELSE status END,
 			updated_at=CURRENT_TIMESTAMP
 		WHERE id=1`, lowest)
+	// A republished card gets a fresh retry budget; otherwise an entry skipped
+	// after three failures would be ignored even though its title changed.
+	s.clearTranslationPrefillFailures(entryIDs)
 }

@@ -1,0 +1,245 @@
+package httpapi
+
+import (
+	"context"
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"testing"
+
+	"github.com/yexca/kikoto/backend/internal/config"
+	"github.com/yexca/kikoto/backend/internal/translation"
+)
+
+func configurePrefillModel(t *testing.T, host *httptest.Server, admin *http.Cookie, baseURL string) {
+	t.Helper()
+	payload, err := json.Marshal(map[string]any{"baseUrl": baseURL, "minFreeBytes": 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	translationRequest(t, host, admin, "PATCH", "/api/settings/translation", string(payload), http.StatusOK)
+}
+
+func seedPrefillCard(t *testing.T, s *Server, id int64, title string) {
+	t.Helper()
+	if _, err := s.db.Exec(`INSERT INTO source_catalog_entry(id,root_path,title) VALUES(?,?,?)`, id, "/"+title, title); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func readPrefillState(t *testing.T, s *Server) (int64, string, string) {
+	t.Helper()
+	var cursor int64
+	var status, lastError string
+	if err := s.db.QueryRow(`SELECT cursor_entry_id,status,last_error FROM translation_prefill_state WHERE id=1`).Scan(&cursor, &status, &lastError); err != nil {
+		t.Fatal(err)
+	}
+	return cursor, status, lastError
+}
+
+func successfulPrefillModel(t *testing.T, calls *atomic.Int32) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		_, _ = io.WriteString(w, `{"choices":[{"message":{"content":"示例译文"},"finish_reason":"stop"}]}`)
+	}))
+}
+
+func TestTranslationPrefillNativeTitleWritesNativeRowWithoutModelCall(t *testing.T) {
+	var calls atomic.Int32
+	var mu sync.Mutex
+	prompts := []string{}
+	model := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		body, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		prompts = append(prompts, string(body))
+		mu.Unlock()
+		_, _ = io.WriteString(w, `{"choices":[{"message":{"content":"示例译文"},"finish_reason":"stop"}]}`)
+	}))
+	defer model.Close()
+	s, host, admin, _ := translationHTTPFixture(t)
+	seedPrefillCard(t, s, 1, "Example title")
+	configurePrefillModel(t, host, admin, model.URL)
+
+	if _, err := s.runTranslationPrefillBatch(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	var origin, translated, language string
+	if err := s.db.QueryRow(`SELECT origin,translated_text,language FROM content_translation
+		WHERE entity_kind='entry' AND entity_id=1 AND field='title' AND language='en'`).Scan(&origin, &translated, &language); err != nil {
+		t.Fatal(err)
+	}
+	if origin != "native" || translated != "Example title" || language != "en" {
+		t.Fatalf("native row = origin %q text %q language %q", origin, translated, language)
+	}
+	if calls.Load() != 3 {
+		t.Fatalf("model calls = %d, want one for each non-native language", calls.Load())
+	}
+	for _, prompt := range prompts {
+		if strings.Contains(prompt, "翻译为英语") {
+			t.Fatalf("native English title was sent to the model: %s", prompt)
+		}
+	}
+}
+
+func TestTranslationPrefillRetriesFailedEntryBeforeAdvancingCursor(t *testing.T) {
+	var calls atomic.Int32
+	model := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if calls.Add(1) <= 3 {
+			_, _ = io.WriteString(w, `{"choices":[{"message":{"content":""},"finish_reason":"stop"}]}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"choices":[{"message":{"content":"示例译文"},"finish_reason":"stop"}]}`)
+	}))
+	defer model.Close()
+	s, host, admin, _ := translationHTTPFixture(t)
+	seedPrefillCard(t, s, 1, "Example title")
+	configurePrefillModel(t, host, admin, model.URL)
+
+	if _, err := s.runTranslationPrefillBatch(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	cursor, status, lastError := readPrefillState(t, s)
+	if cursor != 0 || status != "running" {
+		t.Fatalf("after failure state = cursor %d status %q, want 0/running", cursor, status)
+	}
+	if !strings.Contains(lastError, "no translation") {
+		t.Fatalf("last_error = %q, want the model failure reason", lastError)
+	}
+
+	if _, err := s.runTranslationPrefillBatch(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	cursor, status, lastError = readPrefillState(t, s)
+	if cursor != 1 || status != "running" || lastError != "" {
+		t.Fatalf("after retry state = cursor %d status %q last_error %q, want 1/running/empty", cursor, status, lastError)
+	}
+	if calls.Load() != 6 {
+		t.Fatalf("model calls = %d, want three failed then three retried", calls.Load())
+	}
+}
+
+func TestTranslationPrefillSkipsEntryAfterThreeConsecutiveFailures(t *testing.T) {
+	var calls atomic.Int32
+	model := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		_, _ = io.WriteString(w, `{"choices":[{"message":{"content":""},"finish_reason":"stop"}]}`)
+	}))
+	defer model.Close()
+	s, host, admin, _ := translationHTTPFixture(t)
+	seedPrefillCard(t, s, 1, "Example title")
+	configurePrefillModel(t, host, admin, model.URL)
+
+	for attempt := 1; attempt <= 3; attempt++ {
+		if _, err := s.runTranslationPrefillBatch(context.Background()); err != nil {
+			t.Fatalf("attempt %d: %v", attempt, err)
+		}
+		cursor, status, lastError := readPrefillState(t, s)
+		if status != "running" {
+			t.Fatalf("attempt %d status = %q, want running", attempt, status)
+		}
+		if attempt < 3 {
+			if cursor != 0 {
+				t.Fatalf("attempt %d cursor = %d, want the failing entry retried", attempt, cursor)
+			}
+			continue
+		}
+		if cursor != 1 {
+			t.Fatalf("third failure cursor = %d, want entry skipped", cursor)
+		}
+		if !strings.Contains(lastError, "skipped 1 entries after 3 failures") || !strings.Contains(lastError, "1") {
+			t.Fatalf("last_error = %q, want skipped count and id", lastError)
+		}
+		if len(lastError) > 300 {
+			t.Fatalf("last_error length = %d, want at most 300", len(lastError))
+		}
+	}
+	if calls.Load() != 9 {
+		t.Fatalf("model calls = %d, want three languages on each of three batches", calls.Load())
+	}
+}
+
+func TestTranslationPrefillPublishedEntryRollsCursorBack(t *testing.T) {
+	db := openMigratedTestDB(t)
+	if _, err := db.Exec(`UPDATE translation_prefill_state SET cursor_entry_id=10,status='complete' WHERE id=1`); err != nil {
+		t.Fatal(err)
+	}
+	s := &Server{db: db, translationPrefillFailures: map[int64]int{7: 3, 20: 2, 99: 1}}
+	s.noteCatalogEntriesPublished(context.Background(), []int64{20, 7})
+	var cursor int64
+	var status string
+	if err := db.QueryRow(`SELECT cursor_entry_id,status FROM translation_prefill_state WHERE id=1`).Scan(&cursor, &status); err != nil {
+		t.Fatal(err)
+	}
+	if cursor != 6 || status != "running" {
+		t.Fatalf("published rollback = cursor %d status %q, want 6/running", cursor, status)
+	}
+	if s.translationPrefillFailureCount(7) != 0 || s.translationPrefillFailureCount(20) != 0 || s.translationPrefillFailureCount(99) != 1 {
+		t.Fatal("published entries did not get a fresh retry budget")
+	}
+}
+
+func TestTranslationPrefillBatchAvoidsFullCorpusStatistics(t *testing.T) {
+	db, counter := openCatalogCountingTestDB(t)
+	s := NewServer(db, config.Config{})
+	seedPrefillCard(t, s, 1, "Example title")
+	model := successfulPrefillModel(t, &atomic.Int32{})
+	defer model.Close()
+	baseURL := model.URL
+	minFree := int64(0)
+	if _, err := translation.NewStore(db).Update(context.Background(), translation.Patch{BaseURL: &baseURL, MinFreeBytes: &minFree}); err != nil {
+		t.Fatal(err)
+	}
+	counter.reset()
+	if _, err := s.runTranslationPrefillBatch(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	statements := counter.snapshot()
+	foundStateRead := false
+	for _, statement := range statements {
+		lower := strings.ToLower(statement)
+		if strings.Contains(lower, "group by language") {
+			t.Fatalf("worker ran the full language statistics query: %s", statement)
+		}
+		if strings.Contains(lower, "count(*) from source_catalog_entry") {
+			t.Fatalf("worker ran the full corpus count query: %s", statement)
+		}
+		if strings.Contains(lower, "from translation_prefill_state") {
+			foundStateRead = true
+		}
+	}
+	if !foundStateRead {
+		t.Fatal("worker did not read the single prefill state row")
+	}
+}
+
+func TestTranslationPrefillLoadsProtectedNamesOncePerEntry(t *testing.T) {
+	db, counter := openCatalogCountingTestDB(t)
+	s := NewServer(db, config.Config{})
+	seedPrefillCard(t, s, 1, "Example title")
+	model := successfulPrefillModel(t, &atomic.Int32{})
+	defer model.Close()
+	baseURL := model.URL
+	minFree := int64(0)
+	if _, err := translation.NewStore(db).Update(context.Background(), translation.Patch{BaseURL: &baseURL, MinFreeBytes: &minFree}); err != nil {
+		t.Fatal(err)
+	}
+	counter.reset()
+	if _, err := s.runTranslationPrefillBatch(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	loads := 0
+	for _, statement := range counter.snapshot() {
+		if strings.Contains(statement, "FROM source_catalog_entry WHERE id=?") {
+			loads++
+		}
+	}
+	if loads != 1 {
+		t.Fatalf("catalog entry loads = %d, want once for all languages of one entry", loads)
+	}
+}
