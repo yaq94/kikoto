@@ -50,6 +50,10 @@ Query names: `progress_exact`, `purge_empty_pending`, `root_incomplete`,
 `publish_1000_rows`, `publish_1000_rows_fixture`, `cleanup_100_cards`,
 `lifecycle_100_entries`.
 
+`publish_1000_rows_fixture`, `cleanup_100_cards` and `lifecycle_100_entries`
+require `--vacuum-to`; without a copy the tool refuses to run them so the
+source database stays read-only.
+
 ## What is measured
 
 - `progress_exact`: the six statements of `sourceCatalogProgress` (scan row,

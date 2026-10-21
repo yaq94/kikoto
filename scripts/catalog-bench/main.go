@@ -271,6 +271,13 @@ func main() {
 		return false
 	}
 
+	// Write benchmarks must never touch the source database. Requiring a
+	// VACUUM INTO copy keeps the read-only contract even though each write
+	// benchmark rolls back.
+	if *vacuumTo == "" && (enabled("cleanup_100_cards") || enabled("lifecycle_100_entries") || enabled("publish_1000_rows_fixture")) {
+		fatalf("cleanup_100_cards, lifecycle_100_entries and publish_1000_rows_fixture require --vacuum-to")
+	}
+
 	if enabled("progress_exact") {
 		rep.Queries = append(rep.Queries, benchRead(ctx, "progress_exact", *runs, func(ctx context.Context) (map[string]any, error) {
 			return runProgress(ctx, ro, sid, gen)
