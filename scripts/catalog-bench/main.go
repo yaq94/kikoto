@@ -209,6 +209,11 @@ func main() {
 	if *writeDB != "" && samePath(*dbPath, *writeDB) {
 		fatalf("--write-db must differ from --db")
 	}
+	if *writeDB != "" {
+		if _, err := os.Stat(*writeDB); err != nil {
+			fatalf("--write-db: %v", err)
+		}
+	}
 	if *vacuumTo != "" {
 		if _, err := os.Stat(*vacuumTo); err == nil && !*force {
 			fatalf("%s exists; pass --force to replace it", *vacuumTo)
