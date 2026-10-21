@@ -79,6 +79,16 @@ export type CatalogGroupingPreview = {
   episodes: CatalogSeriesEpisode[];
 };
 export type CatalogTrack = RemoteTrack & { path: string; children: CatalogTrack[] };
+export type CatalogTrackPage = {
+  tracks: CatalogTrack[];
+  total?: number;
+  returned?: number;
+  truncated?: boolean;
+  summary?: boolean;
+  path?: string;
+  depth?: number;
+};
+export type CatalogTrackOptions = { path?: string; depth?: number; limit?: number };
 export type CatalogDirectory = Omit<CatalogEntry, keyof PersonalReview> & {
   directoryType: "catalog" | "remote";
   status: CatalogStatus;
@@ -194,8 +204,14 @@ export const sourceCatalogApi = {
   refreshCatalogDirectory: (id: number, signal?: AbortSignal) =>
     postJSONBody<{ status: string }>(`/api/source-catalog/${id}/refresh`, {}, signal),
   getCatalogEntry: (id: number, signal?: AbortSignal) => getJSON<CatalogEntry>(`/api/source-catalog/${id}`, signal),
-  getCatalogTracks: (id: number, signal?: AbortSignal) =>
-    getJSON<{ tracks: CatalogTrack[] }>(`/api/source-catalog/${id}/tracks`, signal),
+  getCatalogTracks: (id: number, options?: CatalogTrackOptions, signal?: AbortSignal) => {
+    const params = new URLSearchParams();
+    if (options?.path !== undefined) params.set("path", options.path);
+    if (options?.depth) params.set("depth", String(options.depth));
+    if (options?.limit) params.set("limit", String(options.limit));
+    const query = params.toString();
+    return getJSON<CatalogTrackPage>(`/api/source-catalog/${id}/tracks${query ? `?${query}` : ""}`, signal);
+  },
   updateCatalogReview: (id: number, patch: PersonalReviewPatch) =>
     patchJSONBody<PersonalReview & { workId: number }>(`/api/source-catalog/${id}/user-state`, patch),
   scanSourceCatalog: (id: number, signal?: AbortSignal) =>

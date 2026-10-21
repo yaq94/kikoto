@@ -21,3 +21,31 @@ export function buildCatalogTree(entryId: number, tracks: CatalogTrack[]): TreeN
   present(root);
   return root;
 }
+
+function uniqueCatalogTracks(tracks: CatalogTrack[]): CatalogTrack[] {
+  const seen = new Set<string>();
+  return tracks.filter((track) => {
+    if (seen.has(track.path)) return false;
+    seen.add(track.path);
+    return true;
+  });
+}
+
+/** Merges a lazily fetched folder page into the tree already on screen. */
+export function mergeCatalogTracks(
+  tracks: CatalogTrack[],
+  folderPath: string,
+  children: CatalogTrack[],
+): CatalogTrack[] {
+  const target = folderPath.replace(/^\/+|\/+$/g, "");
+  if (target === "") return uniqueCatalogTracks([...tracks, ...children]);
+  const merge = (nodes: CatalogTrack[]): CatalogTrack[] =>
+    nodes.map((node) => {
+      if (node.path === target) {
+        return { ...node, children: uniqueCatalogTracks([...(node.children ?? []), ...children]) };
+      }
+      if (!node.children?.length) return node;
+      return { ...node, children: merge(node.children) };
+    });
+  return merge(tracks);
+}

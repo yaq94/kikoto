@@ -16,7 +16,7 @@ import (
 
 var numberedMigrationFilePattern = regexp.MustCompile(`^[0-9]{3}_[a-z0-9][a-z0-9_]*\.sql$`)
 
-const latestNumberedMigrationVersion = 85
+const latestNumberedMigrationVersion = 86
 
 // latestReleasedBaseline is the newest file in migrations/baseline/, which
 // production uses for a fresh database.
@@ -119,8 +119,8 @@ func TestMigrateUpgradesExistingDatabaseThroughNumberedChain(t *testing.T) {
 	if err := db.QueryRow("SELECT filename FROM schema_migration WHERE version = ?", latestNumberedMigrationVersion).Scan(&filename); err != nil {
 		t.Fatal(err)
 	}
-	if filename != "085_source_catalog_progress_counters.sql" {
-		t.Fatalf("applied migration = %q, want 085_source_catalog_progress_counters.sql", filename)
+	if filename != "086_catalog_search_and_track_index.sql" {
+		t.Fatalf("applied migration = %q, want 086_catalog_search_and_track_index.sql", filename)
 	}
 }
 
@@ -244,7 +244,7 @@ func TestMigrateUpgradesRetiredBaselineLedger(t *testing.T) {
 			if err := rows.Err(); err != nil {
 				t.Fatal(err)
 			}
-			wantHistory := testCase.wantHistory + ",063_recommendation_catalog.sql,064_retire_source_health_check.sql,065_availability_watch_family.sql,066_contributor_role.sql,067_user_time_zone.sql,068_listening_hours.sql,069_openlist_catalog.sql,070_source_catalog_scan.sql,071_catalog_series.sql,072_source_catalog_lifecycle.sql,073_shared_association.sql,074_work_matching.sql,075_personal_transfer.sql,076_source_catalog_publish_queue.sql,077_source_catalog_publish_cleanup.sql,078_source_catalog_loose_works.sql,079_source_catalog_sidecar.sql,080_source_catalog_sidecar_queue.sql,081_source_catalog_sidecar_revision.sql,082_source_catalog_sidecar_retry.sql,083_source_catalog_cleanup_indexes.sql,084_source_catalog_orphan_cursor.sql,085_source_catalog_progress_counters.sql"
+			wantHistory := testCase.wantHistory + ",063_recommendation_catalog.sql,064_retire_source_health_check.sql,065_availability_watch_family.sql,066_contributor_role.sql,067_user_time_zone.sql,068_listening_hours.sql,069_openlist_catalog.sql,070_source_catalog_scan.sql,071_catalog_series.sql,072_source_catalog_lifecycle.sql,073_shared_association.sql,074_work_matching.sql,075_personal_transfer.sql,076_source_catalog_publish_queue.sql,077_source_catalog_publish_cleanup.sql,078_source_catalog_loose_works.sql,079_source_catalog_sidecar.sql,080_source_catalog_sidecar_queue.sql,081_source_catalog_sidecar_revision.sql,082_source_catalog_sidecar_retry.sql,083_source_catalog_cleanup_indexes.sql,084_source_catalog_orphan_cursor.sql,085_source_catalog_progress_counters.sql,086_catalog_search_and_track_index.sql"
 			if got := strings.Join(filenames, ","); got != wantHistory {
 				t.Fatalf("upgraded migration history = %q, want %q", got, wantHistory)
 			}
@@ -725,11 +725,43 @@ func schemaSnapshot(t *testing.T, db *sql.DB) map[string]string {
 	return snapshot
 }
 
+// ftsShadowTables names the internal tables FTS5 creates for every virtual
+// table. Their contents encode token positions and dictionary layout, so the
+// same logical rows can serialize differently depending on whether they were
+// inserted one by one or rebuilt in one statement. Comparing them would make
+// the baseline check depend on FTS internals rather than on application data.
+func ftsShadowTables(t *testing.T, db *sql.DB) map[string]bool {
+	t.Helper()
+	rows, err := db.Query(`SELECT name FROM sqlite_master WHERE type='table' AND sql LIKE '%USING fts5%'`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	shadow := map[string]bool{}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			t.Fatal(err)
+		}
+		for _, suffix := range []string{"_data", "_idx", "_docsize", "_config", "_content"} {
+			shadow[name+suffix] = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	return shadow
+}
+
 func dataSnapshot(t *testing.T, db *sql.DB) map[string]string {
 	t.Helper()
 	tables := applicationTables(t, db)
+	shadow := ftsShadowTables(t, db)
 	snapshot := make(map[string]string)
 	for _, table := range tables {
+		if shadow[table] {
+			continue
+		}
 		columns := tableInfo(t, db, table)
 		var names []string
 		for _, column := range columns {
@@ -866,4 +898,42 @@ func diffStringMaps(left, right map[string]string) string {
 		}
 	}
 	return strings.Join(differences, "\n")
+}
+
+func TestCatalogSearchMigrationBackfillsExistingRows(t *testing.T) {
+	sourceDir := filepath.Join("..", "..", "migrations")
+	previousCatalog := copyNumberedMigrationsThrough(t, sourceDir, 84)
+	db := openMigrationManagerDB(t)
+	if err := Migrate(db, previousCatalog); err != nil {
+		t.Fatalf("create schema 084: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO file_source(id,code,display_name,source_type) VALUES(7,'legacy_source','Legacy Source','openlist');
+		INSERT INTO source_catalog_entry(id,file_source_id,root_path,title,primary_code) VALUES(1,7,'/legacy','Legacy Work','RJ00999999');
+		INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes) VALUES(1,'Disc/legacy.mp3','Legacy Track','audio',10);`); err != nil {
+		t.Fatalf("seed schema 084: %v", err)
+	}
+	if err := Migrate(db, sourceDir); err != nil {
+		t.Fatalf("upgrade to 085: %v", err)
+	}
+	var documents int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM source_catalog_search_doc WHERE body LIKE '%Legacy Track%'`).Scan(&documents); err != nil {
+		t.Fatal(err)
+	}
+	if documents != 1 {
+		t.Fatalf("file search documents = %d, want 1", documents)
+	}
+	var hits int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM source_catalog_search WHERE source_catalog_search MATCH '"Legacy Track"'`).Scan(&hits); err != nil {
+		t.Fatal(err)
+	}
+	if hits != 1 {
+		t.Fatalf("FTS hits = %d, want 1", hits)
+	}
+	var parent string
+	if err := db.QueryRow(`SELECT parent_path FROM source_catalog_file WHERE catalog_entry_id=1 AND relative_path='Disc/legacy.mp3'`).Scan(&parent); err != nil {
+		t.Fatal(err)
+	}
+	if parent != "Disc" {
+		t.Fatalf("parent_path = %q, want Disc", parent)
+	}
 }
