@@ -45,6 +45,9 @@ export const scriptJobs = {
   "run-source-index-performance.mjs": [],
   "run-source-index-tail-performance.mjs": [],
   "test-kikoto-helper.ps1": [],
+  // A manual benchmark harness. It is not wired into a job because it needs a
+  // production-sized database copy, which CI does not have.
+  "catalog-bench": [],
 };
 
 const documentation =
