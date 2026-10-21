@@ -133,6 +133,14 @@ export const contentTranslationApi = {
     apiTransport.sendJSONBody<ContentTranslationResult>("POST", "/api/content-translations", input, { signal }),
 
   /**
+   * Reads the version the server currently uses. The provider calls this once
+   * per session so a cached row is checked before it paints, even when no
+   * translation request of this session has run yet.
+   */
+  version: (signal?: AbortSignal) =>
+    apiTransport.getJSON<{ version: string }>("/api/content-translations/version", signal),
+
+  /**
    * Translates inputs in server-sized batches and returns results by request
    * key (`input.key` when supplied, otherwise `contentTranslationRequestKey`).
    * Inputs of different languages go out as separate requests. A request over

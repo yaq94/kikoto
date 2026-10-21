@@ -354,6 +354,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("PATCH /api/media-items/{id}/progress", s.updateMediaProgress)
 	mux.HandleFunc("GET /api/auth/me/preferences", s.getUserPreferences)
 	mux.HandleFunc("PATCH /api/auth/me/preferences", s.updateUserPreferences)
+	mux.HandleFunc("GET /api/content-translations/version", s.getContentTranslationVersion)
 	handleSlowFirstResponse("POST /api/content-translations", s.translateContent)
 	handleSlowFirstResponse("POST /api/content-translations/batch", s.translateContentBatch)
 	handleSlowFirstResponse("POST /api/settings/translation/test", s.testTranslation)

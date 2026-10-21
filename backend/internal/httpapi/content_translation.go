@@ -138,6 +138,15 @@ func (s *Server) translateContent(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, result)
 }
 
+// getContentTranslationVersion lets a reader check its browser cache before the
+// first translation of a session. It exposes only the opaque version string.
+func (s *Server) getContentTranslationVersion(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requirePermission(w, r, "library:read"); !ok {
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"version": s.contentTranslationVersion(r.Context())})
+}
+
 // contentTranslationVersion identifies everything that changes the bytes a
 // model returns: the endpoint, the model name, the reasoning switch and the
 // prompt template. The browser only compares it for equality. The endpoint is

@@ -7,6 +7,7 @@ import { apiSessionVersion } from "@/lib/apiSession";
 import { currentClientStorageScope } from "@/lib/clientStorageScope";
 import {
   ContentTranslationBatchError,
+  contentTranslationApi,
   translateCoalesced,
   type ContentTranslationInput,
   type ContentTranslationRequest,
@@ -68,6 +69,24 @@ export function ContentLanguageProvider({ children }: { children: ReactNode }) {
       window.removeEventListener(CONTENT_LANGUAGE_CHANGED, refresh);
     };
   }, [scope]);
+  // The version is a server-wide fact, not a result of this session's first
+  // request. Reading it here means a cached row from an older model is
+  // rejected before it paints, instead of staying visible until some later
+  // translation happens to announce the new version.
+  useEffect(() => {
+    if (!userId || demoMode) return;
+    const controller = new AbortController();
+    void contentTranslationApi
+      .version(controller.signal)
+      .then((value) => {
+        if (!controller.signal.aborted) noteVersion(value?.version);
+      })
+      .catch(() => {
+        // An unknown version keeps the permissive read; a later response
+        // announces the version it used.
+      });
+    return () => controller.abort();
+  }, [userId, demoMode, noteVersion]);
   useEffect(() => {
     if (!userId || demoMode) return;
     const controller = new AbortController();
