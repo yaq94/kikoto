@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -9,6 +10,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/yexca/kikoto/backend/internal/config"
 	"github.com/yexca/kikoto/backend/internal/sqlutil"
@@ -538,5 +540,472 @@ func TestSourceCatalogExclusionSuppressesPendingObservation(t *testing.T) {
 		if pending != want {
 			t.Fatalf("observation %q pending = %d, want %d", name, pending, want)
 		}
+	}
+}
+
+// A whitelist is per exclusion rule. A shallower exception releases only the
+// rows it covers, and a deeper whole rule is still an exclusion because the
+// exception is not at least as specific as that rule.
+func TestSourceCatalogExclusionWhitelistNestedRules(t *testing.T) {
+	db := openMigratedTestDB(t)
+	const sourceID = int64(81)
+	seedExclusionSource(t, db, sourceID, sourceTypeOpenList)
+	if _, err := db.Exec(`INSERT INTO source_catalog_entry(id,file_source_id,root_path,title) VALUES
+		(811,?, '/A/Parent','Parent'),
+		(812,?, '/A/Keep','Keep'),
+		(813,?, '/A/Keep/Deep','Deep'),
+		(814,?, '/A/Drop','Drop'),
+		(815,?, '/A/Other','Other'),
+		(816,?, '/B','Outside'),
+		(817,?, '/A/Keep/Deep/Inner','Nested exception')`, sourceID, sourceID, sourceID, sourceID, sourceID, sourceID, sourceID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes)
+		SELECT id, 'track.mp3', 'Track', 'audio', 100 FROM source_catalog_entry WHERE file_source_id=?`, sourceID); err != nil {
+		t.Fatal(err)
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	ctx := context.Background()
+	if _, err = tx.Exec(`INSERT INTO source_catalog_exclusion(file_source_id,path,mode) VALUES
+		(?, '/A', 'whole'),
+		(?, '/A/Keep', 'whitelist'),
+		(?, '/A/Keep/Deep', 'whole'),
+		(?, '/A/Keep/Deep/Inner', 'whitelist')`, sourceID, sourceID, sourceID, sourceID); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{"/A", "/A/Keep/Deep"} {
+		if err = applyCatalogExclusionTx(ctx, tx, sourceID, p); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err = tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	for id, want := range map[int64]string{
+		811: "excluded", 812: "available", 813: "excluded", 814: "excluded", 815: "excluded", 816: "available",
+		817: "available",
+	} {
+		var status string
+		if err = db.QueryRow(`SELECT availability_status FROM source_catalog_entry WHERE id=?`, id).Scan(&status); err != nil {
+			t.Fatal(err)
+		}
+		if status != want {
+			t.Fatalf("entry %d status = %q, want %q", id, status, want)
+		}
+	}
+	var kept, dropped int
+	if err = db.QueryRow(`SELECT count(*) FROM source_catalog_file WHERE catalog_entry_id=812`).Scan(&kept); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.QueryRow(`SELECT count(*) FROM source_catalog_file WHERE catalog_entry_id IN (811,813,814,815)`).Scan(&dropped); err != nil {
+		t.Fatal(err)
+	}
+	var nested int
+	if err = db.QueryRow(`SELECT count(*) FROM source_catalog_file WHERE catalog_entry_id=817`).Scan(&nested); err != nil {
+		t.Fatal(err)
+	}
+	if kept != 1 || dropped != 0 || nested != 1 {
+		t.Fatalf("files kept=%d excluded=%d nested=%d, want 1/0/1", kept, dropped, nested)
+	}
+}
+
+// Removing a whitelist re-excludes the subtree under the whole rule. Removing
+// the whole rule afterwards restores the entry because nothing covers it.
+func TestSourceCatalogExclusionWhitelistRemovalReexcludes(t *testing.T) {
+	db := openMigratedTestDB(t)
+	const sourceID = int64(82)
+	seedExclusionSource(t, db, sourceID, sourceTypeOpenList)
+	if _, err := db.Exec(`INSERT INTO source_catalog_entry(id,file_source_id,root_path,title) VALUES
+		(821,?, '/A','Parent'),(822,?, '/A/Keep','Keep')`, sourceID, sourceID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes) VALUES
+		(821,'drop.mp3','Drop','audio',1),(822,'keep.mp3','Keep','audio',1)`); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	tx, err := db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tx.Exec(`INSERT INTO source_catalog_exclusion(file_source_id,path,mode) VALUES(?, '/A', 'whole')`, sourceID); err != nil {
+		t.Fatal(err)
+	}
+	if err = applyCatalogExclusionTx(ctx, tx, sourceID, "/A"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tx.Exec(`INSERT INTO source_catalog_exclusion(file_source_id,path,mode) VALUES(?, '/A/Keep', 'whitelist')`, sourceID); err != nil {
+		t.Fatal(err)
+	}
+	if err = revokeCatalogExclusionTx(ctx, tx, sourceID, "/A/Keep"); err != nil {
+		t.Fatal(err)
+	}
+	if err = tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	var status string
+	if err = db.QueryRow(`SELECT availability_status FROM source_catalog_entry WHERE id=822`).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != "available" {
+		t.Fatalf("whitelisted entry = %q, want available", status)
+	}
+
+	// Deleting the whitelist hides the subtree again.
+	tx, err = db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tx.Exec(`DELETE FROM source_catalog_exclusion WHERE file_source_id=? AND mode='whitelist'`, sourceID); err != nil {
+		t.Fatal(err)
+	}
+	if err = applyCatalogExclusionTx(ctx, tx, sourceID, "/A/Keep"); err != nil {
+		t.Fatal(err)
+	}
+	if err = tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.QueryRow(`SELECT availability_status FROM source_catalog_entry WHERE id=822`).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != "excluded" {
+		t.Fatalf("entry after whitelist removal = %q, want excluded", status)
+	}
+	var files int
+	if err = db.QueryRow(`SELECT count(*) FROM source_catalog_file WHERE catalog_entry_id=822`).Scan(&files); err != nil {
+		t.Fatal(err)
+	}
+	if files != 0 {
+		t.Fatalf("files after whitelist removal = %d, want 0", files)
+	}
+
+	// Deleting the whole rule restores both cards.
+	tx, err = db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tx.Exec(`DELETE FROM source_catalog_exclusion WHERE file_source_id=?`, sourceID); err != nil {
+		t.Fatal(err)
+	}
+	if err = revokeCatalogExclusionTx(ctx, tx, sourceID, "/A"); err != nil {
+		t.Fatal(err)
+	}
+	if err = tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []int64{821, 822} {
+		if err = db.QueryRow(`SELECT availability_status FROM source_catalog_entry WHERE id=?`, id).Scan(&status); err != nil {
+			t.Fatal(err)
+		}
+		if status != "available" {
+			t.Fatalf("entry %d after whole-rule removal = %q, want available", id, status)
+		}
+	}
+}
+
+// A whitelisted card keeps everything playback needs: its 24 files, its
+// directory rows and its audio root. The excluded sibling still disappears.
+func TestSourceCatalogExclusionWhitelistKeepsFilesTracksAndRange(t *testing.T) {
+	db := openMigratedTestDB(t)
+	const sourceID, generation = int64(83), int64(830)
+	var remote *httptest.Server
+	remote = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/fs/get" {
+			var input struct {
+				Path string `json:"path"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&input)
+			if input.Path != "/A/Keep/07.mp3" {
+				t.Errorf("wrong real path: %s", input.Path)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"code": 200,
+				"data": map[string]any{"name": "07.mp3", "size": 16, "raw_url": remote.URL + "/audio"},
+			})
+			return
+		}
+		http.ServeContent(w, r, "07.mp3", time.Unix(0, 0), bytes.NewReader([]byte("0123456789abcdef")))
+	}))
+	defer remote.Close()
+
+	for _, statement := range []struct {
+		query string
+		args  []any
+	}{
+		{`INSERT INTO file_source(id,code,display_name,source_type) VALUES(?, 'keep_source', 'Keep Source', 'openlist')`, []any{sourceID}},
+		{`INSERT INTO file_source_endpoint(file_source_id,api_url,base_url) VALUES(?, ?, ?)`, []any{sourceID, remote.URL, remote.URL}},
+		{`INSERT INTO work(id,primary_code,title) VALUES(830,'RJ00000083','Keep Work')`, nil},
+		{`INSERT INTO source_catalog_entry(id,file_source_id,root_path,title,work_id) VALUES(830,?, '/A/Keep','Keep Card',830)`, []any{sourceID}},
+		{`INSERT INTO source_catalog_entry(id,file_source_id,root_path,title) VALUES(831,?, '/A/Drop','Drop Card')`, []any{sourceID}},
+		{`INSERT INTO source_catalog_directory(file_source_id,path,generation,revision,partition_path,catalog_root,status) VALUES
+			(?, '/A', 830, 1, '/A', '', 'complete'),
+			(?, '/A/Keep', 830, 1, '/A', '/A/Keep', 'complete'),
+			(?, '/A/Drop', 830, 1, '/A', '/A/Drop', 'complete')`, []any{sourceID, sourceID, sourceID}},
+		{`INSERT INTO source_catalog_audio_root(file_source_id,generation,catalog_root) VALUES(?, 830, '/A/Keep')`, []any{sourceID}},
+	} {
+		if _, err := db.Exec(statement.query, statement.args...); err != nil {
+			t.Fatalf("%s: %v", statement.query, err)
+		}
+	}
+	for index := 1; index <= 24; index++ {
+		name := fmt.Sprintf("%02d.mp3", index)
+		if _, err := db.Exec(`INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes) VALUES(830,?,?,'audio',16)`, name, name); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec(`INSERT INTO source_catalog_observation(file_source_id,directory_path,name,revision,kind,size_bytes,publish_pending)
+			VALUES(?,'/A/Keep',?,1,'audio',16,1)`, sourceID, name); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := db.Exec(`INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes) VALUES(831,'drop.mp3','Drop','audio',16);
+		INSERT INTO source_catalog_observation(file_source_id,directory_path,name,revision,kind,size_bytes,publish_pending)
+		VALUES(?, '/A/Drop','drop.mp3',1,'audio',16,1);`, sourceID); err != nil {
+		t.Fatal(err)
+	}
+
+	tx, err := db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tx.Exec(`INSERT INTO source_catalog_exclusion(file_source_id,path,mode) VALUES(?, '/A', 'whole'), (?, '/A/Keep', 'whitelist')`, sourceID, sourceID); err != nil {
+		t.Fatal(err)
+	}
+	if err = applyCatalogExclusionTx(context.Background(), tx, sourceID, "/A"); err != nil {
+		t.Fatal(err)
+	}
+	if err = tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+
+	var keptFiles, keptDirs, keptRoots, keptObservations int
+	if err = db.QueryRow(`SELECT count(*) FROM source_catalog_file WHERE catalog_entry_id=830`).Scan(&keptFiles); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.QueryRow(`SELECT count(*) FROM source_catalog_directory WHERE file_source_id=? AND path='/A/Keep'`, sourceID).Scan(&keptDirs); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.QueryRow(`SELECT count(*) FROM source_catalog_audio_root WHERE file_source_id=? AND catalog_root='/A/Keep'`, sourceID).Scan(&keptRoots); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.QueryRow(`SELECT count(*) FROM source_catalog_observation WHERE file_source_id=? AND directory_path='/A/Keep'`, sourceID).Scan(&keptObservations); err != nil {
+		t.Fatal(err)
+	}
+	if keptFiles != 24 || keptDirs != 1 || keptRoots != 1 || keptObservations != 24 {
+		t.Fatalf("whitelisted rows files=%d dirs=%d roots=%d observations=%d, want 24/1/1/24",
+			keptFiles, keptDirs, keptRoots, keptObservations)
+	}
+
+	server := NewServer(db, config.Config{Mode: config.ModeProduction, RootUsername: "whitelist-root", DataRoot: t.TempDir(), CacheRoot: t.TempDir()})
+	t.Cleanup(func() { _ = server.Shutdown(context.Background()) })
+	createTestAdministrator(t, server, "whitelist-root", "synthetic-password")
+	handler := server.Routes()
+	cookie := loginTestSession(t, handler, "whitelist-root", "synthetic-password")
+
+	tracks := reviewRequest(t, handler, cookie, http.MethodGet, "/api/source-catalog/830/tracks", "", http.StatusOK)["tracks"].([]any)
+	if len(tracks) != 24 {
+		t.Fatalf("whitelisted card tracks = %d, want 24", len(tracks))
+	}
+	target := reviewRequest(t, handler, cookie, http.MethodPost, "/api/source-catalog/830/playback", `{"paths":["07.mp3"]}`, http.StatusOK)["targets"].([]any)[0].(map[string]any)
+	request := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/media/%.0f/stream", target["locationId"]), nil)
+	request.AddCookie(cookie)
+	request.Header.Set("Range", "bytes=2-5")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusPartialContent || response.Body.String() != "2345" || response.Header().Get("Content-Range") != "bytes 2-5/16" {
+		t.Fatalf("range: %d %q %s", response.Code, response.Body.String(), response.Header().Get("Content-Range"))
+	}
+
+	list := reviewRequest(t, handler, cookie, http.MethodGet, fmt.Sprintf("/api/remote-sources/%d/works", sourceID), "", http.StatusOK)
+	works := list["works"].([]any)
+	if list["total"] != float64(1) || len(works) != 1 || works[0].(map[string]any)["catalogEntryId"] != float64(830) {
+		t.Fatalf("excluded sibling still listed: %#v", list)
+	}
+}
+
+// A split card stores its real directory in source_root while root_path keeps
+// the group suffix. Excluding the directory must remove the split card's files
+// and hide the card, and personal records must survive.
+func TestSourceCatalogExclusionSplitCardUsesSourceRoot(t *testing.T) {
+	db := openMigratedTestDB(t)
+	const sourceID = int64(84)
+	seedExclusionSource(t, db, sourceID, sourceTypeOpenList)
+	if _, err := db.Exec(`INSERT INTO user_account(id,username,display_name,role) VALUES(1,'split-user','Split User','user');
+		INSERT INTO work(id,primary_code,title) VALUES(840,'RJ00000084','Split Work');
+		INSERT INTO source_catalog_entry(id,file_source_id,root_path,source_root,title,work_id) VALUES
+			(841,?, '/Creator::RJ00000084','/Creator','Split card',840);
+		INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes) VALUES
+			(841,'a.mp3','A','audio',10),(841,'b.mp3','B','audio',10);
+		INSERT INTO user_work_state(user_id,work_id,rating,note) VALUES(1,840,5,'keep me');`, sourceID); err != nil {
+		t.Fatal(err)
+	}
+	server := NewServer(db, config.Config{Mode: config.ModeProduction, RootUsername: "split-root", DataRoot: t.TempDir(), CacheRoot: t.TempDir()})
+	t.Cleanup(func() { _ = server.Shutdown(context.Background()) })
+	createTestAdministrator(t, server, "split-root", "synthetic-password")
+	handler := server.Routes()
+	cookie := loginTestSession(t, handler, "split-root", "synthetic-password")
+	before := reviewRequest(t, handler, cookie, http.MethodGet, fmt.Sprintf("/api/remote-sources/%d/works", sourceID), "", http.StatusOK)
+	if before["total"] != float64(1) {
+		t.Fatalf("split card not visible before exclusion: %#v", before)
+	}
+	response := exclusionRequest(t, handler, cookie, http.MethodPost,
+		fmt.Sprintf("/api/remote-sources/%d/catalog/exclusions", sourceID), `{"path":"/Creator","mode":"whole"}`)
+	if response.Code != http.StatusCreated {
+		t.Fatalf("create exclusion = %d %s", response.Code, response.Body.String())
+	}
+	var files int
+	if err := db.QueryRow(`SELECT count(*) FROM source_catalog_file WHERE catalog_entry_id=841`).Scan(&files); err != nil {
+		t.Fatal(err)
+	}
+	if files != 0 {
+		t.Fatalf("split card files = %d, want 0", files)
+	}
+	after := reviewRequest(t, handler, cookie, http.MethodGet, fmt.Sprintf("/api/remote-sources/%d/works", sourceID), "", http.StatusOK)
+	if after["total"] != float64(0) || len(after["works"].([]any)) != 0 {
+		t.Fatalf("split card still visible: %#v", after)
+	}
+	var personal int
+	if err := db.QueryRow(`SELECT count(*) FROM user_work_state WHERE work_id=840 AND rating=5 AND note='keep me'`).Scan(&personal); err != nil {
+		t.Fatal(err)
+	}
+	if personal != 1 {
+		t.Fatal("personal record was removed with the split card")
+	}
+}
+
+// Creating a whitelist returns mode and applies the exception; deleting it
+// re-applies the whole rule. An unknown mode is rejected.
+func TestSourceCatalogExclusionAPIMode(t *testing.T) {
+	db := openMigratedTestDB(t)
+	const sourceID = int64(85)
+	seedExclusionSource(t, db, sourceID, sourceTypeOpenList)
+	server := NewServer(db, config.Config{RootUsername: "mode-root", DataRoot: t.TempDir(), CacheRoot: t.TempDir()})
+	t.Cleanup(func() { _ = server.Shutdown(context.Background()) })
+	createTestAdministrator(t, server, "mode-root", "synthetic-password")
+	handler := server.Routes()
+	cookie := loginTestSession(t, handler, "mode-root", "synthetic-password")
+	base := fmt.Sprintf("/api/remote-sources/%d/catalog/exclusions", sourceID)
+
+	response := exclusionRequest(t, handler, cookie, http.MethodPost, base, `{"path":"/A","mode":"whole"}`)
+	if response.Code != http.StatusCreated {
+		t.Fatalf("create whole = %d %s", response.Code, response.Body.String())
+	}
+	var whole catalogExclusion
+	if err := json.Unmarshal(response.Body.Bytes(), &whole); err != nil {
+		t.Fatal(err)
+	}
+	if whole.Mode != catalogExclusionModeWhole {
+		t.Fatalf("whole mode = %q", whole.Mode)
+	}
+	response = exclusionRequest(t, handler, cookie, http.MethodPost, base, `{"path":"/A/Keep","mode":"whitelist","note":"audio"}`)
+	if response.Code != http.StatusCreated {
+		t.Fatalf("create whitelist = %d %s", response.Code, response.Body.String())
+	}
+	var whitelist catalogExclusion
+	if err := json.Unmarshal(response.Body.Bytes(), &whitelist); err != nil {
+		t.Fatal(err)
+	}
+	if whitelist.Mode != catalogExclusionModeWhitelist || whitelist.Path != "/A/Keep" {
+		t.Fatalf("whitelist = %+v", whitelist)
+	}
+	response = exclusionRequest(t, handler, cookie, http.MethodPost, base, `{"path":"/A/Keep","mode":"subtree"}`)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("invalid mode = %d %s", response.Code, response.Body.String())
+	}
+	response = exclusionRequest(t, handler, cookie, http.MethodGet, base, "")
+	var listed []catalogExclusion
+	if err := json.Unmarshal(response.Body.Bytes(), &listed); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != http.StatusOK || len(listed) != 2 {
+		t.Fatalf("list = %d %+v", response.Code, listed)
+	}
+	modes := map[string]string{}
+	for _, item := range listed {
+		modes[item.Path] = item.Mode
+	}
+	if modes["/A"] != catalogExclusionModeWhole || modes["/A/Keep"] != catalogExclusionModeWhitelist {
+		t.Fatalf("listed modes = %#v", modes)
+	}
+	response = exclusionRequest(t, handler, cookie, http.MethodDelete,
+		fmt.Sprintf("%s/%d", base, whitelist.ID), "")
+	if response.Code != http.StatusOK {
+		t.Fatalf("delete whitelist = %d %s", response.Code, response.Body.String())
+	}
+	response = exclusionRequest(t, handler, cookie, http.MethodGet, base, "")
+	if err := json.Unmarshal(response.Body.Bytes(), &listed); err != nil {
+		t.Fatal(err)
+	}
+	if len(listed) != 1 || listed[0].Path != "/A" {
+		t.Fatalf("after whitelist delete = %+v", listed)
+	}
+}
+
+// Incremental sync must not recreate the excluded subtree, but it must still
+// discover the whitelisted child inside it: the ancestor is listed only as a
+// bridge, and the excluded sibling receives no request.
+func TestCatalogSyncReachesWhitelistInsideExcludedSubtree(t *testing.T) {
+	tree := newCatalogSyncTestTree()
+	tree.set("/", catalogSyncTestEntry{Name: "Partition A", IsDir: true, Modified: "p1"})
+	tree.set("/Partition A",
+		catalogSyncTestEntry{Name: "Keep", IsDir: true, Modified: "k1"},
+		catalogSyncTestEntry{Name: "Drop", IsDir: true, Modified: "d1"})
+	tree.set("/Partition A/Keep", catalogSyncTestEntry{Name: "01.mp3", Size: 100, Modified: "kf"})
+	tree.set("/Partition A/Drop", catalogSyncTestEntry{Name: "02.mp3", Size: 100, Modified: "df"})
+	f := newCatalogSyncFixture(t, tree)
+	if p := f.runFullScan(t, ""); p["status"] != "complete" {
+		t.Fatalf("full scan did not complete: %#v", p)
+	}
+	sourceID := f.sourceID(t)
+	tx, err := f.server.db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tx.Exec(`INSERT INTO source_catalog_exclusion(file_source_id,path,mode) VALUES(?, '/Partition A', 'whole'), (?, '/Partition A/Keep', 'whitelist')`, sourceID, sourceID); err != nil {
+		t.Fatal(err)
+	}
+	if err = applyCatalogExclusionTx(context.Background(), tx, sourceID, "/Partition A"); err != nil {
+		t.Fatal(err)
+	}
+	if err = tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	// Force the next sync to re-discover the whitelisted child from its parent.
+	if _, err = f.server.db.Exec(`DELETE FROM source_catalog_directory WHERE file_source_id=? AND path IN ('/Partition A/Keep','/Partition A/Drop')`, sourceID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = f.server.db.Exec(`UPDATE source_catalog_directory SET observed_version='', last_verified_run=0 WHERE file_source_id=?`, sourceID); err != nil {
+		t.Fatal(err)
+	}
+	tree.resetHits()
+	state := f.runCatalogSync(t, false)
+	if state.Status != "succeeded" {
+		t.Fatalf("sync = %#v", state)
+	}
+	if hits := tree.listCount("/Partition A/Drop"); hits != 0 {
+		t.Fatalf("excluded sibling listed %d times", hits)
+	}
+	var keepDirs, dropDirs int
+	if err = f.server.db.QueryRow(`SELECT count(*) FROM source_catalog_directory WHERE file_source_id=? AND path='/Partition A/Keep'`, sourceID).Scan(&keepDirs); err != nil {
+		t.Fatal(err)
+	}
+	if err = f.server.db.QueryRow(`SELECT count(*) FROM source_catalog_directory WHERE file_source_id=? AND path='/Partition A/Drop'`, sourceID).Scan(&dropDirs); err != nil {
+		t.Fatal(err)
+	}
+	if keepDirs != 1 || dropDirs != 0 {
+		t.Fatalf("directories keep=%d drop=%d, want 1/0", keepDirs, dropDirs)
+	}
+	var keepFiles, dropFiles int
+	if err = f.server.db.QueryRow(`SELECT count(*) FROM source_catalog_file f JOIN source_catalog_entry e ON e.id=f.catalog_entry_id WHERE e.file_source_id=? AND e.root_path='/Partition A/Keep'`, sourceID).Scan(&keepFiles); err != nil {
+		t.Fatal(err)
+	}
+	if err = f.server.db.QueryRow(`SELECT count(*) FROM source_catalog_file f JOIN source_catalog_entry e ON e.id=f.catalog_entry_id WHERE e.file_source_id=? AND e.root_path='/Partition A/Drop'`, sourceID).Scan(&dropFiles); err != nil {
+		t.Fatal(err)
+	}
+	if keepFiles != 1 || dropFiles != 0 {
+		t.Fatalf("files keep=%d drop=%d, want 1/0", keepFiles, dropFiles)
 	}
 }

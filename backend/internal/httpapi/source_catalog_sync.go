@@ -442,14 +442,15 @@ func (s *Server) applyCatalogSyncProbeTx(ctx context.Context, tx *sql.Tx, source
 	changedCount := 0
 	for name, child := range byName {
 		childPath := path.Join(parent.Path, name)
-		// An excluded subtree is invisible to the index. The incremental path
-		// must apply the same rule as the first pass; otherwise a later root
-		// probe would recreate a directory an operator excluded.
-		excluded, excludeErr := catalogPathExcludedTx(ctx, tx, sourceID, childPath)
+		// An excluded subtree is invisible to the index, but a path that leads
+		// to a whitelist must still exist so the exception can be reached. The
+		// publish path applies the strict rule, so a bridge directory never
+		// publishes anything from the excluded part of its tree.
+		traversable, excludeErr := catalogPathTraversableTx(ctx, tx, sourceID, childPath)
 		if excludeErr != nil {
 			return 0, excludeErr
 		}
-		if excluded {
+		if !traversable {
 			continue
 		}
 		row, ok := existing[name]
@@ -647,11 +648,11 @@ func (s *Server) applyCatalogSyncListing(ctx context.Context, sourceID, generati
 	visible := make([]openlist.Object, 0, len(entries))
 	for _, obj := range entries {
 		childPath := path.Join(dir.Path, obj.Name)
-		excluded, excludeErr := catalogPathExcludedTx(ctx, tx.Tx, sourceID, childPath)
+		traversable, excludeErr := catalogPathTraversableTx(ctx, tx.Tx, sourceID, childPath)
 		if excludeErr != nil {
 			return 0, 0, excludeErr
 		}
-		if excluded {
+		if !traversable {
 			continue
 		}
 		if catalogNameEncodingDamaged(obj.Name) {

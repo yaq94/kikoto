@@ -11,11 +11,17 @@ import (
 )
 
 const (
-	catalogExclusionModeWhole = "whole"
-	catalogExclusionAction    = "exclude"
-	maxCatalogExclusionNote   = 2000
-	maxCatalogExclusionPath   = 4096
+	catalogExclusionModeWhole     = "whole"
+	catalogExclusionModeWhitelist = "whitelist"
+	catalogExclusionAction        = "exclude"
+	maxCatalogExclusionNote       = 2000
+	maxCatalogExclusionPath       = 4096
 )
+
+// catalogObservationPathSQL is the source path of one observation row. A row
+// in the source root already starts with '/', so it must not gain a second
+// separator.
+const catalogObservationPathSQL = `(CASE WHEN directory_path='/' THEN '/'||name ELSE directory_path||'/'||name END)`
 
 type catalogExclusion struct {
 	ID        int64  `json:"id"`
@@ -31,6 +37,22 @@ type catalogExclusionPayload struct {
 	Path string `json:"path"`
 	Mode string `json:"mode"`
 	Note string `json:"note"`
+}
+
+// normalizeCatalogExclusionMode accepts the two rule kinds. "whole" excludes a
+// subtree; "whitelist" is an exception inside one and never excludes anything
+// by itself.
+func normalizeCatalogExclusionMode(raw string) (string, error) {
+	switch mode := strings.ToLower(strings.TrimSpace(raw)); mode {
+	case "":
+		return catalogExclusionModeWhole, nil
+	case catalogExclusionModeWhole:
+		return catalogExclusionModeWhole, nil
+	case catalogExclusionModeWhitelist:
+		return catalogExclusionModeWhitelist, nil
+	default:
+		return "", errors.New("mode must be whole or whitelist")
+	}
 }
 
 // normalizeCatalogExclusionPath accepts only an absolute source path below the
@@ -65,55 +87,146 @@ func normalizeCatalogExclusionPath(raw string) (string, error) {
 	return cleaned, nil
 }
 
+// catalogPathExcludedSQL is the SQL form of catalogPathExcludedTx. Both the
+// source and the path may be bound values ("?") or column expressions. Bound
+// forms take the source id followed by the path twice for the whole-rule match,
+// then twice for the whitelist exception.
+func catalogPathExcludedSQL(sourceExpr, pathExpr string) string {
+	return `EXISTS (
+		SELECT 1 FROM source_catalog_exclusion x
+		WHERE x.file_source_id=` + sourceExpr + ` AND x.enabled=1 AND x.mode='whole'
+			AND (` + pathExpr + `=x.path OR substr(` + pathExpr + `,1,length(x.path)+1)=x.path || '/')
+			AND NOT EXISTS (
+				SELECT 1 FROM source_catalog_exclusion w
+				WHERE w.file_source_id=x.file_source_id AND w.enabled=1 AND w.mode='whitelist'
+					AND (` + pathExpr + `=w.path OR substr(` + pathExpr + `,1,length(w.path)+1)=w.path || '/')
+					AND length(w.path) >= length(x.path)))`
+}
+
+// catalogPathLeadsToWhitelistSQL reports whether path is a strict ancestor of
+// an enabled whitelist. Such a path must still be listed so the exception can
+// be reached, even while its own contents stay excluded.
+func catalogPathLeadsToWhitelistSQL(sourceExpr, pathExpr string) string {
+	return `EXISTS (
+		SELECT 1 FROM source_catalog_exclusion w
+		WHERE w.file_source_id=` + sourceExpr + ` AND w.enabled=1 AND w.mode='whitelist'
+			AND substr(w.path,1,length(` + pathExpr + `)+1)=` + pathExpr + ` || '/')`
+}
+
 // catalogPathExcludedTx reports whether path itself or one of its ancestors is
 // excluded for this source. The prefix comparison is boundary-aware: /A does
-// not exclude /AB.
+// not exclude /AB. A whitelist is a subtree exception: it defeats an exclusion
+// only when it is at least as specific as that exclusion and still covers this
+// path. Evaluation is per exclusion row, so an outer rule without an exception
+// keeps its subtree excluded even when a sibling has one.
 func catalogPathExcludedTx(ctx context.Context, tx *sql.Tx, sourceID int64, p string) (bool, error) {
 	if p == "" {
 		p = "/"
 	}
 	var hit int
-	err := tx.QueryRowContext(ctx, `SELECT EXISTS(
-		SELECT 1 FROM source_catalog_exclusion
-		WHERE file_source_id=? AND enabled=1
-			AND (path=? OR substr(?,1,length(path)+1)=path || '/'))`,
-		sourceID, p, p).Scan(&hit)
+	err := tx.QueryRowContext(ctx, `SELECT `+catalogPathExcludedSQL("?", "?")+``,
+		sourceID, p, p, p, p).Scan(&hit)
 	return hit != 0, err
+}
+
+// catalogPathTraversableTx reports whether the index may descend into path.
+// An excluded path is still traversable when it is an ancestor of a whitelist:
+// the exception cannot be discovered without listing its parents. Publishing
+// and cleanup keep using the strict rule, so only nodes on the way to an
+// exception are re-listed.
+func catalogPathTraversableTx(ctx context.Context, tx *sql.Tx, sourceID int64, p string) (bool, error) {
+	if p == "" {
+		p = "/"
+	}
+	excluded, err := catalogPathExcludedTx(ctx, tx, sourceID, p)
+	if err != nil || !excluded {
+		return !excluded, err
+	}
+	var leads int
+	err = tx.QueryRowContext(ctx, `SELECT `+catalogPathLeadsToWhitelistSQL("?", "?")+``,
+		sourceID, p, p).Scan(&leads)
+	return leads != 0, err
+}
+
+// catalogExclusionBaseRootSQL resolves the real directory of a card. A split
+// card keeps its group suffix in root_path and stores the directory in
+// source_root, so matching only root_path would leave the split card and its
+// files visible after an operator excluded that directory.
+const catalogExclusionBaseRootSQL = `COALESCE(NULLIF(source_root,''),root_path)`
+
+// catalogExclusionEntries returns the cards whose real directory is p or below
+// it. The caller re-checks each one against the whitelist before changing it.
+func catalogExclusionEntries(ctx context.Context, tx *sql.Tx, sourceID int64, p string) ([]int64, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT id FROM source_catalog_entry
+		WHERE file_source_id=? AND (`+catalogExclusionBaseRootSQL+`=? OR substr(`+catalogExclusionBaseRootSQL+`,1,length(?)+1)=? || '/')`,
+		sourceID, p, p, p)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	ids := []int64{}
+	for rows.Next() {
+		var id int64
+		if err = rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
 }
 
 // applyCatalogExclusionTx keeps the entry identities and every personal or
 // shared reference, but removes the source rows that made the subtree
-// publishable. The entries become excluded, not missing.
+// publishable. The entries become excluded, not missing. A card covered by an
+// enabled whitelist keeps its files and stays available, and the directory,
+// observation and audio-root rows a whitelisted card needs are kept as well.
 func applyCatalogExclusionTx(ctx context.Context, tx *sql.Tx, sourceID int64, p string) error {
-	if _, err := tx.ExecContext(ctx, `UPDATE source_catalog_entry
-		SET availability_status='excluded',updated_at=CURRENT_TIMESTAMP
-		WHERE file_source_id=? AND (root_path=? OR substr(root_path,1,length(?)+1)=? || '/')`,
-		sourceID, p, p, p); err != nil {
+	ids, err := catalogExclusionEntries(ctx, tx, sourceID, p)
+	if err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM source_catalog_file
-		WHERE catalog_entry_id IN (
-			SELECT id FROM source_catalog_entry
-			WHERE file_source_id=? AND (root_path=? OR substr(root_path,1,length(?)+1)=? || '/'))`,
-		sourceID, p, p, p); err != nil {
-		return err
+	for _, id := range ids {
+		var base string
+		if err = tx.QueryRowContext(ctx, `SELECT `+catalogExclusionBaseRootSQL+` FROM source_catalog_entry WHERE id=?`, id).Scan(&base); err != nil {
+			return err
+		}
+		excluded, queryErr := catalogPathExcludedTx(ctx, tx, sourceID, base)
+		if queryErr != nil {
+			return queryErr
+		}
+		if !excluded {
+			continue
+		}
+		if _, err = tx.ExecContext(ctx, `UPDATE source_catalog_entry
+			SET availability_status='excluded',updated_at=CURRENT_TIMESTAMP WHERE id=?`, id); err != nil {
+			return err
+		}
+		if _, err = tx.ExecContext(ctx, `DELETE FROM source_catalog_file WHERE catalog_entry_id=?`, id); err != nil {
+			return err
+		}
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM source_catalog_observation
 		WHERE file_source_id=? AND (
 			directory_path=? OR substr(directory_path,1,length(?)+1)=? || '/'
-			OR (CASE WHEN directory_path='/' THEN '/'||name ELSE directory_path||'/'||name END)=?
-			OR substr(CASE WHEN directory_path='/' THEN '/'||name ELSE directory_path||'/'||name END,1,length(?)+1)=? || '/')`,
-		sourceID, p, p, p, p, p, p); err != nil {
+			OR `+catalogObservationPathSQL+`=? OR substr(`+catalogObservationPathSQL+`,1,length(?)+1)=? || '/')
+			AND `+catalogPathExcludedSQL("?", catalogObservationPathSQL),
+		sourceID, p, p, p, p, p, p, sourceID); err != nil {
 		return err
 	}
+	// A directory row on the way to a whitelist is kept so the next scan can
+	// reach the exception; its own contents were already filtered above.
 	if _, err := tx.ExecContext(ctx, `DELETE FROM source_catalog_directory
-		WHERE file_source_id=? AND (path=? OR substr(path,1,length(?)+1)=? || '/')`,
-		sourceID, p, p, p); err != nil {
+		WHERE file_source_id=? AND (path=? OR substr(path,1,length(?)+1)=? || '/')
+			AND `+catalogPathExcludedSQL("?", "path")+`
+			AND NOT `+catalogPathLeadsToWhitelistSQL("?", "path"),
+		sourceID, p, p, p, sourceID, p, p, p, p, sourceID, p, p); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM source_catalog_audio_root
-		WHERE file_source_id=? AND (catalog_root=? OR substr(catalog_root,1,length(?)+1)=? || '/')`,
-		sourceID, p, p, p); err != nil {
+		WHERE file_source_id=? AND (catalog_root=? OR substr(catalog_root,1,length(?)+1)=? || '/')
+			AND `+catalogPathExcludedSQL("?", "catalog_root")+`
+			AND NOT `+catalogPathLeadsToWhitelistSQL("?", "catalog_root"),
+		sourceID, p, p, p, sourceID, p, p, p, p, sourceID, p, p); err != nil {
 		return err
 	}
 	// The progress columns are an incremental projection. Rebuild them in the
@@ -123,21 +236,35 @@ func applyCatalogExclusionTx(ctx context.Context, tx *sql.Tx, sourceID int64, p 
 }
 
 // revokeCatalogExclusionTx restores only rows that no remaining exclusion still
-// covers. A row that was previously checked waits for the next scan to prove
-// availability; a row that was never checked can show as available again.
+// covers. Rows that are still excluded are left alone, and files return on the
+// next scan because publishing now honours the same rule. A row that was
+// previously checked waits for the next scan to prove availability; a row that
+// was never checked can show as available again.
 func revokeCatalogExclusionTx(ctx context.Context, tx *sql.Tx, sourceID int64, p string) error {
-	_, err := tx.ExecContext(ctx, `UPDATE source_catalog_entry
-		SET availability_status=CASE WHEN status_checked_at IS NULL THEN 'available' ELSE 'unavailable' END,
-			updated_at=CURRENT_TIMESTAMP
-		WHERE file_source_id=? AND availability_status='excluded'
-			AND (root_path=? OR substr(root_path,1,length(?)+1)=? || '/')
-			AND NOT EXISTS (
-				SELECT 1 FROM source_catalog_exclusion x
-				WHERE x.file_source_id=source_catalog_entry.file_source_id AND x.enabled=1
-					AND (x.path=source_catalog_entry.root_path
-						OR substr(source_catalog_entry.root_path,1,length(x.path)+1)=x.path || '/'))`,
-		sourceID, p, p, p)
-	return err
+	ids, err := catalogExclusionEntries(ctx, tx, sourceID, p)
+	if err != nil {
+		return err
+	}
+	for _, id := range ids {
+		var base string
+		if err = tx.QueryRowContext(ctx, `SELECT `+catalogExclusionBaseRootSQL+` FROM source_catalog_entry WHERE id=?`, id).Scan(&base); err != nil {
+			return err
+		}
+		excluded, queryErr := catalogPathExcludedTx(ctx, tx, sourceID, base)
+		if queryErr != nil {
+			return queryErr
+		}
+		if excluded {
+			continue
+		}
+		if _, err = tx.ExecContext(ctx, `UPDATE source_catalog_entry
+			SET availability_status=CASE WHEN status_checked_at IS NULL THEN 'available' ELSE 'unavailable' END,
+				updated_at=CURRENT_TIMESTAMP
+			WHERE id=? AND availability_status='excluded'`, id); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *Server) catalogExclusionSourceID(w http.ResponseWriter, r *http.Request) (int64, bool) {
@@ -214,12 +341,9 @@ func (s *Server) createCatalogExclusion(w http.ResponseWriter, r *http.Request) 
 		writeAPIError(w, http.StatusBadRequest, "invalid_request", err.Error(), false)
 		return
 	}
-	mode := strings.TrimSpace(payload.Mode)
-	if mode == "" {
-		mode = catalogExclusionModeWhole
-	}
-	if mode != catalogExclusionModeWhole {
-		writeAPIError(w, http.StatusBadRequest, "invalid_request", "unsupported exclusion mode", false)
+	mode, err := normalizeCatalogExclusionMode(payload.Mode)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid_request", err.Error(), false)
 		return
 	}
 	note := strings.TrimSpace(payload.Note)
@@ -249,7 +373,14 @@ func (s *Server) createCatalogExclusion(w http.ResponseWriter, r *http.Request) 
 		writeAPIError(w, http.StatusConflict, "conflict", "path is already excluded", false)
 		return
 	}
-	if err = applyCatalogExclusionTx(r.Context(), tx.Tx, sourceID, normalized); err != nil {
+	// A whitelist restores whatever a whole rule had already hidden below it;
+	// a whole rule reconciles the rows it now excludes.
+	if mode == catalogExclusionModeWhitelist {
+		err = revokeCatalogExclusionTx(r.Context(), tx.Tx, sourceID, normalized)
+	} else {
+		err = applyCatalogExclusionTx(r.Context(), tx.Tx, sourceID, normalized)
+	}
+	if err != nil {
 		writeError(w, err)
 		return
 	}
@@ -290,9 +421,9 @@ func (s *Server) deleteCatalogExclusion(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	defer release()
-	var excludedPath string
-	if err = tx.QueryRowContext(r.Context(), `SELECT path FROM source_catalog_exclusion
-		WHERE id=? AND file_source_id=?`, exclusionID, sourceID).Scan(&excludedPath); err != nil {
+	var excludedPath, excludedMode string
+	if err = tx.QueryRowContext(r.Context(), `SELECT path,mode FROM source_catalog_exclusion
+		WHERE id=? AND file_source_id=?`, exclusionID, sourceID).Scan(&excludedPath, &excludedMode); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			writeAPIError(w, http.StatusNotFound, "not_found", "exclusion not found", false)
 			return
@@ -304,7 +435,14 @@ func (s *Server) deleteCatalogExclusion(w http.ResponseWriter, r *http.Request) 
 		writeError(w, err)
 		return
 	}
-	if err = revokeCatalogExclusionTx(r.Context(), tx.Tx, sourceID, excludedPath); err != nil {
+	// Removing a whitelist re-applies the whole rule above it; removing a whole
+	// rule restores only what no other rule still covers.
+	if excludedMode == catalogExclusionModeWhitelist {
+		err = applyCatalogExclusionTx(r.Context(), tx.Tx, sourceID, excludedPath)
+	} else {
+		err = revokeCatalogExclusionTx(r.Context(), tx.Tx, sourceID, excludedPath)
+	}
+	if err != nil {
 		writeError(w, err)
 		return
 	}
@@ -313,7 +451,7 @@ func (s *Server) deleteCatalogExclusion(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	s.invalidateRemoteWorkCache(sourceID)
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "path": excludedPath})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "path": excludedPath, "mode": excludedMode})
 }
 
 // suppressExcludedCatalogObservationsTx clears the pending flag for rows whose
@@ -322,10 +460,7 @@ func (s *Server) deleteCatalogExclusion(w http.ResponseWriter, r *http.Request) 
 func suppressExcludedCatalogObservationsTx(ctx context.Context, tx *sql.Tx, sourceID int64, directoryPath string, revision int) error {
 	result, err := tx.ExecContext(ctx, `UPDATE source_catalog_observation SET publish_pending=0
 		WHERE file_source_id=? AND directory_path=? AND revision=? AND publish_pending=1
-			AND EXISTS(SELECT 1 FROM source_catalog_exclusion x
-				WHERE x.file_source_id=source_catalog_observation.file_source_id AND x.enabled=1
-					AND ((CASE WHEN source_catalog_observation.directory_path='/' THEN '/'||source_catalog_observation.name ELSE source_catalog_observation.directory_path||'/'||source_catalog_observation.name END)=x.path
-						OR substr((CASE WHEN source_catalog_observation.directory_path='/' THEN '/'||source_catalog_observation.name ELSE source_catalog_observation.directory_path||'/'||source_catalog_observation.name END),1,length(x.path)+1)=x.path || '/'))`,
+			AND `+catalogPathExcludedSQL("source_catalog_observation.file_source_id", catalogObservationPathSQL),
 		sourceID, directoryPath, revision)
 	if err != nil {
 		return err

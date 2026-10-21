@@ -51,11 +51,13 @@ func moveCatalogDirectoryCountersTx(ctx context.Context, tx *sql.Tx, sourceID in
 }
 
 func enqueueCatalogDirectoryTx(ctx context.Context, tx *sql.Tx, sourceID, generation int64, p, partition, root string) (bool, error) {
-	excluded, err := catalogPathExcludedTx(ctx, tx, sourceID, p)
+	// A whitelist below this path still needs its ancestors listed, so the
+	// traversal check is looser than the publish/cleanup rule.
+	traversable, err := catalogPathTraversableTx(ctx, tx, sourceID, p)
 	if err != nil {
 		return false, err
 	}
-	if excluded {
+	if !traversable {
 		return false, nil
 	}
 	result, err := tx.ExecContext(ctx, `INSERT INTO source_catalog_directory(file_source_id,path,generation,partition_path,catalog_root) VALUES(?,?,?,?,?)
@@ -540,11 +542,11 @@ func (s *Server) expandCatalogDirectory(ctx context.Context, job workflowJobReco
 	}
 	for _, name := range names {
 		child := path.Join(p, name)
-		excluded, excludeErr := catalogPathExcludedTx(ctx, tx.Tx, sourceID, child)
+		traversable, excludeErr := catalogPathTraversableTx(ctx, tx.Tx, sourceID, child)
 		if excludeErr != nil {
 			return false, excludeErr
 		}
-		if excluded {
+		if !traversable {
 			cursor = name
 			continue
 		}
@@ -768,7 +770,7 @@ func resetCatalogPublishCursorTx(ctx context.Context, tx *sql.Tx, sourceID int64
 // orders the scan and the observation primary key orders each directory's rows,
 // so no temporary sort is needed. The LIMIT placeholder is
 // catalogPublishRows.
-const catalogPublishQuery = `SELECT d.path,d.catalog_root,o.name,o.kind,o.size_bytes,o.content_hash,o.modified_at,
+var catalogPublishQuery = `SELECT d.path,d.catalog_root,o.name,o.kind,o.size_bytes,o.content_hash,o.modified_at,
 	-- The split decision belongs to the catalog root, so every row below
 	-- it must see the plan. A format child that read an empty mode used to
 	-- publish its own folder row into the creator card, which then could
@@ -793,11 +795,7 @@ WHERE d.file_source_id=?1 AND d.generation=?2 AND d.status='complete' AND d.cata
 	AND o.publish_pending=1
 	AND EXISTS(SELECT 1 FROM source_catalog_audio_root r
 		WHERE r.file_source_id=d.file_source_id AND r.generation=d.generation AND r.catalog_root=d.catalog_root)
-	AND NOT EXISTS(SELECT 1 FROM source_catalog_exclusion x
-		WHERE x.file_source_id=d.file_source_id AND x.enabled=1
-			AND (d.path=x.path OR substr(d.path,1,length(x.path)+1)=x.path || '/'
-				OR (CASE WHEN d.path='/' THEN '/'||o.name ELSE d.path||'/'||o.name END)=x.path
-				OR substr(CASE WHEN d.path='/' THEN '/'||o.name ELSE d.path||'/'||o.name END,1,length(x.path)+1)=x.path || '/'))
+	AND NOT ` + catalogPathExcludedSQL("d.file_source_id", catalogObservationPathSQL) + `
 ORDER BY d.path,o.name LIMIT ?3`
 
 // Publish a bounded number of validated observations. The first playable
