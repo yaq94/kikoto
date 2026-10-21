@@ -2,7 +2,7 @@
 
 ## 1. 范围与不变量
 
-- 工作树：`E:/项目/服务器/.kikoto-work/wt/h`，分支 `codex/rem-h`，基线提交 `17c4e5d4`。
+- 工作树：`/srv/kikoto/work`，分支 `codex/rem-h`，基线提交 `17c4e5d4`。
 - 只读产品代码；本提交只新增 `scripts/catalog-bench/` 与本文件。没有改 backend/frontend、迁移、部署或 Git 远端。
 - 生产实例：`kikoto:next-d55130fe`，schema `84`；数据库 `source_catalog_scan` 的来源 3 / generation 53。
 - 基准副本不修改源库：源库以 `mode=ro` 打开（基准读取连接另加 `query_only(1)`；`VACUUM INTO` 连接只用 `mode=ro`，因为 `query_only` 会拒绝 VACUUM），`VACUUM INTO` 写入 `/tmp`；写路径基准在副本上 `BEGIN IMMEDIATE ... ROLLBACK`，副本也不落改动。
@@ -18,8 +18,8 @@
 | 工作树提交 | `17c4e5d4` |
 | 生产镜像 | `kikoto:next-d55130fe` |
 | schema | 84（`schema_state.current_version=84`，`schema_migration` 最高 84） |
-| 源库 | `/root/kikoto/config/kikoto.db`，387,837,952 B |
-| 副本 | `/tmp/kikoto-bench-before.db` → `E:/项目/服务器/.kikoto-work/bench/kikoto-before-17c4e5d4.db`，366,694,400 B |
+| 源库 | `/srv/kikoto/config/kikoto.db`，387,837,952 B |
+| 副本 | `/srv/kikoto/bench/kikoto-before.db` → `/srv/kikoto/bench/kikoto-before-17c4e5d4.db`，366,694,400 B |
 | 副本 sha256 | `2be092c0cd05cb1a5a2897f70d66f3032812cd0519d9b522cead9a15f79f8e01` |
 | `VACUUM INTO` 耗时 | 6.76 s（服务器本地） |
 | 下载耗时 | 100.6 s（SFTP，366,694,400 B） |
@@ -35,7 +35,7 @@
 | `publish_pending=1` | 171,604 |
 | run 53 | `partial`；14,463 complete、4 failed、27 unconfirmed empty、pending 0 |
 | observed / indexed | 389,823 / 41,569 |
-| `/asmr6/轩子` | 本副本实测 499 目录、87,660 observation、87,657 file、25 audio；审计参考为 87,419 / 87,415 / 19，副本时点已推进 |
+| `/source/example` | 本副本实测 499 目录、87,660 observation、87,657 file、25 audio；审计参考为 87,419 / 87,415 / 19，副本时点已推进 |
 | lifecycle | `stage=observe`、`lifecycle_cursor=0` |
 | `publish_cleanup_cursor` | 1,070,887 |
 
@@ -44,7 +44,7 @@
 命令：
 
 ```sh
-/tmp/catalog-bench --db /tmp/kikoto-bench-before.db --write-db /tmp/kikoto-bench-write.db \
+/srv/kikoto/bench/catalog-bench --db /srv/kikoto/bench/kikoto-before.db --write-db /srv/kikoto/bench/kikoto-write.db \
   --runs 5 --write-runs 3 --only progress_exact,purge_empty_pending,root_incomplete,publish_1000_rows,publish_1000_rows_fixture \
   --json-out /tmp/before-server-warm.json
 ```
@@ -53,7 +53,7 @@
 | --- | ---: | ---: | --- | ---: |
 | `progress_exact`（6 条语句） | **504.9 ms** | 498.4–515.7 | run 53 / 14,494 目录 | <20 ms |
 | `purge_empty_pending`（空检查） | **199.7 ms** | 195.5–200.5 | stale=0 | <1 ms |
-| `root_incomplete`（`/asmr6/轩子`） | **252.0 ms** | 248.1–257.3 | incomplete=0 | <5 ms |
+| `root_incomplete`（`/source/example`） | **252.0 ms** | 248.1–257.3 | incomplete=0 | <5 ms |
 | `publish_1000_rows`（实际队列） | **27.8 ms** | 27.3–29.8 | 0 行 | <2 s |
 | `publish_1000_rows_fixture`（临时标记 1,000 行） | **5.1 ms** | 5.0–5.2 | 1,000 行 | <2 s |
 | `cleanup_100_cards`（cursor 0，3 次） | **2,446.8 ms** | 2,250.1–2,906.1 | 100 卡、31 张有目录行、removed=0 | <1 s |
@@ -93,7 +93,7 @@ C 结果复现了审计参考，说明副本和 SQL 口径正确。C 交叉核�
 
 ### 2.5 3 小时 slow / SQLITE_BUSY
 
-命令：`docker logs --since 3h kikoto > /tmp/kikoto-logs-3h.txt 2>&1`，在 2026-10-21 10:05Z 左右采集。
+命令：`docker logs --since 3h kikoto > /srv/kikoto/logs/kikoto-3h.txt 2>&1`，在 2026-10-21 10:05Z 左右采集。
 
 | 指标 | 值 |
 | --- | ---: |
@@ -107,26 +107,26 @@ C 结果复现了审计参考，说明副本和 SQL 口径正确。C 交叉核�
 
 ## 3. 脚本与复现
 
-脚本：`E:/项目/服务器/.kikoto-work/wt/h/scripts/catalog-bench/main.go`
-说明：`E:/项目/服务器/.kikoto-work/wt/h/scripts/catalog-bench/README.md`
+脚本：`/srv/kikoto/work/scripts/catalog-bench/main.go`
+说明：`/srv/kikoto/work/scripts/catalog-bench/README.md`
 
 构建（模块在 `backend/`，命名文件构建可解析 `modernc.org/sqlite`）：
 
 ```sh
-cd E:/项目/服务器/.kikoto-work/wt/h/backend
-go build -o E:/项目/服务器/.kikoto-work/bench/catalog-bench.exe ../scripts/catalog-bench/main.go
+cd /srv/kikoto/work/backend
+go build -o /srv/kikoto/bench/catalog-bench.exe ../scripts/catalog-bench/main.go
 ```
 
 服务器 Linux 交叉编译：
 
 ```sh
-GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o E:/项目/服务器/.kikoto-work/bench/catalog-bench-linux ../scripts/catalog-bench/main.go
+GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o /srv/kikoto/bench/catalog-bench-linux ../scripts/catalog-bench/main.go
 ```
 
 跑 before：
 
 ```sh
-cd E:/项目/服务器/.kikoto-work/bench
+cd /srv/kikoto/bench
 cp kikoto-before-17c4e5d4.db kikoto-write.db
 ./catalog-bench.exe --db kikoto-before-17c4e5d4.db --write-db kikoto-write.db \
   --logs docker-logs-3h.txt --runs 5 --write-runs 3 --label before \
@@ -146,7 +146,7 @@ cp kikoto-before-17c4e5d4.db kikoto-write.db
 | --- | --- | --- | --- | --- |
 | G1 | `sourceCatalogProgress` | <20 ms | 504.9 ms（modernc；C 242.8） | 待填 |
 | G2 | 空 pending 的 purge | <1 ms | 199.7 ms（C 81.3） | 待填 |
-| G3 | `catalogRootIncomplete('/asmr6/轩子')` | <5 ms | 252.0 ms（C 117.4） | 待填 |
+| G3 | `catalogRootIncomplete('/source/example')` | <5 ms | 252.0 ms（C 117.4） | 待填 |
 | G4 | 发布 1,000 行 | <2 s | SELECT 1,000 行 5.1 ms；实际 0 行 27.8 ms；写入路径未测 | 待填 |
 | G5 | cleanup 100 卡（生产驱动） | <1 s | 2,446.8 ms（cursor 0）；生产日志 733–6,482 ms | 待填 |
 | G6 | lifecycle 100 entry | <200 ms | 37.1 ms；但 partial 运行不进入 lifecycle | 待填 |

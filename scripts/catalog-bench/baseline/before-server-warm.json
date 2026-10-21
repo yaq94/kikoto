@@ -16,9 +16,9 @@
     "directories": 14494,
     "generation": 53,
     "id": 3,
-    "root": "/asmr6/轩子"
+    "root": "/source/example"
   },
-  "root": "/asmr6/轩子",
+  "root": "/source/example",
   "queries": [
     {
       "name": "progress_exact",
@@ -98,7 +98,7 @@
       "maxMs": 257.346,
       "details": {
         "incomplete": 0,
-        "root": "/asmr6/轩子"
+        "root": "/source/example"
       },
       "plan": [
         "#1 SCAN CONSTANT ROW",

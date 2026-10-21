@@ -2,7 +2,7 @@
 
 ## 审查范围与基线
 
-- 仓库 `E:/项目/服务器/kikoto-source`，分支 `codex/kikoto-next-integration`，HEAD `1920a8d0a60b15d4febbe037ea308d9c81dc19ab`。该 HEAD 相对部署提交 `2bae5db98acceff6b45fdb4d168908c7b0da9177` 只多两个 docs 提交（`0f70702f`、`1920a8d0`，仅改 `.scratch/kikoto-next` 证据与执行记录），应用代码等价。
+- 仓库 `/srv/kikoto/source`，分支 `codex/kikoto-next-integration`，HEAD `1920a8d0a60b15d4febbe037ea308d9c81dc19ab`。该 HEAD 相对部署提交 `2bae5db98acceff6b45fdb4d168908c7b0da9177` 只多两个 docs 提交（`0f70702f`、`1920a8d0`，仅改 `.scratch/kikoto-next` 证据与执行记录），应用代码等价。
 - 工作区不干净：共 8 个已跟踪文件被改，其中 7 个是后端代码/测试（`source_catalog_index.go`、`source_catalog_index_store.go`、`source_catalog_index_worker.go`、`source_catalog_loose_works.go`、`source_catalog_split_identity_test.go`、`work_matching_scope_test.go`、`storage/migration_manager_test.go`），另 1 个是证据 `20-post-review-fixes.md`；`backend/migrations/084_source_catalog_orphan_cursor.sql` 未跟踪。084 未提交、未进镜像；当前部署仍是 `kikoto:next-2bae5db9`、schema 83。
 - 合同：`spec.md` 的 AC-01..AC-28 与 Testing Decisions。证据按 01–21、`index-calibration.md`、`issues/*.md` 核对；生产 run 53 数字采用审查输入（14,463/14,494 完成、4 failed、27 unconfirmed empty、42,624 张可播放卡、42,610 未登记），不重复验证。
 - 本次为只读审查，只新增本文件；未改源码、测试、工单或 Git 状态。
@@ -42,7 +42,7 @@
 
 ## 缺口清单（按严重度）
 
-1. **高：AC-21 生产重复拆分卡未消除。** 20:318-343 实测同一来源目录、同一相对音轨出现两张卡（`/asmr/中文音声/Flora圆圆` 的 `圆宝的呼吸声纯享版2`）；修复 `retireStaleFormatCardsTx`（`source_catalog_loose_works.go:1193`）与 084 仍在工作区，未提交、未部署。修复：提交 084 + worker/store 改动，跑 `TestSourceCatalogPartialRunRetiresOrphanSplitCards` 与 `TestSourceCatalogLinkedSplitCardKeepsSiblings`，部署 schema 84 后强制新 generation（或跑完孤儿清理），用 `source_root + relative_path` 查重复为 0，再更新 21。
+1. **高：AC-21 生产重复拆分卡未消除。** 20:318-343 实测同一来源目录、同一相对音轨出现两张卡（`/source/example/008` 的 `Example Work 104`）；修复 `retireStaleFormatCardsTx`（`source_catalog_loose_works.go:1193`）与 084 仍在工作区，未提交、未部署。修复：提交 084 + worker/store 改动，跑 `TestSourceCatalogPartialRunRetiresOrphanSplitCards` 与 `TestSourceCatalogLinkedSplitCardKeepsSiblings`，部署 schema 84 后强制新 generation（或跑完孤儿清理），用 `source_root + relative_path` 查重复为 0，再更新 21。
 2. **高：AC-21 run 53 终态与 generation 清理未入证据。** 21:121-124 仍写“run 53 尚未到达终态”；21:54 仍用 run 52 的 14,461/14,494、6 failed。修复：在 21 增加 run 53 表（status、complete/failed/empty/pending、卡片数、`publish_pending`、`orphan_cleanup_cursor`、generation 清理结果、4 条 U+FFFD 失败清单），更新 17 §未完成项；不要把 partial 写成完整覆盖。
 3. **高：AC-25 低空间与播放/扫描组合未验证。** index-calibration:97-101 明确低空间是“单独以翻译配置触发”；21:75-82 的组合负载没有暂停。修复：在真实音轨播放 + 全量扫描 + 翻译同时运行时把 `minFreeBytes` 提到可用空间之上，记录扫描/缓存进入 `paused_low_disk`、播放器继续推进、队列与进度保持；恢复阈值后记录续跑和原文/记录可读。
 4. **中：AC-08 统一搜索口径。** 21:49 称未登记卡片“不会被列表或搜索过滤”，但 `library_list.go:150 librarySearchWhere` 与 `library/search.go` 没有 `source_catalog_entry` 联结；只有 `openlist_catalog.go:484 listOpenListWorks` 的来源范围搜索能搜到未登记卡。修复：要么把 catalog 卡片并入库级搜索（按共享身份去重），要么把 21 的表述限定为“来源范围搜索”，并补一条库页搜索的 F 断言。

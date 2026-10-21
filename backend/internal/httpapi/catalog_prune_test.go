@@ -14,7 +14,7 @@ func seedCatalogPruneFixture(t *testing.T, db *sql.DB) {
 	t.Helper()
 	for _, statement := range []string{
 		`INSERT INTO user_account(id,username,display_name,role) VALUES(1,'prune-user','Prune User','user')`,
-		`INSERT INTO work(id,primary_code,title) VALUES(1,'RJ90000001','Retained work')`,
+		`INSERT INTO work(id,primary_code,title) VALUES(1,'RJ00000001','Retained work')`,
 		`INSERT INTO user_work_state(user_id,work_id,rating,note) VALUES(1,1,5,'keep this review')`,
 		`INSERT INTO file_source(id,code,display_name,source_type) VALUES(90,'prune-source','Prune source','openlist')`,
 		`INSERT INTO workflow_run(id,workflow_code,display_name,status,trigger_type)

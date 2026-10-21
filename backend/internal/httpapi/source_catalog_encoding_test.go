@@ -16,10 +16,10 @@ import (
 const (
 	encodingSourceID   = int64(77)
 	encodingGeneration = int64(501)
-	encodingParent     = "/asmr/橙澄子汉化组"
-	replacementName    = "[橙澄子汉化组]\ufffdRJ313527 MP3+lrc"
-	cleanSiblingName   = "[橙澄子汉化组]RJ313527 MP3+Lrc"
-	unresolvedName     = "[橙澄子汉化组]\ufffdRJ305379 MP3"
+	encodingParent     = "/source/example"
+	replacementName    = "[Example Circle]\ufffdRJ00000001 MP3+lrc"
+	cleanSiblingName   = "[Example Circle]RJ00000001 MP3+Lrc"
+	unresolvedName     = "[Example Circle]\ufffdRJ00000003 MP3"
 )
 
 func seedEncodingScan(t *testing.T, db *sql.DB) {
@@ -75,7 +75,7 @@ func expandEncodingChild(t *testing.T, server *Server, db *sql.DB, name string) 
 func TestCatalogEncodingNameDamage(t *testing.T) {
 	damaged := []string{
 		replacementName,
-		"[橙澄子汉化组]RJ324820 MP3+Lrc\ufffd",
+		"[Example Circle]RJ00000002 MP3+Lrc\ufffd",
 		"broken\xffname",
 	}
 	for _, name := range damaged {
@@ -88,8 +88,8 @@ func TestCatalogEncodingNameDamage(t *testing.T) {
 			t.Fatalf("%q was flagged as damaged", name)
 		}
 	}
-	if code := catalogEncodingCandidateCode(replacementName); code != "RJ313527" {
-		t.Fatalf("candidate code = %q, want RJ313527", code)
+	if code := catalogEncodingCandidateCode(replacementName); code != "RJ00000001" {
+		t.Fatalf("candidate code = %q, want RJ00000001", code)
 	}
 	// A replacement character inside the digits leaves fewer than five of them.
 	// The code must stay empty: a truncated number is a different work.
@@ -111,7 +111,7 @@ func TestCatalogEncodingOpenListKeepsInvalidBytes(t *testing.T) {
 		_, _ = w.Write(body)
 	}))
 	defer upstream.Close()
-	page, err := openlist.NewClient(upstream.URL, upstream.Client()).ListPage(context.Background(), "/asmr", 1, 100)
+	page, err := openlist.NewClient(upstream.URL, upstream.Client()).ListPage(context.Background(), "/source/example", 1, 100)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -176,7 +176,7 @@ func TestCatalogEncodingDamagedDirectoryIsRecordedNotEnqueued(t *testing.T) {
 	if reported != replacementName {
 		t.Fatalf("recorded name = %q, want the listed bytes %q", reported, replacementName)
 	}
-	if candidate != "RJ313527" || status != catalogEncodingUnresolved {
+	if candidate != "RJ00000001" || status != catalogEncodingUnresolved {
 		t.Fatalf("issue = code %q status %q", candidate, status)
 	}
 	// The sibling directory is untouched by the damaged name: a later listing
@@ -269,7 +269,7 @@ func TestCatalogEncodingFixListOnlyUnresolved(t *testing.T) {
 		}
 	}
 	// An operator decision is not a scanner write, but the fix list respects it.
-	if _, err := db.Exec(`UPDATE source_catalog_encoding_issue SET status=?,resolved_path='/asmr/fixed'
+	if _, err := db.Exec(`UPDATE source_catalog_encoding_issue SET status=?,resolved_path='/source/example/fixed'
 		WHERE file_source_id=? AND raw_name=?`, catalogEncodingIgnored, encodingSourceID, replacementName); err != nil {
 		t.Fatal(err)
 	}

@@ -16,9 +16,9 @@
     "directories": 14494,
     "generation": 53,
     "id": 3,
-    "root": "/asmr6/轩子"
+    "root": "/source/example"
   },
-  "root": "/asmr6/轩子",
+  "root": "/source/example",
   "queries": [
     {
       "name": "cleanup_100_cards",

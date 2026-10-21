@@ -36,7 +36,7 @@ root set once; it does not change published identities or staging rows.
 
 ## 发布尾部性能
 
-The live copy `/tmp/kikoto-live-ba9ef02/instance/config/kikoto.db`
+The live copy `/srv/kikoto/live/instance/config/kikoto.db`
 (34,234,368 bytes, 3,917 directories, 47,670 observations) reproduced the
 pathological tail: with only five unpublished observations left, the
 pre-queue query took **36.1–36.9 s** and its plan applied `LIMIT` only after a
@@ -183,7 +183,7 @@ complete、27 未确认空、6 failed、0 pending；14,890 次请求、3,897 个
 | 其余 | `single` |
 
 作品前缀为 `(?i)^(?:RJ|BJ|VJ|CC)[0-9]{5,8}(?:[^0-9A-Za-z]|$)|^[NSAB][0-9]{1,6}(?:[^0-9A-Za-z]|$)`。
-`file` 模式不是一文件一卡：`亦弟亦妹1..6`、`Ending1..3` 这类同 base title 的分集留在同一张卡，
+`file` 模式不是一文件一卡：`Example Work 101 1..6`、`Ending1..3` 这类同 base title 的分集留在同一张卡，
 组内按字典序取第一个文件作标题。
 
 保护条件：已登记作品、已是系列成员、被其他条目 relocated 指向的卡强制 `single`；
@@ -199,19 +199,19 @@ relocated 依赖时，才写 `file_source_id=NULL, relocated_to_id=第一张拆�
 
 | 目录 | 直接音频 | 判定 | 卡片数 |
 | --- | ---: | --- | ---: |
-| `/asmr/中文音声/有声小说/金麟岂是池中物--叶倩彤` | 225 | `single` | 1 |
-| `/asmr/中文音声/小野猫/小野猫-N` | 429 | `prefix` | 344 |
-| `/asmr/中文音声/南征` | 823 | `file` | 744（`亦弟亦妹` 6 轨一张、`抖s医生` 5 轨一张） |
-| `/asmr/中文音声/岁岁` | 666 | `file` | 632 |
-| `/asmr/英语音声/Tags/Harem` | 267 | `file` | 254（`Roommate Roulette - Ending1..3` 一张） |
-| `/asmr/中文音声/杏吧骚麦/骚麦` | 225 | `file` | 225 |
-| `/asmr/中文音声/骚麦俱乐部` | 6 | `single` | 1 |
+| `/source/example/001` | 225 | `single` | 1 |
+| `/source/example/002` | 429 | `prefix` | 344 |
+| `/source/example/003` | 823 | `file` | 744（`Example Work 101` 6 轨一张、`Example Work 102` 5 轨一张） |
+| `/source/example/004` | 666 | `file` | 632 |
+| `/source/example/005` | 267 | `file` | 254（`Example Work 103` 一张） |
+| `/source/example/006` | 225 | `file` | 225 |
+| `/source/example/007` | 6 | `single` | 1 |
 
-`岁岁/CV岁岁林三岁林三小岁z 279部14G` 是父目录音频的整包副本：280 个文件里 271 个与父目录
-同大小（±0.1%），文件名加 `林三歲 ` 前缀或转成繁体。按 `file` 规则会重复发布 280 张卡，
+`Example Work 004/Example Work 105 279部14G` 是父目录音频的整包副本：280 个文件里 271 个与父目录
+同大小（±0.1%），文件名加 `Example Work ` 前缀或转成繁体。按 `file` 规则会重复发布 280 张卡，
 因此在判定前增加副本检测：子目录 ≥20 个音频且 ≥90% 与父目录音频大小差在 0.1% 以内时，
 强制 `single`。测试 `TestSourceCatalogLooseWorksPackageCopyStaysOneCard` 覆盖该路径；
-`岁岁` 下 3–7 个文件的专栏子目录低于 20 条门槛，保持各自卡片。
+`Example Work 004` 下 3–7 个文件的专栏子目录低于 20 条门槛，保持各自卡片。
 
 ### 验证
 

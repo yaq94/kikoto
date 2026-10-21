@@ -262,13 +262,13 @@ matches the backup.
 | v0.8.0 | `059` | `059_v0.8.0.sql` |
 | v0.8.1, v0.8.2 | `066` | `066_v0.8.1.sql` |
 | v0.8.3 | `068` | `068_v0.8.3.sql` |
-| development build (unreleased) | `084` | Development baseline only; `compat/084_dev.sql` |
+| development build (unreleased) | `092` | Development baseline only; `compat/092_dev.sql` |
 
 Per-release upgrade steps are in the [release notes](../history/index.md).
 
 ## Kikoto-next Schema Additions
 
-Migrations `069` through `084` extend the source catalog, shared associations,
+Migrations `069` through `092` extend the source catalog, shared associations,
 personal transfer, and the recoverable index. Pending release notes and upgrade
 steps are in [Unreleased](../history/unreleased.md).
 
@@ -290,6 +290,14 @@ steps are in [Unreleased](../history/unreleased.md).
 | `082_source_catalog_sidecar_retry.sql` | `sidecar_transient_attempts`, `sidecar_retry_at`, `sidecar_failure`, and a due-row index | A temporary outage waits on a bounded backoff instead of spending the five permanent attempts; a definitive 404/410 still settles, and an administrator can reopen the queue |
 | `083_source_catalog_cleanup_indexes.sql` | Partial indexes on the live `root_path` and on non-empty `source_root` | The cleanup pass seeks the entries below a card instead of scanning every live entry for each card |
 | `084_source_catalog_orphan_cursor.sql` | `source_catalog_scan.orphan_cleanup_cursor`; the `work_matching_subject` view excludes retired cards | The orphan pass resumes after a skipped root; a partial run still retires stale split cards of fully observed roots, and retired cards are not queued for matching |
+| `085_source_catalog_progress_counters.sql` | `source_catalog_scan` progress counters and the publish cursor pair | The migration seeds the counters from the current generation; `?exact=1` rebuilds them from the directory and observation tables |
+| `086_catalog_search_and_track_index.sql` | `source_catalog_search_doc`, its FTS5 trigram index and triggers, and the generated `source_catalog_file.parent_path` column | The search index is rebuilt from the document table; the track index is derived from `relative_path` |
+| `087_source_catalog_exclusion.sql` | Source directory exclusions; `source_catalog_entry` admits `excluded` | Every entry column is copied; indexes, triggers and `work_matching_subject` are recreated. Excluded cards and personal records remain |
+| `088_source_catalog_incremental_sync.sql` | Directory sync columns, `source_catalog_sync_run`, and a partial unique index for one running sync per source | A run row records its own progress; a busy source keeps its previous successful scan |
+| `089_work_primary_code_trimmed_unique.sql` | Unique index over non-empty trimmed `work.primary_code` | Duplicate trimmed codes abort with an actionable message before the index is created; no row is rewritten |
+| `090_catalog_phase_timing.sql` | `source_catalog_phase_timing` rows per workflow run | Timing rows are diagnostics; a missing row does not change catalog state |
+| `091_catalog_encoding_issue.sql` | `source_catalog_encoding_issue` fix list | Damaged names stay recorded; the scanner never requests a guessed path |
+| `092_content_translation_store.sql` | `content_translation`, its FTS5 trigram index, and `translation_prefill_state` | Stored translations and the prefill cursor survive restart; a failed generation writes no row |
 
 The Release To Schema Map above lists every numbered file. `069` rebuilds `work`
 and `logical_work` to relax code uniqueness and creates the catalog entry and
@@ -316,6 +324,30 @@ one for plain cards and one for split cards. Each branch is a half-open path
 range, so the pass reads the subtree instead of the whole entry table.
 Every added column has a default, so an existing row stays readable; the queue
 starts empty and a later scan enqueues cards that publish credit files.
+
+`084` adds the orphan cleanup cursor and narrows `work_matching_subject` to
+unretired cards. `085` replaces the per-poll aggregate with the scan progress
+counters and the publish cursor; the migration seeds them from the current
+generation, and `?exact=1` keeps the aggregate query for reconciliation. `086`
+adds the search document table, its FTS5 trigram index and triggers, plus the
+generated `parent_path` column and index used for first-level track reads; the
+index is rebuilt from the stored documents. `087` adds source-level directory
+exclusions and rebuilds `source_catalog_entry` to admit the `excluded`
+availability value, recreating its indexes, triggers and the matching view.
+`088` adds the directory sync columns, the sync run table and the partial
+unique index that keeps one running sync per source. `089` adds a unique index
+over non-empty trimmed work codes and aborts with an actionable message when an
+existing database still contains duplicates. `090` records per-phase catalog
+timings. `091` keeps damaged source names in a separate fix-list table. `092`
+stores the durable translation corpus, its FTS5 index and the prefill cursor.
+
+The `084` through `092` changes retain existing rows. `087` is the only table
+rebuild; it copies every entry column and then recreates the indexes, triggers
+and view. `085`, `088`, `090`, `091` and `092` add tables or columns with
+defaults, so an older binary that never reads them still reads every other
+table. Startup refuses a database newer than the binary before running a
+handler. Rolling back any of these schemas requires a database snapshot, not a
+reverse migration; see [Release rollback](release-rollback.md).
 
 `077` does not change entry identity. It lets a generation remove stale file
 rows left by an older generation without touching an entry that the current

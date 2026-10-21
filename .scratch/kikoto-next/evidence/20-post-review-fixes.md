@@ -54,7 +54,7 @@
 
 ## 目录索引写锁与吞吐（2026-10-20 19:xx）
 
-依据 `E:\项目\服务器\.kikoto-work\index-write-contention.md`（本机施工单，不入库）。
+依据 `/srv/kikoto/index-write-contention.md`（本机施工单，不入库）。
 基线 run 50：并发 2、间隔 300ms、99 目录/分钟、146 分钟；期间 116 次 `SQLITE_BUSY`、202 次 `context deadline exceeded`，与目录作业起止强相关。
 
 改动：
@@ -79,7 +79,7 @@
 
 本批无迁移，schema 仍为 82。
 
-补充测量（2026-10-20 20:xx，`.kikoto-work/probe-publish2.db`，14,459 个当前代目录 / 14,459 条 audio_root / 266,296 条旧代 pending）：
+补充测量（2026-10-20 20:xx，`/srv/kikoto/bench/probe-publish.db`，14,459 个当前代目录 / 14,459 条 audio_root / 266,296 条旧代 pending）：
 
 | 发布查询形态 | LIMIT 100 |
 | --- | --- |
@@ -320,8 +320,8 @@
 生产 run 53 收尾为 `partial`：4 个上游目录名本身含 U+FFFD，无法寻址；
 另有 27 个未确认空目录。旧代码只在 `failed + restricted = 0` 时执行拆分卡
 退役，因此上一代留下的拆分卡在本代仍可见。实测同一来源目录、
-同一相对音轨出现两张卡（例：`/asmr/中文音声/Flora圆圆` 的
-`圆宝的呼吸声纯享版2` 旧卡与本代 `…2.2` 新卡）。
+同一相对音轨出现两张卡（例：`/source/example/008` 的
+`Example Work 104` 旧卡与本代 `…2.2` 新卡）。
 
 修复：
 
@@ -360,7 +360,7 @@
 ## 孤儿退役的根级阻塞（2026-10-21 生产复验）
 
 续跑 run 53 后只有 32 张旧卡被退役，1,661 张仍可见。抽查
-`/asmr/中文音声/Flora圆圆`：旧卡 `圆宝的呼吸声纯享版2` 与本代
+`/source/example/008`：旧卡 `Example Work 104` 与本代
 `…2.2` 指向同一相对音轨，根目录 `complete`、子树无失败，替代卡唯一，本应退役。
 根级 `NOT EXISTS` 把「该根内有任意卡带 work/系列/入向别名」当成整根跳过，
 而该根中一张无关旧卡恰好是别名目标，于是所有重复卡都被留下。
