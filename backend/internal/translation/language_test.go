@@ -56,3 +56,14 @@ func TestScriptConversionRoundTrip(t *testing.T) {
 		t.Fatalf("Simplified = %q", simplified)
 	}
 }
+
+func TestDetectSourceLanguageTreatsMostlyLatinTitlesAsTranslatable(t *testing.T) {
+	// A Chinese circle or cast name inside an English title is not evidence that
+	// the title itself is Chinese; it still needs a translation.
+	if got := DetectSourceLanguage("Example conversion title 示例声优 示例社团"); got != SourceUnknown {
+		t.Fatalf("mixed title language = %q, want unknown", got)
+	}
+	if got := DetectSourceLanguage("示例声优 示例社团 纯爱"); got != SourceHans {
+		t.Fatalf("mostly simplified title language = %q, want zh-Hans", got)
+	}
+}

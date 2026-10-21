@@ -47,6 +47,11 @@ func DetectSourceLanguage(text string) string {
 		return SourceJapanese
 	case hangul > 0:
 		return SourceKorean
+	case han > 0 && latin > han*2:
+		// A mostly Latin title that carries a Chinese circle or cast name is not
+		// Chinese prose. Treating it as native would leave the reader with the
+		// untranslated source, so the caller translates it instead.
+		return SourceUnknown
 	case han > 0:
 		return hanLanguage(text, han)
 	case latin > 0 && other == 0:

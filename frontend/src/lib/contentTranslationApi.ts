@@ -193,6 +193,11 @@ type CoalescedWaiter = {
 type CoalescedEntry = {
   input: ContentTranslationInput;
   waiters: Set<CoalescedWaiter>;
+  // Called when the last interested reader leaves. The flush aborts the network
+  // request only after every entry of that request has lost its readers, so a
+  // language switch or navigation stops the stale model call without cutting
+  // off a field another visible component still needs.
+  empty?: () => void;
 };
 
 // A page renders many fields in one frame. Queueing for one short window turns
@@ -221,7 +226,11 @@ async function flushCoalesced() {
 
   const deferred = new Map<
     string,
-    { promise: Promise<ContentTranslationResult>; resolve: (value: ContentTranslationResult) => void; reject: (reason: unknown) => void }
+    {
+      promise: Promise<ContentTranslationResult>;
+      resolve: (value: ContentTranslationResult) => void;
+      reject: (reason: unknown) => void;
+    }
   >();
   for (const [key] of entries) {
     let resolve!: (value: ContentTranslationResult) => void;
@@ -248,9 +257,16 @@ async function flushCoalesced() {
     }
   };
 
+  const controller = new AbortController();
+  for (const [, entry] of entries) {
+    entry.empty = () => {
+      if (entries.every(([, item]) => item.waiters.size === 0)) controller.abort();
+    };
+  }
   try {
     const results = await contentTranslationApi.translateBatch(
       entries.map(([key, entry]) => ({ ...entry.input, key })),
+      controller.signal,
     );
     for (const [key, entry] of entries) {
       const result = results.get(key);
@@ -314,7 +330,10 @@ export function translateCoalesced(
   return new Promise<ContentTranslationResult>((resolve, reject) => {
     const onAbort = () => {
       target.waiters.delete(waiter);
-      if (target.waiters.size === 0) coalesced.delete(key);
+      if (target.waiters.size === 0) {
+        coalesced.delete(key);
+        target.empty?.();
+      }
       reject(abortError());
     };
     const waiter: CoalescedWaiter = {
