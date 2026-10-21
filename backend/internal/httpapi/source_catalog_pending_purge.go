@@ -1,6 +1,10 @@
 package httpapi
 
-import "context"
+import (
+	"context"
+	"database/sql"
+	"sync"
+)
 
 const (
 	// catalogStalePendingPurge is both the row bound of one update and the
@@ -18,15 +22,32 @@ const (
 // files and lets tests swap it without waiting on real pauses.
 var catalogPendingPurgePause = pauseCatalogWriter
 
+// catalogPendingPurgeRuns records the generation whose stale queues have been
+// checked to empty. The scan asks on every step; without this gate the EXISTS
+// join below runs against every pending row on each step. The key includes the
+// pool so tests and separate servers never share a verdict.
+type catalogPendingPurgeKey struct {
+	db       *sql.DB
+	sourceID int64
+}
+
+var catalogPendingPurgeRuns sync.Map
+
 // purgeStaleCatalogPending clears publish_pending on observations whose
 // directory no longer belongs to this scan generation. The row itself, its
 // entry and file, and all personal state remain untouched. At most
 // catalogStalePendingPurge*catalogStalePendingPurgeBatch rows are cleared per
 // call; a remaining backlog is left for the next invocation.
 func (s *Server) purgeStaleCatalogPending(ctx context.Context, job workflowJobRecord, sourceID int64) error {
-	// The scan asks on every step, so the common "nothing stale" answer must
-	// not open a write transaction. This read uses the partial pending index
-	// and returns before any write lock is taken.
+	key := catalogPendingPurgeKey{db: s.db, sourceID: sourceID}
+	if generation, ok := catalogPendingPurgeRuns.Load(key); ok && generation.(int64) == job.RunID {
+		// The stale set is fixed per generation. A clean queue stays clean until
+		// the next scan starts, so the common step does no query at all.
+		return nil
+	}
+	// The first call for a generation pays one indexed existence check. A
+	// non-empty queue then drains in bounded batches; a full final batch leaves
+	// the generation unmarked so the next invocation continues.
 	var stale int
 	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS(
 		SELECT 1 FROM source_catalog_observation o
@@ -36,6 +57,7 @@ func (s *Server) purgeStaleCatalogPending(ctx context.Context, job workflowJobRe
 		return err
 	}
 	if stale == 0 {
+		catalogPendingPurgeRuns.Store(key, job.RunID)
 		return nil
 	}
 	for batch := 0; batch < catalogStalePendingPurgeBatch; batch++ {
@@ -47,6 +69,7 @@ func (s *Server) purgeStaleCatalogPending(ctx context.Context, job workflowJobRe
 			return err
 		}
 		if cleared < catalogStalePendingPurge {
+			catalogPendingPurgeRuns.Store(key, job.RunID)
 			return nil
 		}
 		if batch+1 < catalogStalePendingPurgeBatch {

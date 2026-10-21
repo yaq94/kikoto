@@ -11,20 +11,36 @@ import (
 	"github.com/yexca/kikoto/backend/internal/openlist"
 )
 
-// catalogRootIncomplete reports an observation gap below one catalog root.
-// Retirement and missing-state decisions only apply to a range the current
-// generation fully observed: a failed, restricted, unconfirmed-empty or still
-// listing directory keeps every older card and file row it owns.
-func catalogRootIncomplete(ctx context.Context, tx *sql.Tx, sourceID, generation int64, root string) (bool, error) {
+// catalogRootIncompleteQuery returns the statement that reports an observation
+// gap below one catalog root. Retirement and missing-state decisions only apply
+// to a range the current generation fully observed: a failed, restricted,
+// unconfirmed-empty or still listing directory keeps every older card and file
+// row it owns. The observation arm bounds directory_path as a half-open range;
+// the pending index is ordered by (file_source_id,directory_path,name), so the
+// range seeks the subtree instead of testing every pending row with substr().
+// catalog_root is always an ancestor of the directory path it labels, so the
+// path range selects the same rows as the former catalog_root equality.
+// Keeping the builder separate lets a plan guard assert the exact statement.
+func catalogRootIncompleteQuery(sourceID, generation int64, root string) (string, []any) {
+	root = strings.TrimRight(root, "/")
 	if root == "" {
 		root = "/"
 	}
-	var incomplete int
-	err := tx.QueryRowContext(ctx, `SELECT EXISTS(
+	query := `SELECT EXISTS(
 		SELECT 1 FROM source_catalog_directory d
 		WHERE d.file_source_id=? AND d.generation=? AND d.status<>'complete'
-			AND NOT (d.status='empty' AND d.error_code='not_found')
-			AND (?='/' OR d.catalog_root=? OR d.path=? OR substr(d.path,1,length(?)+1)=? || '/')
+			AND NOT (d.status='empty' AND d.error_code='not_found')`
+	args := []any{sourceID, generation}
+	if root != "/" {
+		// The top-level range keeps directory_path sargable even though the
+		// slash check is a second conjunct. The range may include a sibling such
+		// as /root-extra; the slash predicate removes it without a scan.
+		query += `
+			AND d.path>=? AND d.path<?
+			AND (d.path=? OR d.path>=?)`
+		args = append(args, root, root+"0", root, root+"/")
+	}
+	query += `
 		UNION ALL
 		SELECT 1 FROM source_catalog_observation o
 		JOIN source_catalog_directory pd ON pd.file_source_id=o.file_source_id AND pd.path=o.directory_path AND o.revision=pd.revision
@@ -35,10 +51,34 @@ func catalogRootIncomplete(ctx context.Context, tx *sql.Tx, sourceID, generation
 			-- describe a container, not missing coverage of the card below it.
 			-- An audio row is always a gap because its own root will publish.
 			AND (o.kind='audio' OR EXISTS(SELECT 1 FROM source_catalog_audio_root r
-				WHERE r.file_source_id=pd.file_source_id AND r.generation=pd.generation AND r.catalog_root=pd.catalog_root))
-			AND (?='/' OR pd.catalog_root=? OR pd.path=? OR substr(pd.path,1,length(?)+1)=? || '/')
-	)`, sourceID, generation, root, root, root, root, root,
-		sourceID, generation, root, root, root, root, root).Scan(&incomplete)
+				WHERE r.file_source_id=pd.file_source_id AND r.generation=pd.generation AND r.catalog_root=pd.catalog_root))`
+	args = append(args, sourceID, generation)
+	if root != "/" {
+		query += `
+			AND o.directory_path>=? AND o.directory_path<?
+			AND (o.directory_path=? OR o.directory_path>=?)`
+		args = append(args, root, root+"0", root, root+"/")
+	}
+	query += `
+	)`
+	return query, args
+}
+
+// catalogSubtreeBounds returns the half-open range covering root's
+// descendants. The upper sentinel root+"0" is safe because '/' sorts below
+// '0', so every path under root+'/' stays below it.
+func catalogSubtreeBounds(root string) (string, string) {
+	root = strings.TrimRight(root, "/")
+	if root == "" {
+		return "", ""
+	}
+	return root + "/", root + "0"
+}
+
+func catalogRootIncomplete(ctx context.Context, tx *sql.Tx, sourceID, generation int64, root string) (bool, error) {
+	query, args := catalogRootIncompleteQuery(sourceID, generation, root)
+	var incomplete int
+	err := tx.QueryRowContext(ctx, query, args...).Scan(&incomplete)
 	return incomplete != 0, err
 }
 
@@ -117,6 +157,132 @@ func catalogRangeUncertain(ctx context.Context, tx *sql.Tx, sourceID, generation
 	return uncertain != 0, err
 }
 
+func catalogRangeUncertainSetSQL(baseCount int) string {
+	values := strings.TrimSuffix(strings.Repeat("(?),", baseCount), ",")
+	return `WITH bases(path) AS (VALUES ` + values + `)
+		SELECT DISTINCT b.path
+		FROM source_catalog_directory d
+		JOIN bases b ON b.path='/' OR d.path=b.path OR (d.path>=b.path||'/' AND d.path<b.path||'0')
+		WHERE d.file_source_id=? AND d.generation=?
+			AND d.status IN ('failed','restricted','empty','pending','listing_complete')
+			AND NOT (d.status='empty' AND d.error_code='not_found')`
+}
+
+// catalogRangeUncertainSetTx answers catalogRangeUncertain for a bounded card
+// batch with two statements: one reads the nearest directory row for every
+// ancestor, and one checks every base for an uncertain descendant. The caller
+// keeps the same per-base verdict the single-card helper produces.
+func catalogRangeUncertainSetTx(ctx context.Context, tx *sql.Tx, sourceID, generation int64, bases []string) (map[string]bool, error) {
+	uniqueBases := make([]string, 0, len(bases))
+	seenBase := map[string]bool{}
+	for _, base := range bases {
+		if base == "" {
+			base = "/"
+		}
+		if !seenBase[base] {
+			seenBase[base] = true
+			uniqueBases = append(uniqueBases, base)
+		}
+	}
+	result := map[string]bool{}
+	if len(uniqueBases) == 0 {
+		return result, nil
+	}
+	ancestorSet := map[string]bool{}
+	for _, base := range uniqueBases {
+		for current := base; ; {
+			ancestorSet[current] = true
+			if current == "/" {
+				break
+			}
+			parent := path.Dir(current)
+			if parent == "." || parent == current {
+				ancestorSet["/"] = true
+				break
+			}
+			current = parent
+		}
+	}
+	ancestors := make([]string, 0, len(ancestorSet))
+	for ancestor := range ancestorSet {
+		ancestors = append(ancestors, ancestor)
+	}
+	type directoryRow struct {
+		status, code string
+	}
+	rowsByPath := map[string]directoryRow{}
+	rows, err := tx.QueryContext(ctx, `SELECT path,status,error_code FROM source_catalog_directory
+		WHERE file_source_id=? AND generation=? AND path IN (`+sqlPlaceholders(len(ancestors))+`)`,
+		append([]any{sourceID, generation}, stringArgs(ancestors)...)...)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var directory string
+		var row directoryRow
+		if err = rows.Scan(&directory, &row.status, &row.code); err != nil {
+			break
+		}
+		rowsByPath[directory] = row
+	}
+	readErr := rows.Err()
+	_ = rows.Close()
+	if err != nil {
+		return nil, err
+	}
+	if readErr != nil {
+		return nil, readErr
+	}
+	partition := func(base string) (bool, bool) {
+		for current := base; ; {
+			if row, ok := rowsByPath[current]; ok {
+				return true, row.status == "complete" || (row.status == "empty" && row.code == "not_found")
+			}
+			if current == "/" {
+				return false, false
+			}
+			parent := path.Dir(current)
+			if parent == "." || parent == current {
+				return false, false
+			}
+			current = parent
+		}
+	}
+	observed := map[string]bool{}
+	for _, base := range uniqueBases {
+		_, observed[base] = partition(base)
+	}
+	uncertainArgs := make([]any, 0, len(uniqueBases)+2)
+	for _, base := range uniqueBases {
+		uncertainArgs = append(uncertainArgs, base)
+	}
+	uncertainArgs = append(uncertainArgs, sourceID, generation)
+	rows, err = tx.QueryContext(ctx, catalogRangeUncertainSetSQL(len(uniqueBases)), uncertainArgs...)
+	if err != nil {
+		return nil, err
+	}
+	matched := map[string]bool{}
+	for rows.Next() {
+		var base string
+		if err = rows.Scan(&base); err != nil {
+			break
+		}
+		matched[base] = true
+	}
+	readErr = rows.Err()
+	_ = rows.Close()
+	if err != nil {
+		return nil, err
+	}
+	if readErr != nil {
+		return nil, readErr
+	}
+	for _, base := range uniqueBases {
+		result[base] = !observed[base] || matched[base]
+	}
+	return result, nil
+}
+
 func catalogFailureStatus(err error) string {
 	if errors.Is(err, openlist.ErrMaintenance) {
 		return "maintenance"
@@ -132,6 +298,18 @@ func catalogFailureStatus(err error) string {
 	return "unavailable"
 }
 
+func markCatalogRangeStatusTx(ctx context.Context, tx *sql.Tx, sourceID int64, root, status string) error {
+	_, err := tx.ExecContext(ctx, `UPDATE source_catalog_entry SET availability_status=?,status_checked_at=CURRENT_TIMESTAMP
+		WHERE file_source_id=? AND relocated_to_id IS NULL AND (?='/' OR root_path=? OR source_root=? OR substr(root_path,1,length(?)+2)=? || '::')`,
+		status, sourceID, root, root, root, root, root)
+	return err
+}
+
+type catalogEntryStatusUpdate struct {
+	ID     int64
+	Status string
+}
+
 func (s *Server) setCatalogEntryStatus(ctx context.Context, id int64, status string) error {
 	tx, release, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
 	if err != nil {
@@ -144,36 +322,131 @@ func (s *Server) setCatalogEntryStatus(ctx context.Context, id int64, status str
 	return tx.Commit()
 }
 
-func markCatalogRangeStatusTx(ctx context.Context, tx *sql.Tx, sourceID int64, root, status string) error {
-	_, err := tx.ExecContext(ctx, `UPDATE source_catalog_entry SET availability_status=?,status_checked_at=CURRENT_TIMESTAMP
-		WHERE file_source_id=? AND relocated_to_id IS NULL AND (?='/' OR root_path=? OR source_root=? OR substr(root_path,1,length(?)+2)=? || '::')`,
-		status, sourceID, root, root, root, root, root)
-	return err
-}
-
-// markCatalogDirectoryStatusTx applies a directory's own outcome to the cards
-// whose real path is that directory. A failed child below a card does not make
-// the card unplayable: its own files were still observed and published.
-
-func setCatalogEntryStatusTx(ctx context.Context, tx *sql.Tx, id int64, status string) error {
-	if _, err := tx.ExecContext(ctx, `UPDATE source_catalog_entry SET availability_status=?,status_checked_at=CURRENT_TIMESTAMP WHERE id=?`, status, id); err != nil {
+// setCatalogEntryStatusesTx applies a whole lifecycle batch with one statement
+// per affected table. work_source_presence is aggregated by (work_id,
+// file_source_id), and media locations are matched through media_item_id, whose
+// catalog fingerprint carries the entry id and relative path.
+func setCatalogEntryStatusesTx(ctx context.Context, tx *sql.Tx, updates []catalogEntryStatusUpdate) error {
+	if len(updates) == 0 {
+		return nil
+	}
+	var values strings.Builder
+	args := make([]any, 0, len(updates)*2)
+	ids := make([]int64, 0, len(updates))
+	missing := []int64{}
+	available := []int64{}
+	for index, update := range updates {
+		if index > 0 {
+			values.WriteByte(',')
+		}
+		values.WriteString("(?,?)")
+		args = append(args, update.ID, update.Status)
+		ids = append(ids, update.ID)
+		switch update.Status {
+		case "missing":
+			missing = append(missing, update.ID)
+		case "available":
+			available = append(available, update.ID)
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `WITH updates(id,status) AS (VALUES `+values.String()+`)
+		UPDATE source_catalog_entry
+		SET availability_status=(SELECT status FROM updates u WHERE u.id=source_catalog_entry.id),
+			status_checked_at=CURRENT_TIMESTAMP
+		WHERE id IN (SELECT id FROM updates)`, args...); err != nil {
 		return err
 	}
-	if status == "missing" || status == "available" {
-		availability := "unavailable"
-		if status == "available" {
-			availability = "available"
-		}
-		if _, err := tx.ExecContext(ctx, `UPDATE media_file_location SET availability=? WHERE location_type='catalog_stream'
-			AND instr(stream_url,'/api/source-catalog/' || ? || '/media?')=1
-			AND (?='unavailable' OR EXISTS(SELECT 1 FROM source_catalog_file f WHERE f.catalog_entry_id=? AND f.relative_path=media_file_location.path AND f.kind='audio'))`, availability, id, availability, id); err != nil {
+	if len(missing) > 0 {
+		if _, err := tx.ExecContext(ctx, `UPDATE media_file_location SET availability='unavailable'
+			WHERE location_type='catalog_stream' AND media_item_id IN (
+				SELECT m.id FROM source_catalog_entry e CROSS JOIN media_item m
+				WHERE e.id IN (`+sqlPlaceholders(len(missing))+`)
+					AND m.fingerprint>=('catalog:'||e.id||':')
+					AND m.fingerprint<('catalog:'||e.id||';'))`, int64Args(missing)...); err != nil {
 			return err
 		}
 	}
-	_, err := tx.ExecContext(ctx, `UPDATE work_source_presence SET availability=CASE WHEN EXISTS(
-		SELECT 1 FROM source_catalog_entry e WHERE e.work_id=work_source_presence.work_id AND e.file_source_id=work_source_presence.file_source_id AND e.relocated_to_id IS NULL AND e.availability_status='available') THEN 'available' ELSE ? END,
-		last_checked_at=CURRENT_TIMESTAMP WHERE (work_id,file_source_id) IN(SELECT work_id,file_source_id FROM source_catalog_entry WHERE id=?)`, status, id)
+	if len(available) > 0 {
+		if _, err := tx.ExecContext(ctx, `UPDATE media_file_location SET availability='available'
+			WHERE location_type='catalog_stream' AND media_item_id IN (
+				SELECT m.id FROM source_catalog_entry e
+				JOIN source_catalog_file f ON f.catalog_entry_id=e.id AND f.kind='audio'
+				JOIN media_item m ON m.fingerprint='catalog:'||e.id||':'||f.relative_path
+				WHERE e.id IN (`+sqlPlaceholders(len(available))+`))`, int64Args(available)...); err != nil {
+			return err
+		}
+	}
+	type presencePair struct {
+		workID, sourceID int64
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT id,work_id,file_source_id FROM source_catalog_entry
+		WHERE id IN (`+sqlPlaceholders(len(ids))+`)`, int64Args(ids)...)
+	if err != nil {
+		return err
+	}
+	entryPair := map[int64]presencePair{}
+	for rows.Next() {
+		var id int64
+		var workID, sourceID sql.NullInt64
+		if err = rows.Scan(&id, &workID, &sourceID); err != nil {
+			break
+		}
+		if workID.Valid && sourceID.Valid {
+			entryPair[id] = presencePair{workID: workID.Int64, sourceID: sourceID.Int64}
+		}
+	}
+	readErr := rows.Err()
+	_ = rows.Close()
+	if err != nil {
+		return err
+	}
+	if readErr != nil {
+		return readErr
+	}
+	// Sequential per-card updates leave the status of the last card in the
+	// group when no live card is available. Preserve that order while one
+	// statement updates every group.
+	last := map[presencePair]string{}
+	pairs := []presencePair{}
+	for _, update := range updates {
+		pair, ok := entryPair[update.ID]
+		if !ok {
+			continue
+		}
+		if _, seen := last[pair]; !seen {
+			pairs = append(pairs, pair)
+		}
+		last[pair] = update.Status
+	}
+	if len(pairs) == 0 {
+		return nil
+	}
+	values.Reset()
+	args = args[:0]
+	for index, pair := range pairs {
+		if index > 0 {
+			values.WriteByte(',')
+		}
+		values.WriteString("(?,?,?)")
+		args = append(args, pair.workID, pair.sourceID, last[pair])
+	}
+	_, err = tx.ExecContext(ctx, `WITH targets(work_id,file_source_id,fallback) AS (VALUES `+values.String()+`)
+		UPDATE work_source_presence
+		SET availability=CASE WHEN EXISTS(
+			SELECT 1 FROM source_catalog_entry e
+			WHERE e.work_id=work_source_presence.work_id
+				AND e.file_source_id=work_source_presence.file_source_id
+				AND e.relocated_to_id IS NULL AND e.availability_status='available')
+			THEN 'available'
+			ELSE (SELECT fallback FROM targets t
+				WHERE t.work_id=work_source_presence.work_id AND t.file_source_id=work_source_presence.file_source_id) END,
+			last_checked_at=CURRENT_TIMESTAMP
+		WHERE (work_id,file_source_id) IN (SELECT work_id,file_source_id FROM targets)`, args...)
 	return err
+}
+
+func setCatalogEntryStatusTx(ctx context.Context, tx *sql.Tx, id int64, status string) error {
+	return setCatalogEntryStatusesTx(ctx, tx, []catalogEntryStatusUpdate{{ID: id, Status: status}})
 }
 
 // Only full successful coverage reaches this bounded final pass. Failure,
@@ -261,6 +534,7 @@ func (s *Server) settleCatalogLifecycleBatch(ctx context.Context, job workflowJo
 	if readErr != nil {
 		return false, readErr
 	}
+	updates := make([]catalogEntryStatusUpdate, 0, len(entries))
 	for _, e := range entries {
 		if stage == "reconcile" {
 			if e.generation != job.RunID {
@@ -337,12 +611,13 @@ func (s *Server) settleCatalogLifecycleBatch(ctx context.Context, job workflowJo
 				}
 			}
 		}
-		if err = setCatalogEntryStatusTx(ctx, tx.Tx, e.id, status); err != nil {
-			return false, err
-		}
+		updates = append(updates, catalogEntryStatusUpdate{ID: e.id, Status: status})
 		cursor = e.id
 	}
 	observedCount = len(entries)
+	if err = setCatalogEntryStatusesTx(ctx, tx.Tx, updates); err != nil {
+		return false, err
+	}
 	if len(entries) < catalogLifecycleRows {
 		if stage == "observe" {
 			stage = "reconcile"
@@ -385,19 +660,26 @@ func (s *Server) cleanupCatalogPublishBatch(ctx context.Context, job workflowJob
 	if cursor < 0 {
 		cursor = 0
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT id FROM source_catalog_entry
-		WHERE file_source_id=? AND last_seen_generation=? AND id>?
-		ORDER BY id LIMIT ?`, sourceID, job.RunID, cursor, catalogCleanupRows)
+	type cleanupCard struct {
+		id              int64
+		base            string
+		hasDirectoryRow bool
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT e.id,`+catalogEffectiveRootSQL("e")+`,
+			EXISTS(SELECT 1 FROM source_catalog_file f WHERE f.catalog_entry_id=e.id AND f.kind<>'audio')
+		FROM source_catalog_entry e
+		WHERE e.file_source_id=? AND e.last_seen_generation=? AND e.id>?
+		ORDER BY e.id LIMIT ?`, sourceID, job.RunID, cursor, catalogCleanupRows)
 	if err != nil {
 		return 0, 0, err
 	}
-	ids := []int64{}
+	cards := []cleanupCard{}
 	for rows.Next() {
-		var id int64
-		if err = rows.Scan(&id); err != nil {
+		var card cleanupCard
+		if err = rows.Scan(&card.id, &card.base, &card.hasDirectoryRow); err != nil {
 			break
 		}
-		ids = append(ids, id)
+		cards = append(cards, card)
 	}
 	if err == nil {
 		err = rows.Err()
@@ -406,101 +688,107 @@ func (s *Server) cleanupCatalogPublishBatch(ctx context.Context, job workflowJob
 	if err != nil {
 		return 0, 0, err
 	}
-	for _, id := range ids {
-		var base string
-		if err = tx.QueryRowContext(ctx, `SELECT `+catalogEffectiveRootSQL("source_catalog_entry")+`
-			FROM source_catalog_entry WHERE id=?`, id).Scan(&base); err != nil {
-			return 0, 0, err
-		}
-		// A failed, restricted or unconfirmed-empty directory still proves
-		// nothing about its files. Deleting the older generation below it would
-		// hide tracks that the source never had a chance to republish. Keep the
-		// rows until a later scan completes that subtree.
+	if len(cards) == 0 {
+		return 0, 0, tx.Commit()
+	}
+	bases := make([]string, 0, len(cards))
+	for _, card := range cards {
+		bases = append(bases, card.base)
+	}
+	uncertain, err := catalogRangeUncertainSetTx(ctx, tx.Tx, sourceID, job.RunID, bases)
+	if err != nil {
+		return 0, 0, err
+	}
+	// A failed, restricted or unconfirmed-empty directory still proves nothing
+	// about its files. Deleting the older generation below it would hide tracks
+	// that the source never had a chance to republish. Keep those rows; the
+	// cursor still advances because the verdict cannot change within this run.
+	cleanIDs := []int64{}
+	for _, card := range cards {
+		base := card.base
 		if base == "" {
 			base = "/"
 		}
-		// The configured root is the whole tree: a failure anywhere below it
-		// keeps older rows, while a fully observed root cleans them.
-		uncertain, uncertainErr := catalogRangeUncertain(ctx, tx.Tx, sourceID, job.RunID, base)
-		if uncertainErr != nil {
-			return 0, 0, uncertainErr
+		if !uncertain[base] {
+			cleanIDs = append(cleanIDs, card.id)
 		}
-		if !uncertain {
-			result, execErr := tx.ExecContext(ctx, `DELETE FROM source_catalog_file WHERE catalog_entry_id=? AND observed_generation<>?`, id, job.RunID)
-			if execErr != nil {
-				return 0, 0, execErr
-			}
-			n, execErr := result.RowsAffected()
-			if execErr != nil {
-				return 0, 0, execErr
-			}
-			removed += n
+	}
+	if len(cleanIDs) > 0 {
+		args := append(int64Args(cleanIDs), job.RunID)
+		result, deleteErr := tx.ExecContext(ctx, `DELETE FROM source_catalog_file
+			WHERE catalog_entry_id IN (`+sqlPlaceholders(len(cleanIDs))+`) AND observed_generation<>?`, args...)
+		if deleteErr != nil {
+			return 0, 0, deleteErr
 		}
-		// A folder row that is now its own catalog entry belongs to that
-		// entry, not to the card above it. Keeping it makes the parent list a
-		// child work as one of its tracks.
-		//
-		// Only a card that stores a directory row can lose one. Most cards are
-		// leaves, and the delete below resolves the card's whole path range; on
-		// a large source that dominated the cleanup pass. A directory row is
-		// never audio, so an audio-only card is skipped with the same result.
-		var hasDirectoryRow int
-		if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM source_catalog_file
-			WHERE catalog_entry_id=? AND kind<>'audio')`, id).Scan(&hasDirectoryRow); err != nil {
-			return 0, 0, err
-		}
-		if hasDirectoryRow == 0 {
-			cursor = id
-			continue
-		}
-		// A split card records the real directory in source_root and keeps a
-		// synthetic root_path such as /Creator::key. The folder row in the card
-		// above names the real directory. Both forms are queried as half-open
-		// path ranges so the entry indexes seek the children. The previous
-		// prefix comparison made SQLite scan every live entry for every card.
-		parentRoot := strings.TrimRight(base, "/")
-		lower, upper := parentRoot+"/", parentRoot+"0"
-		if parentRoot == "" {
-			// The root card owns every top-level directory. UTF-8 cannot
-			// encode above this sentinel, so the range still covers all paths.
-			lower, upper = "", "\U0010FFFF"
-		}
-		// length() counts characters, while a Go byte offset would split a
-		// multibyte path at the wrong position. The expression does not affect
-		// how the range predicates seek the indexes.
-		result, execErr := tx.ExecContext(ctx, `DELETE FROM source_catalog_file
-			WHERE catalog_entry_id=? AND relative_path IN (
-				SELECT substr(root_path,length(?)+2) FROM source_catalog_entry
-				WHERE file_source_id=? AND id<>? AND relocated_to_id IS NULL
-					AND source_root='' AND root_path>=? AND root_path<?
-				UNION ALL
-				SELECT substr(source_root,length(?)+2) FROM source_catalog_entry
-				WHERE file_source_id=? AND id<>? AND relocated_to_id IS NULL
-					AND source_root<>'' AND source_root>=? AND source_root<?
-			)`, id, parentRoot, sourceID, id, lower, upper, parentRoot, sourceID, id, lower, upper)
-		if execErr != nil {
-			return 0, 0, execErr
-		}
-		n, execErr := result.RowsAffected()
-		if execErr != nil {
-			return 0, 0, execErr
+		n, deleteErr := result.RowsAffected()
+		if deleteErr != nil {
+			return 0, 0, deleteErr
 		}
 		removed += n
-		cursor = id
 	}
-	if len(ids) > 0 {
-		// A card whose subtree is failed, restricted or unconfirmed-empty keeps
-		// the rows an older generation left there: the current generation never
-		// proved those files are gone. Retrying inside the same run cannot change
-		// that verdict, because it reads the same directory rows; a later
-		// generation that observes the subtree deletes them. The cursor still
-		// advances so one pass always terminates.
-		if _, err = tx.ExecContext(ctx, `UPDATE source_catalog_scan SET publish_cleanup_cursor=?,updated_at=CURRENT_TIMESTAMP WHERE file_source_id=?`, cursor, sourceID); err != nil {
-			return 0, 0, err
+	// A folder row that is now its own catalog entry belongs to that entry, not
+	// to the card above it. The batch mapping keeps each card's child paths
+	// correlated with its own base, so one card cannot delete another card's
+	// relative path. Both real-root forms use half-open ranges and the root
+	// indexes from migration 083.
+	childCards := []cleanupCard{}
+	for _, card := range cards {
+		if card.hasDirectoryRow {
+			childCards = append(childCards, card)
 		}
+	}
+	if len(childCards) > 0 {
+		var values strings.Builder
+		valuesArgs := make([]any, 0, len(childCards)*4)
+		for index, card := range childCards {
+			base := card.base
+			if base == "" {
+				base = "/"
+			}
+			parentRoot := strings.TrimRight(base, "/")
+			lower, upper := catalogSubtreeBounds(base)
+			if parentRoot == "" {
+				// The root card owns every top-level directory. The sentinel is
+				// the highest valid rune, so the range still covers all paths.
+				lower, upper = "", "􏿿"
+			}
+			if index > 0 {
+				values.WriteByte(',')
+			}
+			values.WriteString("(?,?,?,?)")
+			valuesArgs = append(valuesArgs, card.id, parentRoot, lower, upper)
+		}
+		args := append(valuesArgs, sourceID, sourceID)
+		result, deleteErr := tx.ExecContext(ctx, `WITH batch(id,parent_root,lower_bound,upper_bound) AS (VALUES `+values.String()+`),
+			children(card_id,relative) AS (
+				SELECT b.id,substr(e.root_path,length(b.parent_root)+2)
+				FROM batch b JOIN source_catalog_entry e
+					ON e.file_source_id=? AND e.relocated_to_id IS NULL
+					AND e.id<>b.id AND e.source_root='' AND e.root_path>=b.lower_bound AND e.root_path<b.upper_bound
+				UNION ALL
+				SELECT b.id,substr(e.source_root,length(b.parent_root)+2)
+				FROM batch b JOIN source_catalog_entry e
+					ON e.file_source_id=? AND e.relocated_to_id IS NULL
+					AND e.id<>b.id AND e.source_root<>'' AND e.source_root>=b.lower_bound AND e.source_root<b.upper_bound
+			)
+			DELETE FROM source_catalog_file
+			WHERE rowid IN (SELECT f.rowid FROM children c
+				JOIN source_catalog_file f ON f.catalog_entry_id=c.card_id AND f.relative_path=c.relative)`, args...)
+		if deleteErr != nil {
+			return 0, 0, deleteErr
+		}
+		n, deleteErr := result.RowsAffected()
+		if deleteErr != nil {
+			return 0, 0, deleteErr
+		}
+		removed += n
+	}
+	cursor = cards[len(cards)-1].id
+	if _, err = tx.ExecContext(ctx, `UPDATE source_catalog_scan SET publish_cleanup_cursor=?,updated_at=CURRENT_TIMESTAMP WHERE file_source_id=?`, cursor, sourceID); err != nil {
+		return 0, 0, err
 	}
 	if err = tx.Commit(); err != nil {
 		return 0, 0, err
 	}
-	return int64(len(ids)), removed, nil
+	return int64(len(cards)), removed, nil
 }
