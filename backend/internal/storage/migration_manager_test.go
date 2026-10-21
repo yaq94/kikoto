@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -16,7 +17,7 @@ import (
 
 var numberedMigrationFilePattern = regexp.MustCompile(`^[0-9]{3}_[a-z0-9][a-z0-9_]*\.sql$`)
 
-const latestNumberedMigrationVersion = 87
+const latestNumberedMigrationVersion = 88
 
 // latestReleasedBaseline is the newest file in migrations/baseline/, which
 // production uses for a fresh database.
@@ -119,8 +120,8 @@ func TestMigrateUpgradesExistingDatabaseThroughNumberedChain(t *testing.T) {
 	if err := db.QueryRow("SELECT filename FROM schema_migration WHERE version = ?", latestNumberedMigrationVersion).Scan(&filename); err != nil {
 		t.Fatal(err)
 	}
-	if filename != "087_source_catalog_exclusion.sql" {
-		t.Fatalf("applied migration = %q, want 087_source_catalog_exclusion.sql", filename)
+	if filename != "088_source_catalog_incremental_sync.sql" {
+		t.Fatalf("applied migration = %q, want 088_source_catalog_incremental_sync.sql", filename)
 	}
 }
 
@@ -244,8 +245,7 @@ func TestMigrateUpgradesRetiredBaselineLedger(t *testing.T) {
 			if err := rows.Err(); err != nil {
 				t.Fatal(err)
 			}
-			wantHistory := testCase.wantHistory + ",063_recommendation_catalog.sql,064_retire_source_health_check.sql,065_availability_watch_family.sql,066_contributor_role.sql,067_user_time_zone.sql,068_listening_hours.sql,069_openlist_catalog.sql,070_source_catalog_scan.sql,071_catalog_series.sql,072_source_catalog_lifecycle.sql,073_shared_association.sql,074_work_matching.sql,075_personal_transfer.sql,076_source_catalog_publish_queue.sql,077_source_catalog_publish_cleanup.sql,078_source_catalog_loose_works.sql,079_source_catalog_sidecar.sql,080_source_catalog_sidecar_queue.sql,081_source_catalog_sidecar_revision.sql,082_source_catalog_sidecar_retry.sql,083_source_catalog_cleanup_indexes.sql,084_source_catalog_orphan_cursor.sql,085_source_catalog_progress_counters.sql,086_catalog_search_and_track_index.sql,087_source_catalog_exclusion.sql"
-
+			wantHistory := testCase.wantHistory + numberedMigrationSuffix(t, sourceDir, 62)
 			if got := strings.Join(filenames, ","); got != wantHistory {
 				t.Fatalf("upgraded migration history = %q, want %q", got, wantHistory)
 			}
@@ -630,6 +630,37 @@ func openMigrationManagerDB(t *testing.T) *sql.DB {
 func copyNumberedMigrations(t *testing.T, sourceDir string) string {
 	t.Helper()
 	return copyNumberedMigrationsThrough(t, sourceDir, latestNumberedMigrationVersion)
+}
+
+// numberedMigrationSuffix builds the expected history tail from the migration
+// files actually packaged for this build. A hand-written list had to be edited
+// by every branch that added a migration, so merging two of them always
+// conflicted on the same line.
+func numberedMigrationSuffix(t *testing.T, sourceDir string, from int) string {
+	t.Helper()
+	entries, err := os.ReadDir(sourceDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := []string{}
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !numberedMigrationFilePattern.MatchString(name) {
+			continue
+		}
+		version, err := strconv.Atoi(name[:3])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if version > from {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	if len(names) == 0 {
+		return ""
+	}
+	return "," + strings.Join(names, ",")
 }
 
 func copyNumberedMigrationsThrough(t *testing.T, sourceDir string, version int) string {
