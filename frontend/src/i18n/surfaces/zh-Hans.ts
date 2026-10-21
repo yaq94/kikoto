@@ -125,6 +125,7 @@ export const surfaceHans = {
     stale: "预览暂不可用，请刷新选择后重试。",
   },
   sourceLifecycle: {
+    excluded: "已按来源规则排除",
     label: "来源状态",
     available: "来源可用",
     unavailable: "来源暂时失联",
@@ -159,6 +160,18 @@ export const surfaceHans = {
     headersHint: "可选，每行一个「名称: 值」，最多 8 个，仅支持自定义 X-* 名称与 Accept-Language；其他请求头会被拒绝。",
   },
   sourceIndex: {
+    exclusions: {
+      title: "目录排除",
+      hint: "被排除的目录及其全部子目录不会进入扫描和卡片；已保存的作品、评价和系列成员关系会保留。",
+      path: "目录路径",
+      pathPlaceholder: "/示例作品/附加内容",
+      note: "备注（可选）",
+      add: "添加排除",
+      adding: "正在添加…",
+      remove: "删除排除",
+      empty: "当前没有排除目录。",
+      failed: "排除设置未能保存，请刷新后重试。",
+    },
     title: "完整来源索引",
     start: "索引全部匿名音声",
     resume: "继续索引",

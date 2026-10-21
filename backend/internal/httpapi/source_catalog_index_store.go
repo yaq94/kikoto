@@ -49,6 +49,23 @@ func moveCatalogDirectoryCountersTx(ctx context.Context, tx *sql.Tx, sourceID in
 	return err
 }
 
+func enqueueCatalogDirectoryTx(ctx context.Context, tx *sql.Tx, sourceID, generation int64, p, partition, root string) (bool, error) {
+	excluded, err := catalogPathExcludedTx(ctx, tx, sourceID, p)
+	if err != nil {
+		return false, err
+	}
+	if excluded {
+		return false, nil
+	}
+	result, err := tx.ExecContext(ctx, `INSERT INTO source_catalog_directory(file_source_id,path,generation,partition_path,catalog_root) VALUES(?,?,?,?,?)
+	ON CONFLICT(file_source_id,path) DO UPDATE SET generation=excluded.generation,partition_path=excluded.partition_path,catalog_root=excluded.catalog_root,revision=source_catalog_directory.revision+1,next_page=1,expected_total=-1,children_cursor='',status='pending',attempts=0,error_code='',completed_at=NULL WHERE source_catalog_directory.generation<>excluded.generation`, sourceID, p, generation, partition, root)
+	if err != nil {
+		return false, err
+	}
+	changed, err := result.RowsAffected()
+	return changed > 0, err
+}
+
 func addCatalogDirectoryCountersTx(ctx context.Context, tx *sql.Tx, sourceID int64) error {
 	_, err := tx.ExecContext(ctx, `UPDATE source_catalog_scan SET directories=directories+1,pending=pending+1,updated_at=CURRENT_TIMESTAMP WHERE file_source_id=?`, sourceID)
 	return err
@@ -113,19 +130,6 @@ func seedCatalogCountersTx(ctx context.Context, tx *sql.Tx, sourceID int64) erro
 		updated_at=CURRENT_TIMESTAMP
 	WHERE source_catalog_scan.file_source_id=?`, sourceID)
 	return err
-}
-
-// enqueueCatalogDirectoryTx reports whether the path entered the current
-// generation. A row already in this generation is left untouched, so the
-// caller must not add a directory counter for it.
-func enqueueCatalogDirectoryTx(ctx context.Context, tx *sql.Tx, sourceID, generation int64, p, partition, root string) (bool, error) {
-	result, err := tx.ExecContext(ctx, `INSERT INTO source_catalog_directory(file_source_id,path,generation,partition_path,catalog_root) VALUES(?,?,?,?,?)
-	ON CONFLICT(file_source_id,path) DO UPDATE SET generation=excluded.generation,partition_path=excluded.partition_path,catalog_root=excluded.catalog_root,revision=source_catalog_directory.revision+1,next_page=1,expected_total=-1,children_cursor='',status='pending',attempts=0,error_code='',completed_at=NULL WHERE source_catalog_directory.generation<>excluded.generation`, sourceID, p, generation, partition, root)
-	if err != nil {
-		return false, err
-	}
-	changed, err := result.RowsAffected()
-	return changed > 0, err
 }
 
 func (s *Server) pendingCatalogDirectories(ctx context.Context, sourceID, generation int64, limit int) ([]catalogScanDirectory, error) {
@@ -237,6 +241,11 @@ func (s *Server) persistCatalogPage(ctx context.Context, job workflowJobRecord, 
 		// longer belong to the directory revision must not stay in the pending
 		// queue until a later successful cleanup.
 		if _, err = tx.ExecContext(ctx, `UPDATE source_catalog_observation SET publish_pending=0 WHERE file_source_id=? AND directory_path=? AND revision<>? AND publish_pending=1`, sourceID, d.Path, d.Revision); err != nil {
+			return err
+		}
+		// An excluded path must not stay in the pending queue: it would keep
+		// catalogRootIncomplete true even though the publisher will never see it.
+		if err = suppressExcludedCatalogObservationsTx(ctx, tx.Tx, sourceID, d.Path, d.Revision); err != nil {
 			return err
 		}
 		var count int
@@ -534,6 +543,14 @@ func (s *Server) expandCatalogDirectory(ctx context.Context, job workflowJobReco
 		if p == "/" {
 			part = child
 		}
+		excluded, excludeErr := catalogPathExcludedTx(ctx, tx.Tx, sourceID, child)
+		if excludeErr != nil {
+			return false, excludeErr
+		}
+		if excluded {
+			cursor = name
+			continue
+		}
 		added, addErr := enqueueCatalogDirectoryTx(ctx, tx.Tx, sourceID, job.RunID, child, part, root)
 		if addErr != nil {
 			return false, addErr
@@ -760,6 +777,11 @@ WHERE d.file_source_id=?1 AND d.generation=?2 AND d.status='complete' AND d.cata
 	AND o.publish_pending=1
 	AND EXISTS(SELECT 1 FROM source_catalog_audio_root r
 		WHERE r.file_source_id=d.file_source_id AND r.generation=d.generation AND r.catalog_root=d.catalog_root)
+	AND NOT EXISTS(SELECT 1 FROM source_catalog_exclusion x
+		WHERE x.file_source_id=d.file_source_id AND x.enabled=1
+			AND (d.path=x.path OR substr(d.path,1,length(x.path)+1)=x.path || '/'
+				OR (CASE WHEN d.path='/' THEN '/'||o.name ELSE d.path||'/'||o.name END)=x.path
+				OR substr(CASE WHEN d.path='/' THEN '/'||o.name ELSE d.path||'/'||o.name END,1,length(x.path)+1)=x.path || '/'))
 ORDER BY d.path,o.name LIMIT ?3`
 
 // Publish a bounded number of validated observations. The first playable

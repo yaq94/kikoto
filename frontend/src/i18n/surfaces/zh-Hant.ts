@@ -125,6 +125,7 @@ export const surfaceHant = {
     stale: "預覽暫不可用，請重新選擇後再試。",
   },
   sourceLifecycle: {
+    excluded: "已依來源規則排除",
     label: "來源狀態",
     available: "來源可用",
     unavailable: "來源暫時失聯",
@@ -159,6 +160,18 @@ export const surfaceHant = {
     headersHint: "選填，每行一個「名稱: 值」，最多 8 個，僅支援自訂 X-* 名稱與 Accept-Language；其他標頭會被拒絕。",
   },
   sourceIndex: {
+    exclusions: {
+      title: "目錄排除",
+      hint: "被排除的目錄及其全部子目錄不會進入掃描和卡片；已儲存的作品、評價和系列成員關係會保留。",
+      path: "目錄路徑",
+      pathPlaceholder: "/範例作品/附加內容",
+      note: "備註（選填）",
+      add: "新增排除",
+      adding: "正在新增…",
+      remove: "刪除排除",
+      empty: "目前沒有排除目錄。",
+      failed: "排除設定未能儲存，請重新整理後再試。",
+    },
     title: "完整來源索引",
     start: "索引全部匿名音聲",
     resume: "繼續索引",

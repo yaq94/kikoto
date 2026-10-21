@@ -126,6 +126,7 @@ export const surfaceKorean = {
     stale: "미리 보기를 사용할 수 없습니다. 선택을 갱신한 후 다시 시도하세요.",
   },
   sourceLifecycle: {
+    excluded: "소스 규칙으로 제외됨",
     label: "소스 상태",
     available: "소스 사용 가능",
     unavailable: "소스에 일시적으로 연결할 수 없습니다",
@@ -163,6 +164,18 @@ export const surfaceKorean = {
       "선택 사항이며 한 줄에 「이름: 값」 하나씩 최대 8개입니다. 사용자 지정 X-* 이름과 Accept-Language만 지정할 수 있고 다른 헤더는 거부됩니다.",
   },
   sourceIndex: {
+    exclusions: {
+      title: "디렉터리 제외",
+      hint: "제외한 디렉터리와 하위 경로는 스캔과 카드에서 빠집니다. 저장한 작품, 평가, 시리즈 소속은 유지됩니다.",
+      path: "디렉터리 경로",
+      pathPlaceholder: "/예시 작품/추가 콘텐츠",
+      note: "메모(선택)",
+      add: "제외 추가",
+      adding: "추가 중…",
+      remove: "제외 삭제",
+      empty: "제외된 디렉터리가 없습니다.",
+      failed: "제외 설정을 저장하지 못했습니다. 새로 고친 뒤 다시 시도하세요.",
+    },
     title: "전체 소스 색인",
     start: "모든 익명 공개 음성 색인",
     resume: "색인 재개",

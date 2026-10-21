@@ -4,6 +4,7 @@ import { useAuth } from "@/auth/AuthProvider";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
 import { FullSourceIndex } from "./FullSourceIndex";
+import { SourceCatalogExclusions } from "./SourceCatalogExclusions";
 
 export function OpenListScan({ sourceId, onDone }: { sourceId: number; onDone: () => void }) {
   const { t } = useTranslation();
@@ -42,6 +43,7 @@ export function OpenListScan({ sourceId, onDone }: { sourceId: number; onDone: (
         </p>
       )}
       <FullSourceIndex key={sourceId} sourceId={sourceId} onDone={onDone} />
+      <SourceCatalogExclusions key={"exclusions-" + sourceId} sourceId={sourceId} />
     </div>
   );
 }
