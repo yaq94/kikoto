@@ -128,6 +128,13 @@ export const groups = [
     env: { SOURCE_PLAYBACK_API_URL: "{fixture}" },
   },
   {
+    name: "source-resource-limits-live",
+    fixture: "source-playback-fixture",
+    spec: "source-resource-limits-live",
+    env: { SOURCE_PLAYBACK_API_URL: "{fixture}" },
+    fixtureEnv: { SOURCE_PLAYBACK_FIXTURE_WORKERS: "1" },
+  },
+  {
     name: "content-translation",
     fixture: "content-translation-fixture",
     spec: "content-translation",
@@ -189,7 +196,7 @@ export const bundles = {
   series: ["catalog-series", "catalog-series-review"],
   matching: ["work-matching", "shared-association", "shared-split"],
   personal: ["personal-review-live-api", "personal-transfer"],
-  "source-playback": ["source-lifecycle", "source-playback-live-api"],
+  "source-playback": ["source-lifecycle", "source-playback-live-api", "source-resource-limits-live"],
   "content-translation": ["content-translation", "traditional-translation"],
   "integrated-acceptance": ["integrated-acceptance"],
   "translation-settings": ["translation-settings"],

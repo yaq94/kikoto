@@ -201,6 +201,14 @@ func run() error {
 	}
 	app := httpapi.NewServer(db, config.Config{Mode: config.ModeProduction, RootUsername: "synthetic-user", DataRoot: dataRoot, CacheRoot: filepath.Join(root, "cache"), AllowedOrigins: []string{origin}})
 	defer func() { _ = app.Shutdown(context.Background()) }()
+	// Queue-driven behaviour (catalog scans, prefill) only advances through the
+	// production job runner. Groups that assert on the queue opt in, so the
+	// request-shape tests keep a quiet server.
+	if os.Getenv("SOURCE_PLAYBACK_FIXTURE_WORKERS") == "1" {
+		workersCtx, stopWorkers := context.WithCancel(context.Background())
+		defer stopWorkers()
+		go app.StartJobRunner(workersCtx)
+	}
 	stop := make(chan struct{})
 	var once sync.Once
 	mux := http.NewServeMux()
