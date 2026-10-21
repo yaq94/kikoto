@@ -12,7 +12,9 @@ function translated(input: ContentTranslationInput): ContentTranslationResult {
   return { text: `t:${input.text}`, original: input.text, language: input.language, status: "translated" };
 }
 
-function memoryCache(): Pick<ContentTranslationCache, "has" | "put"> & { stored: Map<string, ContentTranslationResult> } {
+function memoryCache(): Pick<ContentTranslationCache, "has" | "put"> & {
+  stored: Map<string, ContentTranslationResult>;
+} {
   const stored = new Map<string, ContentTranslationResult>();
   return {
     stored,
@@ -24,7 +26,10 @@ function memoryCache(): Pick<ContentTranslationCache, "has" | "put"> & { stored:
   };
 }
 
-function request(window: TitlePrefetchRequest["window"], loadPage: TitlePrefetchRequest["loadPage"]): TitlePrefetchRequest {
+function request(
+  window: TitlePrefetchRequest["window"],
+  loadPage: TitlePrefetchRequest["loadPage"],
+): TitlePrefetchRequest {
   return { namespace: "local:all", scope: "scope", language: "zh-cn", window, loadPage };
 }
 

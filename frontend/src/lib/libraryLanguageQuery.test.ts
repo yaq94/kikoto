@@ -17,7 +17,20 @@ describe("display language query wiring", () => {
   });
 
   it("adds lang after the existing local query parameters", async () => {
-    await libraryApi.listWorksPage(2, 24, "voice", "all", "all", "recent", "desc", 1, false, undefined, "session", "zh-cn");
+    await libraryApi.listWorksPage(
+      2,
+      24,
+      "voice",
+      "all",
+      "all",
+      "recent",
+      "desc",
+      1,
+      false,
+      undefined,
+      "session",
+      "zh-cn",
+    );
     expect(getJSON.mock.calls[0][0]).toBe(
       "/api/works?page=2&pageSize=24&scope=all&status=all&sort=recent&direction=desc&seed=1&recommendBadges=false&recommendationSession=session&q=voice&lang=zh-cn",
     );

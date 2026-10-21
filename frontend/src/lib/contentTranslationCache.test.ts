@@ -46,9 +46,15 @@ function fakeIndexedDB() {
                 queueMicrotask(() => transaction.oncomplete?.());
               }
             };
-            const run = <T>(apply: () => T): { result: T; onsuccess: null | (() => void); onerror: null | (() => void) } => {
+            const run = <T>(
+              apply: () => T,
+            ): { result: T; onsuccess: null | (() => void); onerror: null | (() => void) } => {
               pending += 1;
-              const req = { result: undefined as T, onsuccess: null as null | (() => void), onerror: null as null | (() => void) };
+              const req = {
+                result: undefined as T,
+                onsuccess: null as null | (() => void),
+                onerror: null as null | (() => void),
+              };
               queueMicrotask(() => {
                 req.result = apply();
                 req.onsuccess?.();
@@ -102,15 +108,13 @@ const hashText = async (text: string) => `hash:${text}`;
 
 describe("content translation cache key", () => {
   it("is account, entity, field, language and content scoped", () => {
-    expect(buildContentTranslationCacheKey("srv:user-7", input(3), "abc")).toBe(
-      "srv:user-7|entry:103|title|zh-cn|abc",
-    );
+    expect(buildContentTranslationCacheKey("srv:user-7", input(3), "abc")).toBe("srv:user-7|entry:103|title|zh-cn|abc");
     expect(buildContentTranslationCacheKey("srv:user-7", input(3, { workId: 8 }), "abc")).toBe(
       "srv:user-7|entry:103|title|zh-cn|abc",
     );
-    expect(buildContentTranslationCacheKey("srv:user-7", { workId: 8, field: "title", text: "x", language: "en" }, "abc")).toBe(
-      "srv:user-7|work:8|title|en|abc",
-    );
+    expect(
+      buildContentTranslationCacheKey("srv:user-7", { workId: 8, field: "title", text: "x", language: "en" }, "abc"),
+    ).toBe("srv:user-7|work:8|title|en|abc");
   });
 
   it("prefers a series id like the server's entity mapping", () => {
@@ -197,7 +201,7 @@ describe("content translation cache", () => {
 
   it("evicts the oldest persisted rows by lastUsedAt", async () => {
     const { factory } = fakeIndexedDB();
-    
+
     let clock = 0;
     const first = createContentTranslationCache({
       indexedDB: factory,
