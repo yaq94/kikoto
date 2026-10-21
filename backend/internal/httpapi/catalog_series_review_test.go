@@ -40,6 +40,7 @@ func TestCatalogSeriesPersonalReviewsRestartAndExistingSourceRelations(t *testin
 			metadataReviewExec(t, db, `INSERT INTO file_source(id,code,display_name,source_type) VALUES(7,'example_remote_a','Example Remote A','openlist'),(8,'example_remote_b','Example Remote B','openlist');
     INSERT INTO file_source_endpoint(file_source_id,api_url,base_url) VALUES(7,'https://a.example.invalid','https://a.example.invalid'),(8,'https://b.example.invalid','https://b.example.invalid');
     INSERT INTO source_catalog_entry(id,file_source_id,root_path,title) VALUES(1,7,'/Episode A','Episode A'),(2,8,'/Episode B','Episode B');
+    INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes) VALUES(1,'track.mp3','Track A','audio',128),(2,'track.mp3','Track B','audio',128);
     INSERT INTO catalog_series(id,title) VALUES(1,'Example series');
     INSERT INTO catalog_series_member(series_id,catalog_entry_id,position,evidence) VALUES(1,1,1,'manual'),(1,2,2,'manual');`)
 		}
