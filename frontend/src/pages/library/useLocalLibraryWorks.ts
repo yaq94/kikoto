@@ -20,6 +20,8 @@ export type LocalLibraryWorksRequest = {
   sort: LibrarySort;
   direction: SortDirection;
   randomSeed: number;
+  /** Display language requested from the server; `origin` keeps the old query. */
+  language: string;
 };
 
 /**
@@ -50,7 +52,7 @@ export function useLocalLibraryWorks({
   onPageBeyondTotal: (lastPage: number) => void;
 }) {
   const { t } = useTranslation();
-  const { page, pageSize, query, scope, status, sort, direction, randomSeed } = request;
+  const { page, pageSize, query, scope, status, sort, direction, randomSeed, language } = request;
   const { badgesEnabled, session, setListContext, recordEvents } = recommendations;
   const sessionId = session.id;
   const [works, setWorks] = useState<Work[]>([]);
@@ -83,6 +85,7 @@ export function useLocalLibraryWorks({
     randomSeed,
     badgesEnabled,
     sessionId,
+    language,
   ]);
   const loadErrorMessage = useStableCallback((error: unknown) =>
     error instanceof Error ? error.message : t("library.couldNotLoad"),
@@ -106,6 +109,19 @@ export function useLocalLibraryWorks({
     },
     [setListContext],
   );
+
+  // A different display language is a different result set. Drop the old
+  // cards immediately; the reload below owns the loading state. The persistent
+  // translation cache is keyed by language, so it is deliberately kept.
+  const loadedLanguage = useRef(language);
+  useEffect(() => {
+    if (loadedLanguage.current === language) return;
+    loadedLanguage.current = language;
+    setWorks([]);
+    setTotal(null);
+    setOptimisticSearchClauses(null);
+    setLoadError("");
+  }, [language]);
 
   useEffect(() => {
     if (!visible || !ready || isRestorePending()) return;
@@ -137,6 +153,7 @@ export function useLocalLibraryWorks({
           badgesEnabled && sort !== "recommend",
           controller.signal,
           sessionId,
+          language,
         );
       })
       .then((result) => {
@@ -185,6 +202,7 @@ export function useLocalLibraryWorks({
     randomSeed,
     badgesEnabled,
     sessionId,
+    language,
     showPage,
     recordEvents,
     loadErrorMessage,
@@ -218,6 +236,7 @@ export function useLocalLibraryWorks({
         badgesEnabled && sort !== "recommend",
         undefined,
         sessionId,
+        language,
       )
       .then((result) => {
         if (seq !== requestSeq.current) return;
@@ -250,6 +269,7 @@ export function useLocalLibraryWorks({
       badgesEnabled && sort !== "recommend",
       undefined,
       sessionId,
+      language,
     );
     showPage(result, { sort, randomSeed, badgesEnabled });
   });
