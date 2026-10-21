@@ -1,9 +1,9 @@
 # Translation service
 
 `internal/translation` owns server-only configuration, the bounded completion
-client, shared request queue, name protection and rebuildable disk cache.
+client, the two-lane request queue, name protection and language detection.
 `httpapi/content_translation*.go` resolves readable public fields;
-`translation_runtime.go` composes those fields with the model and cache. The React
+`translation_runtime.go` composes them with the model and the scheduler. The React
 `features/translation` entry owns the administrator form and its typed API, while
 `components/content-translation` renders translated public text.
 
@@ -20,8 +20,16 @@ Administrator routes require `sources:write`:
 - `POST /api/settings/translation/test` accepts `text` and `targetLanguage`
   (`zh-Hans`, `en`, `ja` or `ko`). It returns complete plain text, the configured
   model name, template version and elapsed milliseconds.
-- `GET /api/settings/translation/runtime` returns `active`, `queued`, `readers`,
-  `cacheEntries`, charged `cacheBytes` and `cacheStatus`.
+- `GET /api/settings/translation/runtime` returns per-language corpus counts,
+  the soft byte budget, the prefill view and the queue counters.
+- `GET /api/settings/translation/prefill` returns the durable prefill cursor,
+  per-language coverage, the night-window flag, the recent rate and the last
+  error. `POST` the same route with `{"status":"running"|"paused"}` pauses or
+  resumes the pass.
+- `POST /api/content-translations/batch` accepts a display `language` and up to
+  200 items, each with a client `key` and the same selector as the single
+  endpoint. Every item reports its own `status` and `code`; one failure does not
+  cancel the rest.
 
 Configuration is persisted transactionally in `app_setting.translation_service`.
 The secret is stored with the other private server data; it is not encrypted by
@@ -95,37 +103,45 @@ directory, edition, media identity or player state.
 
 | Setting | Default | Accepted range |
 | --- | --- | --- |
-| `concurrency` | 1 | 1–8 |
-| `queueLimit` | 32 | 0–256 |
+| `concurrency` | 8 | 1–16 |
+| `queueLimit` | 2048 | 0–4096 |
+| `maxEntries` | 0 (unlimited) | 0–2,000,000 |
 | `timeoutSeconds` | 60 | 1–60 |
 | `cacheBytes` | 256 MiB | 4 KiB–4 GiB |
 | `minFreeBytes` | 2 GiB | 0–1 TiB |
 
-Content requests share a FIFO with administrator trials. Identical in-flight
-content requests share one job; cancelling the last reader cancels it. The queue
-holds no database connection while waiting. At most 512 readers are admitted;
-full queues reject with a readable failure. The timeout includes waiting. Trials
-require an immediately free lane and otherwise return `translation_busy`.
-Configuration changes adjust the queue and cache; in-flight publication reloads
-current storage limits. Lower concurrency drains existing calls before admitting
-more, and a lower queue limit rejects excess waiting jobs.
+Interactive content requests and the background prefill pass run on separate
+lanes of one scheduler. Interactive work is always chosen first; a queued
+background job is promoted when a viewer asks for the same content. Identical
+in-flight requests share one job, and cancelling the last reader cancels it. The
+queue holds no database connection while waiting; at most 512 readers are
+admitted. The timeout includes waiting. Trials require an immediately free lane
+and otherwise return `translation_busy`.
 
-Only successful, name-validated results are stored under `CacheRoot/translations`.
-Cache identity includes original and protected text, target language, service URL,
-model, thinking option, template version and protection version. File-backed
-entries survive application restart. Least-recently-used eviction charges each
-JSON file size rounded up to 4 KiB, with an independent 8192-entry ceiling. This
-charge is a portable budget estimate, not exact allocation on every filesystem.
-Unknown files, links, the business database, personal records and source identity
-are outside cache eviction. Owned incomplete atomic-write files are discarded.
+The interactive lane holds 256 waiting items and the background lane follows
+`queueLimit`. Total concurrency is `concurrency`. Outside 00:00–08:00
+Asia/Shanghai the background lane is limited to two simultaneous calls, so a
+viewer still finds a free worker; inside the window it may use every slot.
 
-Free space is read from the nearest existing parent even before the cache
-directory exists. Low space pauses new writes (`paused_low_disk`) while keeping
-existing entries readable; raising free space or lowering the reserve permits
-later successful writes. Failed generations are never cached. Storage failures
-return an uncached successful translation with `unavailable`; an oversized cache
-entry reports `entry_too_large`. Cache hits report `hit`, and writes `stored`.
+Translated content is durable corpus, not a cache. `content_translation` stores
+one row per `cache_key` with `origin` `native` or `model`; `origin=native` rows
+hold the source text unchanged and never increment model usage. There is no
+least-recently-used eviction and no `last_used_at`. `maxEntries` is a soft row
+budget with zero meaning unlimited, so a deployment cannot silently shrink
+search coverage. `cacheBytes` is likewise a soft budget shown to operators;
+`minFreeBytes` still pauses new generation when the data volume runs low.
 
+A content change produces a new `cache_key` because the source text is part of
+it. The previous row stays readable for history and is removed only by an
+explicit maintenance pass; the hot path never deletes rows. `zh-tw` viewers read
+the `zh-Hans` row and convert it with OpenCC `s2t` at display time, so the corpus
+does not store a second full-text copy. A title detected as `zh-Hant` is written
+as a native row and participates in searches for both scripts.
+
+Free space is read from the nearest existing parent before the data directory
+exists. Low space pauses new generation (`paused_low_disk`) while keeping stored
+rows readable; raising free space permits later generation. Failed generations
+are never stored. Stored rows report `hit`, freshly generated rows `stored`.
 ## Model contract and limits
 
 The default model invocation name is `Index-Translate-35B-A3B`; a configured name
