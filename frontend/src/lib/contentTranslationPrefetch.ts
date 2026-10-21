@@ -39,6 +39,11 @@ export type TitlePrefetchRequest = {
   namespace: string;
   scope: string;
   language: string;
+  /**
+   * Model/template version the caller already knows. A row from another
+   * version is not a warm hit; an unknown version keeps the permissive read.
+   */
+  version?: string;
   window: PrefetchWindow;
   /** Loads one page and maps it to title inputs; unmappable entries may be omitted. */
   loadPage: (page: number, pageSize: number) => Promise<ContentTranslationInput[]>;
@@ -89,7 +94,7 @@ export function createTitlePrefetchQueue(deps: TitlePrefetchDeps): TitlePrefetch
             const key = input.key ?? contentTranslationRequestKey(input);
             if (inFlightKeys.has(key)) continue;
             if (deps.isInFlight?.(key)) continue;
-            if (await deps.cache.has(request.scope, input)) continue;
+            if (await deps.cache.has(request.scope, input, request.version)) continue;
             inFlightKeys.add(key);
             claimedKeys.push(key);
             inputs.push(input);

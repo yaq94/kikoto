@@ -23,6 +23,9 @@ const LanguageContext = createContext({
   session: "",
   revision: 0,
   canRead: false,
+  /** Model/template that produced the newest response; "" until one arrives. */
+  cacheVersion: "",
+  noteVersion: (_version?: string): void => undefined,
 });
 const ScopeContext = createContext<{
   resource?: ContentTranslationResource;
@@ -32,6 +35,18 @@ const ScopeContext = createContext<{
   revision: number;
 }>({ original: false, toggle: () => undefined, retry: () => undefined, revision: 0 });
 
+/**
+ * Returns a notifier with a stable identity. The Provider creates it once, so
+ * an effect that lists it as a dependency does not re-run on every render:
+ * an inline arrow here used to feed a render loop.
+ */
+export function createCacheVersionNotifier(setVersion: (update: (current: string) => string) => void) {
+  return (next?: string) => {
+    if (!next) return;
+    setVersion((current) => (current === next ? current : next));
+  };
+}
+
 // Account language is shared by visible content, but never changes media state.
 export function ContentLanguageProvider({ children }: { children: ReactNode }) {
   const { user, demoMode } = useAuth();
@@ -39,6 +54,8 @@ export function ContentLanguageProvider({ children }: { children: ReactNode }) {
   const scope = currentClientStorageScope(user?.id ?? null);
   const session = scope + ":" + apiSessionVersion();
   const [revision, setRevision] = useState(0);
+  const [cacheVersion, setCacheVersion] = useState("");
+  const noteVersion = useMemo(() => createCacheVersionNotifier(setCacheVersion), []);
   const [loaded, setLoaded] = useState({ session: "", revision: 0, language: "origin" });
   useEffect(() => {
     const refresh = (event: Event) => {
@@ -78,13 +95,12 @@ export function ContentLanguageProvider({ children }: { children: ReactNode }) {
   // value from another session is never shown. A newer revision keeps the last
   // successful language until its own read completes.
   const language = loaded.session === session ? loaded.language : "origin";
-  return (
-    <LanguageContext.Provider
-      value={{ language, accountScope: scope, session, revision, canRead: Boolean(userId && !demoMode) }}
-    >
-      {children}
-    </LanguageContext.Provider>
+  const canRead = Boolean(userId && !demoMode);
+  const value = useMemo(
+    () => ({ language, accountScope: scope, session, revision, canRead, cacheVersion, noteVersion }),
+    [language, scope, session, revision, canRead, cacheVersion, noteVersion],
   );
+  return <LanguageContext.Provider value={value}>{children}</LanguageContext.Provider>;
 }
 
 /** The selected display language, shared by visible titles and list queries. */
@@ -95,6 +111,14 @@ export function useContentLanguage() {
 /** The account storage scope used by the persistent translation cache. */
 export function useContentLanguageScope() {
   return useContext(LanguageContext).accountScope;
+}
+
+/**
+ * The model/template version of the newest response, or "" while this session
+ * has not seen one. An unknown version keeps the permissive cache read.
+ */
+export function useContentLanguageCacheVersion() {
+  return useContext(LanguageContext).cacheVersion;
 }
 
 export function ContentTranslationScope({
@@ -150,7 +174,7 @@ export function TranslatedText({
   controls?: boolean;
 }) {
   const { t } = useTranslation();
-  const { language, accountScope, session, revision, canRead } = useContext(LanguageContext);
+  const { language, accountScope, session, revision, canRead, cacheVersion, noteVersion } = useContext(LanguageContext);
   const scope = useContext(ScopeContext);
   const resource = explicit ?? scope.resource;
   const [element, setElement] = useState<HTMLSpanElement | null>(null);
@@ -203,7 +227,7 @@ export function TranslatedText({
     };
     void (async () => {
       // A cached display language paints without touching the network.
-      const cached = await contentTranslationCache.get(accountScope, translationInput);
+      const cached = await contentTranslationCache.get(accountScope, translationInput, cacheVersion || undefined);
       if (cancelled || controller.signal.aborted) return;
       if (cached) {
         setSettled({
@@ -215,7 +239,18 @@ export function TranslatedText({
       try {
         const result = await translateCoalesced(translationInput, controller.signal);
         if (result.status !== "failed") {
-          void contentTranslationCache.put(accountScope, translationInput, result);
+          // `put` stores `result.version`, so a later read with the same
+          // expected version finds this row and a different one does not.
+          // Announce the version only once the row is cached: publishing it
+          // first re-runs every visible effect, and a lookup that outran the
+          // write would start a second translation of the same text. A
+          // source-level field has no key, so a failed put never announces.
+          void contentTranslationCache
+            .put(accountScope, translationInput, result)
+            .then((cached) => {
+              if (cached && result.version) noteVersion(result.version);
+            })
+            .catch(() => undefined);
         }
         if (!cancelled && !controller.signal.aborted) setSettled({ key, result });
       } catch (error) {
@@ -233,7 +268,7 @@ export function TranslatedText({
       cancelled = true;
       controller.abort();
     };
-  }, [enabled, visible, key, input, text, language, accountScope]);
+  }, [enabled, visible, key, input, text, language, accountScope, cacheVersion, noteVersion]);
   const result = settled?.key === key ? settled.result : null;
   const success =
     enabled && result && (result.status === "translated" || result.status === "existing" || result.status === "native");

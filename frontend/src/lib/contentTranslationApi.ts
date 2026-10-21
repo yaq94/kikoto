@@ -23,6 +23,11 @@ export type ContentTranslationResult = {
   status: ContentTranslationStatus;
   code?: string;
   cacheStatus?: string;
+  /**
+   * Model and prompt template that produced this text. The cache stores it so
+   * a row from an older model or template is not shown again.
+   */
+  version?: string;
 };
 
 /** A batch item. `key` is echoed by the server so responses may arrive in any order. */

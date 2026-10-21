@@ -16,15 +16,27 @@ export type CachedTranslation = {
   status: CachedTranslationStatus;
   storedAt: number;
   lastUsedAt: number;
+  /**
+   * Model and prompt template that produced this text, when the server
+   * reported one. The key already separates the original text and the target
+   * language; this field separates the model and the template.
+   */
+  version?: string;
 };
 
 /** The row stored in IndexedDB. `key` is the store's keyPath. */
 export type CachedTranslationRecord = CachedTranslation & { key: string };
 
 export type ContentTranslationCache = {
-  get(scope: string, input: ContentTranslationInput): Promise<CachedTranslation | null>;
+  /**
+   * Reads a successful row. When `expectedVersion` is known, a row produced by
+   * another model or template — or a row with no version at all — is deleted
+   * and reported as a miss. Without an expected version the previous behaviour
+   * (any row for this key) is kept.
+   */
+  get(scope: string, input: ContentTranslationInput, expectedVersion?: string): Promise<CachedTranslation | null>;
   /** Whether a successful result is already known, without refreshing its use time. */
-  has(scope: string, input: ContentTranslationInput): Promise<boolean>;
+  has(scope: string, input: ContentTranslationInput, expectedVersion?: string): Promise<boolean>;
   /** Stores a successful result; failed results are ignored. */
   put(scope: string, input: ContentTranslationInput, result: ContentTranslationResult): Promise<boolean>;
   /** Evicts the least recently used rows until both IndexedDB limits hold. */
@@ -114,7 +126,18 @@ function withoutKey(record: CachedTranslationRecord): CachedTranslation {
     status: record.status,
     storedAt: record.storedAt,
     lastUsedAt: record.lastUsedAt,
+    version: record.version,
   };
+}
+
+/**
+ * Whether a stored row can answer a request whose model/template version is
+ * known. A missing row version is stale once an expectation exists; a caller
+ * that does not know the version keeps the previous permissive behaviour.
+ */
+export function contentTranslationVersionMatches(storedVersion: string | undefined, expectedVersion?: string): boolean {
+  if (!expectedVersion) return true;
+  return storedVersion === expectedVersion;
 }
 
 function requestResult<T>(request: IDBRequest<T>): Promise<T> {
@@ -227,6 +250,18 @@ export function createContentTranslationCache(options: ContentTranslationCacheOp
     }
   }
 
+  async function idbDelete(key: string): Promise<void> {
+    const db = await openDatabase();
+    if (!db) return;
+    try {
+      const transaction = db.transaction(CONTENT_TRANSLATION_STORE_NAME, "readwrite");
+      transaction.objectStore(CONTENT_TRANSLATION_STORE_NAME).delete(key);
+      await transactionDone(transaction);
+    } catch {
+      disablePersistence();
+    }
+  }
+
   async function idbPut(record: CachedTranslationRecord): Promise<boolean> {
     const db = await openDatabase();
     if (!db) return false;
@@ -293,11 +328,17 @@ export function createContentTranslationCache(options: ContentTranslationCacheOp
   }
 
   return {
-    async get(scope, input) {
+    async get(scope, input, expectedVersion) {
       const key = await keyFor(scope, input);
       if (!key) return null;
       const inMemory = memory.get(key);
       if (inMemory) {
+        if (!contentTranslationVersionMatches(inMemory.version, expectedVersion)) {
+          // A row produced by another model or template is not a cache hit.
+          memory.delete(key);
+          void idbDelete(key);
+          return null;
+        }
         const touched = { ...inMemory, lastUsedAt: now() };
         remember(key, touched);
         // Recency is what the persistent eviction order reads; keep it fresh
@@ -307,6 +348,10 @@ export function createContentTranslationCache(options: ContentTranslationCacheOp
       }
       const stored = await idbGet(key);
       if (!stored || !isCacheableTranslationStatus(stored.status)) return null;
+      if (!contentTranslationVersionMatches(stored.version, expectedVersion)) {
+        await idbDelete(key);
+        return null;
+      }
       const touched = { ...stored, lastUsedAt: now() };
       remember(key, touched);
       // Persist the recency so a later prune does not evict a row just read.
@@ -314,12 +359,24 @@ export function createContentTranslationCache(options: ContentTranslationCacheOp
       return withoutKey(touched);
     },
 
-    async has(scope, input) {
+    async has(scope, input, expectedVersion) {
       const key = await keyFor(scope, input);
       if (!key) return false;
-      if (memory.has(key)) return true;
+      const inMemory = memory.get(key);
+      if (inMemory) {
+        if (!contentTranslationVersionMatches(inMemory.version, expectedVersion)) {
+          memory.delete(key);
+          void idbDelete(key);
+          return false;
+        }
+        return true;
+      }
       const stored = await idbGet(key);
       if (!stored || !isCacheableTranslationStatus(stored.status)) return false;
+      if (!contentTranslationVersionMatches(stored.version, expectedVersion)) {
+        await idbDelete(key);
+        return false;
+      }
       remember(key, stored);
       return true;
     },
@@ -336,6 +393,9 @@ export function createContentTranslationCache(options: ContentTranslationCacheOp
         status: result.status,
         storedAt: timestamp,
         lastUsedAt: timestamp,
+        // An absent server version stays absent: a row without version is
+        // still usable while the expected version is unknown.
+        version: result.version || undefined,
       };
       remember(key, record);
       await idbPut(record);
