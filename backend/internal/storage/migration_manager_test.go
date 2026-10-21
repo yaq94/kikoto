@@ -244,7 +244,7 @@ func TestMigrateUpgradesRetiredBaselineLedger(t *testing.T) {
 			if err := rows.Err(); err != nil {
 				t.Fatal(err)
 			}
-			wantHistory := testCase.wantHistory + ",063_recommendation_catalog.sql,064_retire_source_health_check.sql,065_availability_watch_family.sql,066_contributor_role.sql,067_user_time_zone.sql,068_listening_hours.sql,069_openlist_catalog.sql,070_source_catalog_scan.sql,071_catalog_series.sql,072_source_catalog_lifecycle.sql,073_shared_association.sql,074_work_matching.sql,075_personal_transfer.sql,076_source_catalog_publish_queue.sql,077_source_catalog_publish_cleanup.sql,078_source_catalog_loose_works.sql,079_source_catalog_sidecar.sql,080_source_catalog_sidecar_queue.sql,081_source_catalog_sidecar_revision.sql,082_source_catalog_sidecar_retry.sql,083_source_catalog_cleanup_indexes.sql,084_source_catalog_orphan_cursor.sql,085_source_catalog_progress_counters.sql,086_catalog_search_and_track_index.sql,087_source_catalog_exclusion.sql,088_source_catalog_incremental_sync.sql,089_work_primary_code_trimmed_unique.sql"
+			wantHistory := testCase.wantHistory + numberedMigrationSuffix(t, sourceDir, 62)
 			if got := strings.Join(filenames, ","); got != wantHistory {
 				t.Fatalf("upgraded migration history = %q, want %q", got, wantHistory)
 			}
@@ -624,6 +624,44 @@ func openMigrationManagerDB(t *testing.T) *sql.DB {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 	return db
+}
+
+// numberedMigrationSuffix returns the catalog's numbered files after the given
+// version, in the order the manager applies them. Deriving the list from the
+// packaged files keeps this assertion stable while independently developed
+// migrations merge or renumber; the manager still rejects a gap or duplicate.
+func numberedMigrationSuffix(t *testing.T, sourceDir string, afterVersion int) string {
+	t.Helper()
+	entries, err := os.ReadDir(sourceDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	type numbered struct {
+		version int
+		name    string
+	}
+	files := []numbered{}
+	for _, entry := range entries {
+		if entry.IsDir() || !numberedMigrationFilePattern.MatchString(entry.Name()) {
+			continue
+		}
+		var version int
+		if _, err := fmt.Sscanf(entry.Name(), "%03d_", &version); err != nil {
+			t.Fatalf("parse migration version from %q: %v", entry.Name(), err)
+		}
+		if version > afterVersion {
+			files = append(files, numbered{version: version, name: entry.Name()})
+		}
+	}
+	sort.Slice(files, func(i, j int) bool { return files[i].version < files[j].version })
+	names := make([]string, 0, len(files))
+	for _, file := range files {
+		names = append(names, file.name)
+	}
+	if len(names) == 0 {
+		return ""
+	}
+	return "," + strings.Join(names, ",")
 }
 
 func copyNumberedMigrations(t *testing.T, sourceDir string) string {

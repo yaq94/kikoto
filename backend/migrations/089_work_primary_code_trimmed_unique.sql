@@ -8,22 +8,22 @@
 -- Fail before the index with an actionable message when a legacy catalog still
 -- holds duplicates. A bare UNIQUE constraint error names the column but not the
 -- migration or the required repair.
-DROP TRIGGER IF EXISTS work_primary_code_089_preflight;
+DROP TRIGGER IF EXISTS temp.work_primary_code_089_preflight;
 CREATE TEMP TRIGGER work_primary_code_089_preflight
 BEFORE UPDATE ON work
 WHEN EXISTS (
   SELECT 1 FROM work
   WHERE trim(primary_code) <> ''
-  GROUP BY primary_code
+  GROUP BY trim(primary_code)
   HAVING count(*) > 1
 )
 BEGIN
-  SELECT RAISE(ABORT, '089: duplicate non-empty work.primary_code; merge or clear the duplicates before upgrading');
+  SELECT RAISE(ABORT, '089: duplicate non-empty work.primary_code after trim; merge or clear the duplicates before upgrading');
 END;
 
 UPDATE work SET id=id WHERE id = (SELECT min(id) FROM work);
 
-DROP TRIGGER work_primary_code_089_preflight;
+DROP TRIGGER temp.work_primary_code_089_preflight;
 
 CREATE UNIQUE INDEX idx_work_primary_code_trimmed
   ON work(primary_code) WHERE trim(primary_code) <> '';

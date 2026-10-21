@@ -196,29 +196,36 @@ func TestMigration089AllowsBlankCodesAndRejectsDuplicates(t *testing.T) {
 }
 
 func TestMigration089RejectsLegacyDuplicateBeforeIndex(t *testing.T) {
-	sourceDir := filepath.Join("..", "..", "migrations")
-	legacyDir := copyMigrationsThrough(t, sourceDir, 88)
-	db, err := storage.Open(filepath.Join(t.TempDir(), "legacy.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = db.Close() }()
-	if err := storage.Migrate(db, legacyDir); err != nil {
-		t.Fatalf("legacy migrate: %v", err)
-	}
-	if _, err := db.Exec(`DROP INDEX idx_work_numbered_code`); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.Exec(`INSERT INTO work(primary_code,title) VALUES('RJ00000892','One'),('RJ00000892','Two')`); err != nil {
-		t.Fatalf("seed legacy duplicates: %v", err)
-	}
-	if err := copyFile(filepath.Join(sourceDir, "089_work_primary_code_trimmed_unique.sql"), filepath.Join(legacyDir, "089_work_primary_code_trimmed_unique.sql")); err != nil {
-		t.Fatal(err)
-	}
-	if err := storage.Migrate(db, legacyDir); err == nil {
-		t.Fatal("migration accepted duplicate non-empty codes")
-	} else if !strings.Contains(err.Error(), "duplicate non-empty work.primary_code") || !strings.Contains(err.Error(), "089") {
-		t.Fatalf("duplicate migration error = %v", err)
+	for _, codes := range [][2]string{
+		{"RJ00000892", "RJ00000892"},
+		{" RJ00000892 ", "RJ00000892"},
+	} {
+		t.Run(strings.TrimSpace(codes[0])+"_"+strings.TrimSpace(codes[1]), func(t *testing.T) {
+			sourceDir := filepath.Join("..", "..", "migrations")
+			legacyDir := copyMigrationsThrough(t, sourceDir, 88)
+			db, err := storage.Open(filepath.Join(t.TempDir(), "legacy.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = db.Close() }()
+			if err := storage.Migrate(db, legacyDir); err != nil {
+				t.Fatalf("legacy migrate: %v", err)
+			}
+			if _, err := db.Exec(`DROP INDEX idx_work_numbered_code`); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := db.Exec(`INSERT INTO work(primary_code,title) VALUES(?,'One'),(?,'Two')`, codes[0], codes[1]); err != nil {
+				t.Fatalf("seed legacy duplicates: %v", err)
+			}
+			if err := copyFile(filepath.Join(sourceDir, "089_work_primary_code_trimmed_unique.sql"), filepath.Join(legacyDir, "089_work_primary_code_trimmed_unique.sql")); err != nil {
+				t.Fatal(err)
+			}
+			if err := storage.Migrate(db, legacyDir); err == nil {
+				t.Fatal("migration accepted duplicate non-empty codes")
+			} else if !strings.Contains(err.Error(), "duplicate non-empty work.primary_code") || !strings.Contains(err.Error(), "089") {
+				t.Fatalf("duplicate migration error = %v", err)
+			}
+		})
 	}
 }
 
