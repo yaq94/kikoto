@@ -63,3 +63,34 @@ func TestCatalogDirectoriesFollowSharedIdentity(t *testing.T) {
 		}
 	}
 }
+
+// A numbered catalog entry is listed for its work by product code even before a
+// personal record registers it. Two sources therefore show two switchable
+// directories without creating duplicate works during indexing.
+func TestCatalogDirectoriesIncludeUnregisteredNumberedEntry(t *testing.T) {
+	f := newRoleBoundaryFixture(t)
+	if _, err := f.server.db.Exec(`
+		INSERT INTO work(id,primary_code,title) VALUES(61,'RJ00000064','Example Work');
+		INSERT INTO file_source(id,code,display_name,source_type,enabled) VALUES
+			(61,'example_catalog_one','Example Catalog One','openlist',1),
+			(62,'example_catalog_two','Example Catalog Two','openlist',1);
+		INSERT INTO source_catalog_entry(id,file_source_id,root_path,primary_code,title,work_id) VALUES
+			(610,61,'/Example/RJ00000064','RJ00000064','Example Work',61),
+			(611,62,'/Example/RJ00000064','RJ00000064','Example Work',NULL);
+	`); err != nil {
+		t.Fatal(err)
+	}
+	got := reviewRequest(t, f.handler, f.cookies["user"], http.MethodGet,
+		"/api/works/61/catalog-directories", "", http.StatusOK)["directories"].([]any)
+	if len(got) != 2 {
+		t.Fatalf("directories = %#v, want the registered and the unregistered source", got)
+	}
+	sources := map[float64]bool{}
+	for _, raw := range got {
+		item := raw.(map[string]any)
+		sources[item["sourceId"].(float64)] = true
+	}
+	if !sources[61] || !sources[62] {
+		t.Fatalf("directory sources = %#v, want 61 and 62", sources)
+	}
+}
