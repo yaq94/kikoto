@@ -608,10 +608,20 @@ func decodeDirObjects(raw json.RawMessage) ([]Object, error) {
 		}
 		return objects, nil
 	}
-	var envelope struct {
-		Content []Object "json:\"content\""
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(raw, &fields) != nil {
+		return nil, ErrInvalid
 	}
-	if json.Unmarshal(raw, &envelope) != nil {
+	if _, ok := fields["content"]; !ok {
+		// An unrecognized object is not an empty directory. Treating it as
+		// empty would let the incremental sync mark every child directory as
+		// deleted.
+		return nil, ErrInvalid
+	}
+	var envelope struct {
+		Content []Object `json:"content"`
+	}
+	if json.Unmarshal(raw, &envelope) != nil || envelope.Content == nil {
 		return nil, ErrInvalid
 	}
 	return envelope.Content, nil
