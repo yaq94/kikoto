@@ -434,16 +434,16 @@ func (s *Server) cleanupCatalogPublishBatch(ctx context.Context, job workflowJob
 		// entry, not to the card above it. Keeping it makes the parent list a
 		// child work as one of its tracks.
 		//
-		// Only a card that stores a folder row can lose one. Most cards are
+		// Only a card that stores a directory row can lose one. Most cards are
 		// leaves, and the delete below resolves the card's whole path range; on
-		// a large source that dominated the cleanup pass. Checking the card's
-		// own rows first keeps the same result without the range work.
-		var hasFolder int
+		// a large source that dominated the cleanup pass. A directory row is
+		// never audio, so an audio-only card is skipped with the same result.
+		var hasDirectoryRow int
 		if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM source_catalog_file
-			WHERE catalog_entry_id=? AND kind='folder')`, id).Scan(&hasFolder); err != nil {
+			WHERE catalog_entry_id=? AND kind<>'audio')`, id).Scan(&hasDirectoryRow); err != nil {
 			return 0, 0, err
 		}
-		if hasFolder == 0 {
+		if hasDirectoryRow == 0 {
 			cursor = id
 			continue
 		}
