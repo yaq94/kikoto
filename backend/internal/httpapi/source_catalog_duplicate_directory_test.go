@@ -33,7 +33,7 @@ func duplicateDirectoryResult(t *testing.T, parentSizes, childSizes []int64) boo
 		t.Fatal(err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	duplicate, err := catalogDuplicateDirectoryTx(context.Background(), tx, sourceID, "/collection/copy")
+	duplicate, err := catalogDuplicateDirectoryTx(context.Background(), tx, sourceID, 1, "/collection/copy")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,5 +62,53 @@ func TestCatalogDuplicateDirectoryRejectsRepeatedSizesWithoutCounterparts(t *tes
 	parent[0], parent[1] = 20_000_000, 20_000_000
 	if duplicateDirectoryResult(t, parent, child) {
 		t.Fatal("repeated sizes without one-to-one counterparts must not be a format copy")
+	}
+}
+
+func TestCatalogDuplicateDirectoryRejectsSubsetOfLargerParent(t *testing.T) {
+	// Twenty tracks selected from a two-hundred-track collection is a real
+	// release, not a format copy.
+	parent := make([]int64, 200)
+	child := make([]int64, 20)
+	for index := range parent {
+		parent[index] = 10_000_000 + int64(index)*4_096
+	}
+	copy(child, parent[:20])
+	if duplicateDirectoryResult(t, parent, child) {
+		t.Fatal("a small selection of a large collection was treated as a copy")
+	}
+}
+
+func TestCatalogDuplicateDirectoryIgnoresStaleParentSizes(t *testing.T) {
+	db := openMigratedTestDB(t)
+	const sourceID = int64(85)
+	seedCatalogCleanupJob(t, db, sourceID, 805)
+	sizes := make([]int64, 20)
+	for index := range sizes {
+		sizes[index] = 10_000_000 + int64(index)*4_096
+	}
+	seedCatalogAudioDirectory(t, db, sourceID, "/collection", sizes)
+	seedCatalogAudioDirectory(t, db, sourceID, "/collection/copy", sizes)
+	// The parent failed this generation; its old sizes are not evidence that
+	// the child repeats it.
+	if _, err := db.Exec(`UPDATE source_catalog_directory SET generation=1,status='failed'
+		WHERE file_source_id=? AND path='/collection'`, sourceID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE source_catalog_directory SET generation=2,status='complete'
+		WHERE file_source_id=? AND path='/collection/copy'`, sourceID); err != nil {
+		t.Fatal(err)
+	}
+	tx, err := db.BeginTx(context.Background(), &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	duplicate, err := catalogDuplicateDirectoryTx(context.Background(), tx, sourceID, 2, "/collection/copy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if duplicate {
+		t.Fatal("a failed parent generation was used as copy evidence")
 	}
 }

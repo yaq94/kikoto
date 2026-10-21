@@ -1004,7 +1004,7 @@ func decideCatalogWorkSplitTx(ctx context.Context, tx *sql.Tx, sourceID, generat
 			// A package copy of the parent's audio is one version, not one
 			// work per file. Keep it on a single card so the same recordings
 			// do not reappear as hundreds of split cards.
-			duplicate, dupErr := catalogDuplicateDirectoryTx(ctx, tx, sourceID, directoryPath)
+			duplicate, dupErr := catalogDuplicateDirectoryTx(ctx, tx, sourceID, generation, directoryPath)
 			if dupErr != nil {
 				return dupErr
 			}
@@ -1655,20 +1655,27 @@ func (s *Server) catalogSplitPlanForRoot(ctx context.Context, tx *sql.Tx, source
 // disc, a differently mastered edition or a partial bonus folder keeps its own
 // card. Duplicates stay unpublished rather than being merged into the parent,
 // because the parent already holds the original files.
-func catalogDuplicateDirectoryTx(ctx context.Context, tx *sql.Tx, sourceID int64, directoryPath string) (bool, error) {
+func catalogDuplicateDirectoryTx(ctx context.Context, tx *sql.Tx, sourceID, generation int64, directoryPath string) (bool, error) {
 	parent := path.Dir(directoryPath)
 	if directoryPath == "/" || parent == "." || parent == directoryPath || parent == "/" {
 		return false, nil
 	}
-	child, err := catalogAudioSizesTx(ctx, tx, sourceID, directoryPath)
+	child, err := catalogAudioSizesTx(ctx, tx, sourceID, generation, directoryPath)
 	if err != nil || len(child) < 20 {
 		return false, err
 	}
-	parentSizes, err := catalogAudioSizesTx(ctx, tx, sourceID, parent)
+	parentSizes, err := catalogAudioSizesTx(ctx, tx, sourceID, generation, parent)
 	if err != nil {
 		return false, err
 	}
 	if len(parentSizes) < 20 {
+		return false, nil
+	}
+	// A selection of the parent's tracks is a real release, not a copy. Only a
+	// child that repeats most of the parent's audio can be a format or package
+	// copy; twenty shared tracks below a two-hundred-track collection are two
+	// different works.
+	if len(child)*5 < len(parentSizes)*4 {
 		return false, nil
 	}
 	sort.Slice(child, func(i, j int) bool { return child[i] < child[j] })
@@ -1693,11 +1700,15 @@ func catalogDuplicateDirectoryTx(ctx context.Context, tx *sql.Tx, sourceID int64
 	return matched*10 >= len(child)*9, nil
 }
 
-func catalogAudioSizesTx(ctx context.Context, tx *sql.Tx, sourceID int64, directoryPath string) ([]int64, error) {
+func catalogAudioSizesTx(ctx context.Context, tx *sql.Tx, sourceID, generation int64, directoryPath string) ([]int64, error) {
+	// Only a directory this generation completed can describe the current copy.
+	// A failed or stale parent keeps its old listing, which must not decide how
+	// a newly observed child is admitted.
 	rows, err := tx.QueryContext(ctx, `SELECT o.size_bytes FROM source_catalog_observation o
 		JOIN source_catalog_directory d ON d.file_source_id=o.file_source_id AND d.path=o.directory_path
-		WHERE o.file_source_id=? AND o.directory_path=? AND o.kind='audio' AND o.revision=d.revision`,
-		sourceID, directoryPath)
+		WHERE o.file_source_id=? AND o.directory_path=? AND o.kind='audio' AND o.revision=d.revision
+			AND d.generation=? AND d.status='complete'`,
+		sourceID, directoryPath, generation)
 	if err != nil {
 		return nil, err
 	}
