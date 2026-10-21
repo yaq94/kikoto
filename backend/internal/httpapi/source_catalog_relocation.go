@@ -10,39 +10,72 @@ import (
 	"strings"
 )
 
+// catalogFingerprintTruncatedPrefix marks a manifest computed from the first
+// 10,000 audio rows of a larger card. A marker can never equal a complete
+// fingerprint, so callers must reject it before treating two cards as the same
+// object. Keeping the marker in the stored column also prevents a giant card
+// from looking like it has no manifest and being rescanned every generation.
+const catalogFingerprintTruncatedPrefix = "truncated:"
+
+func catalogFingerprintUsable(fingerprint string) bool {
+	return fingerprint != "" && !strings.HasPrefix(fingerprint, catalogFingerprintTruncatedPrefix)
+}
+
+// catalogFingerprintsTx keeps the existing three-value shape for the lifecycle
+// caller. A truncated card receives marked fingerprints rather than a silent
+// empty pair, so the state is durable and explicit.
 func catalogFingerprintsTx(ctx context.Context, tx *sql.Tx, id, generation int64) (string, string, error) {
+	strong, layout, _, err := catalogFingerprintsDetailedTx(ctx, tx, id, generation)
+	return strong, layout, err
+}
+
+// catalogFingerprintsDetailedTx reports whether the manifest covers the whole
+// card. The 10,001st row is read only to set truncated; it is not hashed.
+func catalogFingerprintsDetailedTx(ctx context.Context, tx *sql.Tx, id, generation int64) (strong, layout string, truncated bool, err error) {
 	rows, err := tx.QueryContext(ctx, `SELECT relative_path,size_bytes,content_hash FROM source_catalog_file WHERE catalog_entry_id=? AND observed_generation=? AND kind='audio' ORDER BY relative_path LIMIT 10001`, id, generation)
 	if err != nil {
-		return "", "", err
+		return "", "", false, err
 	}
 	defer func() { _ = rows.Close() }()
-	content, layout := sha256.New(), sha256.New()
+	content, layoutHash := sha256.New(), sha256.New()
 	count := 0
+	hashed := 0
 	complete := true
 	for rows.Next() {
 		var path, hash string
 		var size int64
 		if err = rows.Scan(&path, &size, &hash); err != nil {
-			return "", "", err
+			return "", "", false, err
 		}
 		count++
-		_, _ = fmt.Fprintf(layout, "%s\x00%d\n", path, size)
+		if count > 10000 {
+			truncated = true
+			continue
+		}
+		hashed++
+		_, _ = fmt.Fprintf(layoutHash, "%s\x00%d\n", path, size)
 		_, _ = fmt.Fprintf(content, "%s\x00%d\x00%s\n", path, size, hash)
 		if hash == "" {
 			complete = false
 		}
 	}
 	if err = rows.Err(); err != nil {
-		return "", "", err
+		return "", "", false, err
 	}
-	if count == 0 || count > 10000 {
-		return "", "", nil
+	if hashed == 0 {
+		return "", "", false, nil
 	}
-	strong := ""
 	if complete {
 		strong = hex.EncodeToString(content.Sum(nil))
 	}
-	return strong, hex.EncodeToString(layout.Sum(nil)), nil
+	layout = hex.EncodeToString(layoutHash.Sum(nil))
+	if truncated {
+		if strong != "" {
+			strong = catalogFingerprintTruncatedPrefix + strong
+		}
+		layout = catalogFingerprintTruncatedPrefix + layout
+	}
+	return strong, layout, truncated, nil
 }
 
 // catalogSeriesMembershipsCompatibleTx reports whether two cards can be one
@@ -110,6 +143,7 @@ type catalogRelocationEntry struct {
 	root, sourceRoot, title, code, strong, layout string
 	workID                                        sql.NullInt64
 	discovered, lastSeen                          int64
+	truncated                                     bool
 }
 
 func reconcileCatalogEntryTx(ctx context.Context, tx *sql.Tx, sourceID, generation, id int64) error {
@@ -121,9 +155,16 @@ func reconcileCatalogEntryTx(ctx context.Context, tx *sql.Tx, sourceID, generati
 	if _, err = tx.ExecContext(ctx, `DELETE FROM source_catalog_relocation_candidate WHERE catalog_entry_id=?`, id); err != nil {
 		return err
 	}
+	oldStrong, oldLayout := old.strong, old.layout
+	if !catalogFingerprintUsable(oldStrong) {
+		oldStrong = ""
+	}
+	if !catalogFingerprintUsable(oldLayout) {
+		oldLayout = ""
+	}
 	rows, err := tx.QueryContext(ctx, `SELECT id,root_path,source_root,title,primary_code,content_fingerprint,layout_fingerprint,work_id,discovered_generation,last_seen_generation FROM source_catalog_entry
 		WHERE file_source_id=? AND relocated_to_id IS NULL AND last_seen_generation=? AND id<>?
-		AND ((?<>'' AND content_fingerprint=?) OR (?<>'' AND layout_fingerprint=?) OR title=?) ORDER BY id LIMIT 9`, sourceID, generation, id, old.strong, old.strong, old.layout, old.layout, old.title)
+		AND ((?<>'' AND content_fingerprint=?) OR (?<>'' AND layout_fingerprint=?) OR title=?) ORDER BY id LIMIT 9`, sourceID, generation, id, oldStrong, oldStrong, oldLayout, oldLayout, old.title)
 	if err != nil {
 		return err
 	}
@@ -149,17 +190,24 @@ func reconcileCatalogEntryTx(ctx context.Context, tx *sql.Tx, sourceID, generati
 	// of treating a real rename as insufficient evidence.
 	for i := range candidates {
 		candidate := &candidates[i]
-		if candidate.strong != "" && candidate.layout != "" {
+		if catalogFingerprintUsable(candidate.strong) && catalogFingerprintUsable(candidate.layout) {
 			continue
 		}
-		strong, layout, fingerprintErr := catalogFingerprintsTx(ctx, tx, candidate.id, generation)
+		strong, layout, truncated, fingerprintErr := catalogFingerprintsDetailedTx(ctx, tx, candidate.id, generation)
 		if fingerprintErr != nil {
 			return fingerprintErr
 		}
-		if candidate.strong == "" {
+		if truncated {
+			// A partial manifest cannot prove a rename. Keep the card as a
+			// candidate for review, but never treat its prefix as identity.
+			candidate.truncated = true
+			candidate.strong, candidate.layout = "", ""
+			continue
+		}
+		if !catalogFingerprintUsable(candidate.strong) {
 			candidate.strong = strong
 		}
-		if candidate.layout == "" {
+		if !catalogFingerprintUsable(candidate.layout) {
 			candidate.layout = layout
 		}
 	}
@@ -168,14 +216,14 @@ func reconcileCatalogEntryTx(ctx context.Context, tx *sql.Tx, sourceID, generati
 	var layoutTarget catalogRelocationEntry
 	var target catalogRelocationEntry
 	for _, candidate := range candidates {
-		if old.strong != "" && candidate.strong == old.strong {
+		if oldStrong != "" && !candidate.truncated && candidate.strong == oldStrong {
 			strongCount++
 			target = candidate
 		}
 		// A provider hash on both sides is the stronger evidence: a differing
 		// hash contradicts a matching manifest. When the renamed location has
 		// no hash, the manifest remains the only comparable evidence.
-		if old.layout != "" && candidate.layout == old.layout && (candidate.strong == "" || candidate.strong == old.strong) {
+		if oldLayout != "" && !candidate.truncated && candidate.layout == oldLayout && (candidate.strong == "" || candidate.strong == oldStrong) {
 			layoutCount++
 			layoutTarget = candidate
 		}
@@ -183,7 +231,7 @@ func reconcileCatalogEntryTx(ctx context.Context, tx *sql.Tx, sourceID, generati
 	reason := "insufficient_evidence"
 	if strongCount > 0 {
 		var oldCount int
-		if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM source_catalog_entry WHERE file_source_id=? AND relocated_to_id IS NULL AND last_seen_generation<>? AND content_fingerprint=?`, sourceID, generation, old.strong).Scan(&oldCount); err != nil {
+		if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM source_catalog_entry WHERE file_source_id=? AND relocated_to_id IS NULL AND last_seen_generation<>? AND content_fingerprint=?`, sourceID, generation, oldStrong).Scan(&oldCount); err != nil {
 			return err
 		}
 		reason = "ambiguous_evidence"
@@ -201,7 +249,7 @@ func reconcileCatalogEntryTx(ctx context.Context, tx *sql.Tx, sourceID, generati
 				return relocateCatalogEntryTx(ctx, tx, old, target, generation)
 			}
 		}
-	} else if old.layout != "" && layoutCount > 0 {
+	} else if oldLayout != "" && layoutCount > 0 {
 		// OpenList often returns no provider hash. A renamed directory still
 		// has one stable manifest: the same relative paths and sizes. Accept
 		// it only for a multi-file release, unique in this scan, with no
@@ -213,7 +261,7 @@ func reconcileCatalogEntryTx(ctx context.Context, tx *sql.Tx, sourceID, generati
 			return err
 		}
 		var oldCount int
-		if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM source_catalog_entry WHERE file_source_id=? AND relocated_to_id IS NULL AND last_seen_generation<>? AND layout_fingerprint=?`, sourceID, generation, old.layout).Scan(&oldCount); err != nil {
+		if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM source_catalog_entry WHERE file_source_id=? AND relocated_to_id IS NULL AND last_seen_generation<>? AND layout_fingerprint=?`, sourceID, generation, oldLayout).Scan(&oldCount); err != nil {
 			return err
 		}
 		// A single same-sized file is not enough on its own to call this a
@@ -263,6 +311,10 @@ func relocateCatalogEntryTx(ctx context.Context, tx *sql.Tx, old, target catalog
 	}
 	// Release the unique (source, root) key before the survivor takes the new
 	// path, and make the provisional row an alias in the same statement.
+	var sourceID sql.NullInt64
+	if err := tx.QueryRowContext(ctx, `SELECT file_source_id FROM source_catalog_entry WHERE id=?`, old.id).Scan(&sourceID); err != nil {
+		return err
+	}
 	if _, err := tx.ExecContext(ctx, `UPDATE source_catalog_entry SET file_source_id=NULL,relocated_to_id=? WHERE id=?`, old.id, target.id); err != nil {
 		return err
 	}
@@ -279,5 +331,15 @@ func relocateCatalogEntryTx(ctx context.Context, tx *sql.Tx, old, target catalog
 	if _, err := tx.ExecContext(ctx, `DELETE FROM source_catalog_file WHERE catalog_entry_id=? OR (catalog_entry_id=? AND observed_generation<>?)`, target.id, old.id, generation); err != nil {
 		return err
 	}
-	return setCatalogEntryStatusTx(ctx, tx, old.id, "available")
+	if err := setCatalogEntryStatusTx(ctx, tx, old.id, "available"); err != nil {
+		return err
+	}
+	// Clearing file_source_id removes the alias from the indexed projection.
+	// Recount in the same transaction so the scan progress cannot drift.
+	if sourceID.Valid {
+		if _, err := tx.ExecContext(ctx, `UPDATE source_catalog_scan SET indexed=(SELECT count(*) FROM source_catalog_entry WHERE file_source_id=? AND last_seen_generation=?) WHERE file_source_id=?`, sourceID.Int64, generation, sourceID.Int64); err != nil {
+			return err
+		}
+	}
+	return nil
 }

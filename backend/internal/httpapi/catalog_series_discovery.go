@@ -163,12 +163,20 @@ func splitCatalogEpisodeRoots(root string, files []openlist.File) map[string][]o
 
 // attachCatalogSeriesTx is shared by finite and resumable publication. It is
 // deliberately local: no provider calls, work registration or private writes.
+// Callers that already know the published location should use
+// attachCatalogSeriesForRootTx to avoid a second read of the entry.
 func attachCatalogSeriesTx(ctx context.Context, tx *sql.Tx, entryID int64) error {
 	var sourceID int64
 	var root string
 	if err := tx.QueryRowContext(ctx, `SELECT file_source_id,root_path FROM source_catalog_entry WHERE id=?`, entryID).Scan(&sourceID, &root); err != nil {
 		return err
 	}
+	return attachCatalogSeriesForRootTx(ctx, tx, entryID, sourceID, root)
+}
+
+// attachCatalogSeriesForRootTx attaches an episode card using the location its
+// caller already published. It never re-reads file_source_id or root_path.
+func attachCatalogSeriesForRootTx(ctx context.Context, tx *sql.Tx, entryID, sourceID int64, root string) error {
 	// A published work code identifies the work; it does not override an
 	// explicit series directory. Series membership and work identity are
 	// independent levels.
