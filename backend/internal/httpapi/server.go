@@ -391,6 +391,11 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/remote-sources/{id}/catalog/sidecars/retry", s.retrySourceCatalogSidecars)
 	// Operator diagnostics: work adoption, exclusions and admission ceilings.
 	mux.HandleFunc("GET /api/remote-sources/{id}/catalog/diagnostics", s.catalogDiagnostics)
+	// A deployment asks the index to stop at the next directory boundary
+	mux.HandleFunc("GET /api/catalog/maintenance", s.getCatalogMaintenance)
+	mux.HandleFunc("POST /api/catalog/maintenance", s.setCatalogMaintenance)
+	mux.HandleFunc("DELETE /api/catalog/maintenance", s.clearCatalogMaintenance)
+	mux.HandleFunc("GET /api/catalog/phases", s.catalogPhaseTimings)
 	mux.HandleFunc("GET /api/source-catalog/{id}", s.getSourceCatalogEntry)
 	mux.HandleFunc("GET /api/works/{id}/catalog-directories", s.getWorkCatalogDirectories)
 	mux.HandleFunc("GET /api/source-catalog/{id}/tracks", s.getSourceCatalogTracks)

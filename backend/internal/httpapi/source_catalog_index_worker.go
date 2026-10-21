@@ -97,11 +97,23 @@ func (s *Server) executeSourceCatalogIndexJob(ctx context.Context, job workflowJ
 	if _, _, err = s.publishCatalogQueue(ctx, job, input.SourceID); err != nil {
 		return err
 	}
+	scanStarted := time.Now()
 	for count := 0; count < options.PagesPerBatch; {
 		if err = ctx.Err(); err != nil {
 			return err
 		}
+		// A deployment hold stops at a directory boundary, where the committed
+		// checkpoint already describes everything this generation observed. The
+		// job becomes available again when the hold ends, so a held scan cannot
+		// spin on the queue.
+		if held, until, holdErr := s.catalogMaintenanceActive(ctx); holdErr != nil {
+			return holdErr
+		} else if held {
+			s.recordCatalogPhase(ctx, job.RunID, "scan", scanStarted)
+			return s.settleCatalogBatchAt(ctx, job, input.SourceID, "queued", "maintenance", until)
+		}
 		if reason := s.catalogIndexDiskPause(options); reason != "" {
+			s.recordCatalogPhase(ctx, job.RunID, "scan", scanStarted)
 			return s.settleCatalogBatch(ctx, job, input.SourceID, "partial", reason)
 		}
 		expanded, err := s.expandCatalogDirectory(ctx, job, input.SourceID)
@@ -120,7 +132,10 @@ func (s *Server) executeSourceCatalogIndexJob(ctx context.Context, job workflowJ
 			return err
 		}
 		if len(dirs) == 0 {
+			s.recordCatalogPhase(ctx, job.RunID, "scan", scanStarted)
+			publishStarted := time.Now()
 			_, more, err := s.publishCatalogQueue(ctx, job, input.SourceID)
+			s.recordCatalogPhase(ctx, job.RunID, "publish", publishStarted)
 			if err != nil {
 				return err
 			}
@@ -191,6 +206,7 @@ func (s *Server) executeSourceCatalogIndexJob(ctx context.Context, job workflowJ
 			// each invocation bounded; a source with more cards than one pass
 			// can retire continues on the next step instead of leaving the tail
 			// permanently uncleaned.
+			cleanupStarted := time.Now()
 			scanned := int64(0)
 			for pass := 0; pass < catalogCleanupBatchesPerPass; pass++ {
 				scanned, _, err = s.cleanupCatalogPublishBatch(ctx, job, input.SourceID)
@@ -204,6 +220,7 @@ func (s *Server) executeSourceCatalogIndexJob(ctx context.Context, job workflowJ
 					break
 				}
 			}
+			s.recordCatalogPhase(ctx, job.RunID, "cleanup", cleanupStarted)
 			if scanned == catalogCleanupRows {
 				return s.settleCatalogBatch(ctx, job, input.SourceID, "queued", "")
 			}
@@ -229,7 +246,9 @@ func (s *Server) executeSourceCatalogIndexJob(ctx context.Context, job workflowJ
 			// elsewhere must not freeze ranges this generation observed fully.
 			// Only an unlistable configured root makes every range suspect.
 			if !rootEmpty {
+				lifecycleStarted := time.Now()
 				pending, err := s.settleCatalogLifecycleBatch(ctx, job, input.SourceID)
+				s.recordCatalogPhase(ctx, job.RunID, "lifecycle", lifecycleStarted)
 				if err != nil {
 					return err
 				}
@@ -364,6 +383,15 @@ func catalogScanSchedulesDaily(status, reason string, progress catalogIndexProgr
 }
 
 func (s *Server) settleCatalogBatch(ctx context.Context, job workflowJobRecord, sourceID int64, status, reason string) error {
+	return s.settleCatalogBatchAt(ctx, job, sourceID, status, reason, time.Time{})
+}
+
+// settleCatalogBatchAt is settleCatalogBatch with an explicit resume time. A
+// maintenance hold uses it so the job wakes when the hold ends instead of
+// immediately re-queuing and pausing again.
+func (s *Server) settleCatalogBatchAt(ctx context.Context, job workflowJobRecord, sourceID int64, status, reason string, resumeAt time.Time) error {
+	settleStarted := time.Now()
+	defer func() { s.recordCatalogPhase(context.WithoutCancel(ctx), job.RunID, "settle", settleStarted) }()
 	progress, err := s.sourceCatalogProgress(ctx, sourceID, 1)
 	if err != nil {
 		return err
@@ -387,7 +415,17 @@ func (s *Server) settleCatalogBatch(ctx context.Context, job workflowJobRecord, 
 		return err
 	}
 	checkpoint := mustJSON(map[string]any{"phase": status, "detail": map[string]any{"sourceId": sourceID, "generation": job.RunID}, "progressCurrent": progress.Completed, "progressTotal": 0})
-	if _, err = tx.ExecContext(ctx, `UPDATE workflow_job SET status=?,checkpoint_json=?,progress_current=?,progress_total=0,error_message=?,locked_by='',locked_at=NULL,heartbeat_at=NULL,available_at=CASE WHEN ?='queued' THEN CURRENT_TIMESTAMP ELSE NULL END,updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='running' AND locked_by=?`, status, checkpoint, progress.Completed, reason, status, job.ID, job.LockedBy); err != nil {
+	// A queued job normally resumes immediately. A hold defers it to the hold
+	// end so the worker does not re-acquire the lease only to pause again.
+	var availableAt any
+	if status == "queued" {
+		next := time.Now()
+		if resumeAt.After(next) {
+			next = resumeAt
+		}
+		availableAt = next.UTC().Format("2006-01-02 15:04:05")
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE workflow_job SET status=?,checkpoint_json=?,progress_current=?,progress_total=0,error_message=?,locked_by='',locked_at=NULL,heartbeat_at=NULL,available_at=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='running' AND locked_by=?`, status, checkpoint, progress.Completed, reason, availableAt, job.ID, job.LockedBy); err != nil {
 		return err
 	}
 	if _, err = tx.ExecContext(ctx, `UPDATE workflow_node_run SET status=?,output_json=?,error_message=?,finished_at=CASE WHEN ?='queued' THEN NULL ELSE CURRENT_TIMESTAMP END WHERE id=?`, status, mustJSON(progress), reason, status, job.NodeRunID); err != nil {
