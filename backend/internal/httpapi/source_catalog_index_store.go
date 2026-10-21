@@ -566,6 +566,9 @@ func (s *Server) expandCatalogDirectory(ctx context.Context, job workflowJobReco
 		if err = addCompletedDirectoryPublishPendingTx(ctx, tx.Tx, sourceID, job.RunID, p, change); err != nil {
 			return false, err
 		}
+		if err = resetCatalogPublishCursorTx(ctx, tx.Tx, sourceID, p, change.Inserted); err != nil {
+			return false, err
+		}
 	} else if change.Deleted {
 		if err = addCatalogPublishPendingTx(ctx, tx.Tx, sourceID, -change.Pending); err != nil {
 			return false, err
@@ -710,6 +713,20 @@ func addCompletedDirectoryPublishPendingTx(ctx context.Context, tx *sql.Tx, sour
 	return addCatalogPublishPendingTx(ctx, tx, sourceID, pending)
 }
 
+// resetCatalogPublishCursorTx rewinds the keyset cursor when rows behind its
+// current position can still become publishable in this generation: a
+// directory completed at or before the cursor, or a newly publishable root.
+// Rewinding costs a scan over the pending index only; published rows keep
+// publish_pending=0 and are not selected again.
+func resetCatalogPublishCursorTx(ctx context.Context, tx *sql.Tx, sourceID int64, before string, force bool) error {
+	if force {
+		_, err := tx.ExecContext(ctx, `UPDATE source_catalog_scan SET publish_cursor_path='',publish_cursor_name='' WHERE file_source_id=? AND (publish_cursor_path<>'' OR publish_cursor_name<>'')`, sourceID)
+		return err
+	}
+	_, err := tx.ExecContext(ctx, `UPDATE source_catalog_scan SET publish_cursor_path='',publish_cursor_name='' WHERE file_source_id=? AND publish_cursor_path<>'' AND ?<=publish_cursor_path`, sourceID, before)
+	return err
+}
+
 // catalogPublishQuery drives one publication batch from this generation's
 // directories, not from the pending index: a materialized roots CTE made every
 // publish batch scan the whole audio-root set (88ms per batch on a
@@ -732,11 +749,18 @@ FROM source_catalog_directory d
 -- prefix, so the batch stops as soon as it has enough rows.
 CROSS JOIN source_catalog_observation o ON o.file_source_id=d.file_source_id AND o.directory_path=d.path AND o.revision=d.revision
 LEFT JOIN source_catalog_directory rd ON rd.file_source_id=d.file_source_id AND rd.path=d.catalog_root AND rd.generation=d.generation
-WHERE d.file_source_id=? AND d.generation=? AND d.status='complete' AND d.catalog_root<>''
+WHERE d.file_source_id=?1 AND d.generation=?2 AND d.status='complete' AND d.catalog_root<>''
+	-- Keyset pagination. The comparison uses the same BINARY collation pair
+	-- as ORDER BY d.path,o.name, so a batch never skips a name inside a
+	-- directory or repeats one across a restart. An empty cursor sorts before
+	-- every path, which always starts with '/'.
+	AND (d.path>(SELECT publish_cursor_path FROM source_catalog_scan WHERE file_source_id=?1)
+		OR (d.path=(SELECT publish_cursor_path FROM source_catalog_scan WHERE file_source_id=?1)
+			AND o.name>(SELECT publish_cursor_name FROM source_catalog_scan WHERE file_source_id=?1)))
 	AND o.publish_pending=1
 	AND EXISTS(SELECT 1 FROM source_catalog_audio_root r
 		WHERE r.file_source_id=d.file_source_id AND r.generation=d.generation AND r.catalog_root=d.catalog_root)
-ORDER BY d.path,o.name LIMIT ?`
+ORDER BY d.path,o.name LIMIT ?3`
 
 // Publish a bounded number of validated observations. The first playable
 // observation creates a catalog identity; it never registers a library work.
@@ -905,6 +929,10 @@ func (s *Server) publishCatalogBatch(ctx context.Context, job workflowJobRecord,
 	// projection instead of scanning every pending observation before commit.
 	if len(items) > 0 {
 		if err = addCatalogPublishPendingTx(ctx, tx.Tx, sourceID, -len(items)); err != nil {
+			return 0, err
+		}
+		last := items[len(items)-1]
+		if _, err = tx.ExecContext(ctx, `UPDATE source_catalog_scan SET publish_cursor_path=?,publish_cursor_name=? WHERE file_source_id=?`, last.dir, last.name, sourceID); err != nil {
 			return 0, err
 		}
 		remaining -= len(items)

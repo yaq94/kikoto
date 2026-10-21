@@ -231,6 +231,9 @@ func (s *Server) enqueueSourceCatalogIndexTx(ctx context.Context, tx *sql.Tx, so
 		// current cursor. Rewind the cursor and recount once instead of
 		// tracking every row the resume touched. Published rows keep
 		// publish_pending=0, so the replay cannot publish them twice.
+		if _, err = tx.ExecContext(ctx, `UPDATE source_catalog_scan SET publish_cursor_path='',publish_cursor_name='' WHERE file_source_id=?`, sourceID); err != nil {
+			return catalogIndexQueued{}, err
+		}
 		if err = seedCatalogCountersTx(ctx, tx, sourceID); err != nil {
 			return catalogIndexQueued{}, err
 		}

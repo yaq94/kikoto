@@ -5,11 +5,14 @@ import (
 	"database/sql"
 	"encoding/json"
 	"net/http"
+	"os"
 	"path"
+	"path/filepath"
 	"strconv"
 	"testing"
 
 	"github.com/yexca/kikoto/backend/internal/config"
+	"github.com/yexca/kikoto/backend/internal/storage"
 	"github.com/yexca/kikoto/backend/internal/workflow"
 )
 
@@ -266,6 +269,105 @@ func seedCursorCatalog(t *testing.T, db *sql.DB, sourceID int64) (runID, jobID i
 
 func catalogJobRecord(db *sql.DB, runID, jobID int64) workflowJobRecord {
 	return workflowJobRecord{ID: jobID, RunID: runID, WorkerType: sourceCatalogIndexWorkerType, LockedBy: "counter-test"}
+}
+
+func readPublishCursor(t *testing.T, db *sql.DB, sourceID int64) (string, string) {
+	t.Helper()
+	var directory, name string
+	if err := db.QueryRow(`SELECT publish_cursor_path,publish_cursor_name FROM source_catalog_scan WHERE file_source_id=?`, sourceID).Scan(&directory, &name); err != nil {
+		t.Fatal(err)
+	}
+	return directory, name
+}
+
+func assertNoPendingRowsBeforeCursor(t *testing.T, db *sql.DB, sourceID, generation int64) {
+	t.Helper()
+	directory, name := readPublishCursor(t, db, sourceID)
+	var behind int
+	if err := db.QueryRow(`SELECT count(*) FROM source_catalog_directory d
+		JOIN source_catalog_observation o ON o.file_source_id=d.file_source_id AND o.directory_path=d.path AND o.revision=d.revision
+		WHERE d.file_source_id=? AND d.generation=? AND o.publish_pending=1
+			AND (d.path<? OR (d.path=? AND o.name<=?))`,
+		sourceID, generation, directory, directory, name).Scan(&behind); err != nil {
+		t.Fatal(err)
+	}
+	if behind != 0 {
+		t.Fatalf("%d pending rows sort at or before the cursor (%q,%q); the next batch would skip them", behind, directory, name)
+	}
+}
+
+func TestSourceCatalogPublishCursorResumesAcrossRestart(t *testing.T) {
+	image, err := migratedTestDatabaseImage()
+	if err != nil {
+		t.Fatal(err)
+	}
+	databasePath := filepath.Join(t.TempDir(), "cursor.db")
+	if err = os.WriteFile(databasePath, image, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	db, err := storage.Open(databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const sourceID = int64(41)
+	runID, jobID := seedCursorCatalog(t, db, sourceID)
+	server := NewServer(db, config.Config{Mode: config.ModeProduction, RootUsername: "synthetic-user", DataRoot: t.TempDir(), CacheRoot: t.TempDir()})
+	published, err := server.publishCatalogBatch(context.Background(), catalogJobRecord(db, runID, jobID), sourceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if published != catalogPublishRows {
+		t.Fatalf("first batch published %d, want a full %d-row batch", published, catalogPublishRows)
+	}
+	firstPath, firstName := readPublishCursor(t, db, sourceID)
+	assertNoPendingRowsBeforeCursor(t, db, sourceID, runID)
+	if got := readCatalogStoredCounters(t, db, sourceID).publishPending; got != 90-catalogPublishRows {
+		t.Fatalf("remaining after first batch = %d, want %d", got, 90-catalogPublishRows)
+	}
+	if err = server.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	db, err = storage.Open(databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	server = NewServer(db, config.Config{Mode: config.ModeProduction, RootUsername: "synthetic-user", DataRoot: t.TempDir(), CacheRoot: t.TempDir()})
+	defer func() { _ = server.Shutdown(context.Background()) }()
+	second, err := server.publishCatalogBatch(context.Background(), catalogJobRecord(db, runID, jobID), sourceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second != 90-catalogPublishRows {
+		t.Fatalf("resumed batch published %d, want %d", second, 90-catalogPublishRows)
+	}
+	secondPath, secondName := readPublishCursor(t, db, sourceID)
+	if secondPath < firstPath || (secondPath == firstPath && secondName <= firstName) {
+		t.Fatalf("cursor moved backwards: %q,%q -> %q,%q", firstPath, firstName, secondPath, secondName)
+	}
+	var pending int
+	if err = db.QueryRow(`SELECT count(*) FROM source_catalog_observation WHERE file_source_id=? AND publish_pending=1`, sourceID).Scan(&pending); err != nil {
+		t.Fatal(err)
+	}
+	if pending != 0 {
+		t.Fatalf("%d rows stayed pending after the resumed batch", pending)
+	}
+	var files int
+	if err = db.QueryRow(`SELECT count(*) FROM source_catalog_file WHERE catalog_entry_id IN (SELECT id FROM source_catalog_entry WHERE file_source_id=?)`, sourceID).Scan(&files); err != nil {
+		t.Fatal(err)
+	}
+	if files != 90 {
+		t.Fatalf("published %d file rows, want 90 (a skipped or duplicated row)", files)
+	}
+	stored := readCatalogStoredCounters(t, db, sourceID)
+	if stored.indexed != 3 || stored.publishPending != 0 {
+		t.Fatalf("stored counters after drain = %+v, want indexed=3 and no pending rows", stored)
+	}
+	assertCatalogCounterProjection(t, server, sourceID)
 }
 
 func TestSourceCatalogPublishIdleWaitsForTheLastRow(t *testing.T) {
