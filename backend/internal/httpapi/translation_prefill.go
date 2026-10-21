@@ -512,14 +512,15 @@ func (s *Server) setTranslationPrefill(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, view)
 }
 
-// noteCatalogEntriesPublished asks the prefill pass to look at newly published
-// cards again. The pass walks entry ids in order and stops at the end, so a
-// later card with a higher id would be reached anyway; a card republished below
-// the cursor needs the cursor moved back to it. The update is a single
-// statement and never waits for a translation.
-func (s *Server) noteCatalogEntriesPublished(ctx context.Context, entryIDs []int64) {
+// noteCatalogEntriesPublishedTx asks the prefill pass to look at newly
+// published cards again. The pass walks entry ids in order and stops at the
+// end, so a later card with a higher id would be reached anyway; a card
+// republished below the cursor needs the cursor moved back to it. The caller
+// runs this in the publication transaction so a committed card and its cursor
+// move cannot diverge.
+func noteCatalogEntriesPublishedTx(ctx context.Context, tx *sql.Tx, entryIDs []int64) error {
 	if len(entryIDs) == 0 {
-		return
+		return nil
 	}
 	lowest := entryIDs[0]
 	for _, id := range entryIDs[1:] {
@@ -527,12 +528,10 @@ func (s *Server) noteCatalogEntriesPublished(ctx context.Context, entryIDs []int
 			lowest = id
 		}
 	}
-	_, _ = s.db.ExecContext(ctx, `UPDATE translation_prefill_state
+	_, err := tx.ExecContext(ctx, `UPDATE translation_prefill_state
 		SET cursor_entry_id=min(cursor_entry_id, ?-1),
 			status=CASE WHEN status='complete' THEN 'running' ELSE status END,
 			updated_at=CURRENT_TIMESTAMP
 		WHERE id=1`, lowest)
-	// A republished card gets a fresh retry budget; otherwise an entry skipped
-	// after three failures would be ignored even though its title changed.
-	s.clearTranslationPrefillFailures(entryIDs)
+	return err
 }

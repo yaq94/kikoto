@@ -170,7 +170,18 @@ func TestTranslationPrefillPublishedEntryRollsCursorBack(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := &Server{db: db, translationPrefillFailures: map[int64]int{7: 3, 20: 2, 99: 1}}
-	s.noteCatalogEntriesPublished(context.Background(), []int64{20, 7})
+	tx, err := db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = noteCatalogEntriesPublishedTx(context.Background(), tx, []int64{20, 7}); err != nil {
+		_ = tx.Rollback()
+		t.Fatal(err)
+	}
+	if err = tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	s.clearTranslationPrefillFailures([]int64{20, 7})
 	var cursor int64
 	var status string
 	if err := db.QueryRow(`SELECT cursor_entry_id,status FROM translation_prefill_state WHERE id=1`).Scan(&cursor, &status); err != nil {

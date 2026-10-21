@@ -1112,11 +1112,18 @@ func (s *Server) publishCatalogBatch(ctx context.Context, job workflowJobRecord,
 		if err = markCatalogSidecarCandidatesTx(ctx, tx.Tx, publishedIDs, job.RunID); err != nil {
 			return 0, err
 		}
+		// The prefill cursor moves back in the same transaction as the cards it
+		// refers to. A committed card can therefore never be invisible to the
+		// prefill pass, and a failed update rolls the publication back instead
+		// of leaving a silent gap.
+		if err = noteCatalogEntriesPublishedTx(ctx, tx.Tx, publishedIDs); err != nil {
+			return 0, err
+		}
 		if err = tx.Commit(); err != nil {
 			return 0, err
 		}
 		published = len(items)
-		s.noteCatalogEntriesPublished(ctx, publishedIDs)
+		s.clearTranslationPrefillFailures(publishedIDs)
 		return published, nil
 	}
 	for _, p := range items {
@@ -1163,11 +1170,14 @@ func (s *Server) publishCatalogBatch(ctx context.Context, job workflowJobRecord,
 	if err = markCatalogSidecarCandidatesTx(ctx, tx.Tx, publishedIDs, job.RunID); err != nil {
 		return 0, err
 	}
+	if err = noteCatalogEntriesPublishedTx(ctx, tx.Tx, publishedIDs); err != nil {
+		return 0, err
+	}
 	if err = tx.Commit(); err != nil {
 		return 0, err
 	}
 	published = len(items)
-	s.noteCatalogEntriesPublished(ctx, publishedIDs)
+	s.clearTranslationPrefillFailures(publishedIDs)
 	return published, nil
 }
 
