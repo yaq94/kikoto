@@ -16,19 +16,19 @@ func TestCatalogMaintenanceHoldPausesAndDefersResume(t *testing.T) {
 		"/":        {looseDir("Creator")},
 		"/Creator": {looseAudio("Alpha.mp3")},
 	})
-	hold := f.request(t, http.MethodPost, "/catalog/maintenance", `{"holdSeconds":120,"reason":"deploy"}`, 200)
+	hold := reviewRequest(t, f.handler, f.cookie, http.MethodPost, "/api/catalog/maintenance", `{"holdSeconds":120,"reason":"deploy"}`, 200)
 	if hold["active"] != true {
 		t.Fatalf("hold = %#v, want active", hold)
 	}
 	f.request(t, http.MethodPost, "/catalog/index", `{"intervalMs":100}`, 202)
-	progress := f.drain(t)
+	progress := waitCatalogHold(t, f)
 	if progress["status"] != "queued" || progress["pauseReason"] != "maintenance" {
 		t.Fatalf("progress = %#v, want queued/maintenance", progress)
 	}
 
 	var available, status string
 	runID := int64(progress["runId"].(float64))
-	if err := f.server.db.QueryRow(`SELECT COALESCE(available_at,''),status FROM workflow_job WHERE run_id=?`, runID).Scan(&available, &status); err != nil {
+	if err := f.server.db.QueryRow(`SELECT COALESCE(available_at,''),status FROM workflow_job WHERE workflow_run_id=?`, runID).Scan(&available, &status); err != nil {
 		t.Fatal(err)
 	}
 	if status != "queued" {
@@ -43,12 +43,12 @@ func TestCatalogMaintenanceHoldPausesAndDefersResume(t *testing.T) {
 	}
 
 	// Releasing the hold must let the next step finish the scan.
-	f.request(t, http.MethodDelete, "/catalog/maintenance", "", 200)
-	state := f.request(t, http.MethodGet, "/catalog/maintenance", "", 200)
+	reviewRequest(t, f.handler, f.cookie, http.MethodDelete, "/api/catalog/maintenance", "", 200)
+	state := reviewRequest(t, f.handler, f.cookie, http.MethodGet, "/api/catalog/maintenance", "", 200)
 	if state["active"] == true {
 		t.Fatalf("hold survived DELETE: %#v", state)
 	}
-	if _, err := f.server.db.Exec(`UPDATE workflow_job SET available_at=NULL WHERE run_id=?`, runID); err != nil {
+	if _, err := f.server.db.Exec(`UPDATE workflow_job SET available_at=NULL WHERE workflow_run_id=?`, runID); err != nil {
 		t.Fatal(err)
 	}
 	if p := f.drain(t); p["status"] != "complete" {
@@ -64,12 +64,12 @@ func TestCatalogPhaseTimingsRecordEachPhase(t *testing.T) {
 		"/Creator": {looseAudio("Alpha.mp3")},
 	})
 	f.request(t, http.MethodPost, "/catalog/index", `{"intervalMs":100}`, 202)
-	progress := f.drain(t)
+	progress := waitCatalogHold(t, f)
 	if progress["status"] != "complete" {
 		t.Fatalf("scan = %#v", progress)
 	}
 	runID := int64(progress["runId"].(float64))
-	body := f.request(t, http.MethodGet, "/catalog/phases?runId="+strconvFormat(runID), "", 200)
+	body := reviewRequest(t, f.handler, f.cookie, http.MethodGet, "/api/catalog/phases?runId="+strconvFormat(runID), "", 200)
 	phases, _ := body["phases"].([]any)
 	seen := map[string]bool{}
 	for _, raw := range phases {
@@ -80,7 +80,7 @@ func TestCatalogPhaseTimingsRecordEachPhase(t *testing.T) {
 			t.Fatalf("phase %q missing from %#v", want, seen)
 		}
 	}
-	empty := f.request(t, http.MethodGet, "/catalog/phases?runId=999999", "", 200)
+	empty := reviewRequest(t, f.handler, f.cookie, http.MethodGet, "/api/catalog/phases?runId=999999", "", 200)
 	if got := len(empty["phases"].([]any)); got != 0 {
 		t.Fatalf("unknown run returned %d phases", got)
 	}
@@ -105,4 +105,24 @@ func TestCatalogMaintenanceIgnoresAMalformedSetting(t *testing.T) {
 	if held {
 		t.Fatal("a malformed hold blocked the index")
 	}
+}
+
+// A held job stays queued on purpose, so the generic drain helper would wait
+// forever for a terminal status. Stop as soon as the hold is recorded.
+func waitCatalogHold(t *testing.T, f *looseWorkFixture) map[string]any {
+	t.Helper()
+	for range 100 {
+		if err := f.server.runNextQueuedWorkflowJob(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		p := f.request(t, http.MethodGet, "/catalog/index", "", 200)
+		if p["pauseReason"] == "maintenance" {
+			return p
+		}
+		if p["status"] != "queued" && p["status"] != "running" {
+			return p
+		}
+	}
+	t.Fatal("scan did not reach the maintenance pause")
+	return nil
 }

@@ -16,7 +16,7 @@ import (
 
 var numberedMigrationFilePattern = regexp.MustCompile(`^[0-9]{3}_[a-z0-9][a-z0-9_]*\.sql$`)
 
-const latestNumberedMigrationVersion = 89
+const latestNumberedMigrationVersion = 90
 
 // latestReleasedBaseline is the newest file in migrations/baseline/, which
 // production uses for a fresh database.
@@ -119,8 +119,9 @@ func TestMigrateUpgradesExistingDatabaseThroughNumberedChain(t *testing.T) {
 	if err := db.QueryRow("SELECT filename FROM schema_migration WHERE version = ?", latestNumberedMigrationVersion).Scan(&filename); err != nil {
 		t.Fatal(err)
 	}
-	if filename != "089_work_primary_code_trimmed_unique.sql" {
-		t.Fatalf("applied migration = %q, want 089_work_primary_code_trimmed_unique.sql", filename)
+	want := latestNumberedMigrationFilename(t, sourceDir)
+	if filename != want {
+		t.Fatalf("applied migration = %q, want %s", filename, want)
 	}
 }
 
@@ -974,4 +975,15 @@ func TestCatalogSearchMigrationBackfillsExistingRows(t *testing.T) {
 	if parent != "Disc" {
 		t.Fatalf("parent_path = %q, want Disc", parent)
 	}
+}
+
+// latestNumberedMigrationFilename returns the file the chain head applies, so
+// adding a migration does not require editing this expectation by hand.
+func latestNumberedMigrationFilename(t *testing.T, sourceDir string) string {
+	t.Helper()
+	matches, err := filepath.Glob(filepath.Join(sourceDir, fmt.Sprintf("%03d_*.sql", latestNumberedMigrationVersion)))
+	if err != nil || len(matches) != 1 {
+		t.Fatalf("migration %03d files = %v, err = %v", latestNumberedMigrationVersion, matches, err)
+	}
+	return filepath.Base(matches[0])
 }
