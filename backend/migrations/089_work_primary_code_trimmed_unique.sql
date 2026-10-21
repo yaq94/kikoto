@@ -26,4 +26,4 @@ UPDATE work SET id=id WHERE id = (SELECT min(id) FROM work);
 DROP TRIGGER temp.work_primary_code_089_preflight;
 
 CREATE UNIQUE INDEX idx_work_primary_code_trimmed
-  ON work(primary_code) WHERE trim(primary_code) <> '';
+  ON work(trim(primary_code)) WHERE trim(primary_code) <> '';

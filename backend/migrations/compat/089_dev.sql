@@ -2032,7 +2032,7 @@ CREATE INDEX idx_work_party_party
   ON work_party(party_id, role);
 
 CREATE UNIQUE INDEX idx_work_primary_code_trimmed
-  ON work(primary_code) WHERE trim(primary_code) <> '';
+  ON work(trim(primary_code)) WHERE trim(primary_code) <> '';
 
 CREATE INDEX idx_work_primary_code_upper
   ON work(UPPER(primary_code));

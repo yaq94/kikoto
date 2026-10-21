@@ -238,10 +238,16 @@ func TestMigration089NormalDataCreatesIndex(t *testing.T) {
 		}
 		t.Fatal(err)
 	}
-	if !strings.Contains(sqlText, "WHERE trim(primary_code) <> ''") {
+	if !strings.Contains(sqlText, "ON work(trim(primary_code))") || !strings.Contains(sqlText, "WHERE trim(primary_code) <> ''") {
 		t.Fatalf("089 index = %s", sqlText)
 	}
 	if _, err := db.Exec(`INSERT INTO work(primary_code,title) VALUES('RJ00000893','Normal')`); err != nil {
 		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO work(primary_code,title) VALUES('  RJ00000894  ','Padded')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO work(primary_code,title) VALUES('RJ00000894','Duplicate after trim')`); err == nil {
+		t.Fatal("089 accepted a code that duplicates another code after trim")
 	}
 }
