@@ -6,10 +6,7 @@ vi.mock("@/lib/apiTransport", () => ({
   deleteJSON: vi.fn(),
 }));
 
-import {
-  catalogExclusionPathProblem,
-  normalizeCatalogExclusionPath,
-} from "./catalogExclusions";
+import { catalogExclusionPathProblem, normalizeCatalogExclusionPath } from "./catalogExclusions";
 
 describe("catalog exclusion paths", () => {
   it("rejects empty, relative, root and parent paths", () => {

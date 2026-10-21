@@ -29,10 +29,7 @@ export function catalogExclusionPathProblem(value: string): CatalogExclusionPath
 }
 
 export function normalizeCatalogExclusionPath(value: string): string {
-  return value
-    .trim()
-    .replace(/\/+/g, "/")
-    .replace(/\/+$/, "");
+  return value.trim().replace(/\/+/g, "/").replace(/\/+$/, "");
 }
 
 export const catalogExclusionApi = {
@@ -41,7 +38,5 @@ export const catalogExclusionApi = {
   create: (sourceId: number, input: CatalogExclusionInput) =>
     postJSONBody<CatalogExclusion>(`/api/remote-sources/${sourceId}/catalog/exclusions`, input),
   remove: (sourceId: number, exclusionId: number) =>
-    deleteJSON<{ ok: boolean; path: string }>(
-      `/api/remote-sources/${sourceId}/catalog/exclusions/${exclusionId}`,
-    ),
+    deleteJSON<{ ok: boolean; path: string }>(`/api/remote-sources/${sourceId}/catalog/exclusions/${exclusionId}`),
 };
