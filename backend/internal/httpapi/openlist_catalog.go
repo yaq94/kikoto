@@ -14,6 +14,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/yexca/kikoto/backend/internal/library"
 	"github.com/yexca/kikoto/backend/internal/openlist"
 )
 
@@ -714,8 +715,45 @@ func (s *Server) listOpenListWorks(w http.ResponseWriter, r *http.Request, sourc
 		pageSize = 24
 	}
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
-	prefix, from, args := openListCatalogCardsQuery(source.ID, q)
-	rows, err := s.db.QueryContext(r.Context(), prefix+`SELECT id,series_id,primary_code,title,work_id,updated_at,availability_status,has_audio,COUNT(*) OVER () AS total `+from+` ORDER BY updated_at DESC,series_id DESC,id DESC LIMIT ? OFFSET ?`, append(args, pageSize, (page-1)*pageSize)...)
+	var (
+		pageSQL   string
+		pageArgs  []any
+		countSQL  string
+		countArgs []any
+	)
+	// An empty query stays on the browse path: there is nothing to match, so
+	// the display language must not narrow the list.
+	targets, languagePath := library.DisplaySearchTargets(r.URL.Query().Get("lang"), q)
+	if languagePath && q != "" {
+		entryIDs, lookupErr := s.openListTranslatedEntryIDs(r.Context(), targets)
+		if lookupErr != nil {
+			writeError(w, lookupErr)
+			return
+		}
+		if len(entryIDs) == 0 {
+			writeJSON(w, 200, remoteWorksResponse{SourceID: source.ID, Works: []remoteWorkSummary{}, Page: page, PageSize: pageSize, Total: 0, Status: "ok", Sort: "updated", Direction: "desc", SortApplied: true})
+			return
+		}
+		prefix, from, args := openListCatalogCardsQueryForEntries(source.ID, entryIDs)
+		rank, rankArgs := openListTranslationExactRankSQL(targets, "language_cards")
+		// One materialised CTE serves both the page and its total, so the card
+		// pipeline (admission probes and identity dedup) runs once per request.
+		cards := prefix + `language_cards AS MATERIALIZED (SELECT * ` + from + `)`
+		pageSQL = cards + `
+	SELECT id,series_id,primary_code,title,work_id,updated_at,availability_status,has_audio,(SELECT COUNT(*) FROM language_cards) AS total
+	FROM language_cards ORDER BY ` + rank + ` DESC, updated_at DESC,series_id DESC,id DESC LIMIT ? OFFSET ?`
+		pageArgs = append(append([]any{}, args...), rankArgs...)
+		pageArgs = append(pageArgs, pageSize, (page-1)*pageSize)
+		countSQL = cards + ` SELECT COUNT(*) FROM language_cards`
+		countArgs = args
+	} else {
+		prefix, from, args := openListCatalogCardsQuery(source.ID, q)
+		pageSQL = prefix + `SELECT id,series_id,primary_code,title,work_id,updated_at,availability_status,has_audio,COUNT(*) OVER () AS total ` + from + ` ORDER BY updated_at DESC,series_id DESC,id DESC LIMIT ? OFFSET ?`
+		pageArgs = append(append([]any{}, args...), pageSize, (page-1)*pageSize)
+		countSQL = prefix + "SELECT COUNT(*) " + from
+		countArgs = args
+	}
+	rows, err := s.db.QueryContext(r.Context(), pageSQL, pageArgs...)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -754,10 +792,9 @@ func (s *Server) listOpenListWorks(w http.ResponseWriter, r *http.Request, sourc
 		return
 	}
 	if len(works) == 0 && page > 1 {
-		// COUNT(*) OVER () rides on the page. An out-of-range page has no row
-		// to carry it, so only that page pays for a separate count.
-		countPrefix, countFrom, countArgs := openListCatalogCardsQuery(source.ID, q)
-		if err = s.db.QueryRowContext(r.Context(), countPrefix+"SELECT COUNT(*) "+countFrom, countArgs...).Scan(&total); err != nil {
+		// The total rides on the page. An out-of-range page has no row to carry
+		// it, so only that page pays for a separate count.
+		if err = s.db.QueryRowContext(r.Context(), countSQL, countArgs...).Scan(&total); err != nil {
 			writeError(w, err)
 			return
 		}
@@ -769,6 +806,17 @@ func (s *Server) listOpenListWorks(w http.ResponseWriter, r *http.Request, sourc
 // search omits both the FTS CTE and the per-file instr predicates, so browsing
 // without a query never touches file titles.
 func openListCatalogCardsQuery(sourceID int64, query string) (string, string, []any) {
+	return openListCatalogCardsQueryFiltered(sourceID, query, nil)
+}
+
+// openListCatalogCardsQueryForEntries keeps the same card source but restricts
+// it to catalog entries whose translated text matched. Card text stays in the
+// source language; only the hit set comes from the display-language corpus.
+func openListCatalogCardsQueryForEntries(sourceID int64, entryIDs []int64) (string, string, []any) {
+	return openListCatalogCardsQueryFiltered(sourceID, "", entryIDs)
+}
+
+func openListCatalogCardsQueryFiltered(sourceID int64, query string, entryIDs []int64) (string, string, []any) {
 	query = strings.TrimSpace(query)
 	prefix := ""
 	args := []any{}
@@ -776,6 +824,22 @@ func openListCatalogCardsQuery(sourceID int64, query string) (string, string, []
 	entryArgs := []any{}
 	seriesSearch := ""
 	seriesArgs := []any{}
+	entrySource := "source_catalog_entry e INDEXED BY source_catalog_entry_live_root"
+	seriesScope := ""
+	if entryIDs != nil {
+		// A display-language search already knows the matching entry ids. Drive
+		// the card pipeline from that bounded set with primary-key lookups
+		// instead of scanning every entry of the source.
+		values := strings.TrimSuffix(strings.Repeat("(?),", len(entryIDs)), ",")
+		prefix = "WITH requested_entry(id) AS (VALUES " + values + "), "
+		entrySource = "requested_entry AS requested CROSS JOIN source_catalog_entry AS e ON e.id = requested.id"
+		seriesScope = ` AND s.id IN (
+			SELECT scope_member.series_id FROM catalog_series_member AS scope_member
+			JOIN requested_entry AS scope_requested ON scope_requested.id = scope_member.catalog_entry_id)`
+		for _, id := range entryIDs {
+			args = append(args, id)
+		}
+	}
 	if query != "" {
 		if utf8.RuneCountInString(query) >= 3 {
 			prefix = `WITH search_hits AS MATERIALIZED (
@@ -804,7 +868,7 @@ func openListCatalogCardsQuery(sourceID int64, query string) (string, string, []
 	}
 	from := `FROM (SELECT candidates.*,ROW_NUMBER() OVER (PARTITION BY CASE WHEN work_id IS NOT NULL THEN 'work:' || (SELECT identity_work_id FROM shared_work_identity WHERE work_id=candidates.work_id) WHEN series_id>0 THEN 'series:' || series_id ELSE 'catalog:' || id END ORDER BY series_id,id) AS identity_rank FROM (
 		SELECT e.id,0 AS series_id,e.primary_code,e.title,e.work_id,e.updated_at,e.availability_status,
-			EXISTS(SELECT 1 FROM source_catalog_file f WHERE f.catalog_entry_id=e.id AND f.kind='audio') AS has_audio FROM source_catalog_entry e INDEXED BY source_catalog_entry_live_root
+			EXISTS(SELECT 1 FROM source_catalog_file f WHERE f.catalog_entry_id=e.id AND f.kind='audio') AS has_audio FROM ` + entrySource + `
 		WHERE e.file_source_id=? AND e.relocated_to_id IS NULL AND NOT EXISTS(SELECT 1 FROM catalog_series_member m WHERE m.catalog_entry_id=e.id AND (SELECT COUNT(*) FROM catalog_series_member sibling WHERE sibling.series_id=m.series_id)>=2)
 			AND ` + catalogEntryAdmittedSQL("e") + entrySearch + `
 		UNION ALL
@@ -817,7 +881,7 @@ func openListCatalogCardsQuery(sourceID int64, query string) (string, string, []
 			JOIN source_catalog_file ff INDEXED BY source_catalog_file_parent ON ff.catalog_entry_id=ee.id AND ff.kind='audio'
 			WHERE mm.series_id=s.id AND ee.relocated_to_id IS NULL AND ` + catalogEntryAdmittedSQL("ee") + `
 		) AS has_audio FROM catalog_series s
-		WHERE (SELECT COUNT(*) FROM catalog_series_member all_members WHERE all_members.series_id=s.id)>=2
+		WHERE (SELECT COUNT(*) FROM catalog_series_member all_members WHERE all_members.series_id=s.id)>=2` + seriesScope + `
 		AND EXISTS(SELECT 1 FROM catalog_series_member m JOIN source_catalog_entry e ON e.id=m.catalog_entry_id
 		WHERE m.series_id=s.id AND e.file_source_id=? AND e.relocated_to_id IS NULL AND ` + catalogEntryAdmittedSQL("e") + seriesSearch + `)
 	) AS candidates) AS cards WHERE identity_rank=1`
@@ -830,4 +894,64 @@ func openListCatalogCardsQuery(sourceID int64, query string) (string, string, []
 
 func ftsPhrase(query string) string {
 	return `"` + strings.ReplaceAll(query, `"`, `""`) + `"`
+}
+
+// catalogTranslationHitLimit bounds how many translated entries one search
+// feeds into the card pipeline. It is well above a page and keeps the
+// IN (...) list inside SQLite's bind limit; a search matching more than this
+// reports the bounded total rather than scanning the whole corpus.
+const catalogTranslationHitLimit = 5000
+
+// openListTranslatedEntryIDs collects entry ids whose stored translation
+// matches any target. zh-tw contributes a Simplified and a Traditional target,
+// and the union is deduplicated so a row that matches both appears once.
+func (s *Server) openListTranslatedEntryIDs(ctx context.Context, targets []library.DisplaySearchTarget) ([]int64, error) {
+	seen := map[int64]struct{}{}
+	ids := []int64{}
+	for _, target := range targets {
+		hits, err := s.translatedEntityIDs(ctx, target.Language, "entry", target.Query, catalogTranslationHitLimit)
+		if err != nil {
+			return nil, err
+		}
+		for _, id := range hits {
+			if _, ok := seen[id]; ok {
+				continue
+			}
+			seen[id] = struct{}{}
+			ids = append(ids, id)
+		}
+	}
+	return ids, nil
+}
+
+// openListTranslationExactRankSQL marks a card whose translated title equals
+// the query, so exact hits sort ahead of substring hits. A series card inherits
+// an exact hit from any member entry.
+func openListTranslationExactRankSQL(targets []library.DisplaySearchTarget, cardAlias string) (string, []any) {
+	pairs := []string{}
+	args := []any{}
+	for _, target := range targets {
+		query := strings.TrimSpace(target.Query)
+		if query == "" {
+			continue
+		}
+		pairs = append(pairs, `(exact_hit.language = ? AND exact_hit.translated_text = ?)`)
+		args = append(args, target.Language, query)
+	}
+	if len(pairs) == 0 {
+		return "0", nil
+	}
+	condition := "(" + strings.Join(pairs, " OR ") + ")"
+	series := `EXISTS (
+		SELECT 1 FROM catalog_series_member AS rank_member
+		WHERE rank_member.series_id = ` + cardAlias + `.series_id
+		  AND EXISTS (
+			SELECT 1 FROM content_translation AS exact_hit INDEXED BY idx_content_translation_entity
+			WHERE exact_hit.entity_kind = 'entry' AND exact_hit.entity_id = rank_member.catalog_entry_id
+			  AND exact_hit.field = 'title' AND ` + condition + `))`
+	entry := `EXISTS (
+		SELECT 1 FROM content_translation AS exact_hit INDEXED BY idx_content_translation_entity
+		WHERE exact_hit.entity_kind = 'entry' AND exact_hit.entity_id = ` + cardAlias + `.id
+		  AND exact_hit.field = 'title' AND ` + condition + `)`
+	return `(CASE WHEN ` + cardAlias + `.series_id > 0 THEN ` + series + ` ELSE ` + entry + ` END)`, append(append([]any{}, args...), args...)
 }
