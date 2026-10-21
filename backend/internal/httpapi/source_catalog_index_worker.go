@@ -208,7 +208,10 @@ func (s *Server) executeSourceCatalogIndexJob(ctx context.Context, job workflowJ
 			if p.Failed+p.Restricted > 0 || rootEmpty || unconfirmedEmpty > 0 {
 				status = "partial"
 			}
-			if p.Failed+p.Restricted == 0 && !rootEmpty {
+			// Per-range uncertainty keeps a failed subtree, so a failure
+			// elsewhere must not freeze ranges this generation observed fully.
+			// Only an unlistable configured root makes every range suspect.
+			if !rootEmpty {
 				pending, err := s.settleCatalogLifecycleBatch(ctx, job, input.SourceID)
 				if err != nil {
 					return err
