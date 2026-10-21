@@ -90,19 +90,23 @@ type catalogSidecarFailureCounts struct {
 }
 
 type catalogIndexProgress struct {
-	RunID               int64                       `json:"runId"`
-	Status              string                      `json:"status"`
-	PauseReason         string                      `json:"pauseReason"`
-	Options             catalogIndexOptions         `json:"options"`
-	Requests            int                         `json:"requests"`
-	Directories         int                         `json:"directories"`
-	Completed           int                         `json:"completedDirectories"`
-	Pending             int                         `json:"pendingDirectories"`
-	Failed              int                         `json:"failedDirectories"`
-	Restricted          int                         `json:"restrictedDirectories"`
-	Empty               int                         `json:"unconfirmedEmptyDirectories"`
-	Observed            int                         `json:"observedEntries"`
-	Indexed             int                         `json:"indexedEntries"`
+	RunID       int64               `json:"runId"`
+	Status      string              `json:"status"`
+	PauseReason string              `json:"pauseReason"`
+	Options     catalogIndexOptions `json:"options"`
+	Requests    int                 `json:"requests"`
+	Directories int                 `json:"directories"`
+	Completed   int                 `json:"completedDirectories"`
+	Pending     int                 `json:"pendingDirectories"`
+	Failed      int                 `json:"failedDirectories"`
+	Restricted  int                 `json:"restrictedDirectories"`
+	Empty       int                 `json:"unconfirmedEmptyDirectories"`
+	Observed    int                 `json:"observedEntries"`
+	Indexed     int                 `json:"indexedEntries"`
+	// PublishPending counts only observations the publisher can select in
+	// this generation. Rows refused by admission are removed from the queue
+	// and never inflate this number.
+	PublishPending      int                         `json:"publishPending"`
 	StagingDirectories  int                         `json:"stagingDirectories"`
 	StagingObservations int                         `json:"stagingObservations"`
 	StartedAt           string                      `json:"startedAt"`

@@ -221,6 +221,13 @@ func TestCatalogAdmissionPendingCleanupOnlyClearsTheFlag(t *testing.T) {
 	if pending != 0 {
 		t.Fatalf("pending observations = %d, want 0", pending)
 	}
+	progress, err := server.sourceCatalogProgress(context.Background(), sourceID, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if progress.PublishPending != 0 {
+		t.Fatalf("API publishPending = %d, want 0", progress.PublishPending)
+	}
 }
 
 func publishAdmissionFixtures(t *testing.T, db *sql.DB) int64 {
