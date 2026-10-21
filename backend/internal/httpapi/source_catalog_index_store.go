@@ -746,8 +746,13 @@ func (s *Server) publishCatalogBatch(ctx context.Context, job workflowJobRecord,
 	// split loops, and its stale card would otherwise keep winning the
 	// admission check in every later generation. Its own subtree must first be
 	// fully observed, or deleting its files would hide unrepublished audio.
-	if err = retireStaleFormatCardsTx(ctx, tx.Tx, sourceID, job.RunID); err != nil {
-		return 0, err
+	// Retire stale format cards once per final publish batch, not on every
+	// cleanup-only call: the scan below walks every stale card of the source and
+	// repeated calls would multiply that cost for no new evidence.
+	if len(items) > 0 {
+		if err = retireStaleFormatCardsTx(ctx, tx.Tx, sourceID, job.RunID); err != nil {
+			return 0, err
+		}
 	}
 	// Queue credit files in the same transaction that publishes the card, so a
 	// committed card is never forgotten between publication and the reader. The

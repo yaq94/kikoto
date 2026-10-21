@@ -223,7 +223,7 @@ func (s *Server) enqueueSourceCatalogIndexTx(ctx context.Context, tx *sql.Tx, so
 		// generation; both must start over or those entries keep their previous
 		// status and older file rows forever. The sweep is idempotent: it only
 		// rewrites status and deletes rows an older generation left.
-		if _, err = tx.ExecContext(ctx, `UPDATE source_catalog_scan SET pause_reason='',options_json=?,lifecycle_stage='observe',lifecycle_cursor=0,publish_cleanup_cursor=0,updated_at=CURRENT_TIMESTAMP WHERE file_source_id=?`, mustJSON(options), sourceID); err != nil {
+		if _, err = tx.ExecContext(ctx, `UPDATE source_catalog_scan SET pause_reason='',options_json=?,lifecycle_stage='observe',lifecycle_cursor=0,publish_cleanup_cursor=0,orphan_cleanup_cursor=0,updated_at=CURRENT_TIMESTAMP WHERE file_source_id=?`, mustJSON(options), sourceID); err != nil {
 			return catalogIndexQueued{}, err
 		}
 		if err = resumeCatalogWorkflowTx(ctx, tx, runID); err != nil {
@@ -248,7 +248,7 @@ func (s *Server) enqueueSourceCatalogIndexTx(ctx context.Context, tx *sql.Tx, so
 	if err != nil {
 		return catalogIndexQueued{}, err
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO source_catalog_scan(file_source_id,workflow_run_id,options_json) VALUES(?,?,?) ON CONFLICT(file_source_id) DO UPDATE SET workflow_run_id=excluded.workflow_run_id,options_json=excluded.options_json,pause_reason='',requests=0,lifecycle_stage='observe',lifecycle_cursor=0,publish_cleanup_cursor=0,started_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP`, sourceID, runID, mustJSON(options))
+	_, err = tx.ExecContext(ctx, `INSERT INTO source_catalog_scan(file_source_id,workflow_run_id,options_json) VALUES(?,?,?) ON CONFLICT(file_source_id) DO UPDATE SET workflow_run_id=excluded.workflow_run_id,options_json=excluded.options_json,pause_reason='',requests=0,lifecycle_stage='observe',lifecycle_cursor=0,publish_cleanup_cursor=0,orphan_cleanup_cursor=0,started_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP`, sourceID, runID, mustJSON(options))
 	if err != nil {
 		return catalogIndexQueued{}, err
 	}

@@ -262,13 +262,13 @@ matches the backup.
 | v0.8.0 | `059` | `059_v0.8.0.sql` |
 | v0.8.1, v0.8.2 | `066` | `066_v0.8.1.sql` |
 | v0.8.3 | `068` | `068_v0.8.3.sql` |
-| development build (unreleased) | `083` | Development baseline only; `compat/083_dev.sql` |
+| development build (unreleased) | `084` | Development baseline only; `compat/084_dev.sql` |
 
 Per-release upgrade steps are in the [release notes](../history/index.md).
 
 ## Kikoto-next Schema Additions
 
-Migrations `069` through `083` extend the source catalog, shared associations,
+Migrations `069` through `084` extend the source catalog, shared associations,
 personal transfer, and the recoverable index. Pending release notes and upgrade
 steps are in [Unreleased](../history/unreleased.md).
 
@@ -289,6 +289,7 @@ steps are in [Unreleased](../history/unreleased.md).
 | `081_source_catalog_sidecar_revision.sql` | `source_catalog_entry.sidecar_revision` | A rescan compares the stored credit-file revision; an unchanged exhausted card stays settled, a replaced file resets its attempts |
 | `082_source_catalog_sidecar_retry.sql` | `sidecar_transient_attempts`, `sidecar_retry_at`, `sidecar_failure`, and a due-row index | A temporary outage waits on a bounded backoff instead of spending the five permanent attempts; a definitive 404/410 still settles, and an administrator can reopen the queue |
 | `083_source_catalog_cleanup_indexes.sql` | Partial indexes on the live `root_path` and on non-empty `source_root` | The cleanup pass seeks the entries below a card instead of scanning every live entry for each card |
+| `084_source_catalog_orphan_cursor.sql` | `source_catalog_scan.orphan_cleanup_cursor`; the `work_matching_subject` view excludes retired cards | The orphan pass resumes after a skipped root; a partial run still retires stale split cards of fully observed roots, and retired cards are not queued for matching |
 
 The Release To Schema Map above lists every numbered file. `069` rebuilds `work`
 and `logical_work` to relax code uniqueness and creates the catalog entry and

@@ -317,8 +317,12 @@ pins the category boundary on both sides.
 A release that an older generation already published as its own format card
 keeps that card only until the release card exists again. Once a rescan
 publishes the parent, the stale format card becomes an alias of it: the id is
-kept, `relocated_to_id` points at the release, and its file rows are removed, so
-a saved link, personal review or import reference still resolves. A card that
+kept, `relocated_to_id` points at the release, and its file rows are removed.
+A saved link still resolves through that alias. A personal review or an import
+reference is not moved to the successor: a card that already owns a work or a
+series membership keeps its identity, and a retired card without a registered
+work is reported by the importer as an unregistered source instead of being
+guessed onto another object. A card that
 already owns a work, a series membership or an incoming relocation keeps its
 identity for explicit review instead of being merged into a guessed parent.
 `TestSourceCatalogStaleFormatCardRetiresToReleaseOnRescan` covers the

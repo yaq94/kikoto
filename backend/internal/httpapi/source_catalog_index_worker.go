@@ -190,10 +190,12 @@ func (s *Server) executeSourceCatalogIndexJob(ctx context.Context, job workflowJ
 			if p.Failed+p.Restricted > 0 || rootEmpty || unconfirmedEmpty > 0 {
 				status = "partial"
 			}
-			if p.Failed+p.Restricted == 0 && !rootEmpty {
-				// Retire the split cards of roots that the current generation
-				// no longer splits. A batch keeps the write lock short; a full
-				// batch asks the workflow for another invocation.
+			// Orphan split retirement is per root and resumable, so a failure in
+			// one partition must not keep stale duplicate cards visible in the
+			// partitions that were observed completely. Lifecycle and staging
+			// cleanup still need the whole tree to be free of a failed or
+			// restricted listing, because they judge deletion.
+			if !rootEmpty {
 				retired, err := s.retireOrphanSplitRootsBatch(ctx, job, input.SourceID)
 				if err != nil {
 					return err
@@ -204,6 +206,8 @@ func (s *Server) executeSourceCatalogIndexJob(ctx context.Context, job workflowJ
 				if retired == catalogRetireRoots {
 					return s.settleCatalogBatch(ctx, job, input.SourceID, "queued", "")
 				}
+			}
+			if p.Failed+p.Restricted == 0 && !rootEmpty {
 				pending, err := s.settleCatalogLifecycleBatch(ctx, job, input.SourceID)
 				if err != nil {
 					return err

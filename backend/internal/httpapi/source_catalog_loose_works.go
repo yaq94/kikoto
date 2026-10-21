@@ -1328,10 +1328,17 @@ func (s *Server) retireOrphanSplitRootsBatch(ctx context.Context, job workflowJo
 	if err = verifyCatalogLease(ctx, tx.Tx, job); err != nil {
 		return 0, err
 	}
+	// The pass is resumable: a root that is not fully observed is skipped but
+	// the cursor still moves past it, so a run with a permanent upstream failure
+	// terminates and the next generation retries the root.
+	var cursor int64
+	if err = tx.QueryRowContext(ctx, `SELECT orphan_cleanup_cursor FROM source_catalog_scan WHERE file_source_id=?`, sourceID).Scan(&cursor); err != nil {
+		return 0, err
+	}
 	// A card that carries a work, a series membership or an alias is kept for
-	// explicit review. Such a root is skipped entirely; otherwise every batch
-	// would select it again and the job would never finish.
-	rows, err := tx.QueryContext(ctx, `SELECT DISTINCT e.source_root FROM source_catalog_entry e
+	// explicit review. Such a root is skipped entirely; its child cards stay
+	// visible rather than losing their identity.
+	rows, err := tx.QueryContext(ctx, `SELECT e.source_root,MIN(e.id) AS first_id FROM source_catalog_entry e
 		WHERE e.file_source_id=? AND e.source_root<>'' AND e.relocated_to_id IS NULL
 			AND e.last_seen_generation<>?
 			AND NOT EXISTS(SELECT 1 FROM source_catalog_entry b
@@ -1339,18 +1346,24 @@ func (s *Server) retireOrphanSplitRootsBatch(ctx context.Context, job workflowJo
 					AND (b.work_id IS NOT NULL
 						OR EXISTS(SELECT 1 FROM catalog_series_member m WHERE m.catalog_entry_id=b.id)
 						OR EXISTS(SELECT 1 FROM source_catalog_entry r WHERE r.relocated_to_id=b.id)))
-		ORDER BY e.source_root LIMIT ?`,
-		sourceID, job.RunID, catalogRetireRoots)
+		GROUP BY e.source_root HAVING first_id>?
+		ORDER BY first_id LIMIT ?`,
+		sourceID, job.RunID, cursor, catalogRetireRoots)
 	if err != nil {
 		return 0, err
 	}
 	roots := []string{}
+	nextCursor := cursor
 	for rows.Next() {
 		var root string
-		if err = rows.Scan(&root); err != nil {
+		var firstID int64
+		if err = rows.Scan(&root, &firstID); err != nil {
 			break
 		}
 		roots = append(roots, root)
+		if firstID > nextCursor {
+			nextCursor = firstID
+		}
 	}
 	readErr := rows.Err()
 	_ = rows.Close()
@@ -1359,6 +1372,9 @@ func (s *Server) retireOrphanSplitRootsBatch(ctx context.Context, job workflowJo
 	}
 	if readErr != nil {
 		return 0, readErr
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE source_catalog_scan SET orphan_cleanup_cursor=? WHERE file_source_id=?`, nextCursor, sourceID); err != nil {
+		return 0, err
 	}
 	generation := job.RunID
 	for _, root := range roots {

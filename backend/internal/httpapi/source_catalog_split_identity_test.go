@@ -418,6 +418,101 @@ func TestSourceCatalogRetiresOrphanSplitCards(t *testing.T) {
 	}
 }
 
+// A failure in one partition must not leave stale split cards visible in a
+// fully observed sibling partition. The partial run still knows the sibling
+// root is complete, so the old cards must retire there.
+func TestSourceCatalogPartialRunRetiresOrphanSplitCards(t *testing.T) {
+	// /Good sorts before /Later, so its two split rows are published in the
+	// first batch while the final batch belongs to /Later. Only the orphan pass
+	// can retire the old /Good cards when every identity below it changes.
+	later := []map[string]any{}
+	for i := 0; i < 60; i++ {
+		later = append(later, looseAudio("Later "+strconv.Itoa(101+i)+".mp3"))
+	}
+	f := newLooseWorkFixture(t, map[string][]map[string]any{
+		"/":      {looseDir("Bad"), looseDir("Good"), looseDir("Later")},
+		"/Good":  {looseAudio("Alpha.mp3"), looseAudio("Beta.mp3")},
+		"/Bad":   {looseAudio("bad.mp3")},
+		"/Later": later,
+	})
+	f.failPath("/Bad")
+	f.request(t, http.MethodPost, "/catalog/index", `{"intervalMs":100}`, 202)
+	if p := f.drain(t); p["status"] != "partial" {
+		t.Fatalf("scan = %#v, want partial", p)
+	}
+	cards := f.cards(t)
+	if len(cards) != 62 || cards["Alpha"] == nil || cards["Beta"] == nil {
+		t.Fatalf("cards=%d, want the two Good works and sixty Later works", len(cards))
+	}
+	f.updates(map[string][]map[string]any{
+		"/":      {looseDir("Bad"), looseDir("Good"), looseDir("Later")},
+		"/Good":  {looseAudio("Alpha Two.mp3"), looseAudio("Beta Two.mp3")},
+		"/Bad":   {looseAudio("bad2.mp3")},
+		"/Later": later,
+	})
+	f.request(t, http.MethodPost, "/catalog/index", `{"intervalMs":100,"force":true}`, 202)
+	if p := f.drain(t); p["status"] != "partial" {
+		t.Fatalf("rescan = %#v, want partial", p)
+	}
+	cards = f.cards(t)
+	if len(cards) != 62 || cards["Alpha Two"] == nil || cards["Beta Two"] == nil {
+		t.Fatalf("cards=%d, want only the current sixty-two works", len(cards))
+	}
+	if cards["Alpha"] != nil || cards["Beta"] != nil {
+		t.Fatalf("old split cards are still visible: %v", cards["Alpha"])
+	}
+	var live int
+	if err := f.server.db.QueryRow(`SELECT count(*) FROM source_catalog_entry
+		WHERE source_root='/Good' AND relocated_to_id IS NULL AND file_source_id IS NOT NULL`).Scan(&live); err != nil {
+		t.Fatal(err)
+	}
+	if live != 2 {
+		t.Fatalf("%d live cards below /Good, want 2", live)
+	}
+}
+
+// A split card keeps its work link across a rescan. A linked child must not
+// pin the creator directory: that would collapse every sibling work into the
+// reviewed card. A new sibling still becomes its own card.
+func TestSourceCatalogLinkedSplitCardKeepsSiblings(t *testing.T) {
+	f := newLooseWorkFixture(t, map[string][]map[string]any{
+		"/":        {looseDir("Creator")},
+		"/Creator": {looseAudio("Alpha.mp3"), looseAudio("Beta.mp3")},
+	})
+	f.request(t, http.MethodPost, "/catalog/index", `{"intervalMs":100}`, 202)
+	if p := f.drain(t); p["status"] != "complete" {
+		t.Fatalf("scan = %#v", p)
+	}
+	cards := f.cards(t)
+	if len(cards) != 2 || cards["Alpha"] == nil {
+		t.Fatalf("cards=%v, want two split works", cards)
+	}
+	alphaID := int64(cards["Alpha"]["catalogEntryId"].(float64))
+	if _, err := f.server.db.Exec(`INSERT INTO work(id,primary_code,title) VALUES (78,'','Alpha');
+		UPDATE source_catalog_entry SET work_id=78 WHERE id=?`, alphaID); err != nil {
+		t.Fatal(err)
+	}
+	f.updates(map[string][]map[string]any{
+		"/":        {looseDir("Creator")},
+		"/Creator": {looseAudio("Alpha.mp3"), looseAudio("Beta.mp3"), looseAudio("Gamma.mp3")},
+	})
+	f.request(t, http.MethodPost, "/catalog/index", `{"intervalMs":100,"force":true}`, 202)
+	if p := f.drain(t); p["status"] != "complete" {
+		t.Fatalf("rescan = %#v", p)
+	}
+	cards = f.cards(t)
+	if len(cards) != 3 || cards["Alpha"] == nil || cards["Beta"] == nil || cards["Gamma"] == nil {
+		t.Fatalf("cards=%v, want three independent works", cards)
+	}
+	var workID int64
+	if err := f.server.db.QueryRow(`SELECT coalesce(work_id,0) FROM source_catalog_entry WHERE id=?`, alphaID).Scan(&workID); err != nil {
+		t.Fatal(err)
+	}
+	if workID != 78 {
+		t.Fatalf("Alpha work_id=%d, want 78", workID)
+	}
+}
+
 // A CJK episode copy folds into the episode that uses the same counter: the
 // series keeps two members, not three.
 func TestSourceCatalogCJKEpisodeFormatCopyStaysWithEpisode(t *testing.T) {

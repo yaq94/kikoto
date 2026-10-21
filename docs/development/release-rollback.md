@@ -1,7 +1,7 @@
 # Release Rollback
 
 This page gives the operator procedure for rolling back a Kikoto deployment
-whose schema reached `083`. It states which image can read which schema, how to
+whose schema reached `084`. It states which image can read which schema, how to
 take and restore a database snapshot, and what to check afterwards. It records
 no deployment result; run the commands on the target host and keep their output
 with the release record.
@@ -13,13 +13,13 @@ a database snapshot and starts a binary whose packaged migration catalog ends
 at that snapshot's schema. The image names are the ones used by the current
 next-release deployment; prefer a digest when the deployment recorded one.
 
-| Image | Highest packaged migration | Schema `080` database | Schema `081` database | Schema `082` database | Schema `083` database |
+| Image | Highest packaged migration | Schema `081` database | Schema `082` database | Schema `083` database | Schema `084` database |
 | --- | --- | --- | --- | --- | --- |
-| current build | `083` | Reads and migrates to `083` | Reads and migrates to `083` | Reads and migrates to `083` | Reads and keeps `083` |
-| 081 image | `081` | Reads and migrates to `081` | Reads and keeps `081` | Refuses | Refuses |
-| 080 image | `080` | Reads and keeps `080` | Refuses | Refuses | Refuses |
+| current build | `084` | Reads and migrates to `084` | Reads and migrates to `084` | Reads and migrates to `084` | Reads and keeps `084` |
+| 083 image | `083` | Reads and migrates to `083` | Reads and migrates to `083` | Reads and keeps `083` | Refuses |
+| 081 image | `081` | Reads and migrates to `081` | Refuses | Refuses | Refuses |
+| 080 image | `080` | Refuses | Refuses | Refuses | Refuses |
 | 079 image | `079` | Refuses | Refuses | Refuses | Refuses |
-| 078 image | `078` | Refuses | Refuses | Refuses | Refuses |
 
 The refusal happens before any handler runs. The migration manager compares the
 database's schema version with the highest packaged migration and stops with
@@ -39,10 +39,14 @@ when the published file changes. `082` adds `sidecar_transient_attempts`,
 `sidecar_retry_at` and `sidecar_failure`, all with empty defaults, plus a
 partial index over the due queue. `083` adds two partial indexes over
 `source_catalog_entry`: one for the live `root_path` and one for a non-empty
-`source_root`. No migration deletes or rewrites existing rows. An `080`, `081`
-or `082` snapshot restored into an `083` image upgrades by adding the empty
-columns or indexes; an `083` database needs a binary that packages `083`, and
-an `082` binary must be paired with an `082` snapshot.
+`source_root`. `084` adds `source_catalog_scan.orphan_cleanup_cursor`, an
+`INTEGER NOT NULL DEFAULT 0` cursor for the resumable orphan-card pass, and
+replaces the `work_matching_subject` view so a retired card (one without a file
+source) is not queued for matching. No migration deletes or rewrites card or
+personal rows. An `080`–`083` snapshot restored into an `084` image upgrades by
+adding the empty column and recreating the view; an `084` database needs a
+binary that packages `084`, and an `083` binary must be paired with an `083`
+snapshot.
 
 ## Back Up Before A Deployment
 
@@ -66,8 +70,8 @@ Compose file. For the development stack, use `KIKOTO_DEV_CONFIG_DIR` (default
 The application also writes a `pre-migration` backup to
 `KIKOTO_DB_BACKUP_DIR` (default `config/backups`) before the first numbered
 migration of an existing database. Its name has the form
-`kikoto-pre-migration-<UTC>-v082-to-v083.db`; the first version in the suffix
-is the schema being left, so a `v082-to-v083` file is an `082` snapshot. Keep
+`kikoto-pre-migration-<UTC>-v083-to-v084.db`; the first version in the suffix
+is the schema being left, so a `v083-to-v084` file is an `083` snapshot. Keep
 the snapshot and the previous image reference (`KIKOTO_IMAGE` or the Compose
 override) together. The `rollbacks/` directory is outside `config/`, so the
 copy does not recurse into itself.
@@ -96,12 +100,12 @@ uses one can wait with `up -d --wait`. The production stack in this repository
 does not define that check; poll `/health` as shown under
 [Verify The Restored Instance](#verify-the-restored-instance).
 
-## Restore A Schema 83 Snapshot
+## Restore A Schema 84 Snapshot
 
 Use this to return to the current build after a failed start or to recover a
-damaged `083` database. A `083` snapshot is readable by the current `083`
-image only; to return to schema `082`, restore an `082` snapshot and start an
-`082` image instead.
+damaged `084` database. A `084` snapshot is readable by the current `084`
+image only; to return to schema `083`, restore an `083` snapshot and start an
+`083` image instead.
 
 ```sh
 docker compose down
