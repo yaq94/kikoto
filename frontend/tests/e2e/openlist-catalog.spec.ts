@@ -86,7 +86,9 @@ test("unregistered catalog translates titles and real-path directories without c
     ).ok(),
   ).toBe(true);
   expect(
-    (await page.request.patch(`${backend}/api/auth/me/preferences`, { data: { metadataLanguages: ["en-us"] } })).ok(),
+    // A display language different from the source text exercises the model
+    // path; English content shown as English is a native row by design.
+    (await page.request.patch(`${backend}/api/auth/me/preferences`, { data: { metadataLanguages: ["zh-cn"] } })).ok(),
   ).toBe(true);
   expect(
     (

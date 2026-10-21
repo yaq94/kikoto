@@ -39,7 +39,9 @@ test("series card opens ordered independent episode directories and preserves pl
   expect(
     (
       await page.request.patch(process.env.OPENLIST_API_URL + "/api/auth/me/preferences", {
-        data: { metadataLanguages: ["en-us"] },
+        // The fixture titles are English, so English would be a native row and
+        // never exercise the translated series card.
+        data: { metadataLanguages: ["zh-cn"] },
       })
     ).ok(),
   ).toBe(true);

@@ -216,8 +216,8 @@ export function TranslationSettingsPanel({ readOnly = false }: { readOnly?: bool
           )}
           {(
             [
-              ["concurrency", 1, 8],
-              ["queueLimit", 0, 256],
+              ["concurrency", 1, 16],
+              ["queueLimit", 0, 4096],
               ["cacheBytes", 4096, 4294967296],
               ["minFreeBytes", 0, 1099511627776],
             ] as const

@@ -25,7 +25,9 @@ test("catalog tabs preserve exact playback identity across registered and standa
     if (request.url().includes("/source-catalog/") && request.url().endsWith("/tracks"))
       directoryReads.push(request.url());
     if (request.url().includes("/content-translation") && request.method() === "POST")
-      translations.push(request.postDataJSON());
+      // The client sends one language per request with a page of items, so the
+      // per-field identity lives inside `items`, not at the top level.
+      translations.push(...(request.postDataJSON()?.items ?? []));
   });
   await page.goto("/RJ00000000");
   await page.getByRole("button", { name: /^Example Catalog A/ }).click();
