@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/yexca/kikoto/backend/internal/config"
 	"github.com/yexca/kikoto/backend/internal/library"
@@ -153,6 +154,38 @@ func (fixture snapshotCardTestWorks) rawRows(t *testing.T) []library.RawWork {
 		t.Fatalf("raw rows = %d, want 2", len(page.Works))
 	}
 	return page.Works
+}
+
+// A drained summary table and queue must not run the INSERT ... SELECT that
+// re-queues outdated versions. The test holds the writer lock; the empty check
+// must therefore finish as a read instead of waiting for a write transaction.
+func TestSnapshotCardSummaryEmptyQueueSkipsBackfillWrite(t *testing.T) {
+	db := openMigratedTestDBWithProductionPool(t)
+	var summaries, dirty int
+	if err := db.QueryRow(`SELECT (SELECT COUNT(*) FROM metadata_snapshot_card_summary),
+		(SELECT COUNT(*) FROM metadata_snapshot_card_summary_dirty)`).Scan(&summaries, &dirty); err != nil {
+		t.Fatal(err)
+	}
+	if summaries != 0 || dirty != 0 {
+		t.Fatalf("fresh summary state = %d summaries, %d queued", summaries, dirty)
+	}
+	conn, err := db.Conn(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close() }()
+	if _, err = conn.ExecContext(context.Background(), "BEGIN IMMEDIATE"); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _, _ = conn.ExecContext(context.Background(), "ROLLBACK") }()
+
+	server := &Server{db: db}
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	written, err := server.backfillSnapshotCardSummaries(ctx, 200)
+	if err != nil || written != 0 {
+		t.Fatalf("empty summary backfill = %d, %v; want no write attempt", written, err)
+	}
 }
 
 func TestLibraryAndVoiceCardsMatchWithAndWithoutSnapshotCardSummary(t *testing.T) {

@@ -27,6 +27,30 @@ func TestCatalogIndexContinuationLoopsWithoutTick(t *testing.T) {
 	}
 }
 
+// A queued catalog invocation must be claimable in the same worker pass. The
+// job is stamped available at settlement time, so continuation never waits for
+// the two-second coordinator tick.
+func TestSettleCatalogQueuedJobIsImmediatelyAvailable(t *testing.T) {
+	f := newCatalogIndexFixture(t, emptyCatalogUpstream(t))
+	f.request(t, http.MethodPost, "/catalog/index", `{"intervalMs":100,"pagesPerBatch":1}`, http.StatusAccepted)
+	continued, err := f.server.runNextQueuedWorkflowJobStep(context.Background())
+	if err != nil || !continued {
+		t.Fatalf("first bounded step = %t, %v; want immediate continuation", continued, err)
+	}
+	var jobID, runID int64
+	var availableNow int
+	if err = f.server.db.QueryRow(`SELECT id,workflow_run_id,available_at IS NOT NULL AND available_at<=CURRENT_TIMESTAMP
+		FROM workflow_job WHERE worker_type=?`, sourceCatalogIndexWorkerType).Scan(&jobID, &runID, &availableNow); err != nil {
+		t.Fatal(err)
+	}
+	if availableNow != 1 {
+		t.Fatal("queued catalog job is not available at settlement time")
+	}
+	if !f.server.workflowJobContinuesImmediately(context.Background(), workflowJobRecord{ID: jobID, WorkerType: sourceCatalogIndexWorkerType, RunID: runID}) {
+		t.Fatal("queued catalog job asked for the coordinator tick")
+	}
+}
+
 // Every other worker, and a catalog run that reached a terminal state, must
 // keep the existing tick so a failing or finished job does not spin.
 func TestWorkflowContinuationStaysOffForOtherOutcomes(t *testing.T) {

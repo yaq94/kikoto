@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/yexca/kikoto/backend/internal/remotemetadata"
 	"github.com/yexca/kikoto/backend/internal/testfixture"
@@ -121,6 +122,30 @@ func queuedTitleLanguageWorks(t *testing.T, db *sql.DB) []int64 {
 		ids = append(ids, id)
 	}
 	return ids
+}
+
+// An empty queue must not take the writer lock. The test holds the only write
+// lock; a batch that opens its write transaction before checking the queue
+// would time out instead of returning zero.
+func TestTitleLanguageEmptyQueueSkipsWriteTransaction(t *testing.T) {
+	db := openSearchTestDB(t, "../../migrations")
+	db.SetMaxOpenConns(2)
+	conn, err := db.Conn(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close() }()
+	if _, err = conn.ExecContext(context.Background(), "BEGIN IMMEDIATE"); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _, _ = conn.ExecContext(context.Background(), "ROLLBACK") }()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	refreshed, err := refreshTitleLanguageBatch(ctx, db, 50)
+	if err != nil || refreshed != 0 {
+		t.Fatalf("empty title queue = %d, %v; want no write attempt", refreshed, err)
+	}
 }
 
 // A title sort follows the titles each viewer sees, from stored language
