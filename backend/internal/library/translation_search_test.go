@@ -98,3 +98,19 @@ func TestContentTranslationSearchTraditionalBuildsTwoTargets(t *testing.T) {
 		t.Fatalf("origin language touched translations: %s", origin)
 	}
 }
+
+func TestTraditionalSearchKeepsSharedGlyphsInTheSimplifiedCorpus(t *testing.T) {
+	// "少女" is written identically in both scripts, so conversion leaves it
+	// unchanged. The model still stores its translation under zh-Hans, and a
+	// Traditional reader must find that row.
+	targets, ok := DisplaySearchTargets("zh-tw", "少女")
+	if !ok || len(targets) != 2 {
+		t.Fatalf("targets = %#v, ok = %v; want Simplified and Traditional", targets, ok)
+	}
+	if targets[0].Language != "zh-Hans" || targets[0].Query != "少女" {
+		t.Fatalf("first target = %#v, want zh-Hans/少女", targets[0])
+	}
+	if targets[1].Language != "zh-Hant" || targets[1].Query != "少女" {
+		t.Fatalf("second target = %#v, want zh-Hant/少女", targets[1])
+	}
+}

@@ -25,11 +25,18 @@ func DisplaySearchTargets(display, query string) ([]DisplaySearchTarget, bool) {
 	case "zh-cn", "zh-hans":
 		return []DisplaySearchTarget{{Language: translation.SourceHans, Query: query}}, true
 	case "zh-tw", "zh-hant":
-		targets := []DisplaySearchTarget{}
-		if simplified, err := translation.Simplified(query); err == nil && simplified != "" && simplified != query {
-			targets = append(targets, DisplaySearchTarget{Language: translation.SourceHans, Query: simplified})
+		// The model writes Simplified rows and the display converts them. A
+		// query whose characters are shared by both scripts ("少女") changes no
+		// glyph during conversion, but its translation still lives in the
+		// Simplified corpus, so both targets are always searched.
+		simplified := query
+		if converted, err := translation.Simplified(query); err == nil && converted != "" {
+			simplified = converted
 		}
-		return append(targets, DisplaySearchTarget{Language: translation.SourceHant, Query: query}), true
+		return []DisplaySearchTarget{
+			{Language: translation.SourceHans, Query: simplified},
+			{Language: translation.SourceHant, Query: query},
+		}, true
 	case "ja", "ja-jp":
 		return []DisplaySearchTarget{{Language: translation.SourceJapanese, Query: query}}, true
 	case "ko", "ko-kr":

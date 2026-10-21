@@ -32,6 +32,10 @@ type contentTranslationResponse struct {
 	Status      string `json:"status"`
 	CacheStatus string `json:"cacheStatus,omitempty"`
 	Code        string `json:"code,omitempty"`
+	// Version names the model and template that produced the text. A browser
+	// cache that stored an older version must not keep showing it after an
+	// administrator changes either.
+	Version string `json:"version,omitempty"`
 }
 
 // translationTarget maps a display language to the language the model writes
@@ -127,7 +131,19 @@ func (s *Server) translateContent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	result.Status = status
+	result.Version = s.contentTranslationVersion(r.Context())
 	writeJSON(w, http.StatusOK, result)
+}
+
+// contentTranslationVersion identifies the configured model and the prompt
+// template. It is intentionally short: the browser only compares it for
+// equality and never parses it.
+func (s *Server) contentTranslationVersion(ctx context.Context) string {
+	cfg, err := translation.NewStore(s.db).Load(ctx)
+	if err != nil {
+		return ""
+	}
+	return cfg.Model + "|" + translation.TemplateVersion
 }
 
 // translateContentField is the shared body of the single and batch endpoints.

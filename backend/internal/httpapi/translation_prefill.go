@@ -374,6 +374,18 @@ func (s *Server) translationPrefillFields(ctx context.Context, cfg translation.C
 	for _, entry := range entries {
 		detected := translation.DetectSourceLanguage(entry.title)
 		work := &entryTasks{entry: entry}
+		// A Traditional title is already the text a Traditional reader wants.
+		// Recording it as a native row keeps the four model languages from
+		// re-translating it and makes the coverage report truthful.
+		if detected == translation.SourceHant {
+			key := contentTranslationCacheKey("entry", entry.id, "", "title", translation.SourceHant, entry.title, "native", "", "", "", false)
+			row := contentTranslationRow{CacheKey: key, EntityKind: "entry", EntityID: entry.id, Field: "title", Language: translation.SourceHant, SourceText: entry.title, TranslatedText: entry.title, Origin: "native"}
+			if err := s.saveContentTranslations(ctx, []contentTranslationRow{row}); err != nil {
+				failed[entry.id] = err
+				continue
+			}
+			written++
+		}
 		for _, language := range prefillLanguages {
 			if detected == language {
 				key := contentTranslationCacheKey("entry", entry.id, "", "title", language, entry.title, "native", "", "", "", false)

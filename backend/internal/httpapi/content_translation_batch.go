@@ -40,6 +40,7 @@ type contentTranslationBatchResult struct {
 	Language string `json:"language"`
 	Status   string `json:"status"`
 	Code     string `json:"code,omitempty"`
+	Version  string `json:"version,omitempty"`
 }
 
 // translateContentBatch answers a page without making the caller issue one
@@ -81,6 +82,10 @@ func (s *Server) translateContentBatch(w http.ResponseWriter, r *http.Request) {
 	}
 	close(jobs)
 	wg.Wait()
+	version := s.contentTranslationVersion(r.Context())
+	for index := range results {
+		results[index].Version = version
+	}
 	writeJSON(w, http.StatusOK, contentTranslationBatchResponse{Items: results})
 }
 
