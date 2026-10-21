@@ -134,7 +134,7 @@ func (s *Server) queueCatalogIncrementalSync(ctx context.Context, sourceID int64
 	if err != nil || runID == 0 {
 		return runID, err
 	}
-	if err = setCatalogSyncNextUpdateTx(ctx, tx.Tx, sourceID, s.catalogTime()); err != nil {
+	if err = setCatalogDailyNextUpdateTx(ctx, tx.Tx, sourceID, s.catalogTime()); err != nil {
 		return 0, err
 	}
 	return runID, tx.Commit()

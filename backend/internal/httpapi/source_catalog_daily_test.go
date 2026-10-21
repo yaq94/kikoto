@@ -98,32 +98,55 @@ func TestSourceCatalogDailyStartsOnlyAfterCompleteAndSurvivesRestart(t *testing.
 	}
 	first := f.request(t, http.MethodPost, "/catalog/index", `{"intervalMs":100,"pagesPerBatch":8}`, 202)["runId"]
 	waitCatalogDaily(t, f, func(p map[string]any) bool { return p["status"] == "complete" })
+	if p := f.request(t, http.MethodGet, "/catalog/index", "", 200); p["lastSync"] != nil {
+		t.Fatalf("a full scan was reported as an incremental sync: %#v", p["lastSync"])
+	}
 	closeApp()
 	// A stopped application misses its due time. Startup must dispatch exactly
-	// one persisted update, without creating a second initial scan.
+	// one persisted update, and that update must probe the existing generation
+	// instead of starting a second full crawl.
 	now.Add(int64(24 * time.Hour / time.Second))
 	added.Store(true)
 	f, closeApp = boot(false)
 	f.server.Go(f.server.StartJobRunner)
-	p := waitCatalogDaily(t, f, func(p map[string]any) bool { return p["runId"] != first && p["status"] == "complete" })
-	if p["indexedEntries"] != float64(2) {
-		t.Fatalf("daily scan missed newly added audio: %#v", p)
+	p := waitCatalogDaily(t, f, func(p map[string]any) bool {
+		sync, ok := p["lastSync"].(map[string]any)
+		return ok && sync["status"] == "succeeded"
+	})
+	if p["runId"] != first {
+		t.Fatalf("daily update replaced the completed generation: %#v", p)
 	}
-	second := p["runId"]
+	if p["indexedEntries"] != float64(2) {
+		t.Fatalf("daily sync missed newly added audio: %#v", p)
+	}
+	if published := p["lastSync"].(map[string]any)["entriesPublished"]; published != float64(1) {
+		t.Fatalf("daily sync published %v entries, want 1: %#v", published, p["lastSync"])
+	}
+	syncID := int64(p["lastSync"].(map[string]any)["id"].(float64))
 	list := f.request(t, http.MethodGet, "/works?q=Example%20B", "", 200)
 	if len(list["works"].([]any)) != 1 {
 		t.Fatal("daily discovery is not searchable")
 	}
 	now.Add(int64(23 * time.Hour / time.Second))
 	time.Sleep(2200 * time.Millisecond)
-	if p = f.request(t, http.MethodGet, "/catalog/index", "", 200); p["runId"] != second {
+	p = f.request(t, http.MethodGet, "/catalog/index", "", 200)
+	sync, _ := p["lastSync"].(map[string]any)
+	if sync == nil || int64(sync["id"].(float64)) != syncID {
 		t.Fatal("update repeated before the next day")
 	}
 	entryID := strconv.Itoa(int(list["works"].([]any)[0].(map[string]any)["catalogEntryId"].(float64)))
 	workReferenceRequest(t, f.app, f.cookie, http.MethodPatch, "/api/source-catalog/"+entryID+"/user-state", `{"rating":3,"note":"Example retained note"}`, 200, nil)
+	// The incremental probe has no publisher to pause. Expire the weekly marker
+	// so this tick starts a full generation, which is the path that owns the
+	// low-disk check.
 	low.Store(true)
+	if _, err := f.server.db.Exec(`INSERT INTO app_setting(key,value_json) VALUES(?,?)
+		ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json`, catalogFullSettingPrefix+"1",
+		strconv.FormatInt(now.Load()-int64(8*24*time.Hour/time.Second), 10)); err != nil {
+		t.Fatal(err)
+	}
 	now.Add(int64(time.Hour / time.Second))
-	p = waitCatalogDaily(t, f, func(p map[string]any) bool { return p["runId"] != second && p["status"] == "paused" })
+	p = waitCatalogDaily(t, f, func(p map[string]any) bool { return p["runId"] != first && p["status"] == "paused" })
 	third := p["runId"]
 	if p["requests"] != float64(0) || p["pauseReason"] != "low_disk_space" {
 		t.Fatalf("scheduled scan ignored disk limit: %#v", p)

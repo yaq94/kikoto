@@ -407,7 +407,10 @@ func (s *Server) settleCatalogBatchAt(ctx context.Context, job workflowJobRecord
 		return err
 	}
 	if catalogScanSchedulesDaily(status, reason, progress) {
-		if err = setCatalogNextUpdateTx(ctx, tx.Tx, sourceID, s.catalogTime()); err != nil {
+		// Completion owns the next daily tick only. The weekly full marker is
+		// written when a new full generation is enqueued, so resuming this
+		// generation later cannot restart the seven-day clock.
+		if err = setCatalogDailyNextUpdateTx(ctx, tx.Tx, sourceID, s.catalogTime()); err != nil {
 			return err
 		}
 	}

@@ -89,6 +89,22 @@ type catalogSidecarFailureCounts struct {
 	RequestBudget          int `json:"requestBudget"`
 }
 
+// catalogSyncRunSummary is the read-only view of the most recent incremental
+// sync. The full-scan progress cannot describe it: a sync reuses the existing
+// generation and never changes runId.
+type catalogSyncRunSummary struct {
+	ID               int64  `json:"id"`
+	Status           string `json:"status"`
+	StartedAt        string `json:"startedAt"`
+	FinishedAt       string `json:"finishedAt"`
+	DirsProbed       int    `json:"dirsProbed"`
+	DirsChanged      int    `json:"dirsChanged"`
+	DirsListed       int    `json:"dirsListed"`
+	EntriesPublished int    `json:"entriesPublished"`
+	Requests         int    `json:"requests"`
+	Note             string `json:"note"`
+}
+
 type catalogIndexProgress struct {
 	RunID       int64               `json:"runId"`
 	Status      string              `json:"status"`
@@ -121,6 +137,28 @@ type catalogIndexProgress struct {
 	// instead of requesting. It stays independent of failed, restricted and
 	// empty: the parent listing was read successfully.
 	EncodingUnresolved int `json:"encodingUnresolvedDirectories"`
+
+	// LastSync is the most recent incremental run for this source. It is absent
+	// until the first sync has been queued.
+	LastSync *catalogSyncRunSummary `json:"lastSync,omitempty"`
+}
+
+// catalogSyncRunSummaryFor reads the latest sync attempt. It deliberately has
+// no aggregate: the operator view must stay cheap even on a large source.
+func (s *Server) catalogSyncRunSummaryFor(ctx context.Context, sourceID int64) (*catalogSyncRunSummary, error) {
+	var summary catalogSyncRunSummary
+	err := s.db.QueryRowContext(ctx, `SELECT id,status,started_at,COALESCE(finished_at,''),dirs_probed,dirs_changed,dirs_listed,entries_published,requests,note
+		FROM source_catalog_sync_run WHERE file_source_id=? ORDER BY id DESC LIMIT 1`, sourceID).Scan(
+		&summary.ID, &summary.Status, &summary.StartedAt, &summary.FinishedAt,
+		&summary.DirsProbed, &summary.DirsChanged, &summary.DirsListed,
+		&summary.EntriesPublished, &summary.Requests, &summary.Note)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &summary, nil
 }
 
 func (s *Server) catalogIndexSource(ctx context.Context, id int64) (remoteSourceForUse, error) {
@@ -272,6 +310,11 @@ func (s *Server) enqueueSourceCatalogIndexTx(ctx context.Context, tx *sql.Tx, so
 	if err != nil {
 		return catalogIndexQueued{}, err
 	}
+	// Only a new generation starts the weekly clock. The resume path above and
+	// the incremental sync both keep the previous marker.
+	if err = markCatalogFullGenerationTx(ctx, tx, sourceID, s.catalogTime()); err != nil {
+		return catalogIndexQueued{}, err
+	}
 	if _, err = enqueueCatalogDirectoryTx(ctx, tx, sourceID, runID, "/", "/", ""); err != nil {
 		return catalogIndexQueued{}, err
 	}
@@ -311,6 +354,11 @@ func (s *Server) getSourceCatalogIndex(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
+	lastSync, err := s.catalogSyncRunSummaryFor(r.Context(), id)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
 	var progress catalogIndexProgress
 	if queryInt(r, "exact", 0) == 1 {
 		progress, err = s.sourceCatalogProgressExact(r.Context(), id, max(1, queryInt(r, "page", 1)))
@@ -318,7 +366,7 @@ func (s *Server) getSourceCatalogIndex(w http.ResponseWriter, r *http.Request) {
 		progress, err = s.sourceCatalogProgress(r.Context(), id, max(1, queryInt(r, "page", 1)))
 	}
 	if errors.Is(err, sql.ErrNoRows) {
-		writeJSON(w, 200, catalogIndexProgress{Status: "idle", Options: defaultCatalogIndexOptions(), Partitions: []catalogPartitionProgress{}, Details: []catalogDirectoryProgress{}, SidecarFailures: sidecarFailures})
+		writeJSON(w, 200, catalogIndexProgress{Status: "idle", Options: defaultCatalogIndexOptions(), Partitions: []catalogPartitionProgress{}, Details: []catalogDirectoryProgress{}, SidecarFailures: sidecarFailures, LastSync: lastSync})
 		return
 	}
 	if err != nil {
@@ -326,5 +374,6 @@ func (s *Server) getSourceCatalogIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	progress.SidecarFailures = sidecarFailures
+	progress.LastSync = lastSync
 	writeJSON(w, 200, progress)
 }

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"sort"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -340,7 +341,36 @@ func TestCatalogSyncDoesNotBumpGeneration(t *testing.T) {
 	}
 }
 
-func TestCatalogDailyDispatchesIncrementalRunWithoutReusingPartialGeneration(t *testing.T) {
+func readCatalogSetting(t *testing.T, f catalogIndexFixture, key string) string {
+	t.Helper()
+	var value string
+	if err := f.server.db.QueryRow(`SELECT value_json FROM app_setting WHERE key=?`, key).Scan(&value); err != nil {
+		t.Fatalf("read %s: %v", key, err)
+	}
+	return value
+}
+
+// waitCatalogSyncSettled waits for the incremental run the daily dispatcher
+// started in the background. The catalog status alone cannot describe it: a
+// sync keeps the existing generation, so its runId never moves.
+func waitCatalogSyncSettled(t *testing.T, f catalogIndexFixture) map[string]any {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	var p map[string]any
+	for time.Now().Before(deadline) {
+		p = f.request(t, http.MethodGet, "/catalog/index", "", 200)
+		if sync, ok := p["lastSync"].(map[string]any); ok && sync["status"] != "running" {
+			return p
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	t.Fatalf("incremental sync did not settle: %#v", p["lastSync"])
+	return nil
+}
+
+// A completed generation is updated by directory mtime. The update must reuse
+// the same generation, publish the new card and remain searchable.
+func TestCatalogDailyDispatchesIncrementalRunAfterComplete(t *testing.T) {
 	tree := newCatalogSyncTestTree()
 	tree.set("/", catalogSyncTestEntry{Name: "Partition A", IsDir: true, Modified: "p1"})
 	tree.set("/Partition A", catalogSyncTestEntry{Name: "Work 001", IsDir: true, Modified: "w1"})
@@ -355,40 +385,161 @@ func TestCatalogDailyDispatchesIncrementalRunWithoutReusingPartialGeneration(t *
 	if err := f.server.db.QueryRow(`SELECT workflow_run_id FROM source_catalog_scan WHERE file_source_id=?`, f.sourceID(t)).Scan(&generation); err != nil {
 		t.Fatal(err)
 	}
-	// Model the one partial shape the incremental path owns: the full
-	// generation reached the tree but at least one range failed or was
-	// restricted. Unconfirmed-empty and cancelled generations keep their old
-	// resume behavior.
+	fullMarker := readCatalogSetting(t, f, catalogFullSettingPrefix+"1")
+	if fullMarker != strconv.FormatInt(now.Unix(), 10) {
+		t.Fatalf("full marker = %q, want the enqueue time %d", fullMarker, now.Unix())
+	}
+	tree.set("/", catalogSyncTestEntry{Name: "Partition A", IsDir: true, Modified: "p1"},
+		catalogSyncTestEntry{Name: "Partition B", IsDir: true, Modified: "q1"})
+	tree.set("/Partition B", catalogSyncTestEntry{Name: "Work B", IsDir: true, Modified: "wb1"})
+	tree.set("/Partition B/Work B", catalogSyncTestEntry{Name: "b.mp3", Size: 100, Modified: "fb1"})
+	tomorrow := now.Add(25 * time.Hour)
+	f.server.catalogNow = func() time.Time { return tomorrow }
+	if err := f.server.dispatchDueCatalogUpdates(context.WithValue(context.Background(), catalogIndexNoPacingKey{}, true)); err != nil {
+		t.Fatal(err)
+	}
+	p := waitCatalogSyncSettled(t, f)
+	if p["runId"] != float64(generation) {
+		t.Fatalf("daily incremental changed generation: before=%d after=%v", generation, p["runId"])
+	}
+	sync := p["lastSync"].(map[string]any)
+	for _, key := range []string{"id", "status", "startedAt", "finishedAt", "dirsProbed", "dirsChanged", "dirsListed", "entriesPublished", "requests", "note"} {
+		if _, ok := sync[key]; !ok {
+			t.Fatalf("sync summary lacks %q: %#v", key, sync)
+		}
+	}
+	if sync["status"] != "succeeded" || sync["entriesPublished"] != float64(1) || sync["dirsProbed"].(float64) == 0 {
+		t.Fatalf("daily sync = %#v", sync)
+	}
+	if after := readCatalogSetting(t, f, catalogFullSettingPrefix+"1"); after != fullMarker {
+		t.Fatalf("incremental sync reset the weekly marker: before=%q after=%q", fullMarker, after)
+	}
+	list := f.request(t, http.MethodGet, "/works?q=Work%20B", "", 200)
+	if len(list["works"].([]any)) != 1 {
+		t.Fatal("incremental discovery is not searchable")
+	}
+}
+
+// A partial generation with failed or restricted ranges owns checkpoints that
+// a directory-first sync cannot reconstruct. The daily update must resume it.
+func TestCatalogDailyResumesPartialGenerationWithFailures(t *testing.T) {
+	tree := newCatalogSyncTestTree()
+	tree.set("/", catalogSyncTestEntry{Name: "Partition A", IsDir: true, Modified: "p1"})
+	tree.set("/Partition A", catalogSyncTestEntry{Name: "Work 001", IsDir: true, Modified: "w1"})
+	tree.set("/Partition A/Work 001", catalogSyncTestEntry{Name: "01.mp3", Size: 100, Modified: "f1"})
+	f := newCatalogSyncFixture(t, tree)
+	now := time.Now().UTC().Truncate(time.Second)
+	f.server.catalogNow = func() time.Time { return now }
+	if p := f.runFullScan(t, ""); p["status"] != "complete" {
+		t.Fatalf("full scan did not complete: %#v", p)
+	}
+	var generation int64
+	if err := f.server.db.QueryRow(`SELECT workflow_run_id FROM source_catalog_scan WHERE file_source_id=?`, f.sourceID(t)).Scan(&generation); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := f.server.db.Exec(`UPDATE workflow_run SET status='partial' WHERE id=?`, generation); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := f.server.db.Exec(`UPDATE source_catalog_scan SET failed=1 WHERE file_source_id=?`, f.sourceID(t)); err != nil {
 		t.Fatal(err)
 	}
+	fullMarker := readCatalogSetting(t, f, catalogFullSettingPrefix+"1")
 	tomorrow := now.Add(25 * time.Hour)
 	f.server.catalogNow = func() time.Time { return tomorrow }
 	if err := f.server.dispatchDueCatalogUpdates(context.WithValue(context.Background(), catalogIndexNoPacingKey{}, true)); err != nil {
 		t.Fatal(err)
 	}
-	deadline := time.Now().Add(10 * time.Second)
-	var runID int64
-	var status string
-	for time.Now().Before(deadline) {
-		err := f.server.db.QueryRow(`SELECT id,status FROM source_catalog_sync_run WHERE file_source_id=? ORDER BY id DESC LIMIT 1`, f.sourceID(t)).Scan(&runID, &status)
-		if err == nil && status != "running" {
-			break
-		}
-		time.Sleep(25 * time.Millisecond)
+	var syncRuns int
+	if err := f.server.db.QueryRow(`SELECT count(*) FROM source_catalog_sync_run WHERE file_source_id=?`, f.sourceID(t)).Scan(&syncRuns); err != nil {
+		t.Fatal(err)
 	}
-	if runID == 0 || status == "running" {
-		t.Fatalf("daily did not start an incremental run: id=%d status=%q", runID, status)
+	if syncRuns != 0 {
+		t.Fatalf("partial generation was replaced by %d sync runs", syncRuns)
 	}
 	var after int64
 	if err := f.server.db.QueryRow(`SELECT workflow_run_id FROM source_catalog_scan WHERE file_source_id=?`, f.sourceID(t)).Scan(&after); err != nil {
 		t.Fatal(err)
 	}
 	if after != generation {
-		t.Fatalf("daily incremental changed generation: before=%d after=%d", generation, after)
+		t.Fatalf("daily resume changed generation: before=%d after=%d", generation, after)
+	}
+	var jobStatus string
+	if err := f.server.db.QueryRow(`SELECT status FROM workflow_job WHERE workflow_run_id=? AND worker_type=?`, generation, sourceCatalogIndexWorkerType).Scan(&jobStatus); err != nil {
+		t.Fatal(err)
+	}
+	if jobStatus != "queued" {
+		t.Fatalf("partial generation was not resumed: job status %q", jobStatus)
+	}
+	if marker := readCatalogSetting(t, f, catalogFullSettingPrefix+"1"); marker != fullMarker {
+		t.Fatalf("resume reset the weekly marker: before=%q after=%q", fullMarker, marker)
+	}
+}
+
+// The weekly full marker records when a full generation was enqueued. Neither
+// a daily incremental sync nor a resume may restart the seven-day clock.
+func TestCatalogSyncWeeklyFullMarkerOnlyMovesWithANewGeneration(t *testing.T) {
+	tree := newCatalogSyncTestTree()
+	tree.set("/", catalogSyncTestEntry{Name: "Partition A", IsDir: true, Modified: "p1"})
+	tree.set("/Partition A", catalogSyncTestEntry{Name: "Work 001", IsDir: true, Modified: "w1"})
+	tree.set("/Partition A/Work 001", catalogSyncTestEntry{Name: "01.mp3", Size: 100, Modified: "f1"})
+	f := newCatalogSyncFixture(t, tree)
+	now := time.Now().UTC().Truncate(time.Second)
+	f.server.catalogNow = func() time.Time { return now }
+	if p := f.runFullScan(t, ""); p["status"] != "complete" {
+		t.Fatalf("full scan did not complete: %#v", p)
+	}
+	var generation int64
+	if err := f.server.db.QueryRow(`SELECT workflow_run_id FROM source_catalog_scan WHERE file_source_id=?`, f.sourceID(t)).Scan(&generation); err != nil {
+		t.Fatal(err)
+	}
+	enqueued := readCatalogSetting(t, f, catalogFullSettingPrefix+"1")
+	if enqueued != strconv.FormatInt(now.Unix(), 10) {
+		t.Fatalf("full marker = %q, want %d", enqueued, now.Unix())
+	}
+	// Incremental sync keeps the marker.
+	now = now.Add(24 * time.Hour)
+	f.server.catalogNow = func() time.Time { return now }
+	if err := f.server.dispatchDueCatalogUpdates(context.WithValue(context.Background(), catalogIndexNoPacingKey{}, true)); err != nil {
+		t.Fatal(err)
+	}
+	waitCatalogSyncSettled(t, f)
+	if marker := readCatalogSetting(t, f, catalogFullSettingPrefix+"1"); marker != enqueued {
+		t.Fatalf("incremental sync reset the weekly marker: before=%q after=%q", enqueued, marker)
+	}
+	// Resume keeps it too.
+	if _, err := f.server.db.Exec(`UPDATE workflow_run SET status='partial' WHERE id=?`, generation); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.server.db.Exec(`UPDATE source_catalog_scan SET failed=1 WHERE file_source_id=?`, f.sourceID(t)); err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(24 * time.Hour)
+	f.server.catalogNow = func() time.Time { return now }
+	if err := f.server.dispatchDueCatalogUpdates(context.WithValue(context.Background(), catalogIndexNoPacingKey{}, true)); err != nil {
+		t.Fatal(err)
+	}
+	if marker := readCatalogSetting(t, f, catalogFullSettingPrefix+"1"); marker != enqueued {
+		t.Fatalf("resume reset the weekly marker: before=%q after=%q", enqueued, marker)
+	}
+	if p := f.drain(t); p["status"] != "complete" {
+		t.Fatalf("resumed generation did not complete: %#v", p)
+	}
+	// Only an expired weekly marker starts a new full generation, and that
+	// enqueue is what moves the marker.
+	nextFull := time.Unix(now.Unix(), 0).Add(8 * 24 * time.Hour)
+	f.server.catalogNow = func() time.Time { return nextFull }
+	if err := f.server.dispatchDueCatalogUpdates(context.WithValue(context.Background(), catalogIndexNoPacingKey{}, true)); err != nil {
+		t.Fatal(err)
+	}
+	if marker := readCatalogSetting(t, f, catalogFullSettingPrefix+"1"); marker != strconv.FormatInt(nextFull.Unix(), 10) {
+		t.Fatalf("new generation did not move the weekly marker: got %q want %d", marker, nextFull.Unix())
+	}
+	var after int64
+	if err := f.server.db.QueryRow(`SELECT workflow_run_id FROM source_catalog_scan WHERE file_source_id=?`, f.sourceID(t)).Scan(&after); err != nil {
+		t.Fatal(err)
+	}
+	if after == generation {
+		t.Fatal("expired weekly marker did not enqueue a new full generation")
 	}
 }
 
