@@ -111,6 +111,7 @@ func (s *Server) listWorks(w http.ResponseWriter, r *http.Request) {
 		RecommendationSessionID: recommendationSessionID,
 		DemoOnly:                s.cfg.IsDemo(),
 		TitleLanguages:          s.titleSortLanguages(r.Context(), r.URL.Query().Get("sort")),
+		Language:                strings.TrimSpace(r.URL.Query().Get("lang")),
 	}
 	showDemoScores := s.cfg.IsDemo() && (options.IncludeRecommendation || strings.EqualFold(options.Sort, "recommend"))
 	if s.cfg.IsDemo() {
