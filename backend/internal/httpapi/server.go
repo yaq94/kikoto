@@ -388,6 +388,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/remote-sources/{id}/catalog/exclusions", s.listCatalogExclusions)
 	mux.HandleFunc("POST /api/remote-sources/{id}/catalog/exclusions", s.createCatalogExclusion)
 	mux.HandleFunc("DELETE /api/remote-sources/{id}/catalog/exclusions/{exclusionId}", s.deleteCatalogExclusion)
+	mux.HandleFunc("GET /api/remote-sources/{id}/catalog/encoding-issues", s.listSourceCatalogEncodingIssues)
 	mux.HandleFunc("POST /api/remote-sources/{id}/catalog/sidecars/retry", s.retrySourceCatalogSidecars)
 	// Operator diagnostics: work adoption, exclusions and admission ceilings.
 	mux.HandleFunc("GET /api/remote-sources/{id}/catalog/diagnostics", s.catalogDiagnostics)

@@ -12,6 +12,8 @@ import (
 	"net/url"
 	"path"
 	"strings"
+	"unicode/utf16"
+	"unicode/utf8"
 
 	"github.com/yexca/kikoto/backend/internal/buildinfo"
 )
@@ -49,6 +51,10 @@ type Object struct {
 	Modified string          `json:"modified"`
 	RawURL   string          `json:"raw_url"`
 	HashInfo json.RawMessage `json:"hash_info"`
+	// NameDamaged marks a listed name whose JSON string was not valid UTF-8.
+	// Name preserves those bytes unchanged; callers must not build a source
+	// path from it, because the character the origin intended is unknown.
+	NameDamaged bool `json:"-"`
 }
 type File struct {
 	Path  string
@@ -209,6 +215,24 @@ type Page struct {
 	Total   int      `json:"total"`
 }
 
+// listObject keeps the name as raw JSON so an invalid byte survives the
+// decode. encoding/json would silently replace it with U+FFFD, which is
+// indistinguishable from a replacement character the source actually sent.
+type listObject struct {
+	Name     json.RawMessage `json:"name"`
+	Size     int64           `json:"size"`
+	IsDir    bool            `json:"is_dir"`
+	Type     int             `json:"type"`
+	Modified string          `json:"modified"`
+	RawURL   string          `json:"raw_url"`
+	HashInfo json.RawMessage `json:"hash_info"`
+}
+
+type listPage struct {
+	Content []listObject `json:"content"`
+	Total   *int         `json:"total"`
+}
+
 // ListPage reads exactly one anonymous page, leaving traversal/checkpoints to
 // the caller. A missing total or invalid name cannot prove directory coverage.
 func (c *Client) ListPage(ctx context.Context, root string, page, pageSize int) (Page, error) {
@@ -216,19 +240,121 @@ func (c *Client) ListPage(ctx context.Context, root string, page, pageSize int) 
 	if (root != "/" && !ValidRoot(root)) || page < 1 || pageSize < 1 || pageSize > 500 {
 		return data, ErrInvalid
 	}
-	err := c.request(ctx, "list", map[string]any{"path": root, "page": page, "per_page": pageSize, "password": "", "refresh": false}, &data)
+	var raw listPage
+	err := c.request(ctx, "list", map[string]any{"path": root, "page": page, "per_page": pageSize, "password": "", "refresh": false}, &raw)
 	if err != nil {
 		return data, err
 	}
-	if data.Total < 0 || len(data.Content) > pageSize {
+	if raw.Total == nil || *raw.Total < 0 || len(raw.Content) > pageSize {
 		return data, ErrInvalid
+	}
+	data.Total = *raw.Total
+	data.Content = make([]Object, 0, len(raw.Content))
+	for _, entry := range raw.Content {
+		name, valid, decodeErr := decodeJSONName(entry.Name)
+		if decodeErr != nil {
+			return Page{Total: -1}, ErrInvalid
+		}
+		data.Content = append(data.Content, Object{
+			Name: name, Size: entry.Size, IsDir: entry.IsDir, Type: entry.Type,
+			Modified: entry.Modified, RawURL: entry.RawURL, HashInfo: entry.HashInfo, NameDamaged: !valid,
+		})
 	}
 	for _, obj := range data.Content {
 		if obj.Name == "" || obj.Name == "." || obj.Name == ".." || len(obj.Name) > 1024 || strings.ContainsAny(obj.Name, "/\\\x00\r\n") || obj.Size < 0 {
-			return data, ErrInvalid
+			return Page{Total: -1}, ErrInvalid
 		}
 	}
 	return data, nil
+}
+
+// decodeJSONName unquotes one JSON string without passing it through
+// encoding/json's UTF-8 repair. The returned flag is false when the string
+// held an invalid byte or a lone surrogate; the bytes themselves are kept.
+func decodeJSONName(raw []byte) (string, bool, error) {
+	raw = bytes.TrimSpace(raw)
+	if len(raw) < 2 || raw[0] != '"' || raw[len(raw)-1] != '"' {
+		return "", false, ErrInvalid
+	}
+	src := raw[1 : len(raw)-1]
+	out := make([]byte, 0, len(src))
+	valid := true
+	for index := 0; index < len(src); index++ {
+		if src[index] != '\\' {
+			out = append(out, src[index])
+			continue
+		}
+		index++
+		if index >= len(src) {
+			return "", false, ErrInvalid
+		}
+		switch src[index] {
+		case '"', '\\', '/':
+			out = append(out, src[index])
+		case 'b':
+			out = append(out, '\b')
+		case 'f':
+			out = append(out, '\f')
+		case 'n':
+			out = append(out, '\n')
+		case 'r':
+			out = append(out, '\r')
+		case 't':
+			out = append(out, '\t')
+		case 'u':
+			if index+4 >= len(src) {
+				return "", false, ErrInvalid
+			}
+			r, ok := decodeHexRune(src[index+1 : index+5])
+			if !ok {
+				return "", false, ErrInvalid
+			}
+			index += 4
+			if utf16.IsSurrogate(r) {
+				if index+6 < len(src) && src[index+1] == '\\' && src[index+2] == 'u' {
+					if second, secondOK := decodeHexRune(src[index+3 : index+7]); secondOK {
+						if pair := utf16.DecodeRune(r, second); pair != utf8.RuneError {
+							out = utf8.AppendRune(out, pair)
+							index += 6
+							continue
+						}
+					}
+				}
+				// A lone surrogate cannot be represented in UTF-8.
+				valid = false
+				out = utf8.AppendRune(out, utf8.RuneError)
+				continue
+			}
+			out = utf8.AppendRune(out, r)
+		default:
+			return "", false, ErrInvalid
+		}
+	}
+	if !utf8.Valid(out) {
+		valid = false
+	}
+	return string(out), valid, nil
+}
+
+func decodeHexRune(raw []byte) (rune, bool) {
+	if len(raw) != 4 {
+		return 0, false
+	}
+	var value rune
+	for _, digit := range raw {
+		value <<= 4
+		switch {
+		case digit >= '0' && digit <= '9':
+			value |= rune(digit - '0')
+		case digit >= 'a' && digit <= 'f':
+			value |= rune(digit-'a') + 10
+		case digit >= 'A' && digit <= 'F':
+			value |= rune(digit-'A') + 10
+		default:
+			return 0, false
+		}
+	}
+	return value, true
 }
 
 func ValidRoot(root string) bool {
