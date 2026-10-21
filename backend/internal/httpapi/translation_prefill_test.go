@@ -87,6 +87,43 @@ func TestTranslationPrefillNativeTitleWritesNativeRowWithoutModelCall(t *testing
 	}
 }
 
+func TestTranslationPrefillPausesOnLowDiskAndResumesWhenSpaceReturns(t *testing.T) {
+	var calls atomic.Int32
+	model := successfulPrefillModel(t, &calls)
+	defer model.Close()
+	s, host, admin, _ := translationHTTPFixture(t)
+	seedPrefillCard(t, s, 1, "Example title")
+	configurePrefillModel(t, host, admin, model.URL)
+
+	s.catalogDiskSpace = func(string) (diskSpaceSnapshot, error) {
+		return diskSpaceSnapshot{Available: 0}, nil
+	}
+	if _, err := s.runTranslationPrefillBatch(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	_, status, lastError := readPrefillState(t, s)
+	if status != "paused" || lastError != "paused_low_disk" {
+		t.Fatalf("low disk state = %q/%q, want paused/paused_low_disk", status, lastError)
+	}
+	if calls.Load() != 0 {
+		t.Fatalf("model calls while paused = %d, want 0", calls.Load())
+	}
+
+	s.catalogDiskSpace = func(string) (diskSpaceSnapshot, error) {
+		return diskSpaceSnapshot{Available: 4 << 30}, nil
+	}
+	if _, err := s.runTranslationPrefillBatch(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	_, status, lastError = readPrefillState(t, s)
+	if status != "running" || lastError != "" {
+		t.Fatalf("resumed state = %q/%q, want running with no error", status, lastError)
+	}
+	if calls.Load() == 0 {
+		t.Fatal("translation did not resume after free space returned")
+	}
+}
+
 func TestTranslationPrefillRetriesFailedEntryBeforeAdvancingCursor(t *testing.T) {
 	var calls atomic.Int32
 	model := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

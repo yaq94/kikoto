@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -194,12 +195,32 @@ func (s *Server) runTranslationPrefillWorker(ctx context.Context) {
 // runTranslationPrefillBatch fills one bounded batch. It returns whether more
 // rows remain.
 func (s *Server) runTranslationPrefillBatch(ctx context.Context) (bool, error) {
+	cfg, err := translation.NewStore(s.db).Load(ctx)
+	if err != nil {
+		return false, err
+	}
 	state, err := s.translationPrefillState(ctx)
 	if err != nil {
 		return false, err
 	}
-	if state.Status == "complete" || state.Status == "paused" {
+	if state.Status == "complete" {
 		return false, nil
+	}
+	if state.Status == "paused" {
+		// A manual pause waits for the operator. A low-disk pause is a
+		// resource condition: resume by itself once the reserve is available
+		// again, without guessing whether the operator meant to keep it off.
+		if state.LastError == "" || s.translationDiskPause(cfg) != "" {
+			return false, nil
+		}
+		if _, err = s.db.ExecContext(ctx, `UPDATE translation_prefill_state SET status='running', last_error='', updated_at=CURRENT_TIMESTAMP WHERE id=1`); err != nil {
+			return false, err
+		}
+		state.Status = "running"
+	}
+	if pause := s.translationDiskPause(cfg); pause != "" {
+		_, err = s.db.ExecContext(ctx, `UPDATE translation_prefill_state SET status='paused', last_error=?, updated_at=CURRENT_TIMESTAMP WHERE id=1`, pause)
+		return false, err
 	}
 	entries, err := s.translationPrefillEntries(ctx, state.Cursor)
 	if err != nil {
@@ -221,10 +242,6 @@ func (s *Server) runTranslationPrefillBatch(ctx context.Context) (bool, error) {
 			continue
 		}
 		active = append(active, entry)
-	}
-	cfg, err := translation.NewStore(s.db).Load(ctx)
-	if err != nil {
-		return false, err
 	}
 	written := 0
 	var failed map[int64]error
@@ -271,6 +288,30 @@ func (s *Server) runTranslationPrefillBatch(ctx context.Context) (bool, error) {
 	}
 	s.noteTranslationPrefillWrite(written)
 	return len(entries) == translationPrefillBatchSize, runErr
+}
+
+// translationDiskPause keeps the background translation pass from consuming
+// the last free bytes of the volume that holds SQLite and its WAL. The cache
+// reserve is a floor, so the batch leaves the same headroom for a write that
+// the configured minimum promises to the operator.
+func (s *Server) translationDiskPause(cfg translation.Config) string {
+	root := filepath.Dir(s.cfg.DatabasePath)
+	if s.cfg.DatabasePath == "" {
+		root = s.cfg.CacheRoot
+	}
+	measure := s.catalogDiskSpace
+	if measure == nil {
+		measure = queryDiskSpace
+	}
+	snapshot, err := measure(root)
+	if err != nil {
+		return "disk_space_unknown"
+	}
+	const writeHeadroom = 64 << 20
+	if snapshot.Available < uint64(cfg.MinFreeBytes)+writeHeadroom {
+		return "paused_low_disk"
+	}
+	return ""
 }
 
 // translationPrefillFailureCount is the process-local consecutive-failure
@@ -500,7 +541,7 @@ func (s *Server) setTranslationPrefill(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusBadRequest, "translation_invalid_input", "Choose running or paused.", false)
 		return
 	}
-	if _, err := s.db.ExecContext(r.Context(), `UPDATE translation_prefill_state SET status=?, updated_at=CURRENT_TIMESTAMP WHERE id=1`, input.Status); err != nil {
+	if _, err := s.db.ExecContext(r.Context(), `UPDATE translation_prefill_state SET status=?, last_error='', updated_at=CURRENT_TIMESTAMP WHERE id=1`, input.Status); err != nil {
 		writeError(w, err)
 		return
 	}
