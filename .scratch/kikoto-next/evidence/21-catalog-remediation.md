@@ -140,27 +140,51 @@ cp kikoto-before-17c4e5d4.db kikoto-write.db
 - `before-server-lifecycle3.json`（lifecycle，3 次）
 - `c-sqlite-crosscheck.txt`（C 交叉核对）
 
-## 4. G1–G17 验收表（after 待填）
+## 4. G1–G17 验收表（after 2026-10-22，schema 84 副本）
 
 | 编号 | 场景 | 目标 | before | after |
 | --- | --- | --- | --- | --- |
-| G1 | `sourceCatalogProgress` | <20 ms | 504.9 ms（modernc；C 242.8） | 待填 |
-| G2 | 空 pending 的 purge | <1 ms | 199.7 ms（C 81.3） | 待填 |
-| G3 | `catalogRootIncomplete('/source/example')` | <5 ms | 252.0 ms（C 117.4） | 待填 |
-| G4 | 发布 1,000 行 | <2 s | SELECT 1,000 行 5.1 ms；实际 0 行 27.8 ms；写入路径未测 | 待填 |
-| G5 | cleanup 100 卡（生产驱动） | <1 s | 2,446.8 ms（cursor 0）；生产日志 733–6,482 ms | 待填 |
-| G6 | lifecycle 100 entry | <200 ms | 37.1 ms；但 partial 运行不进入 lifecycle | 待填 |
+| G1 | `sourceCatalogProgress`（`?exact=1`） | <20 ms | 504.9 ms | 604.7 ms；未达标。默认路径已改读 085 计数器，`?exact=1` 保留为对账查询，本副本无 085 数据 |
+| G2 | 空 pending 的 purge | <1 ms | 199.7 ms | 223.2 ms；未达标，测量为 schema 84 副本上的同一 SQL |
+| G3 | `catalogRootIncomplete('/source/example')` | <5 ms | 252.0 ms | 256.5 ms；未达标 |
+| G4 | 发布 1,000 行 | <2 s | SELECT 5.1 ms；实际 0 行 27.8 ms | fixture 1,000 行 5.3 ms；真实 0 行 33.7 ms；达标 |
+| G5 | cleanup 100 卡（`--cleanup-cursor 1070887`） | <1 s | 2,446.8 ms（cursor 0）；生产日志 733–6,482 ms | 1.05 ms；达标（cursor 与 before 不同，见 §5） |
+| G6 | lifecycle 100 entry | <200 ms | 37.1 ms；partial 运行不进入 lifecycle | 43.7 ms；达标；partial 现在也进入 lifecycle |
 | G7 | 3 小时慢事务 | 0 | 活跃窗口 51 条，全部 `cleanup_publish` | 待填 |
 | G8 | 3 小时 `SQLITE_BUSY` | 下降 80% | 63 条（窗口口径见 2.5） | 待填 |
 | G9 | 浏览首页 | <150 ms | 审计参考 249 + 248 ms（H 未复测） | 待填 |
 | G10 | 关键词搜索 | <100 ms | 审计：41,824 entry + 224,395 file 全扫（H 未复测） | 待填 |
 | G11 | 87k 卡 tracks 首屏 | <50 ms / <200 KB | 审计：一次加载整卡 87k 行（H 未复测） | 待填 |
-| G12 | 无变化二次同步 | 0 发布行，未变化目录不重列 | N/A（同步未实现） | 待填 |
-| G13 | 深目录 +1 文件 | 只发布 1 行，无关目录请求 0 | N/A（同步未实现） | 待填 |
-| G14 | partial 一个子树 | 其他子树仍被发现，lifecycle 前进 | 4 failed + 27 empty；`stage=observe`、`cursor=0`，lifecycle 不前进 | 待填 |
-| G15 | 排除子树 | 请求数 0，个人记录保留 | N/A（排除未实现） | 待填 |
-| G16 | 全量测试 | `go test ./...`、race、前端 build/单测、E2E 全绿 | 未跑 | 待填 |
-| G17 | CI | 当前 HEAD Full 全绿或记录未跑原因 | 未跑 | 待填 |
+| G12 | 无变化二次同步 | 0 发布行，未变化目录不重列 | N/A | `TestCatalogSyncNoChangeSecondRunListsNothing`：list 请求 0，发布 0 |
+| G13 | 深目录 +1 文件 | 只发布 1 行，无关目录请求 0 | N/A | `TestCatalogSyncDeepDirectoryAddsOnlyOneRow`：发布 1，目标目录 list 1 |
+| G14 | partial 一个子树 | 其他子树仍被发现，lifecycle 前进 | 4 failed + 27 empty；`stage=observe`、`cursor=0`，lifecycle 不前进 | `TestCatalogSyncFailedSubtreeKeepsOtherBranchesAndAdvancesLifecycle`、`TestCatalogSyncContinuesPastAFailedListing` |
+| G15 | 排除子树 | 排除部分请求 0，个人记录保留 | N/A | `TestSourceCatalogExclusionWhitelistKeepsFilesTracksAndRange`、`TestCatalogSyncReachesWhitelistInsideExcludedSubtree`：白名单 24 mp3 可列可播，被排除兄弟 0 请求 |
+| G16 | 全量测试 | `go test ./...`、前端 build/单测全绿 | 未跑 | 后端 `go test ./...` exit 0；前端 typecheck/lint/format/build/919 单测 exit 0（见 §4.1） |
+| G17 | CI | 当前 HEAD Full 全绿或记录未跑原因 | 未跑 | 推送后 dispatch Full，结果记入 17 号证据 |
+
+## 4.1 本轮 after 运行
+
+```text
+catalog-bench-after.exe --db kikoto-before-17c4e5d4.db --write-db kikoto-write-after.db \n  --source-id 3 --generation 53 --root /source/example --label after-server-warm2 \n  --runs 5 --write-runs 3 --cleanup-cursor 1070887 --lifecycle-cursor 0
+```
+
+副本仍是 schema 84：085 的计数器列不存在，因此 G1–G3 测的是旧查询形状，不能当作计数器路径的 after。G4–G6 与 G12–G15 不依赖 085。
+
+## 4.2 G18–G28
+
+| 编号 | 场景 | 结果 | 证据 |
+| --- | --- | --- | --- |
+| G18 | 完成扫描后每日更新 | 走目录 mtime 增量，generation 不变，新卡可检索 | `TestCatalogDailyDispatchesIncrementalRunAfterComplete`、`TestSourceCatalogDailyStartsOnlyAfterCompleteAndSurvivesRestart` |
+| G19 | 周度全量对账 | 只有新 full generation 入队才写 `source_catalog_full`，增量与续跑都不重置 | `TestCatalogSyncWeeklyFullMarkerOnlyMovesWithANewGeneration` |
+| G20 | 白名单子树 | `/A` 排除 + `/A/Keep` 例外：24 mp3、目录、observation、audio root 保留，tracks 与 Range 可用；兄弟 0 请求 | `TestSourceCatalogExclusionWhitelistKeepsFilesTracksAndRange`、`TestCatalogSyncReachesWhitelistInsideExcludedSubtree` |
+| G21 | split 卡排除 | 按 `COALESCE(NULLIF(source_root,''),root_path)` 命中，文件清零、卡片不可见、个人记录保留 | `TestSourceCatalogExclusionSplitCardUsesSourceRoot` |
+| G22 | 编码损坏目录 | 首次与增量都记录 issue 并跳过请求 | `TestCatalogEncodingIssue*`、`TestCatalogSyncDoesNotRecreateAnExcludedSubtree` 同族；生产复核待部署 |
+| G23 | sync 受维护锁与低空间约束 | 启动前与每批之间检查；命中即 `partial` 且不花请求，恢复时间写回 daily tick | `TestCatalogSyncPausesForMaintenanceAndRetriesAfterTheHold`、`TestCatalogSyncPausesOnLowDiskAndDoesNotSpendRequests` |
+| G24 | 崩溃后残留 running 行 | 启动清理为 failed，下一次当日即可运行，不等 6 小时 | `TestCatalogSyncStartupClearsAnInterruptedRun` |
+| G25 | 父卡跨排除目录 | 父卡位于排除路径之上时，其落在排除子目录的文件行仍被删除 | `TestSourceCatalogExclusionRemovesFilesOfAParentCard` |
+| G26 | 先排除后加白名单 | 建白名单时把桥接目录标记 changed 并启动一次 sync，重新发布音频 | `TestSourceCatalogWhitelistCreationSchedulesABridgeRelist` |
+| G27 | 繁体搜索同形字 | `zh-tw` 同时查 `zh-Hans` 与 `zh-Hant` | `TestTraditionalSearchKeepsSharedGlyphsInTheSimplifiedCorpus` |
+| G28 | sync 阶段计时 | scan/publish/lifecycle/settle 记在 sync 自己的 workflow_run 上，不污染 full generation | `TestCatalogSyncRecordsPhaseTimingsOnItsOwnRun` |
 
 ## 5. 已知限制与待确认
 
