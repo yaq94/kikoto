@@ -70,8 +70,11 @@ type catalogSyncObservation struct {
 }
 
 type catalogSyncLease struct {
-	Job     workflowJobRecord
-	release func(string)
+	Job workflowJobRecord
+	// WorkflowRunID is the sync's own workflow_run row. It is not the catalog
+	// generation: phase timings must describe this sync, not the full crawl.
+	WorkflowRunID int64
+	release       func(string)
 }
 
 func catalogSyncBoolInt(value bool) int {
@@ -166,6 +169,9 @@ func jsonUnmarshalCatalogOptions(saved string, options *catalogIndexOptions) err
 
 func (s *Server) executeCatalogIncrementalSync(ctx context.Context, runID, sourceID int64) (runErr error) {
 	state := catalogSyncRunState{ID: runID, SourceID: sourceID, Status: "running"}
+	// resumeAt delays the next daily attempt when a hold or a low disk stopped
+	// this run. It stays zero for an ordinary finish.
+	var resumeAt time.Time
 	defer func() {
 		status := state.Status
 		if status == "" || status == "running" {
@@ -175,15 +181,27 @@ func (s *Server) executeCatalogIncrementalSync(ctx context.Context, runID, sourc
 			status = "failed"
 			state.Note = appendCatalogSyncNote(state.Note, runErr.Error())
 		}
-		if state.DirsProbed == 0 && state.DirsListed == 0 && runErr == nil {
+		if state.DirsProbed == 0 && state.DirsListed == 0 && runErr == nil && status == "succeeded" {
 			state.Note = appendCatalogSyncNote(state.Note, "no non-leaf directories were probed")
 		}
-		_ = s.finishCatalogSyncRun(context.WithoutCancel(ctx), runID, status, state)
+		settle := context.WithoutCancel(ctx)
+		_ = s.finishCatalogSyncRun(settle, runID, status, state)
+		if !resumeAt.IsZero() {
+			_ = s.setCatalogDailyDue(settle, sourceID, resumeAt)
+		}
 	}()
 
 	options, generation, err := s.catalogSyncOptions(ctx, sourceID)
 	if err != nil {
 		return err
+	}
+	// A hold or a low disk is checked before the first request, so a paused
+	// sync costs nothing and leaves every checkpoint untouched.
+	if reason, until := s.pauseCatalogSync(ctx, options); reason != "" {
+		state.Status = "partial"
+		state.Note = appendCatalogSyncNote(state.Note, reason)
+		resumeAt = until
+		return nil
 	}
 	source, err := s.catalogIndexSource(ctx, sourceID)
 	if err != nil {
@@ -224,9 +242,20 @@ func (s *Server) executeCatalogIncrementalSync(ctx context.Context, runID, sourc
 
 	failed := false
 	attempted := map[string]bool{}
+	scanStarted := time.Now()
 	for {
 		if err = ctx.Err(); err != nil {
+			s.recordCatalogPhase(context.WithoutCancel(ctx), lease.WorkflowRunID, "scan", scanStarted)
 			return err
+		}
+		// The hold and the disk floor are re-checked between directory batches,
+		// so a long probe pass stops where the committed checkpoint ends.
+		if reason, until := s.pauseCatalogSync(ctx, options); reason != "" {
+			s.recordCatalogPhase(context.WithoutCancel(ctx), lease.WorkflowRunID, "scan", scanStarted)
+			state.Status = "partial"
+			state.Note = appendCatalogSyncNote(state.Note, reason)
+			resumeAt = until
+			return nil
 		}
 		probes, queryErr := s.pendingCatalogSyncProbes(ctx, sourceID, generation, runID, catalogSyncBatch)
 		if queryErr != nil {
@@ -256,14 +285,22 @@ func (s *Server) executeCatalogIncrementalSync(ctx context.Context, runID, sourc
 			continue
 		}
 
-		changedDirs, queryErr := s.pendingCatalogSyncListings(ctx, sourceID, generation, catalogSyncBatch)
+		changedDirs, queryErr := s.pendingCatalogSyncListings(ctx, sourceID, generation)
 		if queryErr != nil {
 			return queryErr
 		}
-		unattempted := changedDirs[:0]
+		// A failed listing keeps its row in 'changed' state, so the attempted
+		// set is what stops this run from retrying it forever. Only one batch
+		// of new work is spent per pass: the hold and disk checks above then
+		// run again instead of after a whole tree of requests.
+		unattempted := make([]catalogSyncDirectoryState, 0, catalogSyncBatch)
 		for _, dir := range changedDirs {
-			if !attempted[dir.Path] {
-				unattempted = append(unattempted, dir)
+			if attempted[dir.Path] {
+				continue
+			}
+			unattempted = append(unattempted, dir)
+			if len(unattempted) == catalogSyncBatch {
+				break
 			}
 		}
 		if len(unattempted) == 0 {
@@ -292,17 +329,23 @@ func (s *Server) executeCatalogIncrementalSync(ctx context.Context, runID, sourc
 		_ = s.persistCatalogSyncProgress(ctx, state)
 	}
 
+	s.recordCatalogPhase(context.WithoutCancel(ctx), lease.WorkflowRunID, "scan", scanStarted)
 	if err = s.refreshCatalogSyncCounters(ctx, sourceID); err != nil {
 		return err
 	}
 	if state.DirsListed > 0 || state.DirsChanged > 0 || failed || state.Force {
+		publishStarted := time.Now()
 		published, publishErr := s.publishCatalogSyncChanges(ctx, lease.Job, sourceID)
+		s.recordCatalogPhase(context.WithoutCancel(ctx), lease.WorkflowRunID, "publish", publishStarted)
 		if publishErr != nil {
 			return publishErr
 		}
 		state.EntriesPublished += published
-		if err = s.settleCatalogSyncLifecycle(ctx, lease.Job, sourceID, generation); err != nil {
-			return err
+		lifecycleStarted := time.Now()
+		lifecycleErr := s.settleCatalogSyncLifecycle(ctx, lease.Job, sourceID, generation)
+		s.recordCatalogPhase(context.WithoutCancel(ctx), lease.WorkflowRunID, "lifecycle", lifecycleStarted)
+		if lifecycleErr != nil {
+			return lifecycleErr
 		}
 	}
 	if failed {
@@ -312,6 +355,60 @@ func (s *Server) executeCatalogIncrementalSync(ctx context.Context, runID, sourc
 		state.Status = "succeeded"
 	}
 	return nil
+}
+
+// pauseCatalogSync reports why an incremental sync must stop and when it may
+// try again. A deployment hold ends at a known time; a disk shortfall is
+// re-checked after a short delay rather than after the full daily interval.
+func (s *Server) pauseCatalogSync(ctx context.Context, options catalogIndexOptions) (string, time.Time) {
+	if held, until, err := s.catalogMaintenanceActive(ctx); err != nil {
+		return "maintenance_state_unknown", time.Now().Add(time.Hour)
+	} else if held {
+		return "maintenance", until
+	}
+	if reason := s.catalogIndexDiskPause(options); reason != "" {
+		return reason, time.Now().Add(time.Hour)
+	}
+	return "", time.Time{}
+}
+
+// settleInterruptedCatalogSyncTiming runs once at startup. A process that
+// stopped mid-sync leaves a running row and its workflow records behind; both
+// are marked failed so the next daily tick can start instead of being skipped
+// for six hours by the partial unique index.
+func (s *Server) settleInterruptedCatalogSyncTiming(ctx context.Context) error {
+	rows, err := s.db.QueryContext(ctx, `SELECT id FROM source_catalog_sync_run WHERE status='running'`)
+	if err != nil {
+		return err
+	}
+	ids := []int64{}
+	for rows.Next() {
+		var id int64
+		if err = rows.Scan(&id); err != nil {
+			break
+		}
+		ids = append(ids, id)
+	}
+	if err == nil {
+		err = rows.Err()
+	}
+	_ = rows.Close()
+	if err != nil || len(ids) == 0 {
+		return err
+	}
+	for _, id := range ids {
+		if err = s.finishCatalogSyncRun(ctx, id, "failed", catalogSyncRunState{ID: id, Note: "startup interrupted before completion"}); err != nil {
+			return err
+		}
+	}
+	_, err = s.db.ExecContext(ctx, `UPDATE workflow_job SET status='failed',error_message=CASE WHEN error_message='' THEN 'startup interrupted before completion' ELSE error_message END,locked_by='',locked_at=NULL,heartbeat_at=NULL,updated_at=CURRENT_TIMESTAMP
+		WHERE worker_type=? AND status IN ('running','queued')`, sourceCatalogSyncWorkerType)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx, `UPDATE workflow_node_run SET status='failed',finished_at=CURRENT_TIMESTAMP
+		WHERE id IN (SELECT workflow_node_run_id FROM workflow_job WHERE worker_type=? AND status='failed')`, sourceCatalogSyncWorkerType)
+	return err
 }
 
 func (s *Server) seedCatalogSyncDirectories(ctx context.Context, sourceID, generation int64, force bool) error {
@@ -356,11 +453,16 @@ func (s *Server) pendingCatalogSyncProbes(ctx context.Context, sourceID, generat
 	return dirs, rows.Err()
 }
 
-func (s *Server) pendingCatalogSyncListings(ctx context.Context, sourceID, generation int64, limit int) ([]catalogSyncDirectoryState, error) {
+// pendingCatalogSyncListings returns every directory still waiting for a
+// listing. The result is bounded by the size of the source tree, not by a
+// separate cap: the caller walks the whole set and decides per pass how many
+// requests to spend, because a cap here would hide rows behind an already
+// attempted path.
+func (s *Server) pendingCatalogSyncListings(ctx context.Context, sourceID, generation int64) ([]catalogSyncDirectoryState, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT path,partition_path,catalog_root,revision,status,sync_state,observed_version,listing_digest
 		FROM source_catalog_directory
 		WHERE file_source_id=? AND generation=? AND sync_state='changed'
-		ORDER BY path LIMIT 100000`, sourceID, generation)
+		ORDER BY path`, sourceID, generation)
 	if err != nil {
 		return nil, err
 	}
@@ -911,7 +1013,7 @@ func (s *Server) beginCatalogSyncLease(ctx context.Context, syncRunID, generatio
 		_, _ = s.db.ExecContext(settleCtx, `UPDATE workflow_run SET status=?,finished_at=CURRENT_TIMESTAMP WHERE id=?`, status, runID)
 	}
 	_ = leaseCtx
-	return &catalogSyncLease{Job: job, release: releaseLease}, nil
+	return &catalogSyncLease{Job: job, WorkflowRunID: runID, release: releaseLease}, nil
 }
 
 func (s *Server) persistCatalogSyncProgress(ctx context.Context, state catalogSyncRunState) error {

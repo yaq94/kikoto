@@ -126,10 +126,11 @@ viewer still finds a free worker; inside the window it may use every slot.
 Translated content is durable corpus, not a cache. `content_translation` stores
 one row per `cache_key` with `origin` `native` or `model`; `origin=native` rows
 hold the source text unchanged and never increment model usage. There is no
-least-recently-used eviction and no `last_used_at`. `maxEntries` is a soft row
-budget with zero meaning unlimited, so a deployment cannot silently shrink
+least-recently-used eviction and no `last_used_at`. `maxEntries` is reported to
+operators as a planning budget with zero meaning unlimited; the hot path does
+not evict rows to satisfy it, because deleting corpus rows would silently shrink
 search coverage. `cacheBytes` is likewise a soft budget shown to operators;
-`minFreeBytes` still pauses new generation when the data volume runs low.
+`minFreeBytes` pauses new generation when the data volume runs low.
 
 A content change produces a new `cache_key` because the source text is part of
 it. The previous row stays readable for history and is removed only by an
@@ -139,9 +140,16 @@ does not store a second full-text copy. A title detected as `zh-Hant` is written
 as a native row and participates in searches for both scripts.
 
 Free space is read from the nearest existing parent before the data directory
-exists. Low space pauses new generation (`paused_low_disk`) while keeping stored
-rows readable; raising free space permits later generation. Failed generations
-are never stored. Stored rows report `hit`, freshly generated rows `stored`.
+exists. Low space pauses new background generation (`paused_low_disk`) while
+keeping stored rows readable; raising free space permits later generation. The
+prefill worker checks `minFreeBytes` plus a write headroom before starting a
+batch, records `paused_low_disk` in `translation_prefill_state.last_error`, and
+resumes on its own once the floor is met again; an operator-requested `paused`
+status has an empty `last_error` and stays paused. An interactive request keeps
+its model result rather than discarding a paid call: the corpus row is durable
+and is written even when the volume is below the floor, while the rebuildable
+file cache and the source index stop. Failed generations are never stored.
+Stored rows report `hit`, freshly generated rows `stored`.
 ## Model contract and limits
 
 The default model invocation name is `Index-Translate-35B-A3B`; a configured name

@@ -585,6 +585,12 @@ func (s *Server) RecoverInterruptedWorkflows(ctx context.Context) error {
 	if _, err := s.settleInterruptedWorkflowRuns(ctx, "startup interrupted before completion"); err != nil {
 		return err
 	}
+	// An incremental sync owns a run row outside the queued-job retry path, so
+	// the orphan sweep above cannot clear it. Without this the unique running
+	// index would keep the source out of every daily tick for six hours.
+	if err := s.settleInterruptedCatalogSyncTiming(ctx); err != nil {
+		return err
+	}
 	if err := s.reconcileRemoteFetchManifests(ctx); err != nil {
 		return err
 	}

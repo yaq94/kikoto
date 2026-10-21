@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -540,6 +541,145 @@ func TestCatalogSyncWeeklyFullMarkerOnlyMovesWithANewGeneration(t *testing.T) {
 	}
 	if after == generation {
 		t.Fatal("expired weekly marker did not enqueue a new full generation")
+	}
+}
+
+// A deployment hold stops a sync before it spends a request, records why, and
+// moves the daily tick to the hold end instead of a full day later.
+func TestCatalogSyncPausesForMaintenanceAndRetriesAfterTheHold(t *testing.T) {
+	tree := newCatalogSyncTestTree()
+	tree.set("/", catalogSyncTestEntry{Name: "Partition A", IsDir: true, Modified: "p1"})
+	tree.set("/Partition A", catalogSyncTestEntry{Name: "Work 001", IsDir: true, Modified: "w1"})
+	tree.set("/Partition A/Work 001", catalogSyncTestEntry{Name: "01.mp3", Size: 100, Modified: "f1"})
+	f := newCatalogSyncFixture(t, tree)
+	if p := f.runFullScan(t, ""); p["status"] != "complete" {
+		t.Fatalf("full scan did not complete: %#v", p)
+	}
+	if _, err := f.server.db.Exec(`INSERT INTO app_setting(key,value_json) VALUES(?,?)
+		ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json`, catalogMaintenanceSetting,
+		mustJSON(catalogMaintenanceState{Until: time.Now().Add(5 * time.Minute), Reason: "deploy"})); err != nil {
+		t.Fatal(err)
+	}
+	state := f.runCatalogSync(t, false)
+	if state.Status != "partial" || state.Note != "maintenance" {
+		t.Fatalf("held sync = %q/%q, want partial/maintenance", state.Status, state.Note)
+	}
+	if state.Requests != 0 || state.DirsProbed != 0 {
+		t.Fatalf("held sync spent %d requests on %d probes", state.Requests, state.DirsProbed)
+	}
+	if tree.dirsHits["/"] != 0 {
+		t.Fatalf("held sync probed the tree %d times", tree.dirsHits["/"])
+	}
+	var due int64
+	if err := f.server.db.QueryRow(`SELECT CAST(value_json AS INTEGER) FROM app_setting WHERE key=?`, catalogDailySettingPrefix+"1").Scan(&due); err != nil {
+		t.Fatal(err)
+	}
+	if remaining := due - time.Now().Unix(); remaining < 4*60 || remaining > 6*60 {
+		t.Fatalf("daily due in %d seconds, want the hold end", remaining)
+	}
+}
+
+// The sync honours the same disk floor as the full crawl. A shortfall is
+// retried after an hour, not after the daily interval.
+func TestCatalogSyncPausesOnLowDiskAndDoesNotSpendRequests(t *testing.T) {
+	tree := newCatalogSyncTestTree()
+	tree.set("/", catalogSyncTestEntry{Name: "Partition A", IsDir: true, Modified: "p1"})
+	tree.set("/Partition A", catalogSyncTestEntry{Name: "Work 001", IsDir: true, Modified: "w1"})
+	tree.set("/Partition A/Work 001", catalogSyncTestEntry{Name: "01.mp3", Size: 100, Modified: "f1"})
+	f := newCatalogSyncFixture(t, tree)
+	if p := f.runFullScan(t, ""); p["status"] != "complete" {
+		t.Fatalf("full scan did not complete: %#v", p)
+	}
+	f.server.catalogDiskSpace = func(string) (diskSpaceSnapshot, error) { return diskSpaceSnapshot{Available: 0}, nil }
+	state := f.runCatalogSync(t, false)
+	if state.Status != "partial" || state.Note != "low_disk_space" {
+		t.Fatalf("low-disk sync = %q/%q, want partial/low_disk_space", state.Status, state.Note)
+	}
+	if state.Requests != 0 || state.DirsProbed != 0 {
+		t.Fatalf("low-disk sync spent %d requests on %d probes", state.Requests, state.DirsProbed)
+	}
+	var due int64
+	if err := f.server.db.QueryRow(`SELECT CAST(value_json AS INTEGER) FROM app_setting WHERE key=?`, catalogDailySettingPrefix+"1").Scan(&due); err != nil {
+		t.Fatal(err)
+	}
+	if remaining := due - time.Now().Unix(); remaining < 50*60 || remaining > 70*60 {
+		t.Fatalf("daily due in %d seconds, want about an hour", remaining)
+	}
+}
+
+// Phase timings describe the sync itself, not the full crawl it reuses.
+func TestCatalogSyncRecordsPhaseTimingsOnItsOwnRun(t *testing.T) {
+	tree := newCatalogSyncTestTree()
+	tree.set("/", catalogSyncTestEntry{Name: "Partition A", IsDir: true, Modified: "p1"})
+	tree.set("/Partition A", catalogSyncTestEntry{Name: "Work 001", IsDir: true, Modified: "w1"})
+	tree.set("/Partition A/Work 001", catalogSyncTestEntry{Name: "01.mp3", Size: 100, Modified: "f1"})
+	f := newCatalogSyncFixture(t, tree)
+	if p := f.runFullScan(t, ""); p["status"] != "complete" {
+		t.Fatalf("full scan did not complete: %#v", p)
+	}
+	tree.set("/", catalogSyncTestEntry{Name: "Partition A", IsDir: true, Modified: "p1"},
+		catalogSyncTestEntry{Name: "Partition B", IsDir: true, Modified: "q1"})
+	tree.set("/Partition B", catalogSyncTestEntry{Name: "Work B", IsDir: true, Modified: "wb1"})
+	tree.set("/Partition B/Work B", catalogSyncTestEntry{Name: "b.mp3", Size: 100, Modified: "fb1"})
+	state := f.runCatalogSync(t, false)
+	if state.Status != "succeeded" {
+		t.Fatalf("sync = %#v", state)
+	}
+	var generation int64
+	if err := f.server.db.QueryRow(`SELECT workflow_run_id FROM source_catalog_scan WHERE file_source_id=?`, f.sourceID(t)).Scan(&generation); err != nil {
+		t.Fatal(err)
+	}
+	var syncRun int64
+	if err := f.server.db.QueryRow(`SELECT r.id FROM workflow_run r JOIN workflow_job j ON j.workflow_run_id=r.id
+		WHERE j.worker_type=? ORDER BY r.id DESC LIMIT 1`, sourceCatalogSyncWorkerType).Scan(&syncRun); err != nil {
+		t.Fatal(err)
+	}
+	if syncRun == generation {
+		t.Fatalf("sync reused the full generation run %d", generation)
+	}
+	var phases int
+	if err := f.server.db.QueryRow(`SELECT count(*) FROM source_catalog_phase_timing WHERE workflow_run_id=? AND phase='scan'`, syncRun).Scan(&phases); err != nil {
+		t.Fatal(err)
+	}
+	if phases != 1 {
+		t.Fatalf("sync scan phases = %d, want 1", phases)
+	}
+	var generationScans int
+	if err := f.server.db.QueryRow(`SELECT count(*) FROM source_catalog_phase_timing WHERE workflow_run_id=? AND phase='scan'`, generation).Scan(&generationScans); err != nil {
+		t.Fatal(err)
+	}
+	if generationScans != 1 {
+		t.Fatalf("full generation scan phases = %d, want the single full crawl phase", generationScans)
+	}
+}
+
+// A process that stopped mid-sync leaves a running row. Startup clears it so
+// the same day can run instead of waiting for the six-hour stale window.
+func TestCatalogSyncStartupClearsAnInterruptedRun(t *testing.T) {
+	tree := newCatalogSyncTestTree()
+	tree.set("/", catalogSyncTestEntry{Name: "Partition A", IsDir: true, Modified: "p1"})
+	tree.set("/Partition A", catalogSyncTestEntry{Name: "Work 001", IsDir: true, Modified: "w1"})
+	tree.set("/Partition A/Work 001", catalogSyncTestEntry{Name: "01.mp3", Size: 100, Modified: "f1"})
+	f := newCatalogSyncFixture(t, tree)
+	if p := f.runFullScan(t, ""); p["status"] != "complete" {
+		t.Fatalf("full scan did not complete: %#v", p)
+	}
+	if _, err := f.server.db.Exec(`INSERT INTO source_catalog_sync_run(file_source_id,status,note) VALUES(?,'running','')`, f.sourceID(t)); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.server.settleInterruptedCatalogSyncTiming(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	var status, note string
+	if err := f.server.db.QueryRow(`SELECT status,note FROM source_catalog_sync_run ORDER BY id DESC LIMIT 1`).Scan(&status, &note); err != nil {
+		t.Fatal(err)
+	}
+	if status != "failed" || !strings.Contains(note, "startup interrupted") {
+		t.Fatalf("interrupted sync = %q/%q", status, note)
+	}
+	state := f.runCatalogSync(t, false)
+	if state.Status != "succeeded" {
+		t.Fatalf("next sync after startup cleanup = %q/%q", state.Status, state.Note)
 	}
 }
 

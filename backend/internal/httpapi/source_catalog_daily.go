@@ -30,6 +30,15 @@ func setCatalogDailyNextUpdateTx(ctx context.Context, tx *sql.Tx, sourceID int64
 	return err
 }
 
+// setCatalogDailyDue overrides the next daily tick. A maintenance hold or a
+// low-disk pause uses it so the source is retried when the condition ends
+// instead of waiting a full day.
+func (s *Server) setCatalogDailyDue(ctx context.Context, sourceID int64, due time.Time) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO app_setting(key,value_json) VALUES(?,?)
+		ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json`, catalogDailySettingPrefix+strconv.FormatInt(sourceID, 10), due.UTC().Unix())
+	return err
+}
+
 // markCatalogFullGenerationTx records when a new full generation was actually
 // enqueued. The marker uses catalogTime, not CURRENT_TIMESTAMP, so a test or an
 // operator clock and the weekly interval agree.
