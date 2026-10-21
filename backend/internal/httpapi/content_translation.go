@@ -2,10 +2,13 @@ package httpapi
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"net/http"
 	"slices"
+	"strconv"
 
 	"github.com/yexca/kikoto/backend/internal/translation"
 )
@@ -135,15 +138,17 @@ func (s *Server) translateContent(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, result)
 }
 
-// contentTranslationVersion identifies the configured model and the prompt
-// template. It is intentionally short: the browser only compares it for
-// equality and never parses it.
+// contentTranslationVersion identifies everything that changes the bytes a
+// model returns: the endpoint, the model name, the reasoning switch and the
+// prompt template. The browser only compares it for equality. The endpoint is
+// hashed so a viewer never receives a URL or a credential hint in the version.
 func (s *Server) contentTranslationVersion(ctx context.Context) string {
 	cfg, err := translation.NewStore(s.db).Load(ctx)
 	if err != nil {
 		return ""
 	}
-	return cfg.Model + "|" + translation.TemplateVersion
+	sum := sha256.Sum256([]byte(cfg.BaseURL))
+	return cfg.Model + "|" + strconv.FormatBool(cfg.DisableThinking) + "|" + hex.EncodeToString(sum[:8]) + "|" + translation.TemplateVersion
 }
 
 // translateContentField is the shared body of the single and batch endpoints.

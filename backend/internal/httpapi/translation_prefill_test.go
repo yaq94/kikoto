@@ -24,9 +24,15 @@ func configurePrefillModel(t *testing.T, host *httptest.Server, admin *http.Cook
 	translationRequest(t, host, admin, "PATCH", "/api/settings/translation", string(payload), http.StatusOK)
 }
 
+// seedPrefillCard seeds one admitted OpenList card. The prefill pass only walks
+// entries behind an enabled OpenList source, so the fixture owns that source.
 func seedPrefillCard(t *testing.T, s *Server, id int64, title string) {
 	t.Helper()
-	if _, err := s.db.Exec(`INSERT INTO source_catalog_entry(id,root_path,title) VALUES(?,?,?)`, id, "/"+title, title); err != nil {
+	if _, err := s.db.Exec(`INSERT OR IGNORE INTO file_source(id,code,display_name,source_type,enabled)
+		VALUES(1,'prefill-fixture','Example Source','openlist',1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`INSERT INTO source_catalog_entry(id,file_source_id,root_path,title,availability_status) VALUES(?,1,?,?,'available')`, id, "/"+title, title); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -266,6 +272,37 @@ func TestTranslationPrefillBatchAvoidsFullCorpusStatistics(t *testing.T) {
 	}
 }
 
+// The background pass has no viewer to scope it. It must not translate cards
+// behind a disabled source or a source that is no longer an OpenList catalog.
+func TestTranslationPrefillSkipsDisabledAndForeignSources(t *testing.T) {
+	var calls atomic.Int32
+	model := successfulPrefillModel(t, &calls)
+	defer model.Close()
+	s, host, admin, _ := translationHTTPFixture(t)
+	configurePrefillModel(t, host, admin, model.URL)
+	if _, err := s.db.Exec(`INSERT INTO file_source(id,code,display_name,source_type,enabled)
+		VALUES(1,'prefill-disabled','Disabled Source','openlist',0),(2,'prefill-other','Other Source','localfs',1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`INSERT INTO source_catalog_entry(id,file_source_id,root_path,title,availability_status)
+		VALUES(1,1,'/Disabled','Disabled title','available'),(2,2,'/Foreign','Foreign title','available')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.runTranslationPrefillBatch(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if calls.Load() != 0 {
+		t.Fatalf("model calls for out-of-scope sources = %d, want 0", calls.Load())
+	}
+	var rows int
+	if err := s.db.QueryRow(`SELECT count(*) FROM content_translation`).Scan(&rows); err != nil {
+		t.Fatal(err)
+	}
+	if rows != 0 {
+		t.Fatalf("wrote %d rows for out-of-scope sources", rows)
+	}
+}
+
 func TestTranslationPrefillLoadsProtectedNamesOncePerEntry(t *testing.T) {
 	db, counter := openCatalogCountingTestDB(t)
 	s := NewServer(db, config.Config{})
@@ -281,13 +318,15 @@ func TestTranslationPrefillLoadsProtectedNamesOncePerEntry(t *testing.T) {
 	if _, err := s.runTranslationPrefillBatch(context.Background()); err != nil {
 		t.Fatal(err)
 	}
+	// The sidecar query is the protected-name read for an unregistered card.
+	// It must run once for the entry, not once per target language.
 	loads := 0
 	for _, statement := range counter.snapshot() {
-		if strings.Contains(statement, "FROM source_catalog_entry WHERE id=?") {
+		if strings.Contains(statement, "SELECT sidecar_json FROM source_catalog_entry WHERE id=?") {
 			loads++
 		}
 	}
 	if loads != 1 {
-		t.Fatalf("catalog entry loads = %d, want once for all languages of one entry", loads)
+		t.Fatalf("protected-name loads = %d, want once for all languages of one entry", loads)
 	}
 }

@@ -375,9 +375,14 @@ type translationPrefillEntry struct {
 }
 
 func (s *Server) translationPrefillEntries(ctx context.Context, after int64) ([]translationPrefillEntry, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, COALESCE(file_source_id,0), title FROM source_catalog_entry
-		WHERE id>? AND relocated_to_id IS NULL AND availability_status='available' AND trim(title)<>''
-		ORDER BY id LIMIT ?`, after, translationPrefillBatchSize)
+	// The background pass has no viewer to scope it. It must honour the same
+	// source boundary as the reader: a disabled source, or a source that is no
+	// longer an admitted catalog, is not sent to the model.
+	rows, err := s.db.QueryContext(ctx, `SELECT e.id, COALESCE(e.file_source_id,0), e.title FROM source_catalog_entry e
+		JOIN file_source source ON source.id=e.file_source_id
+		WHERE e.id>? AND e.relocated_to_id IS NULL AND e.availability_status='available' AND trim(e.title)<>''
+			AND source.enabled=1 AND source.source_type=?
+		ORDER BY e.id LIMIT ?`, after, sourceTypeOpenList, translationPrefillBatchSize)
 	if err != nil {
 		return nil, err
 	}
@@ -400,9 +405,10 @@ func (s *Server) translationPrefillEntries(ctx context.Context, after int64) ([]
 // cursor movement and retry accounting.
 func (s *Server) translationPrefillFields(ctx context.Context, cfg translation.Config, entries []translationPrefillEntry) (int, map[int64]error, error) {
 	type entryTasks struct {
-		entry translationPrefillEntry
-		once  sync.Once
-		names []string
+		entry    translationPrefillEntry
+		once     sync.Once
+		names    []string
+		namesErr error
 	}
 	type task struct {
 		work     *entryTasks
@@ -478,14 +484,17 @@ func (s *Server) translationPrefillFields(ctx context.Context, cfg translation.C
 			defer wg.Done()
 			defer func() { <-sem }()
 			item.work.once.Do(func() {
-				names, namesErr := s.catalogEntryProtectedNamesForPrefill(ctx, item.work.entry.id)
-				if namesErr != nil {
-					names = nil
-				}
-				item.work.names = names
+				item.work.names, item.work.namesErr = s.catalogEntryProtectedNamesForPrefill(ctx, item.work.entry.id)
 			})
+			// A protected-name lookup that failed cannot be told apart from an
+			// empty list. Sending the title without them would hand a published
+			// circle or cast name to the model, so the entry waits for a retry.
+			if item.work.namesErr != nil {
+				recordFailure(item.work.entry.id, item.work.namesErr)
+				return
+			}
 			target := translationTarget{modelLanguage: item.language}
-			text, translateErr := s.translateWithQueue(ctx, cfg, item.key, item.work.names, item.work.entry.title, target, "")
+			text, translateErr := s.translateInBackground(ctx, cfg, item.key, item.work.names, item.work.entry.title, target)
 			if translateErr != nil {
 				recordFailure(item.work.entry.id, translateErr)
 				return

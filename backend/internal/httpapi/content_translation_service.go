@@ -116,11 +116,24 @@ func displayText(text, language string, target translationTarget, names []string
 // lane, then restores the protected names. The queue deduplicates readers of
 // the same key, so two panels asking for one title share a single call.
 func (s *Server) translateWithQueue(ctx context.Context, cfg translation.Config, key string, names []string, text string, target translationTarget, displayLanguage string) (string, error) {
+	return s.translateOnLane(ctx, cfg, key, names, text, target, false)
+}
+
+// translateInBackground uses the background lane. A prefill pass must never
+// sit in front of a viewer, and the lane already lowers its concurrency during
+// the day.
+func (s *Server) translateInBackground(ctx context.Context, cfg translation.Config, key string, names []string, text string, target translationTarget) (string, error) {
+	return s.translateOnLane(ctx, cfg, key, names, text, target, true)
+}
+
+func (s *Server) translateOnLane(ctx context.Context, cfg translation.Config, key string, names []string, text string, target translationTarget, background bool) (string, error) {
 	protected, err := translation.Protect(text, names)
 	if err != nil {
 		return "", err
 	}
-	result, err := s.contentTranslationQueue(cfg).Do(ctx, key, time.Duration(cfg.TimeoutSeconds)*time.Second, false, func(callCtx context.Context) (translation.Result, error) {
+	queue := s.contentTranslationQueue(cfg)
+	timeout := time.Duration(cfg.TimeoutSeconds) * time.Second
+	run := func(callCtx context.Context) (translation.Result, error) {
 		if cfg.BaseURL == "" {
 			return translation.Result{}, &translation.Error{Code: "translation_not_configured", Message: "Configure a translation service first."}
 		}
@@ -131,7 +144,13 @@ func (s *Server) translateWithQueue(ctx context.Context, cfg translation.Config,
 		defer client.CloseIdleConnections()
 		input := translation.Input{Text: protected.Text, TargetLanguage: target.modelLanguage}
 		return translation.Translate(callCtx, client, cfg, input)
-	})
+	}
+	var result translation.Result
+	if background {
+		result, err = queue.DoBackground(ctx, key, timeout, run)
+	} else {
+		result, err = queue.Do(ctx, key, timeout, false, run)
+	}
 	if err != nil {
 		return "", err
 	}
