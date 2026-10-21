@@ -882,7 +882,7 @@ func openListCatalogCardsQueryFiltered(sourceID int64, query string, entryIDs []
 			WHERE mm.series_id=s.id AND ee.relocated_to_id IS NULL AND ` + catalogEntryAdmittedSQL("ee") + `
 		) AS has_audio FROM catalog_series s
 		WHERE (SELECT COUNT(*) FROM catalog_series_member all_members WHERE all_members.series_id=s.id)>=2` + seriesScope + `
-		AND EXISTS(SELECT 1 FROM catalog_series_member m JOIN source_catalog_entry e ON e.id=m.catalog_entry_id
+		AND EXISTS(SELECT 1 FROM catalog_series_member m CROSS JOIN source_catalog_entry e ON e.rowid=m.catalog_entry_id
 		WHERE m.series_id=s.id AND e.file_source_id=? AND e.relocated_to_id IS NULL AND ` + catalogEntryAdmittedSQL("e") + seriesSearch + `)
 	) AS candidates) AS cards WHERE identity_rank=1`
 	args = append(args, sourceID)

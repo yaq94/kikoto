@@ -340,8 +340,9 @@ func TestOpenListCatalogTracksLargeCardSummary(t *testing.T) {
 }
 
 // A display-language page joins the card source to a translated hit set. The
-// card pipeline must still read entries through the live-root index and must
-// not fall back to scanning file rows.
+// hit set already names the entries, so every entry read must be a primary-key
+// probe: the live-root index must not be entered at all, and file rows must not
+// be scanned.
 func TestOpenListCatalogLanguageSearchPlan(t *testing.T) {
 	db := openMigratedTestDB(t)
 	seedCatalogPlanSource(t, db)
@@ -366,8 +367,11 @@ func TestOpenListCatalogLanguageSearchPlan(t *testing.T) {
 	if strings.Contains(plan, "SCAN source_catalog_file") {
 		t.Fatalf("language search scans source_catalog_file: %s", plan)
 	}
-	if !strings.Contains(plan, "SEARCH e USING INDEX source_catalog_entry_live_root") {
-		t.Fatalf("language search does not read entries through the live-root index: %s", plan)
+	if strings.Contains(plan, "source_catalog_entry_live_root") {
+		t.Fatalf("language search re-enters the live-root index instead of probing matched ids: %s", plan)
+	}
+	if !strings.Contains(plan, "SEARCH e USING INTEGER PRIMARY KEY (rowid=?)") {
+		t.Fatalf("language search does not probe entries by rowid: %s", plan)
 	}
 	var total, rows int
 	if err := db.QueryRow(pageSQL, append(append([]any{}, args...), append(rankArgs, 2, 0)...)...).Scan(new(int64), new(int64), new(string), new(string), new(sql.NullInt64), new(string), new(string), new(bool), &total); err != nil {
@@ -376,5 +380,39 @@ func TestOpenListCatalogLanguageSearchPlan(t *testing.T) {
 	rows = 1
 	if total != 6 || rows != 1 {
 		t.Fatalf("language page total=%d rows=%d, want 6/1", total, rows)
+	}
+}
+
+// A keyword search must keep the same "entry source read once" property as an
+// empty browse: the series membership probe looks entries up by rowid, so the
+// live-root index is not re-entered once per series.
+func TestOpenListCatalogSearchSingleEntryScan(t *testing.T) {
+	db := openMigratedTestDB(t)
+	seedCatalogPlanSource(t, db)
+	for index := 1; index <= 6; index++ {
+		insertCatalogPlanEntry(t, db, int64(index), fmt.Sprintf("Episode %d", index), "")
+		insertCatalogPlanAudio(t, db, int64(index), "track.mp3", fmt.Sprintf("Track %d", index))
+	}
+	if _, err := db.Exec(`INSERT INTO catalog_series(id,title,source_id) VALUES(1,'Beta Collection',7);
+		INSERT INTO catalog_series_member(series_id,catalog_entry_id,position,evidence) VALUES(1,1,1,'manual'),(1,2,2,'manual');`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`ANALYZE`); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, query := range []string{"Episode 1", "Ep"} {
+		t.Run(query, func(t *testing.T) {
+			prefix, from, args := openListCatalogCardsQuery(7, query)
+			searchSQL := prefix + `SELECT id,series_id,COUNT(*) OVER () AS total ` + from + ` ORDER BY updated_at DESC,series_id DESC,id DESC LIMIT 24 OFFSET 0`
+			plan := explainCatalogPlan(t, db, searchSQL, args...)
+			t.Logf("%q plan:\n%s", query, plan)
+			if count := strings.Count(plan, "SEARCH e USING INDEX source_catalog_entry_live_root"); count != 1 {
+				t.Fatalf("query %q reads the entry source %d times, want 1: %s", query, count, plan)
+			}
+			if !strings.Contains(plan, "SEARCH e USING INTEGER PRIMARY KEY (rowid=?)") {
+				t.Fatalf("query %q does not probe entries by rowid: %s", query, plan)
+			}
+		})
 	}
 }
