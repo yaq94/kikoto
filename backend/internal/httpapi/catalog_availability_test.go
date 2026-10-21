@@ -53,6 +53,19 @@ func TestCatalogDirectoryListingChecksUnknownAndStaleTabs(t *testing.T) {
 	if len(directories) != 2 {
 		t.Fatalf("directories = %#v", directories)
 	}
+	// A card that was never probed must not borrow updated_at as its check
+	// time; only status_checked_at records a real source observation.
+	checkedAt := map[float64]string{}
+	for _, raw := range directories {
+		item := raw.(map[string]any)
+		checkedAt[item["catalogEntryId"].(float64)] = item["checkedAt"].(string)
+	}
+	if checkedAt[1] != "" {
+		t.Fatalf("never-checked card reports checkedAt=%q", checkedAt[1])
+	}
+	if checkedAt[2] == "" {
+		t.Fatalf("checked card lost its checkedAt")
+	}
 	f.server.catalogAvailabilityMu.Lock()
 	queued := len(f.server.catalogAvailabilityQueued)
 	f.server.catalogAvailabilityMu.Unlock()

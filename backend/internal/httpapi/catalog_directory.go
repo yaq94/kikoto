@@ -129,7 +129,10 @@ func (s *Server) getWorkCatalogDirectories(w http.ResponseWriter, r *http.Reques
 	)
 	SELECT entry.id,COALESCE(entry.file_source_id,0),COALESCE(source.display_name,''),entry.title,entry.primary_code,COALESCE(source.enabled,0),entry.work_id,
 	 CASE WHEN entry.file_source_id IS NULL THEN 'missing' ELSE entry.availability_status END,
-	 COALESCE(strftime('%Y-%m-%dT%H:%M:%SZ',COALESCE(entry.status_checked_at,entry.updated_at)),'')
+	 -- Only a real probe or a complete republication records when the source
+	 -- was checked. updated_at also moves on unrelated edits, so using it here
+	 -- would show a check time that never happened.
+	 COALESCE(strftime('%Y-%m-%dT%H:%M:%SZ',entry.status_checked_at),'')
 	FROM source_catalog_entry AS entry LEFT JOIN file_source AS source ON source.id=entry.file_source_id
 	WHERE entry.relocated_to_id IS NULL AND (source.source_type='openlist' OR entry.file_source_id IS NULL)
 		AND (entry.work_id IN (SELECT work_id FROM family) OR (entry.work_id IS NULL AND entry.primary_code<>'' AND
