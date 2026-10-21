@@ -162,7 +162,7 @@ func (s *Server) recordCatalogPhase(ctx context.Context, runID int64, phase stri
 	_, _ = s.db.ExecContext(ctx, `INSERT INTO source_catalog_phase_timing(workflow_run_id,phase,started_at,finished_at,duration_ms)
 		VALUES(?,?,?,?,?)
 		ON CONFLICT(workflow_run_id,phase) DO UPDATE SET
-			started_at=excluded.started_at, finished_at=excluded.finished_at,
+			started_at=min(started_at, excluded.started_at), finished_at=max(finished_at, excluded.finished_at),
 			duration_ms=duration_ms+excluded.duration_ms`,
 		runID, phase, started.UTC().Format("2006-01-02 15:04:05"), finished.UTC().Format("2006-01-02 15:04:05"), elapsed.Milliseconds())
 }
