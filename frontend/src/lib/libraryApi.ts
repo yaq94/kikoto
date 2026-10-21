@@ -281,9 +281,10 @@ export const libraryApi = {
     recommendBadges = false,
     signal?: AbortSignal,
     recommendationSession = "",
+    language = "origin",
   ) =>
     getJSON<WorksPage>(
-      `/api/works?page=${page}&pageSize=${pageSize}&scope=${encodeURIComponent(scope)}&status=${encodeURIComponent(status)}&sort=${encodeURIComponent(sort)}&direction=${encodeURIComponent(direction)}&seed=${seed}&recommendBadges=${recommendBadges}${recommendationSession ? `&recommendationSession=${encodeURIComponent(recommendationSession)}` : ""}${query.trim() ? `&q=${encodeURIComponent(query.trim())}` : ""}`,
+      `/api/works?page=${page}&pageSize=${pageSize}&scope=${encodeURIComponent(scope)}&status=${encodeURIComponent(status)}&sort=${encodeURIComponent(sort)}&direction=${encodeURIComponent(direction)}&seed=${seed}&recommendBadges=${recommendBadges}${recommendationSession ? `&recommendationSession=${encodeURIComponent(recommendationSession)}` : ""}${query.trim() ? `&q=${encodeURIComponent(query.trim())}` : ""}${language && language !== "origin" ? `&lang=${encodeURIComponent(language)}` : ""}`,
       signal,
     ),
   checkUnlinkedWorkSources: (workIds: number[]) =>

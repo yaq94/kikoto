@@ -333,9 +333,10 @@ export const remoteSourceApi = {
     recommendBadges = false,
     signal?: AbortSignal,
     recommendationSession = "",
+    language = "origin",
   ) =>
     getJSON<RemoteWorksResponse>(
-      `/api/remote-sources/${id}/works?page=${page}&pageSize=${pageSize}&sort=${encodeURIComponent(sort)}&direction=${encodeURIComponent(direction)}&seed=${seed}&recommendBadges=${recommendBadges}${query.trim() ? `&q=${encodeURIComponent(query.trim())}` : ""}${recommendationSession ? `&recommendationSession=${encodeURIComponent(recommendationSession)}` : ""}`,
+      `/api/remote-sources/${id}/works?page=${page}&pageSize=${pageSize}&sort=${encodeURIComponent(sort)}&direction=${encodeURIComponent(direction)}&seed=${seed}&recommendBadges=${recommendBadges}${query.trim() ? `&q=${encodeURIComponent(query.trim())}` : ""}${recommendationSession ? `&recommendationSession=${encodeURIComponent(recommendationSession)}` : ""}${language && language !== "origin" ? `&lang=${encodeURIComponent(language)}` : ""}`,
       signal,
     ),
   scoreRemoteRecommendations: (

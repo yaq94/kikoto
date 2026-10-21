@@ -55,6 +55,7 @@ export function useRemoteSourceWorks({
   randomSeed,
   inlineRecommendations,
   recommendationSessionId,
+  language,
   onResultsShown,
 }: {
   /** The Library list is the surface on screen. */
@@ -72,6 +73,8 @@ export function useRemoteSourceWorks({
   randomSeed: number;
   inlineRecommendations: boolean;
   recommendationSessionId: string;
+  /** Display language requested from the server; `origin` keeps the old query. */
+  language: string;
   onResultsShown: () => void;
 }) {
   const [result, setResult] = useState<RemoteWorksResponse | null>(null);
@@ -80,6 +83,14 @@ export function useRemoteSourceWorks({
   const loadedRequestKey = useRef("");
   const skipNextEffect = useRef(false);
   const currentResultSourceId = useStableCallback(() => result?.sourceId);
+  // A new display language invalidates what is on screen, not the persistent
+  // translation cache, which is keyed by language.
+  const loadedLanguage = useRef(language);
+  useEffect(() => {
+    if (loadedLanguage.current === language) return;
+    loadedLanguage.current = language;
+    setResult(null);
+  }, [language]);
 
   useEffect(() => {
     if (!visible || !ready || isRestorePending()) return;
@@ -104,6 +115,7 @@ export function useRemoteSourceWorks({
       randomSeed,
       inlineRecommendations,
       recommendationSessionId,
+      language,
     ]);
     // Switching to a local tab clears the remote result. The request key can
     // still match a previous successful load, so only reuse it while that
@@ -124,6 +136,7 @@ export function useRemoteSourceWorks({
         inlineRecommendations,
         controller.signal,
         recommendationSessionId,
+        language,
       )
       .then((loaded) => {
         if (controller.signal.aborted || seq !== requestSeq.current) return;
@@ -152,6 +165,7 @@ export function useRemoteSourceWorks({
     randomSeed,
     inlineRecommendations,
     recommendationSessionId,
+    language,
     currentResultSourceId,
     onResultsShown,
   ]);
@@ -176,6 +190,7 @@ export function useRemoteSourceWorks({
         inlineRecommendations,
         undefined,
         recommendationSessionId,
+        language,
       )
       .then((loaded) => {
         if (seq !== requestSeq.current) return;

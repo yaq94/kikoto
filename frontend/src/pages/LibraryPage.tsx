@@ -16,6 +16,8 @@ import { openWorkDetail, workDetailCodeFromLocation } from "@/app/workDetailNavi
 import { useAuth } from "@/auth/AuthProvider";
 import { REMOTE_TRACK_PERMISSIONS, usePermissionGate } from "@/auth/usePermissionGate";
 import { BrowseLoadingIndicator } from "@/components/collection/BrowseLoadingIndicator";
+import { useContentLanguage } from "@/components/content-translation/ContentTranslation";
+import { useContentTranslationPrefetch } from "@/components/content-translation/ContentTranslationProvider";
 import { DemoContentNotice, DemoRemoteSourceNotice } from "@/components/DemoReadOnlyNotice";
 import { MetadataOnboardingNotice } from "@/components/MetadataOnboardingNotice";
 import { AnchoredPopover } from "@/components/ui/anchored-popover";
@@ -37,6 +39,7 @@ import { useRemoteFetchWorkspace } from "@/features/work-detail/workflows/useRem
 import { useMobileNavigationLayout } from "@/hooks/useMobileNavigationLayout";
 import { useStableCallback } from "@/hooks/useStableCallback";
 import i18n from "@/i18n";
+import { buildPrefetchWindow } from "@/lib/contentTranslationPrefetch";
 import {
   api,
   type LibrarySort,
@@ -157,6 +160,8 @@ export function LibraryPage({ active = true }: { active?: boolean }) {
   }, [active]);
   const toast = useToast();
   const auth = useAuth();
+  const contentLanguage = useContentLanguage();
+  const translationPrefetch = useContentTranslationPrefetch();
   const { t } = useTranslation();
   const mobileNavigationLayout = useMobileNavigationLayout();
   const principalID = auth.user?.id ?? null;
@@ -346,6 +351,7 @@ export function LibraryPage({ active = true }: { active?: boolean }) {
       sort: librarySort,
       direction: sortDirection,
       randomSeed,
+      language: contentLanguage,
     },
     recommendations,
     onResultsShown: resultsScroll.complete,
@@ -419,6 +425,7 @@ export function LibraryPage({ active = true }: { active?: boolean }) {
     randomSeed,
     inlineRecommendations: remoteInlineRecommendations,
     recommendationSessionId: recommendationSession.id,
+    language: contentLanguage,
     onResultsShown: resultsScroll.complete,
   });
 
@@ -426,6 +433,130 @@ export function LibraryPage({ active = true }: { active?: boolean }) {
   useEffect(() => {
     setRemoteSelectionMode(false);
   }, [activeTab.kind, activeRemoteSourceId]);
+
+  // Warm titles for the current page and the nine after it. This starts only
+  // after the visible page has settled, so the first screen keeps the queue.
+  // The queue never aborts work already sent, so fast paging only adds pages.
+  const prefetchedWindow = useRef("");
+  useEffect(() => {
+    if (!active || !showBrowse || contentLanguage === "origin") return;
+    if (activeTab.kind === "source") {
+      const source = activeTab.source;
+      const state = remoteSourceStates[source.id] ?? defaultRemoteSourceViewState;
+      if (remoteWorks.isLoading || !remoteWorks.result) return;
+      const windowKey = JSON.stringify([
+        "remote",
+        source.id,
+        state.page,
+        state.pageSize,
+        remoteSearchQuery,
+        librarySort,
+        sortDirection,
+        randomSeed,
+        contentLanguage,
+      ]);
+      if (prefetchedWindow.current === windowKey) return;
+      prefetchedWindow.current = windowKey;
+      translationPrefetch.warmTitles({
+        namespace: `remote:${source.id}:${remoteSearchQuery}:${librarySort}:${sortDirection}`,
+        scope: browseStorageScope,
+        language: contentLanguage,
+        window: buildPrefetchWindow(state.page, state.pageSize, 9),
+        loadPage: async (page, pageSize) => {
+          const loaded = await api.listRemoteSourceWorks(
+            source.id,
+            page,
+            pageSize,
+            remoteSearchQuery,
+            remoteLibrarySort(librarySort),
+            sortDirection,
+            randomSeed,
+            remoteInlineRecommendations,
+            undefined,
+            recommendationSession.id,
+            contentLanguage,
+          );
+          return loaded.works.flatMap((work) => {
+            const input = work.seriesId
+              ? { seriesId: work.seriesId }
+              : work.catalogEntryId
+                ? { catalogEntryId: work.catalogEntryId }
+                : null;
+            if (!input) return [];
+            return [{ ...input, field: "title" as const, text: work.title, language: contentLanguage }];
+          });
+        },
+      });
+      return;
+    }
+    if (localWorks.isLoading || localWorks.works.length === 0) return;
+    const windowKey = JSON.stringify([
+      "local",
+      localScope,
+      workPage,
+      workPageSize,
+      librarySearchQuery,
+      statusFilter,
+      librarySort,
+      sortDirection,
+      randomSeed,
+      contentLanguage,
+    ]);
+    if (prefetchedWindow.current === windowKey) return;
+    prefetchedWindow.current = windowKey;
+    translationPrefetch.warmTitles({
+      namespace: `local:${localScope}:${librarySearchQuery}:${librarySort}:${sortDirection}`,
+      scope: browseStorageScope,
+      language: contentLanguage,
+      window: buildPrefetchWindow(workPage, workPageSize, 9),
+      loadPage: async (page, pageSize) => {
+        const loaded = await api.listWorksPage(
+          page,
+          pageSize,
+          librarySearchQuery,
+          localScope,
+          statusFilter,
+          librarySort,
+          sortDirection,
+          randomSeed,
+          recommendBadgesEnabled && librarySort !== "recommend",
+          undefined,
+          recommendationSession.id,
+          contentLanguage,
+        );
+        return loaded.works.map((work) => ({
+          workId: work.id,
+          field: "title" as const,
+          text: work.title,
+          language: contentLanguage,
+        }));
+      },
+    });
+  }, [
+    active,
+    showBrowse,
+    contentLanguage,
+    activeTab,
+    remoteSourceStates,
+    remoteWorks.isLoading,
+    remoteWorks.result,
+    remoteSearchQuery,
+    localWorks.isLoading,
+    localWorks.works.length,
+    localScope,
+    workPage,
+    workPageSize,
+    librarySearchQuery,
+    statusFilter,
+    librarySort,
+    sortDirection,
+    randomSeed,
+    remoteInlineRecommendations,
+    recommendationSession.id,
+    recommendBadgesEnabled,
+    browseStorageScope,
+    translationPrefetch,
+  ]);
 
   useLayoutEffect(() => {
     if (!active) {
