@@ -218,7 +218,9 @@ test("a second visit reuses the browser translation cache without new requests @
   });
   let requests = 0;
   page.on("request", (request) => {
-    if (request.url().includes("/api/content-translations")) requests += 1;
+    // Only generation calls count. The version read is a cache identity check
+    // and must happen on every visit; it never asks the model for text.
+    if (request.method() === "POST" && request.url().includes("/api/content-translations")) requests += 1;
   });
   await page.goto("/RJ00000026");
   await chooseLanguage(page, "Simplified Chinese");
