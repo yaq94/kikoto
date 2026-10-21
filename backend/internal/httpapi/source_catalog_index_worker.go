@@ -132,6 +132,36 @@ func (s *Server) executeSourceCatalogIndexJob(ctx context.Context, job workflowJ
 			// drained by the independent sidecar worker, so this never
 			// extends the index job for a whole release tree.
 			s.refreshCatalogSidecars(ctx, input.SourceID)
+			p, err := s.sourceCatalogProgress(ctx, input.SourceID, 1)
+			if err != nil {
+				return err
+			}
+			// A root-level unconfirmed or failed listing makes the whole tree
+			// suspect, so a deletion decision waits for a later generation.
+			rootEmpty := false
+			if p.Empty > 0 {
+				if err = s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM source_catalog_directory
+					WHERE file_source_id=? AND generation=? AND status='empty' AND error_code<>'not_found' AND path='/')`,
+					input.SourceID, job.RunID).Scan(&rootEmpty); err != nil {
+					return err
+				}
+			}
+			// Retire stale split cards before the row cleanup. The cleanup tail
+			// walks every published card and can span many invocations on a large
+			// source; the visible duplicate is a correctness problem, while the old
+			// file rows are storage hygiene. Both are resumable and independent.
+			if !rootEmpty {
+				retired, err := s.retireOrphanSplitRootsBatch(ctx, job, input.SourceID)
+				if err != nil {
+					return err
+				}
+				if err = pauseCatalogWriter(ctx); err != nil {
+					return err
+				}
+				if retired == catalogRetireRoots {
+					return s.settleCatalogBatch(ctx, job, input.SourceID, "queued", "")
+				}
+			}
 			// No directory is left to observe and the publish queue is empty,
 			// so the set of entries this generation republished is final.
 			// Retire the rows an older generation left on those entries now;
@@ -160,25 +190,13 @@ func (s *Server) executeSourceCatalogIndexJob(ctx context.Context, job workflowJ
 			if scanned == catalogCleanupRows {
 				return s.settleCatalogBatch(ctx, job, input.SourceID, "queued", "")
 			}
-			p, err := s.sourceCatalogProgress(ctx, input.SourceID, 1)
-			if err != nil {
-				return err
-			}
-			status := "succeeded"
 			// An unconfirmed-empty directory is not proof that its range is
 			// complete, so it keeps the run partial. It does not block the
 			// lifecycle pass for ranges that were fully observed: other cards
 			// still need their own available/missing state. A failed,
 			// restricted or empty root is different: the whole listing is
 			// suspect and no lifecycle pass runs.
-			rootEmpty := false
-			if p.Empty > 0 {
-				if err = s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM source_catalog_directory
-					WHERE file_source_id=? AND generation=? AND status='empty' AND error_code<>'not_found' AND path='/')`,
-					input.SourceID, job.RunID).Scan(&rootEmpty); err != nil {
-					return err
-				}
-			}
+			status := "succeeded"
 			unconfirmedEmpty := 0
 			if p.Empty > 0 && !rootEmpty {
 				if err = s.db.QueryRowContext(ctx, `SELECT count(*) FROM source_catalog_directory
@@ -189,23 +207,6 @@ func (s *Server) executeSourceCatalogIndexJob(ctx context.Context, job workflowJ
 			}
 			if p.Failed+p.Restricted > 0 || rootEmpty || unconfirmedEmpty > 0 {
 				status = "partial"
-			}
-			// Orphan split retirement is per root and resumable, so a failure in
-			// one partition must not keep stale duplicate cards visible in the
-			// partitions that were observed completely. Lifecycle and staging
-			// cleanup still need the whole tree to be free of a failed or
-			// restricted listing, because they judge deletion.
-			if !rootEmpty {
-				retired, err := s.retireOrphanSplitRootsBatch(ctx, job, input.SourceID)
-				if err != nil {
-					return err
-				}
-				if err = pauseCatalogWriter(ctx); err != nil {
-					return err
-				}
-				if retired == catalogRetireRoots {
-					return s.settleCatalogBatch(ctx, job, input.SourceID, "queued", "")
-				}
 			}
 			if p.Failed+p.Restricted == 0 && !rootEmpty {
 				pending, err := s.settleCatalogLifecycleBatch(ctx, job, input.SourceID)
