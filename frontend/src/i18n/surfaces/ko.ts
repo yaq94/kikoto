@@ -166,9 +166,12 @@ export const surfaceKorean = {
   sourceIndex: {
     exclusions: {
       title: "디렉터리 제외",
-      hint: "제외한 디렉터리와 하위 경로는 스캔과 카드에서 빠집니다. 저장한 작품, 평가, 시리즈 소속은 유지됩니다.",
+      hint: "제외한 디렉터리와 하위 경로는 스캔과 카드에서 빠집니다. 하위 트리 예외를 두면 그 안의 지정 디렉터리는 유지됩니다. 저장한 작품, 평가, 시리즈 소속은 유지됩니다.",
       path: "디렉터리 경로",
       pathPlaceholder: "/예시 작품/추가 콘텐츠",
+      mode: "규칙 유형",
+      modeWhole: "하위 트리 제외",
+      modeWhitelist: "하위 트리 예외",
       note: "메모(선택)",
       add: "제외 추가",
       adding: "추가 중…",

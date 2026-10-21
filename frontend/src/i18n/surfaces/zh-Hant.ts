@@ -162,9 +162,12 @@ export const surfaceHant = {
   sourceIndex: {
     exclusions: {
       title: "目錄排除",
-      hint: "被排除的目錄及其全部子目錄不會進入掃描和卡片；已儲存的作品、評價和系列成員關係會保留。",
+      hint: "被排除的目錄及其全部子目錄不會進入掃描和卡片；子樹例外可保留其中的指定目錄。已儲存的作品、評價和系列成員關係會保留。",
       path: "目錄路徑",
       pathPlaceholder: "/範例作品/附加內容",
+      mode: "規則類型",
+      modeWhole: "排除整棵子樹",
+      modeWhitelist: "子樹例外",
       note: "備註（選填）",
       add: "新增排除",
       adding: "正在新增…",

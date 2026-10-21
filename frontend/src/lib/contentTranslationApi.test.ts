@@ -168,7 +168,7 @@ describe("contentTranslationApi.translateBatch", () => {
     await first;
     expect(signal?.aborted).toBe(false);
 
-    release();
+    release(undefined);
     await expect(second).resolves.toMatchObject({ status: "translated" });
   });
 

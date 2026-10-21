@@ -162,9 +162,12 @@ export const surfaceHans = {
   sourceIndex: {
     exclusions: {
       title: "目录排除",
-      hint: "被排除的目录及其全部子目录不会进入扫描和卡片；已保存的作品、评价和系列成员关系会保留。",
+      hint: "被排除的目录及其全部子目录不会进入扫描和卡片；子树例外可保留其中的指定目录。已保存的作品、评价和系列成员关系会保留。",
       path: "目录路径",
       pathPlaceholder: "/示例作品/附加内容",
+      mode: "规则类型",
+      modeWhole: "排除整棵子树",
+      modeWhitelist: "子树例外",
       note: "备注（可选）",
       add: "添加排除",
       adding: "正在添加…",

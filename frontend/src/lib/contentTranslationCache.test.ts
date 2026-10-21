@@ -225,3 +225,64 @@ describe("content translation cache", () => {
     await expect(second.get("scope", input(3))).resolves.not.toBeNull();
   });
 });
+
+describe("contentTranslationCache model and template versioning", () => {
+  it("invalidates a row produced by another model", async () => {
+    const cache = createContentTranslationCache({ indexedDB: null, subtle: null, hashText });
+    const item = input(1);
+    await cache.put("scope", item, { ...success("one"), version: "model-a|v1" });
+    await expect(cache.get("scope", item, "model-a|v1")).resolves.toMatchObject({ text: "t:one" });
+    await expect(cache.get("scope", item, "model-b|v1")).resolves.toBeNull();
+    expect(cache.memorySize()).toBe(0);
+  });
+
+  it("invalidates a row produced by another prompt template", async () => {
+    const cache = createContentTranslationCache({ indexedDB: null, subtle: null, hashText });
+    const item = input(2);
+    await cache.put("scope", item, { ...success("two"), version: "model-a|v1" });
+    await expect(cache.get("scope", item, "model-a|v2")).resolves.toBeNull();
+    expect(cache.memorySize()).toBe(0);
+  });
+
+  it("treats a row without a version as stale once the version is known", async () => {
+    const cache = createContentTranslationCache({ indexedDB: null, subtle: null, hashText });
+    const item = input(3);
+    await cache.put("scope", item, success("three"));
+    await expect(cache.get("scope", item, "model-a|v1")).resolves.toBeNull();
+    expect(cache.memorySize()).toBe(0);
+  });
+
+  it("keeps the previous behaviour while the expected version is unknown", async () => {
+    const cache = createContentTranslationCache({ indexedDB: null, subtle: null, hashText });
+    const versioned = input(4);
+    const unversioned = input(5);
+    await cache.put("scope", versioned, { ...success("four"), version: "model-a|v1" });
+    await cache.put("scope", unversioned, success("five"));
+    await expect(cache.get("scope", versioned)).resolves.toMatchObject({ text: "t:four" });
+    await expect(cache.get("scope", unversioned)).resolves.toMatchObject({ text: "t:five" });
+    expect(cache.memorySize()).toBe(2);
+  });
+
+  it("deletes a stale persisted row instead of serving it after a reload", async () => {
+    const { factory, stores } = fakeIndexedDB();
+    const first = createContentTranslationCache({ indexedDB: factory, subtle: null, hashText });
+    const item = input(6);
+    await first.put("scope", item, { ...success("six"), version: "model-a|v1" });
+
+    const second = createContentTranslationCache({ indexedDB: factory, subtle: null, hashText });
+    await expect(second.get("scope", item, "model-b|v1")).resolves.toBeNull();
+    expect([...(stores.get("kikoto-translations")?.values() ?? [])]).toHaveLength(0);
+  });
+
+  it("applies the same rule to has()", async () => {
+    const cache = createContentTranslationCache({ indexedDB: null, subtle: null, hashText });
+    const item = input(7);
+    await cache.put("scope", item, { ...success("seven"), version: "model-a|v1" });
+    await expect(cache.has("scope", item, "model-a|v1")).resolves.toBe(true);
+    // An unknown expectation still sees the row.
+    await expect(cache.has("scope", item)).resolves.toBe(true);
+    await expect(cache.has("scope", item, "model-a|v2")).resolves.toBe(false);
+    // The mismatch above removed the row, so the unknown read is a miss now.
+    await expect(cache.has("scope", item)).resolves.toBe(false);
+  });
+});

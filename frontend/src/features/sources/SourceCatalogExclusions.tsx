@@ -7,10 +7,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
 import {
+  CATALOG_EXCLUSION_MODES,
   catalogExclusionApi,
+  catalogExclusionMode,
   catalogExclusionPathProblem,
   normalizeCatalogExclusionPath,
   type CatalogExclusion,
+  type CatalogExclusionMode,
 } from "./catalogExclusions";
 
 /**
@@ -23,6 +26,7 @@ export function SourceCatalogExclusions({ sourceId }: { sourceId: number }) {
   const canWrite = auth.hasPermission("sources:write") && !auth.demoMode;
   const [items, setItems] = useState<CatalogExclusion[] | null>(null);
   const [path, setPath] = useState("");
+  const [mode, setMode] = useState<CatalogExclusionMode>("whole");
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [deleting, setDeleting] = useState<number | null>(null);
@@ -56,7 +60,9 @@ export function SourceCatalogExclusions({ sourceId }: { sourceId: number }) {
     try {
       await catalogExclusionApi.create(sourceId, {
         path: normalizeCatalogExclusionPath(path),
+        mode,
         note: note.trim(),
+        enabled: true,
       });
       setPath("");
       setNote("");
@@ -95,6 +101,24 @@ export function SourceCatalogExclusions({ sourceId }: { sourceId: number }) {
             onChange={(event) => setPath(event.target.value)}
           />
         </label>
+        <label className="grid min-w-40 gap-1 text-sm">
+          <span>{t("sourceIndex.exclusions.mode")}</span>
+          <select
+            className="h-9 rounded-md border bg-background px-2 text-sm"
+            aria-label={t("sourceIndex.exclusions.mode")}
+            value={mode}
+            disabled={busy}
+            onChange={(event) => setMode(event.target.value === "whitelist" ? "whitelist" : "whole")}
+          >
+            {CATALOG_EXCLUSION_MODES.map((option) => (
+              <option key={option} value={option}>
+                {option === "whitelist"
+                  ? t("sourceIndex.exclusions.modeWhitelist")
+                  : t("sourceIndex.exclusions.modeWhole")}
+              </option>
+            ))}
+          </select>
+        </label>
         <label className="grid min-w-40 flex-1 gap-1 text-sm">
           <span>{t("sourceIndex.exclusions.note")}</span>
           <Input value={note} onChange={(event) => setNote(event.target.value)} />
@@ -119,6 +143,11 @@ export function SourceCatalogExclusions({ sourceId }: { sourceId: number }) {
               <span className="min-w-0 flex-1">
                 <span className="block truncate font-medium">{item.path}</span>
                 {item.note && <span className="block truncate text-xs text-muted-foreground">{item.note}</span>}
+              </span>
+              <span className="shrink-0 rounded-full border border-border px-2 py-0.5 text-xs text-muted-foreground">
+                {catalogExclusionMode(item.mode) === "whitelist"
+                  ? t("sourceIndex.exclusions.modeWhitelist")
+                  : t("sourceIndex.exclusions.modeWhole")}
               </span>
               <Button
                 variant="ghost"

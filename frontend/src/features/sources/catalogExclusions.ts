@@ -3,6 +3,7 @@ import { deleteJSON, getJSON, postJSONBody } from "@/lib/apiTransport";
 export type CatalogExclusion = {
   id: number;
   path: string;
+  /** `whole` or `whitelist`; read `catalogExclusionMode` for the normalised value. */
   mode: string;
   action: string;
   note: string;
@@ -10,11 +11,26 @@ export type CatalogExclusion = {
   createdAt: string;
 };
 
+/**
+ * `whole` removes the path and everything below it. `whitelist` is a subtree
+ * exception: it keeps a path indexed even when an ancestor is excluded.
+ */
+export type CatalogExclusionMode = "whole" | "whitelist";
+
+export const CATALOG_EXCLUSION_MODES: readonly CatalogExclusionMode[] = ["whole", "whitelist"];
+
 export type CatalogExclusionInput = {
   path: string;
-  mode?: string;
+  mode?: CatalogExclusionMode;
   note?: string;
+  /** The server creates rules enabled; the field is part of the wire contract. */
+  enabled?: boolean;
 };
+
+/** Unknown or empty values from older rows fall back to the default rule. */
+export function catalogExclusionMode(value: string | undefined): CatalogExclusionMode {
+  return value === "whitelist" ? "whitelist" : "whole";
+}
 
 export type CatalogExclusionPathProblem = "empty" | "relative" | "parent" | "root" | null;
 

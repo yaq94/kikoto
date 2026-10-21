@@ -169,9 +169,12 @@ export const surfaceEnglish = {
   sourceIndex: {
     exclusions: {
       title: "Directory exclusions",
-      hint: "Excluded directories and everything below them stay out of scans and cards. Saved work, reviews and series membership remain.",
+      hint: "Excluded directories and everything below them stay out of scans and cards; a subtree exception keeps a chosen directory inside one. Saved work, reviews and series membership remain.",
       path: "Directory path",
       pathPlaceholder: "/Example Work/Extras",
+      mode: "Rule type",
+      modeWhole: "Exclude subtree",
+      modeWhitelist: "Subtree exception",
       note: "Note (optional)",
       add: "Add exclusion",
       adding: "Adding…",
