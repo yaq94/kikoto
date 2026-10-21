@@ -6,15 +6,24 @@ import { ApiError } from "@/lib/apiTransport";
 import { apiSessionVersion } from "@/lib/apiSession";
 import { currentClientStorageScope } from "@/lib/clientStorageScope";
 import {
-  contentTranslationApi,
+  ContentTranslationBatchError,
+  translateCoalesced,
+  type ContentTranslationInput,
   type ContentTranslationRequest,
   type ContentTranslationResource,
   type ContentTranslationResult,
 } from "@/lib/contentTranslationApi";
+import { contentTranslationCache } from "@/lib/contentTranslationCache";
 import { USER_PREFERENCES_CHANGED } from "@/lib/recommendationSession";
 import { CONTENT_LANGUAGE_CHANGED } from "@/lib/contentLanguageEvents";
 
-const LanguageContext = createContext({ language: "origin", session: "", revision: 0, canRead: false });
+const LanguageContext = createContext({
+  language: "origin",
+  accountScope: "",
+  session: "",
+  revision: 0,
+  canRead: false,
+});
 const ScopeContext = createContext<{
   resource?: ContentTranslationResource;
   original: boolean;
@@ -70,10 +79,22 @@ export function ContentLanguageProvider({ children }: { children: ReactNode }) {
   // successful language until its own read completes.
   const language = loaded.session === session ? loaded.language : "origin";
   return (
-    <LanguageContext.Provider value={{ language, session, revision, canRead: Boolean(userId && !demoMode) }}>
+    <LanguageContext.Provider
+      value={{ language, accountScope: scope, session, revision, canRead: Boolean(userId && !demoMode) }}
+    >
       {children}
     </LanguageContext.Provider>
   );
+}
+
+/** The selected display language, shared by visible titles and list queries. */
+export function useContentLanguage() {
+  return useContext(LanguageContext).language;
+}
+
+/** The account storage scope used by the persistent translation cache. */
+export function useContentLanguageScope() {
+  return useContext(LanguageContext).accountScope;
 }
 
 export function ContentTranslationScope({
@@ -129,7 +150,7 @@ export function TranslatedText({
   controls?: boolean;
 }) {
   const { t } = useTranslation();
-  const { language, session, revision, canRead } = useContext(LanguageContext);
+  const { language, accountScope, session, revision, canRead } = useContext(LanguageContext);
   const scope = useContext(ScopeContext);
   const resource = explicit ?? scope.resource;
   const [element, setElement] = useState<HTMLSpanElement | null>(null);
@@ -174,28 +195,48 @@ export function TranslatedText({
   useEffect(() => {
     if (!enabled || !visible) return;
     const controller = new AbortController();
-    void contentTranslationApi
-      .translate(input, controller.signal)
-      .then((result) => {
-        if (!controller.signal.aborted) setSettled({ key, result });
-      })
-      .catch((error) => {
-        if (!controller.signal.aborted)
-          setSettled({
-            key,
-            result: {
-              text,
-              original: text,
-              language,
-              status: "failed",
-              code: error instanceof ApiError ? error.code : "translation_unavailable",
-            },
-          });
-      });
-    return () => controller.abort();
-  }, [enabled, visible, key, input, text, language]);
+    const translationInput: ContentTranslationInput = input;
+    let cancelled = false;
+    const fail = (code: string) => {
+      if (cancelled || controller.signal.aborted) return;
+      setSettled({ key, result: { text, original: text, language, status: "failed", code } });
+    };
+    void (async () => {
+      // A cached display language paints without touching the network.
+      const cached = await contentTranslationCache.get(accountScope, translationInput);
+      if (cancelled || controller.signal.aborted) return;
+      if (cached) {
+        setSettled({
+          key,
+          result: { text: cached.text, original: cached.original, language, status: cached.status },
+        });
+        return;
+      }
+      try {
+        const result = await translateCoalesced(translationInput, controller.signal);
+        if (result.status !== "failed") {
+          void contentTranslationCache.put(accountScope, translationInput, result);
+        }
+        if (!cancelled && !controller.signal.aborted) setSettled({ key, result });
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        fail(
+          error instanceof ContentTranslationBatchError
+            ? error.code
+            : error instanceof ApiError
+              ? error.code
+              : "translation_unavailable",
+        );
+      }
+    })();
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [enabled, visible, key, input, text, language, accountScope]);
   const result = settled?.key === key ? settled.result : null;
-  const success = enabled && result && (result.status === "translated" || result.status === "existing");
+  const success =
+    enabled && result && (result.status === "translated" || result.status === "existing" || result.status === "native");
   const status = !enabled ? "original" : (result?.status ?? "pending");
   const shown = success && !scope.original ? result.text : (result?.original ?? text);
   const failure = result?.code

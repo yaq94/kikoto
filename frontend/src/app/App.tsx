@@ -30,6 +30,7 @@ import {
 
 import { AuthProvider, useAuth } from "@/auth/AuthProvider";
 import { ContentLanguageProvider } from "@/components/content-translation/ContentTranslation";
+import { ContentTranslationPrefetchProvider } from "@/components/content-translation/ContentTranslationProvider";
 import {
   INSIGHTS_PATH,
   canAccessPage,
@@ -151,11 +152,13 @@ export function App() {
     <MobileRuntimeProvider>
       <AuthProvider>
         <ContentLanguageProvider>
-          <PageHeaderProvider>
-            <LibraryMigrationGate>
-              <AuthenticatedApp />
-            </LibraryMigrationGate>
-          </PageHeaderProvider>
+          <ContentTranslationPrefetchProvider>
+            <PageHeaderProvider>
+              <LibraryMigrationGate>
+                <AuthenticatedApp />
+              </LibraryMigrationGate>
+            </PageHeaderProvider>
+          </ContentTranslationPrefetchProvider>
         </ContentLanguageProvider>
       </AuthProvider>
     </MobileRuntimeProvider>
