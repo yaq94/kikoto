@@ -16,7 +16,7 @@ import (
 
 var numberedMigrationFilePattern = regexp.MustCompile(`^[0-9]{3}_[a-z0-9][a-z0-9_]*\.sql$`)
 
-const latestNumberedMigrationVersion = 86
+const latestNumberedMigrationVersion = 91
 
 // latestReleasedBaseline is the newest file in migrations/baseline/, which
 // production uses for a fresh database.
@@ -119,8 +119,8 @@ func TestMigrateUpgradesExistingDatabaseThroughNumberedChain(t *testing.T) {
 	if err := db.QueryRow("SELECT filename FROM schema_migration WHERE version = ?", latestNumberedMigrationVersion).Scan(&filename); err != nil {
 		t.Fatal(err)
 	}
-	if filename != "086_catalog_search_and_track_index.sql" {
-		t.Fatalf("applied migration = %q, want 086_catalog_search_and_track_index.sql", filename)
+	if filename != "091_catalog_encoding_issue.sql" {
+		t.Fatalf("applied migration = %q, want 091_catalog_encoding_issue.sql", filename)
 	}
 }
 
@@ -244,7 +244,7 @@ func TestMigrateUpgradesRetiredBaselineLedger(t *testing.T) {
 			if err := rows.Err(); err != nil {
 				t.Fatal(err)
 			}
-			wantHistory := testCase.wantHistory + ",063_recommendation_catalog.sql,064_retire_source_health_check.sql,065_availability_watch_family.sql,066_contributor_role.sql,067_user_time_zone.sql,068_listening_hours.sql,069_openlist_catalog.sql,070_source_catalog_scan.sql,071_catalog_series.sql,072_source_catalog_lifecycle.sql,073_shared_association.sql,074_work_matching.sql,075_personal_transfer.sql,076_source_catalog_publish_queue.sql,077_source_catalog_publish_cleanup.sql,078_source_catalog_loose_works.sql,079_source_catalog_sidecar.sql,080_source_catalog_sidecar_queue.sql,081_source_catalog_sidecar_revision.sql,082_source_catalog_sidecar_retry.sql,083_source_catalog_cleanup_indexes.sql,084_source_catalog_orphan_cursor.sql,085_source_catalog_progress_counters.sql,086_catalog_search_and_track_index.sql"
+			wantHistory := testCase.wantHistory + ",063_recommendation_catalog.sql,064_retire_source_health_check.sql,065_availability_watch_family.sql,066_contributor_role.sql,067_user_time_zone.sql,068_listening_hours.sql,069_openlist_catalog.sql,070_source_catalog_scan.sql,071_catalog_series.sql,072_source_catalog_lifecycle.sql,073_shared_association.sql,074_work_matching.sql,075_personal_transfer.sql,076_source_catalog_publish_queue.sql,077_source_catalog_publish_cleanup.sql,078_source_catalog_loose_works.sql,079_source_catalog_sidecar.sql,080_source_catalog_sidecar_queue.sql,081_source_catalog_sidecar_revision.sql,082_source_catalog_sidecar_retry.sql,083_source_catalog_cleanup_indexes.sql,084_source_catalog_orphan_cursor.sql,085_source_catalog_progress_counters.sql,086_catalog_search_and_track_index.sql,087_source_catalog_exclusion.sql,088_source_catalog_incremental_sync.sql,089_work_primary_code_trimmed_unique.sql,090_catalog_phase_timing.sql,091_catalog_encoding_issue.sql"
 			if got := strings.Join(filenames, ","); got != wantHistory {
 				t.Fatalf("upgraded migration history = %q, want %q", got, wantHistory)
 			}

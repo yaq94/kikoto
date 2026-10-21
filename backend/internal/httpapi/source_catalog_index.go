@@ -112,6 +112,11 @@ type catalogIndexProgress struct {
 	Details             []catalogDirectoryProgress  `json:"details"`
 	DetailsTotal        int                         `json:"detailsTotal"`
 	SidecarFailures     catalogSidecarFailureCounts `json:"sidecarFailures"`
+
+	// EncodingUnresolved counts damaged directory names the scanner recorded
+	// instead of requesting. It stays independent of failed, restricted and
+	// empty: the parent listing was read successfully.
+	EncodingUnresolved int `json:"encodingUnresolvedDirectories"`
 }
 
 func (s *Server) catalogIndexSource(ctx context.Context, id int64) (remoteSourceForUse, error) {

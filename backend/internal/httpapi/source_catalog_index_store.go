@@ -529,12 +529,10 @@ func (s *Server) expandCatalogDirectory(ctx context.Context, job workflowJobReco
 		return false, err
 	}
 	for _, name := range names {
-		child := path.Join(p, name)
-		part := partition
-		if p == "/" {
-			part = child
-		}
-		added, addErr := enqueueCatalogDirectoryTx(ctx, tx.Tx, sourceID, job.RunID, child, part, root)
+		// A name that arrived as U+FFFD or invalid UTF-8 cannot be requested:
+		// the source answers "object not found" for it. Record the name and
+		// skip the child; a guessed sibling is not a repair.
+		added, addErr := s.expandCatalogChildTx(ctx, tx.Tx, sourceID, job.RunID, p, partition, root, name)
 		if addErr != nil {
 			return false, addErr
 		}
@@ -1126,6 +1124,9 @@ func (s *Server) sourceCatalogProgress(ctx context.Context, sourceID int64, page
 	if err != nil {
 		return p, err
 	}
+	if p.EncodingUnresolved, err = s.catalogEncodingUnresolvedCount(ctx, sourceID); err != nil {
+		return p, err
+	}
 	if err = json.Unmarshal([]byte(options), &p.Options); err != nil {
 		return p, err
 	}
@@ -1183,6 +1184,9 @@ func (s *Server) sourceCatalogProgressExact(ctx context.Context, sourceID int64,
 	var options string
 	err := s.db.QueryRowContext(ctx, `SELECT scan.workflow_run_id,run.status,scan.pause_reason,scan.options_json,scan.requests,scan.started_at,scan.updated_at FROM source_catalog_scan scan JOIN workflow_run run ON run.id=scan.workflow_run_id WHERE scan.file_source_id=?`, sourceID).Scan(&p.RunID, &p.Status, &p.PauseReason, &options, &p.Requests, &p.StartedAt, &p.UpdatedAt)
 	if err != nil {
+		return p, err
+	}
+	if p.EncodingUnresolved, err = s.catalogEncodingUnresolvedCount(ctx, sourceID); err != nil {
 		return p, err
 	}
 	if err = json.Unmarshal([]byte(options), &p.Options); err != nil {
