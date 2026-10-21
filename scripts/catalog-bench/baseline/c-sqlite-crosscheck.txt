@@ -1,0 +1,15 @@
+C SQLite (Python 3.12.3 / SQLite 3.45.1) cross-check on the same /tmp copy,
+5 warm runs, median ms:
+scan 0.0
+staging 23.4
+dirs 9.7
+observed 190.9
+parts 9.7
+details 3.9
+progress_total 242.8 (min 239.4, max 244.3)
+purge 81.3 (min 80.3, max 84.2)
+root 117.4 (min 111.8, max 118.2)
+
+This reproduces the audit reference (230/85/120 ms) and confirms the copy is
+representative. The Go/modernc harness is slower on the same copy; use one
+driver for before/after comparisons.
