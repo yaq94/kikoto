@@ -439,3 +439,54 @@ func Kind(name string, directory bool) string {
 		return "other"
 	}
 }
+
+// Dirs returns the direct subdirectories of one directory. The OpenList
+// endpoint is intentionally shallow: callers that need a whole tree walk it
+// one level at a time and treat each response as the metadata for exactly
+// that parent. Modified is the child's own mtime; it is not inherited from
+// anything below the child.
+func (c *Client) Dirs(ctx context.Context, root string) ([]Object, error) {
+	if (root != "/" && !ValidRoot(root)) || root == "" {
+		return nil, ErrInvalid
+	}
+	var data json.RawMessage
+	if err := c.request(ctx, "dirs", map[string]any{"path": root, "password": ""}, &data); err != nil {
+		return nil, err
+	}
+	objects, err := decodeDirObjects(data)
+	if err != nil {
+		return nil, err
+	}
+	for i := range objects {
+		obj := &objects[i]
+		if obj.Name == "" || !ValidRoot("/"+obj.Name) || obj.Size < 0 {
+			return nil, ErrInvalid
+		}
+		// Some OpenList builds omit is_dir on this endpoint because the
+		// endpoint only returns directories. The path validation above still
+		// proves the name is one direct child.
+		obj.IsDir = true
+	}
+	return objects, nil
+}
+
+func decodeDirObjects(raw json.RawMessage) ([]Object, error) {
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed == "" || trimmed == "null" {
+		return []Object{}, nil
+	}
+	var objects []Object
+	if strings.HasPrefix(trimmed, "[") {
+		if json.Unmarshal(raw, &objects) != nil {
+			return nil, ErrInvalid
+		}
+		return objects, nil
+	}
+	var envelope struct {
+		Content []Object "json:\"content\""
+	}
+	if json.Unmarshal(raw, &envelope) != nil {
+		return nil, ErrInvalid
+	}
+	return envelope.Content, nil
+}

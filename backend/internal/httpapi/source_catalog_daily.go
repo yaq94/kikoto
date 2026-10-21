@@ -9,7 +9,10 @@ import (
 	"time"
 )
 
-const catalogDailySettingPrefix = "source_catalog_daily:"
+const (
+	catalogDailySettingPrefix = "source_catalog_daily:"
+	catalogFullSettingPrefix  = "source_catalog_full:"
+)
 
 func (s *Server) catalogTime() time.Time {
 	if s.catalogNow != nil {
@@ -18,7 +21,20 @@ func (s *Server) catalogTime() time.Time {
 	return time.Now().UTC()
 }
 
+// Full-scan dispatches own both the next daily tick and the last full
+// reconcile marker. The marker uses catalogTime, not CURRENT_TIMESTAMP, so a
+// test or an operator clock and the weekly interval agree.
 func setCatalogNextUpdateTx(ctx context.Context, tx *sql.Tx, sourceID int64, now time.Time) error {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO app_setting(key,value_json) VALUES(?,?)
+		ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json`, catalogDailySettingPrefix+strconv.FormatInt(sourceID, 10), now.Add(24*time.Hour).Unix()); err != nil {
+		return err
+	}
+	_, err := tx.ExecContext(ctx, `INSERT INTO app_setting(key,value_json) VALUES(?,?)
+		ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json`, catalogFullSettingPrefix+strconv.FormatInt(sourceID, 10), now.Unix())
+	return err
+}
+
+func setCatalogSyncNextUpdateTx(ctx context.Context, tx *sql.Tx, sourceID int64, now time.Time) error {
 	_, err := tx.ExecContext(ctx, `INSERT INTO app_setting(key,value_json) VALUES(?,?)
 		ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json`, catalogDailySettingPrefix+strconv.FormatInt(sourceID, 10), now.Add(24*time.Hour).Unix())
 	return err
@@ -42,6 +58,7 @@ func (s *Server) dispatchDueCatalogUpdates(ctx context.Context) error {
 				WHEN scan.pause_reason='' AND run.status IN ('succeeded','partial') THEN unixepoch(run.finished_at)+86400
 				WHEN run.status IN ('failed','cancelled') THEN unixepoch(run.finished_at)+86400
 			END) END)<=?
+			AND NOT EXISTS(SELECT 1 FROM source_catalog_sync_run sync WHERE sync.file_source_id=scan.file_source_id AND sync.status='running')
 		ORDER BY scan.file_source_id LIMIT 16`, catalogDailySettingPrefix, sourceTypeOpenList, now.Unix())
 	if err != nil {
 		return err
@@ -72,6 +89,13 @@ func (s *Server) dispatchDueCatalogUpdates(ctx context.Context) error {
 	return result
 }
 
+// dispatchCatalogUpdate keeps the old recovery rules for a cancelled, failed
+// or unconfirmed-empty generation: those are incomplete full crawls and must
+// resume their own checkpoints. A partial generation that actually has failed
+// or restricted ranges is the case the directory-first sync replaces: it
+// starts a new sync run and probes mtimes instead of reusing the old crawl.
+// A generation older than a week, a generation with no completed directory,
+// or an explicit operator force starts a new full generation.
 func (s *Server) dispatchCatalogUpdate(ctx context.Context, sourceID int64, now time.Time) error {
 	tx, release, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
 	if err != nil {
@@ -79,16 +103,21 @@ func (s *Server) dispatchCatalogUpdate(ctx context.Context, sourceID int64, now 
 	}
 	defer release()
 	var saved string
-	var due sql.NullInt64
+	var due, lastFull sql.NullInt64
+	var generation, failed, restricted int64
+	var status string
 	err = tx.QueryRowContext(ctx, `SELECT scan.options_json,
 			(CASE WHEN scan.pause_reason='low_disk_space' THEN NULL ELSE COALESCE(CAST(setting.value_json AS INTEGER),CASE
 				WHEN scan.pause_reason='' AND run.status IN ('succeeded','partial') THEN unixepoch(run.finished_at)+86400
 				WHEN run.status IN ('failed','cancelled') THEN unixepoch(run.finished_at)+86400
-			END) END)
+			END) END),
+			scan.workflow_run_id,run.status,scan.failed,scan.restricted,
+			CAST(full_setting.value_json AS INTEGER)
 		FROM source_catalog_scan scan JOIN workflow_run run ON run.id=scan.workflow_run_id
 		JOIN file_source source ON source.id=scan.file_source_id
 		LEFT JOIN app_setting setting ON setting.key=? || scan.file_source_id
-		WHERE scan.file_source_id=? AND source.enabled=1 AND source.source_type=?`, catalogDailySettingPrefix, sourceID, sourceTypeOpenList).Scan(&saved, &due)
+		LEFT JOIN app_setting full_setting ON full_setting.key=? || scan.file_source_id
+		WHERE scan.file_source_id=? AND source.enabled=1 AND source.source_type=?`, catalogDailySettingPrefix, catalogFullSettingPrefix, sourceID, sourceTypeOpenList).Scan(&saved, &due, &generation, &status, &failed, &restricted, &lastFull)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}
@@ -98,6 +127,9 @@ func (s *Server) dispatchCatalogUpdate(ctx context.Context, sourceID int64, now 
 	if !due.Valid || due.Int64 > now.Unix() {
 		return nil
 	}
+	if status == "queued" || status == "running" {
+		return nil
+	}
 	options := defaultCatalogIndexOptions()
 	if err = json.Unmarshal([]byte(saved), &options); err != nil {
 		return err
@@ -105,11 +137,42 @@ func (s *Server) dispatchCatalogUpdate(ctx context.Context, sourceID int64, now 
 	if err = options.validate(); err != nil {
 		return err
 	}
-	if _, err = s.enqueueSourceCatalogIndexTx(ctx, tx.Tx, sourceID, options, "interval", false); err != nil {
+	var directories int64
+	if err = tx.QueryRowContext(ctx, "SELECT count(*) FROM source_catalog_directory WHERE file_source_id=? AND generation=?", sourceID, generation).Scan(&directories); err != nil {
 		return err
 	}
-	if err = setCatalogNextUpdateTx(ctx, tx.Tx, sourceID, now); err != nil {
+	// A cancelled run may point at a generation with no directory rows because
+	// it never started. That is a run to resume, not a reason to replace its
+	// id. A succeeded generation with no rows, or an expired weekly marker,
+	// does need a fresh full generation.
+	expired := lastFull.Valid && now.Sub(time.Unix(lastFull.Int64, 0).UTC()) >= catalogSyncFullInterval
+	forceFull := expired || (status == "succeeded" && (!lastFull.Valid || directories == 0))
+	incremental := !forceFull && status == "partial" && failed+restricted > 0
+	if !incremental {
+		if _, err = s.enqueueSourceCatalogIndexTx(ctx, tx.Tx, sourceID, options, "interval", forceFull); err != nil {
+			return err
+		}
+		if err = setCatalogNextUpdateTx(ctx, tx.Tx, sourceID, now); err != nil {
+			return err
+		}
+		return tx.Commit()
+	}
+	syncID, err := enqueueCatalogSyncTx(ctx, tx.Tx, sourceID, false)
+	if err != nil {
 		return err
 	}
-	return tx.Commit()
+	if err = setCatalogSyncNextUpdateTx(ctx, tx.Tx, sourceID, now); err != nil {
+		return err
+	}
+	if err = tx.Commit(); err != nil {
+		return err
+	}
+	if syncID != 0 {
+		if !s.Go(func(background context.Context) {
+			_ = s.executeCatalogIncrementalSync(background, syncID, sourceID)
+		}) {
+			_ = s.finishCatalogSyncRun(context.WithoutCancel(ctx), syncID, "cancelled", catalogSyncRunState{ID: syncID, SourceID: sourceID, Status: "cancelled"})
+		}
+	}
+	return nil
 }
