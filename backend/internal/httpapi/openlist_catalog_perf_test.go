@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/yexca/kikoto/backend/internal/config"
+	"github.com/yexca/kikoto/backend/internal/library"
 )
 
 func explainCatalogPlan(t *testing.T, db *sql.DB, query string, args ...any) string {
@@ -335,5 +336,45 @@ func TestOpenListCatalogTracksLargeCardSummary(t *testing.T) {
 	t.Logf("track level plan:\n%s", plan)
 	if strings.Contains(plan, "SCAN source_catalog_file") {
 		t.Fatalf("track level scans the card: %s", plan)
+	}
+}
+
+// A display-language page joins the card source to a translated hit set. The
+// card pipeline must still read entries through the live-root index and must
+// not fall back to scanning file rows.
+func TestOpenListCatalogLanguageSearchPlan(t *testing.T) {
+	db := openMigratedTestDB(t)
+	seedCatalogPlanSource(t, db)
+	ids := []int64{}
+	for index := 1; index <= 6; index++ {
+		id := int64(index)
+		ids = append(ids, id)
+		insertCatalogPlanEntry(t, db, id, fmt.Sprintf("Original %d", index), "")
+		insertCatalogPlanAudio(t, db, id, "track.mp3", fmt.Sprintf("Track %d", index))
+		insertTranslatedContent(t, db, "entry", id, "title", "zh-Hans", fmt.Sprintf("作品%d", index), "model")
+	}
+	if _, err := db.Exec(`ANALYZE`); err != nil {
+		t.Fatal(err)
+	}
+	prefix, from, args := openListCatalogCardsQueryForEntries(7, ids)
+	rank, rankArgs := openListTranslationExactRankSQL([]library.DisplaySearchTarget{{Language: "zh-Hans", Query: "作品1"}}, "language_cards")
+	pageSQL := prefix + `language_cards AS MATERIALIZED (SELECT * ` + from + `)
+	SELECT id,series_id,primary_code,title,work_id,updated_at,availability_status,has_audio,(SELECT COUNT(*) FROM language_cards) AS total
+	FROM language_cards ORDER BY ` + rank + ` DESC, updated_at DESC,series_id DESC,id DESC LIMIT ? OFFSET ?`
+	plan := explainCatalogPlan(t, db, pageSQL, append(append([]any{}, args...), append(rankArgs, 2, 0)...)...)
+	t.Logf("language search plan:\n%s", plan)
+	if strings.Contains(plan, "SCAN source_catalog_file") {
+		t.Fatalf("language search scans source_catalog_file: %s", plan)
+	}
+	if !strings.Contains(plan, "SEARCH e USING INDEX source_catalog_entry_live_root") {
+		t.Fatalf("language search does not read entries through the live-root index: %s", plan)
+	}
+	var total, rows int
+	if err := db.QueryRow(pageSQL, append(append([]any{}, args...), append(rankArgs, 2, 0)...)...).Scan(new(int64), new(int64), new(string), new(string), new(sql.NullInt64), new(string), new(string), new(bool), &total); err != nil {
+		t.Fatalf("run language page: %v", err)
+	}
+	rows = 1
+	if total != 6 || rows != 1 {
+		t.Fatalf("language page total=%d rows=%d, want 6/1", total, rows)
 	}
 }
