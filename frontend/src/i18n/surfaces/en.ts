@@ -130,6 +130,7 @@ export const surfaceEnglish = {
     stale: "The preview could not be used. Refresh the selection and try again.",
   },
   sourceLifecycle: {
+    excluded: "Excluded by source rule",
     label: "Source status",
     available: "Source available",
     unavailable: "Source temporarily unavailable",
@@ -166,6 +167,18 @@ export const surfaceEnglish = {
       "Optional, one per line as Name: value, up to 8 custom X-* names and Accept-Language. Other headers are rejected.",
   },
   sourceIndex: {
+    exclusions: {
+      title: "Directory exclusions",
+      hint: "Excluded directories and everything below them stay out of scans and cards. Saved work, reviews and series membership remain.",
+      path: "Directory path",
+      pathPlaceholder: "/Example Work/Extras",
+      note: "Note (optional)",
+      add: "Add exclusion",
+      adding: "Adding…",
+      remove: "Remove exclusion",
+      empty: "No directories are excluded.",
+      failed: "The exclusion change failed. Refresh and retry.",
+    },
     title: "Full source index",
     start: "Index all anonymous audio",
     resume: "Resume index",

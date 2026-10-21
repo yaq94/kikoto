@@ -3,7 +3,14 @@ import type { RemoteTrack } from "@/lib/remoteSourceApi";
 import type { PersonalReview, PersonalReviewPatch } from "@/lib/workApi";
 
 export type CatalogStatus =
-  "available" | "unavailable" | "maintenance" | "restricted" | "unconfirmed_empty" | "missing" | "disabled";
+  | "available"
+  | "unavailable"
+  | "maintenance"
+  | "restricted"
+  | "unconfirmed_empty"
+  | "missing"
+  | "excluded"
+  | "disabled";
 export type AssociationSubject = { kind: "work" | "catalog" | "series"; id: number };
 export type WorkMatchResult = {
   status: "queued" | "no_match" | "review" | "paused" | "failed" | "pending" | "completed" | "existing";

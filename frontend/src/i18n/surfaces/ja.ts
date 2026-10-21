@@ -126,6 +126,7 @@ export const surfaceJapanese = {
     stale: "プレビューを使用できません。選択を更新して再試行してください。",
   },
   sourceLifecycle: {
+    excluded: "ソースルールにより除外",
     label: "ソースの状態",
     available: "ソースを利用できます",
     unavailable: "ソースに一時的に接続できません",
@@ -162,6 +163,18 @@ export const surfaceJapanese = {
       "任意。1行に「名前: 値」を1件、最大8件まで。独自の X-* 名と Accept-Language のみ指定できます。その他のヘッダーは拒否されます。",
   },
   sourceIndex: {
+    exclusions: {
+      title: "ディレクトリ除外",
+      hint: "除外したディレクトリとその配下はスキャンとカードの対象外になります。保存済みの作品、評価、シリーズ所属は残ります。",
+      path: "ディレクトリパス",
+      pathPlaceholder: "/作品例/追加コンテンツ",
+      note: "メモ（任意）",
+      add: "除外を追加",
+      adding: "追加中…",
+      remove: "除外を削除",
+      empty: "除外ディレクトリはありません。",
+      failed: "除外設定を保存できませんでした。再読み込みして再試行してください。",
+    },
     title: "ソース全体の索引",
     start: "匿名公開音声をすべて索引",
     resume: "索引を再開",

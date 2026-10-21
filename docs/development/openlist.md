@@ -41,6 +41,20 @@ remains unconfirmed; permission failures and unfinished ranges prevent complete
 coverage. The existing workflow cancel and retry endpoints stop or resume the
 same scan without discarding its published catalog or private reviews.
 
+## Directory exclusions
+
+`GET` and `POST /api/remote-sources/{id}/catalog/exclusions` require
+`sources:write`. `POST` accepts `{"path":"/Work/Extras","mode":"whole","note":"..."}`.
+The path must be absolute, below `/`, and free of `..`; repeated slashes are
+normalized. An exclusion covers the path and every descendant.
+
+`DELETE /api/remote-sources/{id}/catalog/exclusions/{exclusionId}` removes one
+rule by the id returned from the list. Deletion restores the entry to a
+discoverable state; the next scan decides whether the files are available.
+Existing entries and every work, review, series and relocation reference are
+retained. Only catalog files, observations, directory rows and audio roots below
+the excluded path are removed.
+
 The Library source panel shows index status, counts, timestamps, partition
 coverage and unresolved directories. **Index limits** configures the next start
 or resume; active settings are read-only. **Cancel**, **Resume index** and
