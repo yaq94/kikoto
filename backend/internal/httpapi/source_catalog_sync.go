@@ -172,7 +172,9 @@ func (s *Server) executeCatalogIncrementalSync(ctx context.Context, runID, sourc
 	// resumeAt delays the next daily attempt when a hold or a low disk stopped
 	// this run. It stays zero for an ordinary finish.
 	var resumeAt time.Time
+	settleStarted := time.Now()
 	defer func() {
+		s.recordCatalogPhase(context.WithoutCancel(ctx), runID, "settle", settleStarted)
 		status := state.Status
 		if status == "" || status == "running" {
 			status = "succeeded"
@@ -799,7 +801,12 @@ func (s *Server) applyCatalogSyncListing(ctx context.Context, sourceID, generati
 			}
 		} else if root != "" {
 			rel := strings.TrimPrefix(path.Join(dir.Path, row.Name), strings.TrimRight(root, "/")+"/")
-			if _, err = tx.ExecContext(ctx, `DELETE FROM source_catalog_file WHERE relative_path=? AND catalog_entry_id IN (SELECT id FROM source_catalog_entry WHERE file_source_id=? AND root_path=?)`, rel, sourceID, root); err != nil {
+			// A split card keeps the directory in source_root and a group
+			// suffix in root_path, so matching root_path alone would leave the
+			// deleted audio playable through the split card.
+			if _, err = tx.ExecContext(ctx, `DELETE FROM source_catalog_file WHERE relative_path=?
+				AND catalog_entry_id IN (SELECT id FROM source_catalog_entry
+					WHERE file_source_id=? AND `+catalogExclusionBaseRootSQL+`=?)`, rel, sourceID, root); err != nil {
 				return 0, 0, err
 			}
 		}

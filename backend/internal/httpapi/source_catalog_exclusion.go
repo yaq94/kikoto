@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"path"
 	"strings"
@@ -205,6 +206,20 @@ func applyCatalogExclusionTx(ctx context.Context, tx *sql.Tx, sourceID int64, p 
 			return err
 		}
 	}
+	// A parent card's root can sit above the excluded directory while one of
+	// its files falls inside it. Those rows belong to the excluded subtree and
+	// must go too, or the card would keep advertising audio from a path the
+	// operator removed. Only entries whose base is an ancestor or descendant of
+	// the excluded path are considered, so a wide source stays cheap.
+	base := `COALESCE(NULLIF(b.source_root,''),b.root_path)`
+	ancestor := `(?=` + base + ` OR substr(?,1,length(` + base + `)+1)=` + base + ` || '/' OR substr(` + base + `,1,length(?)+1)=? || '/')`
+	fullPath := `(CASE WHEN ` + base + `='/' THEN '/' || f.relative_path ELSE ` + base + ` || '/' || f.relative_path END)`
+	if _, err := tx.ExecContext(ctx, `DELETE FROM source_catalog_file WHERE (catalog_entry_id, relative_path) IN (
+		SELECT f.catalog_entry_id, f.relative_path FROM source_catalog_file f JOIN source_catalog_entry b ON b.id=f.catalog_entry_id
+		WHERE b.file_source_id=? AND `+ancestor+` AND `+catalogPathExcludedSQL("?", fullPath)+`)`,
+		sourceID, p, p, p, p, sourceID, p, p, p, p); err != nil {
+		return err
+	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM source_catalog_observation
 		WHERE file_source_id=? AND (
 			directory_path=? OR substr(directory_path,1,length(?)+1)=? || '/'
@@ -391,9 +406,27 @@ func (s *Server) createCatalogExclusion(w http.ResponseWriter, r *http.Request) 
 		writeError(w, err)
 		return
 	}
+	if mode == catalogExclusionModeWhitelist {
+		// Rows deleted by an earlier whole rule are not recreated by a status
+		// update: the files and observations are gone. Mark the bridge on the
+		// path as changed so the next sync re-lists the exception and
+		// republishes its audio, instead of reporting an empty whitelist.
+		if _, err = tx.ExecContext(r.Context(), `UPDATE source_catalog_directory SET sync_state='changed'
+			WHERE file_source_id=? AND (path=? OR substr(?,1,length(path)+1)=path || '/')`, sourceID, normalized, normalized); err != nil {
+			writeError(w, err)
+			return
+		}
+	}
 	if err = tx.Commit(); err != nil {
 		writeError(w, err)
 		return
+	}
+	if mode == catalogExclusionModeWhitelist {
+		if _, err = s.startCatalogIncrementalSync(r.Context(), sourceID, false); err != nil {
+			// The rule is saved; the next daily tick can still re-list it.
+			// Report the saved rule, but leave the failure observable.
+			slog.Warn("whitelist resync failed", "source", sourceID, "error", err)
+		}
 	}
 	s.invalidateRemoteWorkCache(sourceID)
 	writeJSON(w, http.StatusCreated, created)

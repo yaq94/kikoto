@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -388,6 +389,83 @@ func exclusionRequest(t *testing.T, handler http.Handler, cookie *http.Cookie, m
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
 	return response
+}
+
+// A parent card can span several directories. Excluding one child directory
+// must remove the files that live there, even though the card's own root is
+// above the excluded path.
+func TestSourceCatalogExclusionRemovesFilesOfAParentCard(t *testing.T) {
+	db := openMigratedTestDB(t)
+	const sourceID = int64(84)
+	if _, err := db.Exec(`INSERT INTO file_source(id,code,display_name,source_type) VALUES(?, 'parent_source', 'Parent Source', 'openlist')`, sourceID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO source_catalog_entry(id,file_source_id,root_path,title) VALUES(840,?,'/A','Parent Card')`, sourceID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes) VALUES
+		(840,'Keep/01.mp3','Keep','audio',16),(840,'Drop/02.mp3','Drop','audio',16)`); err != nil {
+		t.Fatal(err)
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tx.Exec(`INSERT INTO source_catalog_exclusion(file_source_id,path,mode) VALUES(?, '/A/Drop', 'whole')`, sourceID); err != nil {
+		t.Fatal(err)
+	}
+	if err = applyCatalogExclusionTx(context.Background(), tx, sourceID, "/A/Drop"); err != nil {
+		t.Fatal(err)
+	}
+	if err = tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	var kept, dropped int
+	if err = db.QueryRow(`SELECT count(*) FROM source_catalog_file WHERE catalog_entry_id=840 AND relative_path='Keep/01.mp3'`).Scan(&kept); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.QueryRow(`SELECT count(*) FROM source_catalog_file WHERE catalog_entry_id=840 AND relative_path='Drop/02.mp3'`).Scan(&dropped); err != nil {
+		t.Fatal(err)
+	}
+	if kept != 1 || dropped != 0 {
+		t.Fatalf("parent card files kept=%d dropped=%d, want 1/0", kept, dropped)
+	}
+}
+
+// Adding a whitelist after a whole rule deleted its rows must schedule a
+// re-list of the bridge directory, otherwise the exception stays empty until
+// the next day.
+func TestSourceCatalogWhitelistCreationSchedulesABridgeRelist(t *testing.T) {
+	db := openMigratedTestDB(t)
+	const sourceID = int64(85)
+	seedExclusionSource(t, db, sourceID, sourceTypeOpenList)
+	if _, err := db.Exec(`INSERT INTO source_catalog_directory(file_source_id,path,generation,revision,partition_path,catalog_root,status,sync_state,last_verified_run)
+		VALUES(?,'/A/Drop',850,1,'/A','/A/Drop','complete','listed',0)`, sourceID); err != nil {
+		t.Fatal(err)
+	}
+	server := NewServer(db, config.Config{RootUsername: "whitelist-root"})
+	t.Cleanup(func() { _ = server.Shutdown(context.Background()) })
+	createTestAdministrator(t, server, "whitelist-root", "synthetic-password")
+	handler := server.Routes()
+	cookie := loginTestSession(t, handler, "whitelist-root", "synthetic-password")
+	if res := exclusionRequest(t, handler, cookie, http.MethodPost, "/api/remote-sources/85/catalog/exclusions", `{"path":"/A","mode":"whole"}`); res.Code != http.StatusCreated {
+		t.Fatalf("whole rule = %d %s", res.Code, res.Body.String())
+	}
+	if res := exclusionRequest(t, handler, cookie, http.MethodPost, "/api/remote-sources/85/catalog/exclusions", `{"path":"/A/Drop","mode":"whitelist"}`); res.Code != http.StatusCreated {
+		t.Fatalf("whitelist rule = %d %s", res.Code, res.Body.String())
+	}
+	var state string
+	if err := db.QueryRow(`SELECT sync_state FROM source_catalog_directory WHERE file_source_id=? AND path='/A/Drop'`, sourceID).Scan(&state); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			// The whole rule removed the row, which is also a valid starting
+			// point: the next sync re-lists from the bridge.
+			return
+		}
+		t.Fatal(err)
+	}
+	if state != "changed" {
+		t.Fatalf("whitelist bridge state = %q, want changed", state)
+	}
 }
 
 func TestSourceCatalogExclusionAPI(t *testing.T) {
