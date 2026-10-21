@@ -351,3 +351,25 @@ func (s *Server) setTranslationPrefill(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, view)
 }
+
+// noteCatalogEntriesPublished asks the prefill pass to look at newly published
+// cards again. The pass walks entry ids in order and stops at the end, so a
+// later card with a higher id would be reached anyway; a card republished below
+// the cursor needs the cursor moved back to it. The update is a single
+// statement and never waits for a translation.
+func (s *Server) noteCatalogEntriesPublished(ctx context.Context, entryIDs []int64) {
+	if len(entryIDs) == 0 {
+		return
+	}
+	lowest := entryIDs[0]
+	for _, id := range entryIDs[1:] {
+		if id < lowest {
+			lowest = id
+		}
+	}
+	_, _ = s.db.ExecContext(ctx, `UPDATE translation_prefill_state
+		SET cursor_entry_id=min(cursor_entry_id, ?-1),
+			status=CASE WHEN status='complete' THEN 'running' ELSE status END,
+			updated_at=CURRENT_TIMESTAMP
+		WHERE id=1`, lowest)
+}

@@ -1116,6 +1116,8 @@ func (s *Server) publishCatalogBatch(ctx context.Context, job workflowJobRecord,
 			return 0, err
 		}
 		published = len(items)
+	s.noteCatalogEntriesPublished(ctx, publishedIDs)
+		return published, nil
 		return published, nil
 	}
 	for _, p := range items {
