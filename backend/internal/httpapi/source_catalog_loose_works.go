@@ -1335,17 +1335,14 @@ func (s *Server) retireOrphanSplitRootsBatch(ctx context.Context, job workflowJo
 	if err = tx.QueryRowContext(ctx, `SELECT orphan_cleanup_cursor FROM source_catalog_scan WHERE file_source_id=?`, sourceID).Scan(&cursor); err != nil {
 		return 0, err
 	}
-	// A card that carries a work, a series membership or an alias is kept for
-	// explicit review. Such a root is skipped entirely; its child cards stay
-	// visible rather than losing their identity.
+	// The root is the unit of the pass, not of the decision. A card that carries
+	// a work, a series membership or an alias keeps its identity and is skipped
+	// per card below; skipping the whole root would also keep the unrelated
+	// duplicates beside it. Roots are ordered by their first stale id, which the
+	// cursor advances past even when every card in that root is skipped.
 	rows, err := tx.QueryContext(ctx, `SELECT e.source_root,MIN(e.id) AS first_id FROM source_catalog_entry e
 		WHERE e.file_source_id=? AND e.source_root<>'' AND e.relocated_to_id IS NULL
 			AND e.last_seen_generation<>?
-			AND NOT EXISTS(SELECT 1 FROM source_catalog_entry b
-				WHERE b.file_source_id=e.file_source_id AND b.source_root=e.source_root
-					AND (b.work_id IS NOT NULL
-						OR EXISTS(SELECT 1 FROM catalog_series_member m WHERE m.catalog_entry_id=b.id)
-						OR EXISTS(SELECT 1 FROM source_catalog_entry r WHERE r.relocated_to_id=b.id)))
 		GROUP BY e.source_root HAVING first_id>?
 		ORDER BY first_id LIMIT ?`,
 		sourceID, job.RunID, cursor, catalogRetireRoots)

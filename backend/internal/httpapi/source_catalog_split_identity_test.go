@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"net/http"
 	"strconv"
 	"strings"
@@ -552,5 +553,46 @@ func TestSourceCatalogCJKEpisodeFormatCopyStaysWithEpisode(t *testing.T) {
 	}
 	if copyRoot != 0 {
 		t.Fatalf("format copy kept its own entry (%d)", copyRoot)
+	}
+}
+
+// One reviewed card in a creator folder must not keep unrelated duplicates in
+// the same folder alive. The orphan pass is the only path that can retire them
+// when this generation republishes nothing for the root.
+func TestSourceCatalogOrphanPassRetiresBesideALinkedSibling(t *testing.T) {
+	db := openMigratedTestDB(t)
+	const sourceID, runID = int64(86), int64(806)
+	job := seedCatalogCleanupJob(t, db, sourceID, runID)
+	metadataReviewExec(t, db, `INSERT INTO work(id,primary_code,title) VALUES(79,'','Alpha');
+		INSERT INTO source_catalog_directory(file_source_id,path,generation,revision,partition_path,catalog_root,status)
+			VALUES(86,'/Creator',806,1,'/Creator','/Creator','complete');
+		INSERT INTO source_catalog_entry(id,file_source_id,root_path,source_root,title,last_seen_generation,work_id)
+			VALUES(901,86,'/Creator::alpha','/Creator','Alpha',805,79),
+			      (902,86,'/Creator::beta','/Creator','Beta',805,NULL),
+			      (903,86,'/Creator','','Creator',806,NULL);
+		INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes) VALUES
+			(901,'Alpha.mp3','Alpha.mp3','audio',100),
+			(902,'Beta.mp3','Beta.mp3','audio',100),
+			(903,'01.mp3','01.mp3','audio',100);`)
+	server := &Server{db: db}
+	retired, err := server.retireOrphanSplitRootsBatch(context.Background(), job, sourceID)
+	if err != nil {
+		t.Fatalf("orphan pass: %v", err)
+	}
+	if retired != 1 {
+		t.Fatalf("retired roots = %d, want 1", retired)
+	}
+	var alphaLive, betaLive int
+	if err := db.QueryRow(`SELECT file_source_id IS NOT NULL FROM source_catalog_entry WHERE id=901`).Scan(&alphaLive); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(`SELECT file_source_id IS NOT NULL FROM source_catalog_entry WHERE id=902`).Scan(&betaLive); err != nil {
+		t.Fatal(err)
+	}
+	if alphaLive != 1 {
+		t.Fatal("the linked card lost its source")
+	}
+	if betaLive != 0 {
+		t.Fatal("a stale duplicate stayed live beside a linked sibling")
 	}
 }
