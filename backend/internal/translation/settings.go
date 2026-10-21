@@ -96,15 +96,9 @@ func load(ctx context.Context, db queryer) (Config, error) {
 	if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
 		return Config{}, ErrInvalidConfig
 	}
-	// A configuration written before the persistent store still carries the old
-	// interactive defaults. Only that exact tuple is upgraded; a deliberate
-	// choice of the same three numbers is indistinguishable and follows the
-	// deployment default as well.
-	if cfg.Concurrency == 1 && cfg.QueueLimit == 32 && cfg.MaxEntries == 0 && cfg.CacheBytes == 256<<20 {
-		limits := DefaultLimits()
-		limits.CacheBytes, limits.MinFreeBytes = cfg.CacheBytes, cfg.MinFreeBytes
-		cfg.Limits = limits
-	}
+	// Stored limits are returned exactly as saved. Upgrading a tuple that
+	// happens to match an older default would silently rewrite an operator's
+	// deliberate choice, and a save/reload would no longer round-trip.
 	return cfg, nil
 }
 

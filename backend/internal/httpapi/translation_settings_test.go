@@ -101,6 +101,18 @@ func TestTranslationAdminConfigurationIsPrivateAndPreservesModel(t *testing.T) {
 	}
 }
 
+// Limits round-trip exactly. A tuple that happens to match an older default is
+// still an operator's saved choice, not an invitation to rewrite it.
+func TestTranslationSavedLimitsRoundTripWithoutUpgrade(t *testing.T) {
+	_, host, admin, _ := translationHTTPFixture(t)
+	const path = "/api/settings/translation"
+	translationRequest(t, host, admin, "PATCH", path, `{"concurrency":1,"queueLimit":32,"maxEntries":0,"cacheBytes":262144,"minFreeBytes":0}`, 200)
+	saved := translationRequest(t, host, admin, "GET", path, "", 200)
+	if saved["concurrency"] != float64(1) || saved["queueLimit"] != float64(32) || saved["cacheBytes"] != float64(262144) {
+		t.Fatalf("saved limits were rewritten: %#v", saved)
+	}
+}
+
 func TestTranslationTrialUsesSavedModelKeyAndOfficialSingleUserTemplate(t *testing.T) {
 	requests := make(chan map[string]any, 4)
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
