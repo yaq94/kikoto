@@ -623,7 +623,9 @@ func (s *Server) publishCatalogBatch(ctx context.Context, job workflowJobRecord,
 	if err = tx.QueryRowContext(ctx, `SELECT EXISTS(
 		SELECT 1 FROM source_catalog_observation o
 		JOIN source_catalog_directory d ON d.file_source_id=o.file_source_id AND d.path=o.directory_path AND d.revision=o.revision
-		WHERE o.file_source_id=? AND o.publish_pending=1 AND d.generation=? AND d.status='complete' AND d.catalog_root<>'')`,
+		WHERE o.file_source_id=? AND o.publish_pending=1 AND d.generation=? AND d.status='complete' AND d.catalog_root<>''
+			AND (o.kind='audio' OR EXISTS(SELECT 1 FROM source_catalog_audio_root r
+				WHERE r.file_source_id=d.file_source_id AND r.generation=d.generation AND r.catalog_root=d.catalog_root)))`,
 		sourceID, job.RunID).Scan(&stillPending); err != nil {
 		return 0, err
 	}
@@ -749,6 +751,14 @@ func (s *Server) publishCatalogBatch(ctx context.Context, job workflowJobRecord,
 	// Retire stale format cards once per final publish batch, not on every
 	// cleanup-only call: the scan below walks every stale card of the source and
 	// repeated calls would multiply that cost for no new evidence.
+	// A directory card whose audio now belongs to one deeper current card is
+	// the same work seen twice. Like the format pass this walks every stale
+	// card of the source, so it belongs to the final batch only.
+	if len(items) > 0 {
+		if err = retireCoveredContainerCardsTx(ctx, tx.Tx, sourceID, job.RunID); err != nil {
+			return 0, err
+		}
+	}
 	if len(items) > 0 {
 		if err = retireStaleFormatCardsTx(ctx, tx.Tx, sourceID, job.RunID); err != nil {
 			return 0, err

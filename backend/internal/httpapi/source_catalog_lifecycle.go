@@ -30,6 +30,12 @@ func catalogRootIncomplete(ctx context.Context, tx *sql.Tx, sourceID, generation
 		JOIN source_catalog_directory pd ON pd.file_source_id=o.file_source_id AND pd.path=o.directory_path AND o.revision=pd.revision
 		WHERE o.file_source_id=? AND pd.generation=? AND o.publish_pending=1
 			AND NOT (pd.status='empty' AND pd.error_code='not_found')
+			-- A directory whose catalog root holds no audio publishes no card,
+			-- so its folder, text and artwork rows stay pending forever. They
+			-- describe a container, not missing coverage of the card below it.
+			-- An audio row is always a gap because its own root will publish.
+			AND (o.kind='audio' OR EXISTS(SELECT 1 FROM source_catalog_audio_root r
+				WHERE r.file_source_id=pd.file_source_id AND r.generation=pd.generation AND r.catalog_root=pd.catalog_root))
 			AND (?='/' OR pd.catalog_root=? OR pd.path=? OR substr(pd.path,1,length(?)+1)=? || '/')
 	)`, sourceID, generation, root, root, root, root, root,
 		sourceID, generation, root, root, root, root, root).Scan(&incomplete)

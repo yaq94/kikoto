@@ -2,7 +2,9 @@ package httpapi
 
 import (
 	"context"
+	"database/sql"
 	"net/http"
+	"path"
 	"strconv"
 	"strings"
 	"testing"
@@ -594,5 +596,69 @@ func TestSourceCatalogOrphanPassRetiresBesideALinkedSibling(t *testing.T) {
 	}
 	if betaLive != 0 {
 		t.Fatal("a stale duplicate stayed live beside a linked sibling")
+	}
+}
+
+// An older generation could publish a work directory as its own card while the
+// audio lived in a subdirectory. The rescan publishes that subdirectory as the
+// card; the old container must become an alias instead of a second visible
+// card that lists the same files.
+func TestSourceCatalogRescanRetiresCoveredContainerCard(t *testing.T) {
+	f := newLooseWorkFixture(t, map[string][]map[string]any{
+		"/":                     {looseDir("Creator")},
+		"/Creator":              {looseDir("Release")},
+		"/Creator/Release":      {looseDir("Disc"), looseAudio("readme.txt")},
+		"/Creator/Release/Disc": {looseAudio("01.mp3"), looseAudio("02.mp3")},
+	})
+	f.request(t, http.MethodPost, "/catalog/index", `{"intervalMs":100}`, 202)
+	if p := f.drain(t); p["status"] != "complete" {
+		t.Fatalf("scan = %#v", p)
+	}
+
+	var sourceID, generation, liveID int64
+	if err := f.server.db.QueryRow(`SELECT file_source_id FROM source_catalog_entry WHERE root_path='/Creator/Release/Disc'`).Scan(&sourceID); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.server.db.QueryRow(`SELECT MAX(generation) FROM source_catalog_directory WHERE file_source_id=?`, sourceID).Scan(&generation); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.server.db.QueryRow(`SELECT id FROM source_catalog_entry WHERE file_source_id=? AND root_path='/Creator/Release/Disc' AND relocated_to_id IS NULL`, sourceID).Scan(&liveID); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := f.server.db.Exec(`INSERT INTO source_catalog_entry(file_source_id,root_path,primary_code,title,last_seen_generation,discovered_generation) VALUES(?,?,?,?,?,?)`,
+		sourceID, "/Creator/Release", "", "Release", generation-1, generation-1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	staleID, err := result.LastInsertId()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, relativePath := range []string{"Disc/01.mp3", "Disc/02.mp3"} {
+		if _, err := f.server.db.Exec(`INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes,observed_generation) VALUES(?,?,?,'audio',100,?)`,
+			staleID, relativePath, path.Base(relativePath), generation-1); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	f.request(t, http.MethodPost, "/catalog/index", `{"intervalMs":100,"force":true}`, 202)
+	if p := f.drain(t); p["status"] != "complete" {
+		t.Fatalf("rescan = %#v", p)
+	}
+
+	var relocated, fileSource sql.NullInt64
+	if err := f.server.db.QueryRow(`SELECT relocated_to_id,file_source_id FROM source_catalog_entry WHERE id=?`, staleID).Scan(&relocated, &fileSource); err != nil {
+		t.Fatal(err)
+	}
+	if fileSource.Valid || !relocated.Valid || relocated.Int64 != liveID {
+		t.Fatalf("stale container file_source=%v relocated=%v, want alias of %d", fileSource, relocated, liveID)
+	}
+	var files int
+	if err := f.server.db.QueryRow(`SELECT count(*) FROM source_catalog_file WHERE catalog_entry_id=?`, staleID).Scan(&files); err != nil {
+		t.Fatal(err)
+	}
+	if files != 0 {
+		t.Fatalf("%d files left on the retired card", files)
 	}
 }
