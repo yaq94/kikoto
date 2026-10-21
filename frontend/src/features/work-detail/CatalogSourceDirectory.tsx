@@ -5,7 +5,7 @@ import { ContentResourceScope } from "@/components/content-translation/ContentTr
 import { toastFromError, useToast } from "@/components/ui/toast";
 import { api, type CatalogDirectory, type CatalogTrack, type DirectoryRoutingRule } from "@/lib/api";
 import { usePlayer } from "@/player/PlayerProvider";
-import { buildCatalogTree } from "./catalogTreeModel";
+import { buildCatalogTree, mergeCatalogTracks } from "./catalogTreeModel";
 import { catalogPlaybackQueue } from "./catalogPlayback";
 import { DirectoryLoadErrorPanel, SourceDirectoryPanel } from "./directory/SourceDirectoryPanels";
 import { DirectorySkeleton } from "./WorkDetailLayout";
@@ -41,7 +41,7 @@ export function CatalogSourceDirectory({
     setTracks(null);
     setError("");
     void api
-      .getCatalogTracks(entry.catalogEntryId, controller.signal)
+      .getCatalogTracks(entry.catalogEntryId, { depth: 1 }, controller.signal)
       .then((result) => {
         if (!controller.signal.aborted) setTracks(result.tracks);
       })
@@ -51,13 +51,26 @@ export function CatalogSourceDirectory({
     return () => controller.abort();
   }, [entry.catalogEntryId, attempt]);
   const tree = useMemo(() => buildCatalogTree(entry.catalogEntryId, tracks ?? []), [entry.catalogEntryId, tracks]);
+  const loadFolder = (folderPath: string) => {
+    const signal = request.current?.signal;
+    void api
+      .getCatalogTracks(entry.catalogEntryId, { path: folderPath, depth: 1 }, signal)
+      .then((result) => {
+        if (!signal?.aborted) {
+          setTracks((current) => mergeCatalogTracks(current ?? [], folderPath, result.tracks));
+        }
+      })
+      .catch(() => {
+        // The folder stays collapsed; the next open retries the request.
+      });
+  };
   const refresh = async () => {
     if (refreshing) return;
     const signal = request.current?.signal;
     setRefreshing(true);
     try {
       if (auth.hasPermission("sources:write")) await api.refreshCatalogDirectory(entry.catalogEntryId, signal);
-      const result = await api.getCatalogTracks(entry.catalogEntryId, signal);
+      const result = await api.getCatalogTracks(entry.catalogEntryId, { depth: 1 }, signal);
       if (signal?.aborted) return;
       setTracks(result.tracks);
       setError("");
@@ -86,6 +99,7 @@ export function CatalogSourceDirectory({
     <ContentResourceScope resource={{ catalogEntryId: entry.catalogEntryId }}>
       <CatalogAvailabilityNotice entry={{ ...entry, status }} />
       <SourceDirectoryPanel
+        key={entry.catalogEntryId}
         title={t("libraryDetail.directory")}
         description={entry.sourceName}
         tabs={tabs}
@@ -113,6 +127,7 @@ export function CatalogSourceDirectory({
         onPlayFolder={
           auth.hasPermission("playback:use") ? (files, locationId) => void play(files, locationId) : undefined
         }
+        onFolderOpen={loadFolder}
       />
     </ContentResourceScope>
   );

@@ -10,7 +10,7 @@ import { toastFromError, useToast } from "@/components/ui/toast";
 import { DirectoryExplorer } from "./directory/DirectoryExplorer";
 import { type TreeTrack } from "./media/mediaTreeModel";
 import { PersonalReviewEditor } from "./PersonalReviewEditor";
-import { buildCatalogTree } from "./catalogTreeModel";
+import { buildCatalogTree, mergeCatalogTracks } from "./catalogTreeModel";
 import { catalogPlaybackQueue, catalogResumeQueue } from "./catalogPlayback";
 import { useWorkPlaybackCursor } from "./media/useWorkPlaybackCursor";
 import { CatalogGroupingEditor } from "./CatalogGroupingEditor";
@@ -41,7 +41,7 @@ export function CatalogWorkDetail({ id, onBack }: { id: number; onBack: () => vo
         if (!controller.signal.aborted) setFailed(true);
       });
     void api
-      .getCatalogTracks(id, controller.signal)
+      .getCatalogTracks(id, { depth: 1 }, controller.signal)
       .then((result) => setTracks(result.tracks))
       .catch(() => {
         if (!controller.signal.aborted) setFailed(true);
@@ -49,6 +49,17 @@ export function CatalogWorkDetail({ id, onBack }: { id: number; onBack: () => vo
     return () => controller.abort();
   }, [id, auth.user?.id, attempt]);
   const tree = useMemo(() => buildCatalogTree(id, tracks), [id, tracks]);
+  const loadFolder = (folderPath: string) => {
+    const signal = request.current?.signal;
+    void api
+      .getCatalogTracks(id, { path: folderPath, depth: 1 }, signal)
+      .then((result) => {
+        if (!signal?.aborted) setTracks((current) => mergeCatalogTracks(current, folderPath, result.tracks));
+      })
+      .catch(() => {
+        // The folder stays collapsed; the next open retries the request.
+      });
+  };
   const play = async (files: TreeTrack[], locationId: number) => {
     if (!entry) return;
     const signal = request.current?.signal;
@@ -119,6 +130,7 @@ export function CatalogWorkDetail({ id, onBack }: { id: number; onBack: () => vo
             )
           )}
           <DirectoryExplorer
+            key={id}
             root={tree}
             directoryRoutingRules={[]}
             currentLocationId={player.currentTrack?.locationId ?? null}
@@ -126,6 +138,7 @@ export function CatalogWorkDetail({ id, onBack }: { id: number; onBack: () => vo
             onPlayFolder={
               auth.hasPermission("playback:use") ? (files, locationId) => void play(files, locationId) : undefined
             }
+            onFolderOpen={loadFolder}
           />
           <SharedAssociationPanel
             subject={{ kind: "catalog", id }}

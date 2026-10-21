@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/yexca/kikoto/backend/internal/openlist"
 )
@@ -407,78 +408,275 @@ func (s *Server) getSourceCatalogTracks(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	id = entry.ID
-	files, err := s.loadSourceCatalogFiles(r.Context(), id)
+	query := r.URL.Query()
+	_, hasPath := query["path"]
+	_, hasDepth := query["depth"]
+	_, hasLimit := query["limit"]
+	// Callers that send no track parameters keep the historical complete tree.
+	// The scan below walks it in keyset batches so a card is never materialised
+	// as one file slice plus one tree at the same time.
+	if !hasPath && !hasDepth && !hasLimit {
+		builder := newCatalogTrackBuilder(id, "", 0)
+		cursor := ""
+		for {
+			files, more, err := s.loadSourceCatalogFileBatch(r.Context(), id, cursor, 2000)
+			if err != nil {
+				writeError(w, err)
+				return
+			}
+			for _, file := range files {
+				builder.add(file)
+			}
+			if !more {
+				break
+			}
+			cursor = files[len(files)-1].Path
+		}
+		writeJSON(w, 200, map[string]any{"catalogEntryId": id, "tracks": builder.render()})
+		return
+	}
+
+	root := strings.Trim(strings.TrimSpace(query.Get("path")), "/")
+	depth := queryInt(r, "depth", 1)
+	if depth > maxCatalogTrackDepth {
+		depth = maxCatalogTrackDepth
+	}
+	explicitLimit := queryInt(r, "limit", 0)
+	limit := explicitLimit
+	if limit <= 0 {
+		limit = catalogTrackDefaultLimit
+	}
+	if limit > catalogTrackLimitCap {
+		limit = catalogTrackLimitCap
+	}
+	total, err := s.countSourceCatalogFiles(r.Context(), id, root)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
-	writeJSON(w, 200, map[string]any{"catalogEntryId": id, "tracks": catalogTracks(id, files, "")})
+	// A large card without an explicit limit is a summary: a short preview plus
+	// the total. The UI expands a folder by asking for its path.
+	summary := false
+	if explicitLimit == 0 && total > catalogTrackSummaryThreshold {
+		limit = catalogTrackSummaryPreview
+		summary = true
+	}
+	files, truncated, err := s.loadSourceCatalogTrackPage(r.Context(), id, root, depth, limit)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	builder := newCatalogTrackBuilder(id, root, depth)
+	returned := 0
+	for _, file := range files {
+		builder.add(file)
+		if file.Kind != "folder" {
+			returned++
+		}
+	}
+	writeJSON(w, 200, map[string]any{
+		"catalogEntryId": id,
+		"path":           root,
+		"depth":          depth,
+		"tracks":         builder.render(),
+		"total":          total,
+		"returned":       returned,
+		"truncated":      truncated || returned < total,
+		"summary":        summary,
+	})
 }
 
-func catalogTracks(id int64, files []SourceCatalogFile, parent string) []map[string]any {
-	// A split card owns a work's direct audio and its nested format copies, but
-	// the index only publishes the audio rows for that card. Build the tree
-	// from paths and synthesize a missing intermediate folder, so a copy under
-	// FLAC/ or MP3/ is visible instead of being dropped by the parent filter.
-	type node struct {
-		file     SourceCatalogFile
-		children map[string]*node
-		order    []string
+const (
+	catalogTrackDefaultLimit     = 5000
+	catalogTrackLimitCap         = 20000
+	catalogTrackSummaryThreshold = 5000
+	catalogTrackSummaryPreview   = 200
+	maxCatalogTrackDepth         = 8
+)
+
+func (s *Server) loadSourceCatalogFileBatch(ctx context.Context, id int64, after string, limit int) ([]SourceCatalogFile, bool, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT relative_path,title,kind,size_bytes,modified_at,observed_generation
+		FROM source_catalog_file WHERE catalog_entry_id=? AND relative_path>? ORDER BY relative_path LIMIT ?`, id, after, limit+1)
+	if err != nil {
+		return nil, false, err
 	}
-	root := &node{children: map[string]*node{}}
-	ensure := func(segments []string) *node {
-		current := root
-		for _, segment := range segments {
-			child, ok := current.children[segment]
-			if !ok {
-				child = &node{file: SourceCatalogFile{Path: segment, Title: segment, Kind: "folder"}, children: map[string]*node{}}
-				if current.file.Path != "" {
-					child.file.Path = current.file.Path + "/" + segment
-				}
-				current.children[segment] = child
-				current.order = append(current.order, segment)
-			}
-			current = child
+	defer func() { _ = rows.Close() }()
+	files := make([]SourceCatalogFile, 0, limit+1)
+	for rows.Next() {
+		var file SourceCatalogFile
+		if err = rows.Scan(&file.Path, &file.Title, &file.Kind, &file.Size, &file.ModifiedAt, &file.Generation); err != nil {
+			return nil, false, err
 		}
-		return current
+		files = append(files, file)
 	}
-	for _, file := range files {
-		segments := strings.Split(strings.Trim(file.Path, "/"), "/")
-		if len(segments) == 0 {
+	if err = rows.Err(); err != nil {
+		return nil, false, err
+	}
+	more := len(files) > limit
+	if more {
+		files = files[:limit]
+	}
+	return files, more, nil
+}
+
+func (s *Server) countSourceCatalogFiles(ctx context.Context, id int64, root string) (int, error) {
+	where, args := catalogTrackPathFilter(root)
+	var total int
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM source_catalog_file INDEXED BY source_catalog_file_parent WHERE catalog_entry_id=? AND kind<>'folder'`+where,
+		append([]any{id}, args...)...).Scan(&total)
+	return total, err
+}
+
+func (s *Server) loadSourceCatalogTrackPage(ctx context.Context, id int64, root string, depth, limit int) ([]SourceCatalogFile, bool, error) {
+	where, args := catalogTrackPathFilter(root)
+	if depth == 1 {
+		// parent_path is generated from relative_path and indexed, so the
+		// first level reads exactly one level of rows instead of the card.
+		where += " AND parent_path=?"
+		args = append(args, root)
+	} else {
+		where += " AND (length(relative_path)-length(replace(relative_path,'/','')))<=?"
+		maxSlashes := depth - 1
+		if root != "" {
+			maxSlashes = strings.Count(root, "/") + depth
+		}
+		args = append(args, maxSlashes)
+	}
+	queryArgs := append([]any{id}, args...)
+	queryArgs = append(queryArgs, limit+1)
+	rows, err := s.db.QueryContext(ctx, `SELECT relative_path,title,kind,size_bytes,modified_at,observed_generation
+		FROM source_catalog_file INDEXED BY source_catalog_file_parent WHERE catalog_entry_id=?`+where+` ORDER BY relative_path LIMIT ?`, queryArgs...)
+	if err != nil {
+		return nil, false, err
+	}
+	defer func() { _ = rows.Close() }()
+	files := make([]SourceCatalogFile, 0, limit+1)
+	for rows.Next() {
+		var file SourceCatalogFile
+		if err = rows.Scan(&file.Path, &file.Title, &file.Kind, &file.Size, &file.ModifiedAt, &file.Generation); err != nil {
+			return nil, false, err
+		}
+		files = append(files, file)
+	}
+	if err = rows.Err(); err != nil {
+		return nil, false, err
+	}
+	truncated := len(files) > limit
+	if truncated {
+		files = files[:limit]
+	}
+	return files, truncated, nil
+}
+
+// catalogTrackPathFilter restricts rows to the subtree below root. Paths sort
+// in byte order, so path+"/" through path+"0" is the exact prefix range.
+func catalogTrackPathFilter(root string) (string, []any) {
+	if root == "" {
+		return "", nil
+	}
+	return " AND relative_path>=? AND relative_path<?", []any{root + "/", root + "0"}
+}
+
+type catalogTrackNode struct {
+	file     SourceCatalogFile
+	children map[string]*catalogTrackNode
+	order    []string
+}
+
+type catalogTrackBuilder struct {
+	id    int64
+	root  string
+	depth int
+	node  *catalogTrackNode
+}
+
+func newCatalogTrackBuilder(id int64, root string, depth int) *catalogTrackBuilder {
+	return &catalogTrackBuilder{
+		id:    id,
+		root:  strings.Trim(root, "/"),
+		depth: depth,
+		node:  &catalogTrackNode{children: map[string]*catalogTrackNode{}},
+	}
+}
+
+func (b *catalogTrackBuilder) add(file SourceCatalogFile) {
+	relative := strings.Trim(file.Path, "/")
+	if b.root != "" {
+		if relative == b.root {
+			return
+		}
+		if !strings.HasPrefix(relative, b.root+"/") {
+			return
+		}
+		relative = strings.TrimPrefix(relative, b.root+"/")
+	}
+	if relative == "" {
+		return
+	}
+	segments := strings.Split(relative, "/")
+	truncated := false
+	if b.depth > 0 && len(segments) > b.depth {
+		segments = segments[:b.depth]
+		truncated = true
+	}
+	current := b.node
+	absolute := b.root
+	for index, segment := range segments {
+		if segment == "" {
 			continue
 		}
-		parentNode := ensure(segments[:len(segments)-1])
-		name := segments[len(segments)-1]
-		existing, ok := parentNode.children[name]
+		if absolute == "" {
+			absolute = segment
+		} else {
+			absolute += "/" + segment
+		}
+		child, ok := current.children[segment]
 		if !ok {
-			existing = &node{children: map[string]*node{}}
-			parentNode.children[name] = existing
-			parentNode.order = append(parentNode.order, name)
+			child = &catalogTrackNode{
+				file:     SourceCatalogFile{Path: absolute, Title: segment, Kind: "folder"},
+				children: map[string]*catalogTrackNode{},
+			}
+			current.children[segment] = child
+			current.order = append(current.order, segment)
 		}
-		existing.file = file
-		if existing.file.Path == "" {
-			existing.file.Path = strings.Join(segments, "/")
+		if index == len(segments)-1 {
+			if truncated {
+				child.file = SourceCatalogFile{Path: absolute, Title: segment, Kind: "folder"}
+				child.children = map[string]*catalogTrackNode{}
+				child.order = nil
+			} else {
+				child.file = file
+				child.file.Path = strings.Trim(file.Path, "/")
+			}
 		}
+		current = child
 	}
-	var render func(n *node) []map[string]any
-	render = func(n *node) []map[string]any {
+}
+
+func (b *catalogTrackBuilder) render() []map[string]any {
+	var render func(*catalogTrackNode) []map[string]any
+	render = func(n *catalogTrackNode) []map[string]any {
 		tracks := make([]map[string]any, 0, len(n.order))
 		for _, name := range n.order {
 			child := n.children[name]
 			file := child.file
 			stream := ""
 			if file.Kind == "audio" {
-				stream = "/api/source-catalog/" + strconv.FormatInt(id, 10) + "/media?path=" + url.QueryEscape(file.Path)
+				stream = "/api/source-catalog/" + strconv.FormatInt(b.id, 10) + "/media?path=" + url.QueryEscape(file.Path)
 			}
 			children := []map[string]any{}
 			if len(child.order) > 0 {
 				children = render(child)
 			}
-			tracks = append(tracks, map[string]any{"type": file.Kind, "title": file.Title, "path": file.Path, "hash": file.Path, "streamUrl": stream, "downloadUrl": "", "sizeBytes": file.Size, "durationSeconds": nil, "children": children})
+			tracks = append(tracks, map[string]any{
+				"type": file.Kind, "title": file.Title, "path": file.Path, "hash": file.Path,
+				"streamUrl": stream, "downloadUrl": "", "sizeBytes": file.Size,
+				"durationSeconds": nil, "children": children,
+			})
 		}
 		return tracks
 	}
-	return render(root)
+	return render(b.node)
 }
 
 func (s *Server) listOpenListWorks(w http.ResponseWriter, r *http.Request, source remoteSourceForUse) {
@@ -498,46 +696,19 @@ func (s *Server) listOpenListWorks(w http.ResponseWriter, r *http.Request, sourc
 		pageSize = 24
 	}
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
-	from := `FROM (SELECT candidates.*,ROW_NUMBER() OVER (PARTITION BY CASE WHEN work_id IS NOT NULL THEN 'work:' || (SELECT identity_work_id FROM shared_work_identity WHERE work_id=candidates.work_id) WHEN series_id>0 THEN 'series:' || series_id ELSE 'catalog:' || id END ORDER BY series_id,id) AS identity_rank FROM (
-		SELECT e.id,0 AS series_id,e.primary_code,e.title,e.work_id,e.updated_at,e.availability_status,
-			EXISTS(SELECT 1 FROM source_catalog_file f WHERE f.catalog_entry_id=e.id AND f.kind='audio') AS has_audio FROM source_catalog_entry e
-		WHERE e.file_source_id=? AND e.relocated_to_id IS NULL AND NOT EXISTS(SELECT 1 FROM catalog_series_member m WHERE m.catalog_entry_id=e.id AND (SELECT COUNT(*) FROM catalog_series_member sibling WHERE sibling.series_id=m.series_id)>=2)
-			AND EXISTS(SELECT 1 FROM source_catalog_file f WHERE f.catalog_entry_id=e.id AND f.kind='audio')
-		AND (?='' OR instr(lower(e.title),lower(?))>0 OR instr(lower(e.primary_code),lower(?))>0
-			OR EXISTS(SELECT 1 FROM source_catalog_file f WHERE f.catalog_entry_id=e.id AND instr(lower(f.title),lower(?))>0))
-		UNION ALL
-		SELECT 0,s.id,'',s.title,s.work_id,s.created_at,CASE WHEN EXISTS(
-			SELECT 1 FROM catalog_series_member mm JOIN source_catalog_entry ee ON ee.id=mm.catalog_entry_id
-			JOIN source_catalog_file ff ON ff.catalog_entry_id=ee.id AND ff.kind='audio'
-			WHERE mm.series_id=s.id AND ee.relocated_to_id IS NULL AND ee.availability_status='available'
-		) THEN 'available' ELSE 'missing' END,EXISTS(
-			SELECT 1 FROM catalog_series_member mm JOIN source_catalog_entry ee ON ee.id=mm.catalog_entry_id
-			JOIN source_catalog_file ff ON ff.catalog_entry_id=ee.id AND ff.kind='audio'
-			WHERE mm.series_id=s.id AND ee.relocated_to_id IS NULL
-		) AS has_audio FROM catalog_series s
-		WHERE (SELECT COUNT(*) FROM catalog_series_member all_members WHERE all_members.series_id=s.id)>=2
-		AND EXISTS(SELECT 1 FROM catalog_series_member m JOIN source_catalog_entry e ON e.id=m.catalog_entry_id
-		WHERE m.series_id=s.id AND e.file_source_id=? AND e.relocated_to_id IS NULL
-			AND (?='' OR instr(lower(s.title),lower(?))>0 OR instr(lower(e.title),lower(?))>0 OR instr(lower(e.primary_code),lower(?))>0
-			OR EXISTS(SELECT 1 FROM source_catalog_file f WHERE f.catalog_entry_id=e.id AND instr(lower(f.title),lower(?))>0)))
-	) AS candidates) AS cards WHERE identity_rank=1`
-	args := []any{source.ID, q, q, q, q, source.ID, q, q, q, q, q}
-	var total int
-	if err := s.db.QueryRowContext(r.Context(), "SELECT COUNT(*) "+from, args...).Scan(&total); err != nil {
-		writeError(w, err)
-		return
-	}
-	rows, err := s.db.QueryContext(r.Context(), "SELECT id,series_id,primary_code,title,work_id,updated_at,availability_status,has_audio "+from+" ORDER BY updated_at DESC,series_id DESC,id DESC LIMIT ? OFFSET ?", append(args, pageSize, (page-1)*pageSize)...)
+	prefix, from, args := openListCatalogCardsQuery(source.ID, q)
+	rows, err := s.db.QueryContext(r.Context(), prefix+`SELECT id,series_id,primary_code,title,work_id,updated_at,availability_status,has_audio,COUNT(*) OVER () AS total `+from+` ORDER BY updated_at DESC,series_id DESC,id DESC LIMIT ? OFFSET ?`, append(args, pageSize, (page-1)*pageSize)...)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
 	works := []remoteWorkSummary{}
+	total := 0
 	for rows.Next() {
 		var item remoteWorkSummary
 		var availability string
 		var hasAudio bool
-		if err = rows.Scan(&item.CatalogEntryID, &item.SeriesID, &item.PrimaryCode, &item.Title, &item.WorkID, &item.UpdatedAt, &availability, &hasAudio); err != nil {
+		if err = rows.Scan(&item.CatalogEntryID, &item.SeriesID, &item.PrimaryCode, &item.Title, &item.WorkID, &item.UpdatedAt, &availability, &hasAudio, &total); err != nil {
 			break
 		}
 		item.RemoteID = strconv.FormatInt(item.CatalogEntryID, 10)
@@ -545,9 +716,6 @@ func (s *Server) listOpenListWorks(w http.ResponseWriter, r *http.Request, sourc
 			item.RemoteID = "series:" + strconv.FormatInt(item.SeriesID, 10)
 		}
 		item.RemoteCode = item.PrimaryCode
-		// A retained card still has its identity and personal records, but a
-		// completed scan that found the source missing must not advertise
-		// playback. An unfinished scan keeps the last known availability.
 		item.ImportStatus = "remote"
 		item.ListeningStatus = "none"
 		item.Tags = []string{}
@@ -556,8 +724,6 @@ func (s *Server) listOpenListWorks(w http.ResponseWriter, r *http.Request, sourc
 		if item.WorkID != nil {
 			item.ImportStatus = "imported"
 		}
-		// A retained card still has its identity and personal records, but a
-		// scan that lost its files must not advertise playback.
 		item.RemotePlayable = availability == "available" && hasAudio
 		works = append(works, item)
 	}
@@ -569,5 +735,81 @@ func (s *Server) listOpenListWorks(w http.ResponseWriter, r *http.Request, sourc
 		writeError(w, err)
 		return
 	}
+	if len(works) == 0 && page > 1 {
+		// COUNT(*) OVER () rides on the page. An out-of-range page has no row
+		// to carry it, so only that page pays for a separate count.
+		countPrefix, countFrom, countArgs := openListCatalogCardsQuery(source.ID, q)
+		if err = s.db.QueryRowContext(r.Context(), countPrefix+"SELECT COUNT(*) "+countFrom, countArgs...).Scan(&total); err != nil {
+			writeError(w, err)
+			return
+		}
+	}
 	writeJSON(w, 200, remoteWorksResponse{SourceID: source.ID, Works: works, Page: page, PageSize: pageSize, Total: total, Status: "ok", Sort: "updated", Direction: "desc", SortApplied: true})
+}
+
+// openListCatalogCardsQuery builds the deduplicated card source once. Empty
+// search omits both the FTS CTE and the per-file instr predicates, so browsing
+// without a query never touches file titles.
+func openListCatalogCardsQuery(sourceID int64, query string) (string, string, []any) {
+	query = strings.TrimSpace(query)
+	prefix := ""
+	args := []any{}
+	entrySearch := ""
+	entryArgs := []any{}
+	seriesSearch := ""
+	seriesArgs := []any{}
+	if query != "" {
+		if utf8.RuneCountInString(query) >= 3 {
+			prefix = `WITH search_hits AS MATERIALIZED (
+	SELECT d.catalog_entry_id, d.series_id
+	FROM source_catalog_search s JOIN source_catalog_search_doc d ON d.id=s.rowid
+	WHERE source_catalog_search MATCH ? AND (d.entity_kind='series' OR d.file_source_id=?)
+) `
+			args = append(args, ftsPhrase(query), sourceID)
+			entrySearch = ` AND (e.id IN (SELECT catalog_entry_id FROM search_hits WHERE catalog_entry_id<>0)
+	OR EXISTS(SELECT 1 FROM search_hits sh JOIN catalog_series_member sm ON sm.series_id=sh.series_id WHERE sh.series_id<>0 AND sm.catalog_entry_id=e.id))`
+			seriesSearch = ` AND (s.id IN (SELECT series_id FROM search_hits WHERE series_id<>0)
+	OR EXISTS(SELECT 1 FROM search_hits sh JOIN catalog_series_member sm ON sm.catalog_entry_id=sh.catalog_entry_id WHERE sh.catalog_entry_id<>0 AND sm.series_id=s.id))`
+		} else {
+			// A trigram needs three characters. One- and two-character queries
+			// keep the old substring behaviour rather than silently matching
+			// nothing.
+			entrySearch = ` AND (instr(lower(e.title),lower(?))>0 OR instr(lower(e.primary_code),lower(?))>0
+	OR EXISTS(SELECT 1 FROM source_catalog_file f WHERE f.catalog_entry_id=e.id AND instr(lower(f.title),lower(?))>0))`
+			entryArgs = []any{query, query, query}
+			seriesSearch = ` AND (instr(lower(s.title),lower(?))>0 OR EXISTS(
+	SELECT 1 FROM catalog_series_member m JOIN source_catalog_entry se ON se.id=m.catalog_entry_id
+	WHERE m.series_id=s.id AND (instr(lower(se.title),lower(?))>0 OR instr(lower(se.primary_code),lower(?))>0
+	OR EXISTS(SELECT 1 FROM source_catalog_file sf WHERE sf.catalog_entry_id=se.id AND instr(lower(sf.title),lower(?))>0))))`
+			seriesArgs = []any{query, query, query, query, query}
+		}
+	}
+	from := `FROM (SELECT candidates.*,ROW_NUMBER() OVER (PARTITION BY CASE WHEN work_id IS NOT NULL THEN 'work:' || (SELECT identity_work_id FROM shared_work_identity WHERE work_id=candidates.work_id) WHEN series_id>0 THEN 'series:' || series_id ELSE 'catalog:' || id END ORDER BY series_id,id) AS identity_rank FROM (
+		SELECT e.id,0 AS series_id,e.primary_code,e.title,e.work_id,e.updated_at,e.availability_status,
+			EXISTS(SELECT 1 FROM source_catalog_file f WHERE f.catalog_entry_id=e.id AND f.kind='audio') AS has_audio FROM source_catalog_entry e INDEXED BY source_catalog_entry_live_root
+		WHERE e.file_source_id=? AND e.relocated_to_id IS NULL AND NOT EXISTS(SELECT 1 FROM catalog_series_member m WHERE m.catalog_entry_id=e.id AND (SELECT COUNT(*) FROM catalog_series_member sibling WHERE sibling.series_id=m.series_id)>=2)
+			AND EXISTS(SELECT 1 FROM source_catalog_file f WHERE f.catalog_entry_id=e.id AND f.kind='audio')` + entrySearch + `
+		UNION ALL
+		SELECT 0,s.id,'',s.title,s.work_id,s.created_at,CASE WHEN EXISTS(
+			SELECT 1 FROM catalog_series_member mm JOIN source_catalog_entry ee ON ee.id=mm.catalog_entry_id
+			JOIN source_catalog_file ff INDEXED BY source_catalog_file_parent ON ff.catalog_entry_id=ee.id AND ff.kind='audio'
+			WHERE mm.series_id=s.id AND ee.relocated_to_id IS NULL AND ee.availability_status='available'
+		) THEN 'available' ELSE 'missing' END,EXISTS(
+			SELECT 1 FROM catalog_series_member mm JOIN source_catalog_entry ee ON ee.id=mm.catalog_entry_id
+			JOIN source_catalog_file ff INDEXED BY source_catalog_file_parent ON ff.catalog_entry_id=ee.id AND ff.kind='audio'
+			WHERE mm.series_id=s.id AND ee.relocated_to_id IS NULL
+		) AS has_audio FROM catalog_series s
+		WHERE (SELECT COUNT(*) FROM catalog_series_member all_members WHERE all_members.series_id=s.id)>=2
+		AND EXISTS(SELECT 1 FROM catalog_series_member m JOIN source_catalog_entry e ON e.id=m.catalog_entry_id
+		WHERE m.series_id=s.id AND e.file_source_id=? AND e.relocated_to_id IS NULL` + seriesSearch + `)
+	) AS candidates) AS cards WHERE identity_rank=1`
+	args = append(args, sourceID)
+	args = append(args, entryArgs...)
+	args = append(args, sourceID)
+	args = append(args, seriesArgs...)
+	return prefix, from, args
+}
+
+func ftsPhrase(query string) string {
+	return `"` + strings.ReplaceAll(query, `"`, `""`) + `"`
 }

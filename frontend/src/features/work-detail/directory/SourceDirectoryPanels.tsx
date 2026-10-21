@@ -171,6 +171,7 @@ function SourceDirectoryContent({
   onPlayNext,
   onAppendQueue,
   onPreview,
+  onFolderOpen,
 }: {
   emptyState?: ReactNode;
   root: TreeNode;
@@ -184,6 +185,7 @@ function SourceDirectoryContent({
   onPlayNext?: (track: TreeTrack) => void;
   onAppendQueue?: (track: TreeTrack) => void;
   onPreview?: (request: FilePreviewRequest) => void;
+  onFolderOpen?: (path: string) => void;
 }) {
   if (emptyState) return emptyState;
   return (
@@ -199,6 +201,7 @@ function SourceDirectoryContent({
       onPlayNext={onPlayNext}
       onAppendQueue={onAppendQueue}
       onPreview={onPreview}
+      onFolderOpen={onFolderOpen}
     />
   );
 }
@@ -234,6 +237,7 @@ export function SourceDirectoryPanel({
   onPlayNext,
   onAppendQueue,
   onPreview,
+  onFolderOpen,
   autoRoutePath,
   routeStateKey,
 }: {
@@ -263,6 +267,7 @@ export function SourceDirectoryPanel({
   onPlayNext?: (track: TreeTrack) => void;
   onAppendQueue?: (track: TreeTrack) => void;
   onPreview?: (request: FilePreviewRequest) => void;
+  onFolderOpen?: (path: string) => void;
   autoRoutePath?: string[] | null;
   routeStateKey?: string;
 }) {
@@ -311,6 +316,7 @@ export function SourceDirectoryPanel({
       onPlayNext={onPlayNext}
       onAppendQueue={onAppendQueue}
       onPreview={onPreview}
+      onFolderOpen={onFolderOpen}
     />
   );
   const { visibleTabs, showStrip: showSourceTabs } = sourceTabStrip(tabs, sourceTabVisibility.preferences, activeKey);

@@ -319,6 +319,7 @@ export function DirectoryExplorer({
   onPlayNext,
   onAppendQueue,
   onPreview,
+  onFolderOpen,
   emptyLabel = i18n.t("libraryDetail.localFilesUnavailable"),
 }: {
   root: TreeNode;
@@ -332,6 +333,7 @@ export function DirectoryExplorer({
   onAppendQueue?: (track: TreeTrack) => void;
   onPreview?: (request: FilePreviewRequest) => void;
   emptyLabel?: string;
+  onFolderOpen?: (path: string) => void;
 }) {
   const routeSummary = useMemo(() => directoryRouteSummary(root, directoryRoutingRules), [root, directoryRoutingRules]);
   const recommendedPath = routeSummary?.path ?? null;
@@ -353,12 +355,25 @@ export function DirectoryExplorer({
   const [railHidden, toggleRailHidden] = useFolderRailHidden();
   const [trackLimit, setTrackLimit] = useState(trackPageSize);
   const [imageLimit, setImageLimit] = useState(imagePageSize);
+  const requestedFoldersRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     if (!nodeAtPath(root, path)) {
       setPath(recommendedDirectoryPath(root, directoryRoutingRules));
     }
   }, [root, path, directoryRoutingRules]);
+
+  // A catalog card opens at its first level; the folder body arrives when the
+  // viewer opens that folder. Local trees have no loader and skip this.
+  useEffect(() => {
+    if (!onFolderOpen) return;
+    const key = path.join("/");
+    if (key === "" || requestedFoldersRef.current.has(key)) return;
+    const node = nodeAtPath(root, path);
+    if (!node || node.children.size > 0 || node.files.length > 0) return;
+    requestedFoldersRef.current.add(key);
+    onFolderOpen(key);
+  }, [onFolderOpen, path, root]);
 
   useEffect(() => {
     // Routing rules can arrive after the route request; a reset must keep it.
