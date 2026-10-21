@@ -411,3 +411,49 @@ func TestCatalogSyncDirsEndpointAcceptsArrayAndWrappedShapes(t *testing.T) {
 		}
 	}
 }
+
+// An exclusion added after the first index must also stop the incremental
+// path. A root probe that re-lists the tree cannot recreate the excluded
+// directory row, otherwise the next publish pass would admit it again.
+func TestCatalogSyncDoesNotRecreateAnExcludedSubtree(t *testing.T) {
+	tree := newCatalogSyncTestTree()
+	tree.set("/", catalogSyncTestEntry{Name: "Partition A", IsDir: true, Modified: "p1"})
+	tree.set("/Partition A",
+		catalogSyncTestEntry{Name: "Keep", IsDir: true, Modified: "k1"},
+		catalogSyncTestEntry{Name: "Drop", IsDir: true, Modified: "d1"})
+	tree.set("/Partition A/Keep", catalogSyncTestEntry{Name: "01.mp3", Size: 100, Modified: "kf"})
+	tree.set("/Partition A/Drop", catalogSyncTestEntry{Name: "02.mp3", Size: 100, Modified: "df"})
+	f := newCatalogSyncFixture(t, tree)
+	if p := f.runFullScan(t, ""); p["status"] != "complete" {
+		t.Fatalf("full scan did not complete: %#v", p)
+	}
+	sourceID := f.sourceID(t)
+	if _, err := f.server.db.Exec(`INSERT INTO source_catalog_exclusion(file_source_id,path) VALUES(?, '/Partition A/Drop')`, sourceID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.server.db.Exec(`DELETE FROM source_catalog_directory WHERE file_source_id=? AND path='/Partition A/Drop'`, sourceID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.server.db.Exec(`UPDATE source_catalog_directory SET observed_version='' WHERE file_source_id=?`, sourceID); err != nil {
+		t.Fatal(err)
+	}
+	tree.resetHits()
+	state := f.runCatalogSync(t, true)
+	if state.Status != "succeeded" {
+		t.Fatalf("sync did not succeed: %#v", state)
+	}
+	var recreated int
+	if err := f.server.db.QueryRow(`SELECT count(*) FROM source_catalog_directory WHERE file_source_id=? AND path='/Partition A/Drop'`, sourceID).Scan(&recreated); err != nil {
+		t.Fatal(err)
+	}
+	if recreated != 0 {
+		t.Fatalf("incremental sync recreated the excluded directory")
+	}
+	var kept int
+	if err := f.server.db.QueryRow(`SELECT count(*) FROM source_catalog_directory WHERE file_source_id=? AND path='/Partition A/Keep'`, sourceID).Scan(&kept); err != nil {
+		t.Fatal(err)
+	}
+	if kept != 1 {
+		t.Fatalf("incremental sync dropped an admitted directory")
+	}
+}

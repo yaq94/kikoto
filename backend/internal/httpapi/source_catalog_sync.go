@@ -442,8 +442,26 @@ func (s *Server) applyCatalogSyncProbeTx(ctx context.Context, tx *sql.Tx, source
 	changedCount := 0
 	for name, child := range byName {
 		childPath := path.Join(parent.Path, name)
+		// An excluded subtree is invisible to the index. The incremental path
+		// must apply the same rule as the first pass; otherwise a later root
+		// probe would recreate a directory an operator excluded.
+		excluded, excludeErr := catalogPathExcludedTx(ctx, tx, sourceID, childPath)
+		if excludeErr != nil {
+			return 0, excludeErr
+		}
+		if excluded {
+			continue
+		}
 		row, ok := existing[name]
 		if !ok {
+			// A damaged name cannot be requested. Record it and leave the row out
+			// of the generation, exactly as the full index does.
+			if catalogNameEncodingDamaged(name) {
+				if _, err = recordCatalogEncodingIssueTx(ctx, tx, sourceID, parent.Path, name); err != nil {
+					return 0, err
+				}
+				continue
+			}
 			partition := parent.Partition
 			if parent.Path == "/" {
 				partition = childPath
@@ -623,6 +641,28 @@ func (s *Server) applyCatalogSyncListing(ctx context.Context, sourceID, generati
 	if _, err = tx.ExecContext(ctx, `UPDATE source_catalog_observation SET revision=?,publish_pending=0 WHERE file_source_id=? AND directory_path=? AND revision=?`, newRevision, sourceID, dir.Path, revision); err != nil {
 		return 0, 0, err
 	}
+	// An exclusion or a damaged name removes the child from this generation.
+	// Filtering here keeps observations, directory rows and the publish queue
+	// consistent; the probe path applies the same rule.
+	visible := make([]openlist.Object, 0, len(entries))
+	for _, obj := range entries {
+		childPath := path.Join(dir.Path, obj.Name)
+		excluded, excludeErr := catalogPathExcludedTx(ctx, tx.Tx, sourceID, childPath)
+		if excludeErr != nil {
+			return 0, 0, excludeErr
+		}
+		if excluded {
+			continue
+		}
+		if catalogNameEncodingDamaged(obj.Name) {
+			if _, err = recordCatalogEncodingIssueTx(ctx, tx.Tx, sourceID, dir.Path, obj.Name); err != nil {
+				return 0, 0, err
+			}
+			continue
+		}
+		visible = append(visible, obj)
+	}
+	entries = visible
 	seen := map[string]bool{}
 	for _, obj := range entries {
 		name := obj.Name
