@@ -314,3 +314,45 @@
 
 - 旧实现为每个子文件在父尺寸数组中单独查找，不消耗已匹配的父文件；父目录只有少量重复尺寸时，子目录仍可能全部命中并被误判为格式副本。
 - 现在子、父尺寸都排序后一一匹配，子文件必须各有独立父文件，仍要求 90% 命中。新增相同音频集与重复尺寸无反例两个测试。
+
+## 部分扫描下的旧拆分卡（2026-10-21）
+
+生产 run 53 收尾为 `partial`：4 个上游目录名本身含 U+FFFD，无法寻址；
+另有 27 个未确认空目录。旧代码只在 `failed + restricted = 0` 时执行拆分卡
+退役，因此上一代留下的拆分卡在本代仍可见。实测同一来源目录、
+同一相对音轨出现两张卡（例：`/asmr/中文音声/Flora圆圆` 的
+`圆宝的呼吸声纯享版2` 旧卡与本代 `…2.2` 新卡）。
+
+修复：
+
+- 拆分卡退役改为按根推进，并用 `source_catalog_scan.orphan_cleanup_cursor`
+  持久化位置（迁移 084）。被跳过的根（子树未完整观察、带 work/系列/别名）
+  也会越过，不再导致同一批根无限重试；新 generation 与续跑都把游标归零。
+- 退役不再要求全源无失败；每个根仍要求本代目录 `complete` 且子树不含
+  failed/restricted/未确认空目录。失败范围保留旧卡，完整范围去掉重复卡。
+- `retireStaleFormatCardsTx` 只在有实际发布行的最后一批执行，纯清理调用
+  不再重复扫描全部旧卡。
+
+回归：`TestSourceCatalogPartialRunRetiresOrphanSplitCards` 先让 `/Good` 的
+两行在第一批发布、最后一批属于 `/Later`，并在 `/Bad` 注入 500。修复前残留
+4 张卡（64 而非 62），修复后只剩当前两张。`TestSourceCatalogLinkedSplitCardKeepsSiblings`
+锁定“已关联的拆分卡不反过来钉住 creator 目录”。
+
+迁移：`084_source_catalog_orphan_cursor.sql`，schema 83 → 84。回滚快照仍为
+迁移前 schema 83，旧镜像启动前由回滚脚本恢复该快照。
+- `work_matching_subject` 视图排除 `file_source_id IS NULL` 的退役卡；这些对象
+  已不在任何列表中，匹配它们只会消耗逐对象预算并写入不可达的作品关联。
+  迁移 084 重建该视图。
+
+## 终审修复（2026-10-21 续）
+
+| 问题 | 修复 | 回归 |
+| --- | --- | --- |
+| 当前代没有某目录行时，`catalogRangeUncertain` 直接判为确定缺失 | 新增 `catalogBaseObservedTx`：向上找最近一个有本代行的祖先；`complete` 或 `empty+not_found` 才算确认，其余及无祖先均为不确定。reconcile 阶段同样先判定 | `TestCatalogRangeUncertainWalksToObservedAncestor`、`TestSourceCatalogLifecycleKeepsChildOfUnconfirmedEmpty`（去掉修复后失败） |
+| 副本判定只看子目录 90% 匹配，20 轨精选可被 200 轨合集吞掉；父目录可用旧代尺寸 | 增加子目录覆盖父目录 ≥80% 的必要条件；尺寸读取限定本代 `complete` 目录 | `TestCatalogDuplicateDirectoryRejectsSubsetOfLargerParent`、`TestCatalogDuplicateDirectoryIgnoresStaleParentSizes` |
+| 目录列表把 `updated_at` 当检查时间 | `checkedAt` 只取 `status_checked_at`；从未探测的卡返回空串 | `TestCatalogDirectoryListingChecksUnknownAndStaleTabs` 增加空值断言 |
+| 退役卡仍进入匹配队列，消耗逐对象预算 | `work_matching_subject` 视图排除 `file_source_id IS NULL` | `TestWorkMatchingSkipsRetiredCatalogSubjects` |
+| 迁移 084 未进入兼容矩阵与开发基线 | 更新 `docs/development/migrations.md`、`release-rollback.md`；生成 `compat/084_dev.sql` | `go generate ./migrations`；`go test ./internal/storage` |
+
+孤儿清理游标的契约：按根推进、被跳过或阻塞的根越过并留到下一代重试；
+`HAVING` 过滤无法下推到索引，扫描成本按 stale 条目计，已在本批接受。
