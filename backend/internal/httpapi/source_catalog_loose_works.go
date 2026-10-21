@@ -1220,67 +1220,11 @@ func retireStaleFormatCardsTx(ctx context.Context, tx *sql.Tx, sourceID, generat
 		return readErr
 	}
 	for _, card := range stale {
-		// The format directory must have been observed completely in this
-		// generation before its old card can be retired. A failed or restricted
-		// subtree proves nothing: its audio was not republished, so deleting the
-		// old rows would hide playable files until the source recovers. A split
-		// card root carries a "::key" suffix; the directory row uses the path
-		// before it.
-		directory := card.root
-		if index := strings.Index(directory, "::"); index >= 0 {
-			directory = directory[:index]
-		}
-		complete, err := catalogRootIncomplete(ctx, tx, sourceID, generation, directory)
+		parentID, err := catalogFormatCardRetireTargetTx(ctx, tx, sourceID, generation, card.id, card.root)
 		if err != nil {
 			return err
 		}
-		if complete {
-			continue
-		}
-		// The owner is the catalog root assigned by the current directory pass,
-		// not necessarily path.Dir. A format folder can sit below an unadmitted
-		// wrapper, so its parent path may have no card while the release card is
-		// a grandparent. Using the recorded root also prevents attaching the old
-		// card to an unrelated work that happens to share the parent path.
-		var owner string
-		err = tx.QueryRowContext(ctx, `SELECT catalog_root FROM source_catalog_directory
-			WHERE file_source_id=? AND generation=? AND path=?`, sourceID, generation, directory).Scan(&owner)
-		if errors.Is(err, sql.ErrNoRows) {
-			continue
-		}
-		if err != nil {
-			return err
-		}
-		if owner == "" || owner == directory || owner == card.root {
-			continue
-		}
-		var parentID int64
-		err = tx.QueryRowContext(ctx, `SELECT id FROM source_catalog_entry
-			WHERE file_source_id=? AND root_path=? AND relocated_to_id IS NULL AND last_seen_generation=?`,
-			sourceID, owner, generation).Scan(&parentID)
-		if errors.Is(err, sql.ErrNoRows) {
-			continue
-		}
-		if err != nil {
-			return err
-		}
-		covered, err := catalogCardFilesCoveredTx(ctx, tx, card.id, parentID, directory, owner)
-		if err != nil {
-			return err
-		}
-		if !covered {
-			// The current card does not publish every audio path the old card
-			// owned. Retiring it would hide playable files, so keep it for review.
-			continue
-		}
-		var blocked int
-		if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM source_catalog_entry e WHERE e.id=? AND (
-			e.work_id IS NOT NULL
-			OR EXISTS(SELECT 1 FROM catalog_series_member m WHERE m.catalog_entry_id=e.id)
-			OR EXISTS(SELECT 1 FROM source_catalog_entry r WHERE r.relocated_to_id=e.id)))`, card.id).Scan(&blocked); err != nil {
-			return err
-		}
-		if blocked != 0 {
+		if parentID == 0 {
 			continue
 		}
 		if err = retireCatalogCardTx(ctx, tx, card.id, parentID); err != nil {
@@ -1288,6 +1232,77 @@ func retireStaleFormatCardsTx(ctx context.Context, tx *sql.Tx, sourceID, generat
 		}
 	}
 	return nil
+}
+
+// catalogFormatCardRetireTargetTx returns the current release card that owns
+// every audio path of a stale format card. Zero means the card must stay: its
+// subtree was not fully observed, it has no unique owner, its files are not
+// covered, or it carries identity that needs review.
+func catalogFormatCardRetireTargetTx(ctx context.Context, tx *sql.Tx, sourceID, generation, cardID int64, root string) (int64, error) {
+	// The format directory must have been observed completely in this
+	// generation before its old card can be retired. A failed or restricted
+	// subtree proves nothing: its audio was not republished, so deleting the
+	// old rows would hide playable files until the source recovers. A split
+	// card root carries a "::key" suffix; the directory row uses the path
+	// before it.
+	directory := root
+	if index := strings.Index(directory, "::"); index >= 0 {
+		directory = directory[:index]
+	}
+	incomplete, err := catalogRootIncomplete(ctx, tx, sourceID, generation, directory)
+	if err != nil {
+		return 0, err
+	}
+	if incomplete {
+		return 0, nil
+	}
+	// The owner is the catalog root assigned by the current directory pass,
+	// not necessarily path.Dir. A format folder can sit below an unadmitted
+	// wrapper, so its parent path may have no card while the release card is
+	// a grandparent. Using the recorded root also prevents attaching the old
+	// card to an unrelated work that happens to share the parent path.
+	var owner string
+	err = tx.QueryRowContext(ctx, `SELECT catalog_root FROM source_catalog_directory
+		WHERE file_source_id=? AND generation=? AND path=?`, sourceID, generation, directory).Scan(&owner)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	if owner == "" || owner == directory || owner == root {
+		return 0, nil
+	}
+	var parentID int64
+	err = tx.QueryRowContext(ctx, `SELECT id FROM source_catalog_entry
+		WHERE file_source_id=? AND root_path=? AND relocated_to_id IS NULL AND last_seen_generation=?`,
+		sourceID, owner, generation).Scan(&parentID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	covered, err := catalogCardFilesCoveredTx(ctx, tx, cardID, parentID, directory, owner)
+	if err != nil {
+		return 0, err
+	}
+	if !covered {
+		// The current card does not publish every audio path the old card
+		// owned. Retiring it would hide playable files, so keep it for review.
+		return 0, nil
+	}
+	var blocked int
+	if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM source_catalog_entry e WHERE e.id=? AND (
+		e.work_id IS NOT NULL
+		OR EXISTS(SELECT 1 FROM catalog_series_member m WHERE m.catalog_entry_id=e.id)
+		OR EXISTS(SELECT 1 FROM source_catalog_entry r WHERE r.relocated_to_id=e.id)))`, cardID).Scan(&blocked); err != nil {
+		return 0, err
+	}
+	if blocked != 0 {
+		return 0, nil
+	}
+	return parentID, nil
 }
 
 // catalogCardFilesCoveredTx reports whether every audio path of a stale format
@@ -1568,23 +1583,7 @@ func retireCoveredContainerCardsTx(ctx context.Context, tx *sql.Tx, sourceID, ge
 		return err
 	}
 	for _, card := range cards {
-		var blocked int
-		if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM source_catalog_entry e WHERE e.id=? AND (
-			e.work_id IS NOT NULL
-			OR EXISTS(SELECT 1 FROM catalog_series_member m WHERE m.catalog_entry_id=e.id)))`, card.id).Scan(&blocked); err != nil {
-			return err
-		}
-		if blocked != 0 {
-			continue
-		}
-		incomplete, err := catalogRootIncomplete(ctx, tx, sourceID, generation, card.root)
-		if err != nil {
-			return err
-		}
-		if incomplete {
-			continue
-		}
-		target, err := coveredContainerTargetTx(ctx, tx, sourceID, generation, card.root, card.id)
+		target, err := catalogCoveredContainerRetireTargetTx(ctx, tx, sourceID, generation, card.id, card.root)
 		if err != nil {
 			return err
 		}
@@ -1596,6 +1595,183 @@ func retireCoveredContainerCardsTx(ctx context.Context, tx *sql.Tx, sourceID, ge
 		}
 	}
 	return nil
+}
+
+// catalogCoveredContainerRetireTargetTx returns the one deeper current card
+// that owns every audio path of a stale container. Zero keeps the container.
+func catalogCoveredContainerRetireTargetTx(ctx context.Context, tx *sql.Tx, sourceID, generation, cardID int64, root string) (int64, error) {
+	var blocked int
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM source_catalog_entry e WHERE e.id=? AND (
+		e.work_id IS NOT NULL
+		OR EXISTS(SELECT 1 FROM catalog_series_member m WHERE m.catalog_entry_id=e.id)
+		OR EXISTS(SELECT 1 FROM source_catalog_entry r WHERE r.relocated_to_id=e.id)))`, cardID).Scan(&blocked); err != nil {
+		return 0, err
+	}
+	if blocked != 0 {
+		return 0, nil
+	}
+	incomplete, err := catalogRootIncomplete(ctx, tx, sourceID, generation, root)
+	if err != nil {
+		return 0, err
+	}
+	if incomplete {
+		return 0, nil
+	}
+	return coveredContainerTargetTx(ctx, tx, sourceID, generation, root, cardID)
+}
+
+// catalogRetireCardsPerBatch bounds both the rows examined in one transaction
+// and the retirements one call may commit.
+const catalogRetireCardsPerBatch = 100
+
+type catalogRetirePass int
+
+const (
+	catalogRetireCovered catalogRetirePass = iota
+	catalogRetireFormat
+)
+
+// retireCatalogCardsBatch moves stale-card retirement out of the final publish
+// transaction. It examines at most 100 rows per transaction and commits each
+// page independently. The cursor is local to this call; a later call restarts
+// from the lowest id, and already-retired rows simply disappear. Every step is
+// idempotent, so a restart repeats checks without duplicating a retirement.
+//
+// Pass order matches the former in-publish order: covered containers first,
+// then format cards. A full covered pass returns without starting the format
+// pass, so a large covered backlog does not let format cards overtake it.
+//
+// A page whose cards cannot retire (incomplete subtree, partial coverage or an
+// ambiguous owner) still advances the local cursor, so the pass reaches later
+// rows instead of stalling on a blocked prefix. The budget counts committed
+// retirements, not examined rows; one call may therefore scan several pages.
+func (s *Server) retireCatalogCardsBatch(ctx context.Context, job workflowJobRecord, sourceID int64) (retired int, done bool, err error) {
+	budget := catalogRetireCardsPerBatch
+	for _, pass := range []catalogRetirePass{catalogRetireCovered, catalogRetireFormat} {
+		if budget == 0 {
+			return retired, false, nil
+		}
+		n, exhausted, passErr := s.retireCatalogCardPass(ctx, job, sourceID, pass, budget)
+		retired += n
+		budget -= n
+		if passErr != nil {
+			return retired, false, passErr
+		}
+		if !exhausted {
+			return retired, false, nil
+		}
+	}
+	return retired, true, nil
+}
+
+func (s *Server) retireCatalogCardPass(ctx context.Context, job workflowJobRecord, sourceID int64, pass catalogRetirePass, budget int) (retired int, exhausted bool, err error) {
+	var cursor int64
+	for {
+		remaining := budget - retired
+		n, lastID, more, pageErr := s.retireCatalogCardPage(ctx, job, sourceID, pass, cursor, remaining)
+		retired += n
+		if pageErr != nil {
+			return retired, false, pageErr
+		}
+		if retired >= budget {
+			return retired, false, nil
+		}
+		if !more {
+			return retired, true, nil
+		}
+		if lastID <= cursor {
+			return retired, false, errors.New("catalog retire cursor did not advance")
+		}
+		cursor = lastID
+	}
+}
+
+func (s *Server) retireCatalogCardPage(ctx context.Context, job workflowJobRecord, sourceID int64, pass catalogRetirePass, cursor int64, retireLimit int) (retired int, lastID int64, more bool, err error) {
+	tx, release, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
+	if err != nil {
+		return 0, cursor, false, err
+	}
+	defer release()
+	if err = verifyCatalogLease(ctx, tx.Tx, job); err != nil {
+		return 0, cursor, false, err
+	}
+	query := `SELECT e.id,e.root_path FROM source_catalog_entry e
+		WHERE e.file_source_id=? AND e.relocated_to_id IS NULL AND e.last_seen_generation<>? AND e.id>?
+			AND e.source_root='' AND e.work_id IS NULL
+			AND NOT EXISTS(SELECT 1 FROM catalog_series_member m WHERE m.catalog_entry_id=e.id)
+			AND NOT EXISTS(SELECT 1 FROM source_catalog_entry r WHERE r.relocated_to_id=e.id)
+		ORDER BY e.id LIMIT ?`
+	if pass == catalogRetireFormat {
+		query = `SELECT e.id,e.root_path FROM source_catalog_entry e
+			WHERE e.file_source_id=? AND e.relocated_to_id IS NULL AND e.last_seen_generation<>? AND e.id>?
+				AND e.work_id IS NULL
+				AND NOT EXISTS(SELECT 1 FROM catalog_series_member m WHERE m.catalog_entry_id=e.id)
+				AND NOT EXISTS(SELECT 1 FROM source_catalog_entry r WHERE r.relocated_to_id=e.id)
+			ORDER BY e.id LIMIT ?`
+	}
+	rows, err := tx.QueryContext(ctx, query, sourceID, job.RunID, cursor, catalogRetireCardsPerBatch)
+	if err != nil {
+		return 0, cursor, false, err
+	}
+	type retireCard struct {
+		id   int64
+		root string
+	}
+	cards := []retireCard{}
+	for rows.Next() {
+		var card retireCard
+		if err = rows.Scan(&card.id, &card.root); err != nil {
+			break
+		}
+		cards = append(cards, card)
+	}
+	readErr := rows.Err()
+	_ = rows.Close()
+	if err != nil {
+		return 0, cursor, false, err
+	}
+	if readErr != nil {
+		return 0, cursor, false, readErr
+	}
+	if len(cards) > 0 {
+		lastID = cards[len(cards)-1].id
+	} else {
+		lastID = cursor
+	}
+	more = len(cards) == catalogRetireCardsPerBatch
+	for _, card := range cards {
+		if retireLimit > 0 && retired >= retireLimit {
+			break
+		}
+		var target int64
+		if pass == catalogRetireCovered {
+			target, err = catalogCoveredContainerRetireTargetTx(ctx, tx.Tx, sourceID, job.RunID, card.id, card.root)
+		} else {
+			if !catalogWorkPartDirectory(path.Base(card.root)) {
+				continue
+			}
+			target, err = catalogFormatCardRetireTargetTx(ctx, tx.Tx, sourceID, job.RunID, card.id, card.root)
+		}
+		if err != nil {
+			return retired, lastID, false, err
+		}
+		if target == 0 {
+			continue
+		}
+		if err = retireCatalogCardTx(ctx, tx.Tx, card.id, target); err != nil {
+			return retired, lastID, false, err
+		}
+		retired++
+	}
+	if retired > 0 {
+		if _, err = tx.ExecContext(ctx, `UPDATE source_catalog_scan SET indexed=(SELECT count(*) FROM source_catalog_entry WHERE file_source_id=? AND last_seen_generation=?) WHERE file_source_id=?`, sourceID, job.RunID, sourceID); err != nil {
+			return retired, lastID, false, err
+		}
+	}
+	if err = tx.Commit(); err != nil {
+		return retired, lastID, false, err
+	}
+	return retired, lastID, more, nil
 }
 
 // coveredContainerTargetTx reports the one current card that owns every audio
