@@ -185,6 +185,7 @@ func main() {
 	var (
 		dbPath      = flag.String("db", "", "SQLite database path (opened read-only)")
 		vacuumTo    = flag.String("vacuum-to", "", "optional target copy created with VACUUM INTO")
+		writeDB     = flag.String("write-db", "", "disposable copy for write benchmarks; must differ from --db")
 		sourceID    = flag.Int64("source-id", 0, "source id; 0 auto-detects from --root")
 		generation  = flag.Int64("generation", 0, "scan generation; 0 reads source_catalog_scan")
 		root        = flag.String("root", defaultRoot, "root path for catalogRootIncomplete")
@@ -204,6 +205,9 @@ func main() {
 	}
 	if *vacuumTo != "" && samePath(*dbPath, *vacuumTo) {
 		fatalf("--vacuum-to must differ from --db")
+	}
+	if *writeDB != "" && samePath(*dbPath, *writeDB) {
+		fatalf("--write-db must differ from --db")
 	}
 	if *vacuumTo != "" {
 		if _, err := os.Stat(*vacuumTo); err == nil && !*force {
@@ -242,6 +246,10 @@ func main() {
 		}
 		workDB = *vacuumTo
 	}
+	writeWorkDB := *writeDB
+	if writeWorkDB == "" {
+		writeWorkDB = *vacuumTo
+	}
 
 	ctx := context.Background()
 	ro, err := openReadOnly(workDB)
@@ -274,8 +282,8 @@ func main() {
 	// Write benchmarks must never touch the source database. Requiring a
 	// VACUUM INTO copy keeps the read-only contract even though each write
 	// benchmark rolls back.
-	if *vacuumTo == "" && (enabled("cleanup_100_cards") || enabled("lifecycle_100_entries") || enabled("publish_1000_rows_fixture")) {
-		fatalf("cleanup_100_cards, lifecycle_100_entries and publish_1000_rows_fixture require --vacuum-to")
+	if writeWorkDB == "" && (enabled("cleanup_100_cards") || enabled("lifecycle_100_entries") || enabled("publish_1000_rows_fixture")) {
+		fatalf("cleanup_100_cards, lifecycle_100_entries and publish_1000_rows_fixture require --vacuum-to or --write-db")
 	}
 
 	if enabled("progress_exact") {
@@ -325,10 +333,10 @@ func main() {
 		}, []planSpec{{SQL: catalogPublishQuery, Args: []any{sid, gen, publishRows}}}))
 	}
 	if enabled("publish_1000_rows_fixture") {
-		rep.Queries = append(rep.Queries, benchPublishFixture(ctx, workDB, *runs, sid, gen, publishRows))
+		rep.Queries = append(rep.Queries, benchPublishFixture(ctx, writeWorkDB, *runs, sid, gen, publishRows))
 	}
 	if enabled("cleanup_100_cards") {
-		rep.Queries = append(rep.Queries, benchWrite(ctx, "cleanup_100_cards", workDB, *writeRuns, func(ctx context.Context, conn *sql.Conn) (map[string]any, error) {
+		rep.Queries = append(rep.Queries, benchWrite(ctx, "cleanup_100_cards", writeWorkDB, *writeRuns, func(ctx context.Context, conn *sql.Conn) (map[string]any, error) {
 			return runCleanup(ctx, conn, sid, gen, *cleanupFrom, cleanupCards)
 		}, []planSpec{
 			{SQL: cleanupIDsSQL, Args: []any{sid, gen, *cleanupFrom, cleanupCards}},
@@ -338,7 +346,7 @@ func main() {
 		}))
 	}
 	if enabled("lifecycle_100_entries") {
-		rep.Queries = append(rep.Queries, benchWrite(ctx, "lifecycle_100_entries", workDB, *writeRuns, func(ctx context.Context, conn *sql.Conn) (map[string]any, error) {
+		rep.Queries = append(rep.Queries, benchWrite(ctx, "lifecycle_100_entries", writeWorkDB, *writeRuns, func(ctx context.Context, conn *sql.Conn) (map[string]any, error) {
 			return runLifecycle(ctx, conn, sid, gen, *lifecycleAt, lifecycleRows)
 		}, []planSpec{
 			{SQL: lifecycleEntriesSQL, Args: []any{sid, *lifecycleAt, lifecycleRows}},
@@ -922,12 +930,17 @@ func vacuumInto(source, target string, force bool) error {
 }
 
 func openReadOnly(dbPath string) (*sql.DB, error) {
-	dsn := "file:" + filepath.ToSlash(dbPath) + "?mode=ro&_pragma=query_only(1)&_pragma=busy_timeout(5000)"
+	// Match the product connection: 16 MiB page cache per connection and a
+	// 256 MiB mmap window. Without these the harness measures SQLite defaults,
+	// not the production driver configuration.
+	dsn := "file:" + filepath.ToSlash(dbPath) +
+		"?mode=ro&_pragma=query_only(1)&_pragma=busy_timeout(30000)&_pragma=cache_size(-16000)&_pragma=mmap_size(268435456)"
 	return sql.Open("sqlite", dsn)
 }
 
 func openWritable(dbPath string) (*sql.DB, error) {
-	dsn := "file:" + filepath.ToSlash(dbPath) + "?_pragma=busy_timeout(5000)"
+	dsn := "file:" + filepath.ToSlash(dbPath) +
+		"?_pragma=busy_timeout(30000)&_pragma=cache_size(-16000)&_pragma=mmap_size(268435456)"
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, err

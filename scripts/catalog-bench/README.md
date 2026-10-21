@@ -36,6 +36,7 @@ Useful flags:
 | --- | --- |
 | `--db` | source SQLite path, always opened read-only |
 | `--vacuum-to` | optional consistent copy; refuses to overwrite without `--force` |
+| `--write-db` | disposable copy for write benchmarks; must differ from `--db`; falls back to `--vacuum-to` |
 | `--source-id`, `--generation` | override auto-detection |
 | `--root` | root for `catalogRootIncomplete`, default `/asmr6/轩子` |
 | `--runs` | read benchmark repetitions |
@@ -51,8 +52,8 @@ Query names: `progress_exact`, `purge_empty_pending`, `root_incomplete`,
 `lifecycle_100_entries`.
 
 `publish_1000_rows_fixture`, `cleanup_100_cards` and `lifecycle_100_entries`
-require `--vacuum-to`; without a copy the tool refuses to run them so the
-source database stays read-only.
+require `--vacuum-to` or `--write-db`; without a disposable copy the tool
+refuses to run them so the source database stays read-only.
 
 ## What is measured
 

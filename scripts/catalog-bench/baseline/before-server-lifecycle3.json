@@ -1,6 +1,6 @@
 {
-  "generatedAt": "2026-10-21T10:16:27Z",
-  "label": "before-server-lifecycle3",
+  "generatedAt": "2026-10-21T10:30:32Z",
+  "label": "before-server-lifecycle-pragma",
   "driver": "modernc.org/sqlite",
   "database": "/tmp/kikoto-bench-before.db",
   "databaseBytes": 366694400,
@@ -23,9 +23,9 @@
     {
       "name": "lifecycle_100_entries",
       "runs": 3,
-      "medianMs": 42.814,
-      "minMs": 42.263,
-      "maxMs": 45.024,
+      "medianMs": 37.081,
+      "minMs": 36.057,
+      "maxMs": 46.231,
       "details": {
         "cursorFrom": 0,
         "scanned": 100,

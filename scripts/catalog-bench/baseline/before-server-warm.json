@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-21T10:15:59Z",
+  "generatedAt": "2026-10-21T10:31:02Z",
   "label": "before-server-warm",
   "driver": "modernc.org/sqlite",
   "database": "/tmp/kikoto-bench-before.db",
@@ -23,17 +23,17 @@
     {
       "name": "progress_exact",
       "runs": 5,
-      "medianMs": 543.85,
-      "minMs": 539.98,
-      "maxMs": 561.82,
+      "medianMs": 504.918,
+      "minMs": 498.449,
+      "maxMs": 515.654,
       "details": {
         "breakdownMs": {
-          "detailPage": 8.18,
-          "directoryAggregates": 19.281,
-          "observedJoin": 472.283,
-          "partitionPage": 19.272,
-          "scanRow": 0.121,
-          "stagingCounts": 42.654
+          "detailPage": 6.511,
+          "directoryAggregates": 16.716,
+          "observedJoin": 427.04,
+          "partitionPage": 16.973,
+          "scanRow": 0.111,
+          "stagingCounts": 31.083
         },
         "completed": 14463,
         "detailRows": 31,
@@ -77,9 +77,9 @@
     {
       "name": "purge_empty_pending",
       "runs": 5,
-      "medianMs": 204.614,
-      "minMs": 200.123,
-      "maxMs": 207.66,
+      "medianMs": 199.705,
+      "minMs": 195.539,
+      "maxMs": 200.534,
       "details": {
         "stale": 0
       },
@@ -93,9 +93,9 @@
     {
       "name": "root_incomplete",
       "runs": 5,
-      "medianMs": 262.016,
-      "minMs": 260.166,
-      "maxMs": 268.492,
+      "medianMs": 251.951,
+      "minMs": 248.149,
+      "maxMs": 257.346,
       "details": {
         "incomplete": 0,
         "root": "/asmr6/轩子"
@@ -116,9 +116,9 @@
     {
       "name": "publish_1000_rows",
       "runs": 5,
-      "medianMs": 31.785,
-      "minMs": 31.732,
-      "maxMs": 31.843,
+      "medianMs": 27.845,
+      "minMs": 27.331,
+      "maxMs": 29.806,
       "details": {
         "rows": 0
       },
@@ -132,9 +132,9 @@
     {
       "name": "publish_1000_rows_fixture",
       "runs": 5,
-      "medianMs": 5.196,
-      "minMs": 5.05,
-      "maxMs": 5.328,
+      "medianMs": 5.076,
+      "minMs": 5.024,
+      "maxMs": 5.186,
       "details": {
         "markedPending": 1000,
         "rows": 1000

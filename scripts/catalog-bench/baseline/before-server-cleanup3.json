@@ -1,6 +1,6 @@
 {
-  "generatedAt": "2026-10-21T10:16:18Z",
-  "label": "before-server-cleanup3",
+  "generatedAt": "2026-10-21T10:30:24Z",
+  "label": "before-server-cleanup-pragma",
   "driver": "modernc.org/sqlite",
   "database": "/tmp/kikoto-bench-before.db",
   "databaseBytes": 366694400,
@@ -23,9 +23,9 @@
     {
       "name": "cleanup_100_cards",
       "runs": 3,
-      "medianMs": 2690.106,
-      "minMs": 2678.042,
-      "maxMs": 2695.325,
+      "medianMs": 2446.848,
+      "minMs": 2250.108,
+      "maxMs": 2906.066,
       "details": {
         "cursorFrom": 0,
         "directoryCards": 31,
