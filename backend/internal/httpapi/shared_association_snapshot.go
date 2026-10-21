@@ -77,7 +77,7 @@ func loadAssociationObject(ctx context.Context, tx *sql.Tx, subject associationS
 	var err error
 	switch subject.Kind {
 	case "work":
-		err = tx.QueryRowContext(ctx, `SELECT title,primary_code,id FROM work WHERE id=?`, subject.ID).Scan(&o.Title, &o.Code, &o.WorkID)
+		err = tx.QueryRowContext(ctx, `SELECT title,trim(primary_code),id FROM work WHERE id=?`, subject.ID).Scan(&o.Title, &o.Code, &o.WorkID)
 	case "catalog":
 		// A relocation retires the old row; its successor owns the work link and
 		// the review identity the user actually sees. Never build evidence from
@@ -92,10 +92,13 @@ func loadAssociationObject(ctx context.Context, tx *sql.Tx, subject associationS
 		if entry.ID != subject.ID {
 			return o, errAssociationStale
 		}
-		o.Title, o.Code, o.WorkID = entry.Title, entry.PrimaryCode, entry.WorkID
+		o.Title, o.Code, o.WorkID = entry.Title, matchCode(entry.PrimaryCode), entry.WorkID
 		if o.WorkID == nil && o.Code != "" {
 			var id int64
-			err = tx.QueryRowContext(ctx, `SELECT COALESCE(l.canonical_work_id,w.id) FROM work w LEFT JOIN work_edition e ON e.work_id=w.id LEFT JOIN logical_work l ON l.id=e.logical_work_id WHERE w.primary_code=?`, o.Code).Scan(&id)
+			err = tx.QueryRowContext(ctx, `SELECT COALESCE(l.canonical_work_id,w.id) FROM work w
+				LEFT JOIN work_edition e ON e.work_id=w.id
+				LEFT JOIN logical_work l ON l.id=e.logical_work_id
+				WHERE trim(w.primary_code)=? AND trim(w.primary_code)<>''`, o.Code).Scan(&id)
 			if err == nil {
 				o.WorkID = &id
 			} else if errors.Is(err, sql.ErrNoRows) {

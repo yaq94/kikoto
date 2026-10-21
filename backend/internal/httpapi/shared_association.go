@@ -348,11 +348,15 @@ func registerAssociationObject(ctx context.Context, tx *sql.Tx, o *associationOb
 		return nil
 	}
 	var id int64
-	if o.Code != "" {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO work(primary_code,title) VALUES(?,?) ON CONFLICT(primary_code) WHERE primary_code<>'' DO NOTHING`, o.Code, o.Title); err != nil {
+	code := matchCode(o.Code)
+	if code != "" {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO work(primary_code,title) VALUES(?,?) ON CONFLICT(primary_code) WHERE primary_code<>'' DO NOTHING`, code, o.Title); err != nil {
 			return err
 		}
-		if err := tx.QueryRowContext(ctx, `SELECT id FROM work WHERE primary_code=?`, o.Code).Scan(&id); err != nil {
+		// The conflict target protects raw duplicates. The trim predicate keeps
+		// a blank or padded code from selecting an unrelated unnumbered work.
+		if err := tx.QueryRowContext(ctx, `SELECT id FROM work
+			WHERE trim(primary_code)=? AND trim(primary_code)<>''`, code).Scan(&id); err != nil {
 			return err
 		}
 	} else {
@@ -366,10 +370,10 @@ func registerAssociationObject(ctx context.Context, tx *sql.Tx, o *associationOb
 	}
 	if exists == 0 {
 		var logical int64
-		if err := tx.QueryRowContext(ctx, `INSERT INTO logical_work(canonical_work_id,canonical_code) VALUES(?,?) RETURNING id`, id, o.Code).Scan(&logical); err != nil {
+		if err := tx.QueryRowContext(ctx, `INSERT INTO logical_work(canonical_work_id,canonical_code) VALUES(?,?) RETURNING id`, id, code).Scan(&logical); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO work_edition(work_id,logical_work_id,primary_code,is_canonical) VALUES(?,?,?,1)`, id, logical, o.Code); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO work_edition(work_id,logical_work_id,primary_code,is_canonical) VALUES(?,?,?,1)`, id, logical, code); err != nil {
 			return err
 		}
 	}
@@ -383,6 +387,7 @@ func registerAssociationObject(ctx context.Context, tx *sql.Tx, o *associationOb
 			return err
 		}
 	}
+	o.Code = code
 	o.WorkID = &id
 	o.IdentityWorkID = id
 	o.Members = []int64{id}

@@ -95,7 +95,7 @@ func loadWorkMatchMember(ctx context.Context, tx *sql.Tx, subject associationSub
 	if err != nil {
 		return e, err
 	}
-	e.Title, e.Code, e.Level, e.Identity, e.Revision = o.Title, o.Code, o.Level, o.IdentityWorkID, o.Revision
+	e.Title, e.Code, e.Level, e.Identity, e.Revision = o.Title, matchCode(o.Code), o.Level, o.IdentityWorkID, o.Revision
 	if len(e.Title) > 8192 {
 		return e, errAssociationLimit
 	}
@@ -177,6 +177,14 @@ func loadWorkMatchMember(ctx context.Context, tx *sql.Tx, subject associationSub
 		}
 	}
 	return e, nil
+}
+
+// matchCode trims a published work code before it participates in identity
+// matching. A blank code is absence of evidence, never an identity: treating it
+// as a value lets every unnumbered work and every unnumbered catalog entry
+// match each other.
+func matchCode(code string) string {
+	return strings.TrimSpace(code)
 }
 
 func matchWorkEvidence(a, b workMatchEvidence) workMatchCandidate {
@@ -343,12 +351,15 @@ func evaluateWorkMatchTx(ctx context.Context, tx *sql.Tx, subject associationSub
 	if err != nil {
 		return result, err
 	}
-	if subject.Kind == "catalog" && normalizeWorkCode(a.Code) != "" {
+	code := matchCode(a.Code)
+	if subject.Kind == "catalog" && code != "" {
 		var knownID int64
-		err = tx.QueryRowContext(ctx, `SELECT w.id FROM work w WHERE w.primary_code=?
+		err = tx.QueryRowContext(ctx, `SELECT w.id FROM work w
+			WHERE trim(w.primary_code)=? AND trim(w.primary_code)<>''
 			UNION ALL SELECT COALESCE(l.canonical_work_id,alias.source_work_id) FROM work_code_alias alias
 				LEFT JOIN logical_work l ON l.id=alias.logical_work_id
-				WHERE alias.primary_code=? AND COALESCE(l.canonical_work_id,alias.source_work_id) IS NOT NULL LIMIT 1`, a.Code, a.Code).Scan(&knownID)
+				WHERE trim(alias.primary_code)=? AND trim(alias.primary_code)<>''
+					AND COALESCE(l.canonical_work_id,alias.source_work_id) IS NOT NULL LIMIT 1`, code, code).Scan(&knownID)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return result, err
 		}
@@ -385,9 +396,9 @@ func evaluateWorkMatchTx(ctx context.Context, tx *sql.Tx, subject associationSub
 	// The query covers every source and registered work. Overflow pauses the whole
 	// decision; LIMIT can never manufacture uniqueness from a partial candidate set.
 	rows, err := tx.QueryContext(ctx, `SELECT kind,id FROM work_matching_subject s WHERE NOT (kind=? AND id=?) AND (
-	 lower(trim(title))=lower(trim(?)) OR (?<>'' AND primary_code=?) OR
+	 lower(trim(title))=lower(trim(?)) OR (?<>'' AND trim(primary_code)=? AND trim(primary_code)<>'') OR
 	 (? > 0 AND work_id IN (SELECT work_id FROM work_edition WHERE logical_work_id=?)))
-	 ORDER BY kind,id LIMIT ?`, subject.Kind, subject.ID, a.Title, a.Code, a.Code, a.Family, a.Family, options.CandidateLimit+1)
+	 ORDER BY kind,id LIMIT ?`, subject.Kind, subject.ID, a.Title, code, code, a.Family, a.Family, options.CandidateLimit+1)
 	if err != nil {
 		return result, err
 	}
