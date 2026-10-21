@@ -93,16 +93,20 @@ func (s *Server) translateContent(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.requirePermission(w, r, "library:read"); !ok {
 		return
 	}
-	if in.SeriesID <= 0 && in.CatalogEntryID <= 0 && in.WorkID <= 0 && in.SourceID <= 0 && in.Code != "" {
-		identity, err := s.resolveWorkCodeIdentity(r.Context(), in.Code)
-		if err != nil {
-			writeWorkReadError(w, err)
+	resolved, err := s.resolveTranslationResource(r.Context(), in)
+	if err != nil {
+		writeWorkReadError(w, err)
+		return
+	}
+	in = resolved
+	if in.SeriesID <= 0 && in.CatalogEntryID <= 0 && in.SourceID <= 0 {
+		if ok, demoErr := s.translationWorkReadable(r.Context(), in.WorkID); demoErr != nil {
+			writeError(w, demoErr)
+			return
+		} else if !ok {
+			writeAPIError(w, http.StatusNotFound, "not_found", "work not found", false)
 			return
 		}
-		in.WorkID = identity.WorkID
-	}
-	if in.SeriesID <= 0 && in.CatalogEntryID <= 0 && in.SourceID <= 0 && !s.requireDemoWork(w, r, in.WorkID) {
-		return
 	}
 	result, status, err := s.translateContentField(r.Context(), in)
 	if err != nil {
@@ -162,6 +166,34 @@ func (s *Server) contentTranslationVersion(ctx context.Context) string {
 
 // translateContentField is the shared body of the single and batch endpoints.
 // The status it returns is one of original, existing, native or translated.
+// resolveTranslationResource turns a work code into the work id the rest of the
+// path expects. The single and batch endpoints share it so both apply the same
+// identity rules.
+func (s *Server) resolveTranslationResource(ctx context.Context, in contentTranslationRequest) (contentTranslationRequest, error) {
+	if in.SeriesID <= 0 && in.CatalogEntryID <= 0 && in.WorkID <= 0 && in.SourceID <= 0 && in.Code != "" {
+		identity, err := s.resolveWorkCodeIdentity(ctx, in.Code)
+		if err != nil {
+			return in, err
+		}
+		in.WorkID = identity.WorkID
+	}
+	return in, nil
+}
+
+// translationWorkReadable applies the demo catalogue boundary to a resolved
+// work id. Production accepts every readable work; demo only exposes its
+// curated subset.
+func (s *Server) translationWorkReadable(ctx context.Context, workID int64) (bool, error) {
+	if !s.cfg.IsDemo() {
+		return true, nil
+	}
+	eligible, err := s.demoWorkEligible(ctx, workID)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return false, err
+	}
+	return eligible, nil
+}
+
 func (s *Server) translateContentField(ctx context.Context, in contentTranslationRequest) (contentTranslationResponse, string, error) {
 	field, err := s.loadTranslationField(ctx, in)
 	if err != nil {

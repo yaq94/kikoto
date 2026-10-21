@@ -109,6 +109,26 @@ func TestContentTranslationBatchAcceptsTwoHundredItems(t *testing.T) {
 	}
 }
 
+// A batch item may identify its work by code, exactly like the single
+// endpoint. The code is resolved inside the batch, not silently ignored.
+func TestContentTranslationBatchResolvesWorkCodes(t *testing.T) {
+	s, host, _, listener := translationHTTPFixture(t)
+	if _, err := s.db.Exec(`INSERT INTO work(id,primary_code,title) VALUES(1,'RJ00000042','Example title')`); err != nil {
+		t.Fatal(err)
+	}
+	body, _ := json.Marshal(map[string]any{
+		"language": "origin",
+		"items": []map[string]any{{
+			"key": "by-code", "code": "RJ00000042", "field": "title", "text": "Example title",
+		}},
+	})
+	res := translationRequest(t, host, listener, "POST", "/api/content-translations/batch", string(body), 200)
+	item := res["items"].([]any)[0].(map[string]any)
+	if item["status"] != "original" || item["text"] != "Example title" {
+		t.Fatalf("code batch item = %#v", item)
+	}
+}
+
 func TestContentTranslationBatchRejectsTwoHundredAndOneItems(t *testing.T) {
 	_, host, _, listener := translationHTTPFixture(t)
 	items := make([]map[string]any, 0, contentTranslationBatchLimit+1)

@@ -100,6 +100,23 @@ func (s *Server) translateBatchItem(ctx context.Context, language string, item c
 		result.Code = "translation_invalid_input"
 		return result
 	}
+	request, err := s.resolveTranslationResource(ctx, request)
+	if err != nil {
+		result.Status = "failed"
+		result.Code = "translation_content_unavailable"
+		return result
+	}
+	if request.SeriesID <= 0 && request.CatalogEntryID <= 0 && request.SourceID <= 0 {
+		if ok, demoErr := s.translationWorkReadable(ctx, request.WorkID); demoErr != nil {
+			result.Status = "failed"
+			result.Code = "translation_content_unavailable"
+			return result
+		} else if !ok {
+			result.Status = "failed"
+			result.Code = "not_found"
+			return result
+		}
+	}
 	translated, status, err := s.translateContentField(ctx, request)
 	if err != nil {
 		result.Status = "failed"
