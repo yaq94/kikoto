@@ -5,7 +5,7 @@
 - 工作树：`E:/项目/服务器/.kikoto-work/wt/h`，分支 `codex/rem-h`，基线提交 `17c4e5d4`。
 - 只读产品代码；本提交只新增 `scripts/catalog-bench/` 与本文件。没有改 backend/frontend、迁移、部署或 Git 远端。
 - 生产实例：`kikoto:next-d55130fe`，schema `84`；数据库 `source_catalog_scan` 的来源 3 / generation 53。
-- 基准副本不修改源库：源库以 `mode=ro&query_only(1)` 打开，`VACUUM INTO` 写入 `/tmp`；写路径基准在副本上 `BEGIN IMMEDIATE ... ROLLBACK`，副本也不落改动。
+- 基准副本不修改源库：源库以 `mode=ro` 打开（基准读取连接另加 `query_only(1)`；`VACUUM INTO` 连接只用 `mode=ro`，因为 `query_only` 会拒绝 VACUUM），`VACUUM INTO` 写入 `/tmp`；写路径基准在副本上 `BEGIN IMMEDIATE ... ROLLBACK`，副本也不落改动。
 - 保留的不变量：未知不等于删除；个人记录不随卡片/来源删除；共享关联与拆分必须本人确认；出站策略不绕过；不下载音频。H 包不实现功能，不改变这些语义。
 
 ## 2. 基线
