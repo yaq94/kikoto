@@ -2,7 +2,7 @@
 
 **Status:** ready-for-agent
 **设计状态:** 已确认（Q31）；用户故事、验收要求与测试边界作为实施合同。
-**Implementation:** in-progress；01–16、18、19 已在集成分支完成本地验收，17 保持 in-progress；当前构建的完整 Full CI、真实全量覆盖与部署验收按执行记录推进。
+**Implementation:** in-progress；01–16 已达到 resolved（本地实现与按票 H/F 或 H/R 验收完成，生产部署验收见 17）；17 待生产部署验收，18、19 待最终 Full CI 终态。真实全量覆盖与部署结果按执行记录推进。
 **执行授权:** 用户已授权本规格全部功能实现、必要依赖安装、测试、数据库迁移、部署与回滚；进度及证据见[执行记录](execution.md)。
 **领域依据:** [GLOSSARY](../../GLOSSARY.md) · [作品身份与个人记录 ADR](../../docs/decisions/ADR-0004-work-identity-and-personal-state.md)
 
@@ -241,5 +241,5 @@
 - 本规格继承已经确认的 Q1–Q31 决定与“少量浏览器纯功能测试、无真实浏览器视觉验证”边界；当前阶段按已授权的全范围实现、测试、迁移、部署与回滚推进。
 - 真实来源的访问证据按时间与路径分别记录：IAB 匿名网页可播放；程序 fs/get 在当前本机诊断中仍失败，正式应用代理下返回挑战页，尚无 Kikoto 真实媒体 Range 证明。部署网络的历史元数据样例不证明当前可用性，生产 fs/get 本轮未重测；详见 [07 证据](evidence/07-openlist.md#live-缺口与可复验入口)。
 - Index 官方资料中的权重仓库为 IndexTeam/Index-Translate-35B-A3B-preview，公共客户端示例的 model 为 Index-Translate-35B-A3B；实际服务调用名由管理员配置。中文简体、英语、日语和韩语有官方条目，繁体路线按已确认转换方案验收。
-- 各项验收状态以[执行记录](execution.md)及对应票据为准。后续仍需完成真实媒体 Range/定位读取与解码、完整目录分页和改名恢复、实际索引覆盖、后续身份与共享操作迁移、记录一致性、组合负载资源校准及部署验收。
+- 各项验收状态以[执行记录](execution.md)及对应票据为准。本地实现与各票 H/F 或 H/R 验收已完成；仍待取得当前 HEAD 的 Full CI 终态，并在生产部署后复验真实媒体 Range/定位读取、真实索引覆盖、组合负载与迁移结果。
 - 参考：[OpenList 目录接口](https://github.com/OpenListTeam/OpenList/blob/main/server/handles/fsread.go)、[OpenList 搜索实现](https://github.com/OpenListTeam/OpenList/blob/main/internal/search/search.go)、[Index 模型卡](https://huggingface.co/IndexTeam/Index-Translate-35B-A3B-preview)、[Index 调用客户端](https://github.com/bilibili/Index-Translate/blob/main/inference/llm/call_api.py)、[Index 语言清单](https://arxiv.org/html/2609.40181)。

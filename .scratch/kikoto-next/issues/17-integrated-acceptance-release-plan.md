@@ -7,7 +7,7 @@
 **Status:** ready-for-agent
 **Implementation:** in-progress；本地组合验收与 AC-25 低空间用例已通过；生产部署由主代理执行，部署结果待 17 证据回填。
 
-**补充发布依赖:** 18 与 19 已合入，仍须取得对应最终集成 SHA 的完整 Full/Gate 终态及固定审查基线后的完整审查结果。
+**补充发布依赖:** 18 与 19 已合入；当前 HEAD 的 Full/Gate 正在运行，终态待取得，固定审查基线后的完整审查结果保留。
 
 **依据:** [正式规格](../spec.md) · [工单总览](../ticket-proposal.md)
 

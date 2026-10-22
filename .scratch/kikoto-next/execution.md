@@ -3,7 +3,7 @@
 **Status:** ready-for-agent
 **Implementation:** in-progress；01–16 resolved，17 待生产部署验收，18、19 待最终 Full CI 终态。
 **当前部署:** `2bae5db9`，镜像 `kikoto:next-2bae5db9`，schema 83，Full CI run
-`39496305624` 全绿；分项验收见[21 最终验收记录](evidence/21-final-acceptance.md)。
+`39496305624` 全绿；分项验收见[21 最终验收记录](evidence/21-final-acceptance.md)。当前分支 HEAD 尚未部署，本轮部署由主代理执行，结果待回填 17 证据。
 剩余门禁：run 53 全量索引终态与 `work_matching_control` 终态。
 **阶段:** 01–16 resolved（本地实现与按票要求的 H/F 或 H/R 已验收，生产部署验收见 17）；17 待生产部署验收；18、19 待最终 Full CI 终态。以下为历史记录：2026-10-20 完成双轴审查后的目录身份、删除确认、sidecar、翻译、关联与导入修复批次（见 [20 证据](evidence/20-post-review-fixes.md)），待推送、CI 与部署验收。双轴审查完成且发现已闭环；部署提交 `7ed73fa06b38686caf4422f5a9cbd090ba53b7a3` 的 Full CI 全绿（run 39049272400）；2026-10-17T16:44:24Z 已部署到现有服务，schema 68→76，备份与回滚演练通过；生产已创建规格指定 OpenList 来源并完成首次索引启动（429 后退避恢复续跑），浏览/搜索/媒体 Range 回读通过。首次全量索引 runId 41 收于 `partial`（14,458/14,491 complete、6 failed、27 未确认空），暴露父卡不释放子作品、失败运行无法重新观察、创作者目录折叠三类准入缺陷；修复后 schema 77 已部署，runId 42 以新 generation 重扫中。证据见 [17 部署证据](evidence/17-deployment.md)。
 **依据:** [正式规格](spec.md) · [工单总览](ticket-proposal.md) · [领域词汇表](../../GLOSSARY.md) · [作品身份与个人记录 ADR](../../docs/decisions/ADR-0004-work-identity-and-personal-state.md)
@@ -124,3 +124,15 @@ catalog 翻译已在集成产物上取得 H/R/F 证据；其剩余缺口是实�
 - [ ] 仅执行已选定的少量浏览器纯功能用例，关闭截图采集，不增加布局、像素或人工视觉签收门槛。
 - [ ] 形成对应同一产物的部署、升级、备份恢复与回退步骤，按授权执行生产部署和实际迁移，再完成上线后非视觉功能验收。
 - [ ] 核对部署产物、数据兼容、运行状态和用户可见行为；必要时按已验证方案回滚并记录结果。部署与回滚结论仅使用实际执行证据。
+
+## 2026-10-22 收尾
+
+本轮按提交时间顺序记录关键收口：
+
+- `2f455ec4`：记录 after 测量与 G18–G28 结果，覆盖增量同步、排除白名单、低空间暂停与每日调度等回归。
+- `d2c20498`：加入 AC-25 组合负载 H 用例 `TestLowDiskPausesScanAndPrefillWithoutStoppingPlayback`，并新增 E2E 组 `source-resource-limits-live`；覆盖低空间暂停时播放、目录与个人记录继续可用，空间恢复后继续。
+- `dd761619`：新增 `093_source_catalog_partition_index`，进度、空 pending 清理与分区聚合改为索引驱动；G1–G3 在 schema 093 副本上复测为 12.103 ms / 0 ms / 0 ms，均达标。
+- `95831d33`：存储夹具的迁移链头同步到 093。
+- `a62c875f`：格式化资源限制 E2E 用例与 fixture runner。
+
+`source-resource-limits-live` 已注册在 `scripts/run-e2e-fixtures.mjs` 的 `groups`，并随 `source-playback` bundle 进入 E2E 调度。当前 HEAD 的 Full CI 正在运行，终态尚未取得；生产部署由主代理执行，部署、迁移与上线复验结果待回填 17 证据。本轮不宣称生产已验证或部署完成。
