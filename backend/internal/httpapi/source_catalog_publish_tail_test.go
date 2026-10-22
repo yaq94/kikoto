@@ -124,7 +124,10 @@ func TestSourceCatalogPublishTailStaysBounded(t *testing.T) {
 	if published != len(keys) {
 		t.Fatalf("published=%d want %d", published, len(keys))
 	}
-	if elapsed > 2*time.Second {
+	// The dedicated non-race job owns these ceilings: the race detector
+	// instruments every SQLite scan and the sharded CI job runs four in
+	// parallel on a shared runner.
+	if !raceInstrumentation && elapsed > 2*time.Second {
 		t.Fatalf("tail publication took %s; it must seek the pending rows", elapsed)
 	}
 
@@ -134,7 +137,7 @@ func TestSourceCatalogPublishTailStaysBounded(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if published != 0 || elapsed > time.Second {
+	if published != 0 || (!raceInstrumentation && elapsed > time.Second) {
 		t.Fatalf("drained queue published=%d in %s; want an empty queue to return immediately", published, elapsed)
 	}
 }
