@@ -4,9 +4,9 @@
 
 **Blocked by:** [12：系列与单集独立个人评价](12-series-episode-personal-reviews.md)。
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-**Implementation:** verified-local；字段级冲突与 edition 保持已补证，最终部署验收待 17。
+**Implementation:** resolved；本地实现与 H/F 已验收；生产部署验收见 17。
 
 **证据:** [实现边界与验收](../evidence/13-shared-association.md)
 

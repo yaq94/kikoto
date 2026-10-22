@@ -4,9 +4,9 @@
 
 **Blocked by:** [13：共享关联、归组预览与本人冲突确认](13-shared-link-conflict-review.md)。
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-**Implementation:** verified-local；circle 冲突与预算/退避已修复，最终部署验收待 17。
+**Implementation:** resolved；本地实现与 H/F 已验收；生产部署验收见 17。
 
 **依据:** [正式规格](../spec.md) · [工单总览](../ticket-proposal.md)
 

@@ -4,9 +4,9 @@
 
 **Blocked by:** [08：完整来源索引与恢复进度](08-recoverable-full-source-index.md)。
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-**Implementation:** verified-local；改名与删除来源已修复，最终部署验收待 17。
+**Implementation:** resolved；本地实现与 H/F 已验收；生产部署验收见 17。
 
 **依据:** [正式规格](../spec.md) · [工单总览](../ticket-proposal.md)
 

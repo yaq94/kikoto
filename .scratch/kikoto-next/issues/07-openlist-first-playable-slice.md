@@ -4,8 +4,8 @@
 
 **Blocked by:** [04：编号作品全源个人评分与备注](04-numbered-work-personal-reviews.md)；[06：稳定内部引用与编号兼容入口](06-stable-identity-compatibility.md)
 
-**Status:** ready-for-agent
-**Implementation:** verified-local；LIVE Range 在最终部署复验，完整覆盖待 08/17。
+**Status:** resolved
+**Implementation:** resolved；本地实现与 H/F 已验收；生产部署验收见 17（含真实媒体 Range 复验）。
 
 **依据:** [正式规格](../spec.md) · [工单总览](../ticket-proposal.md)
 

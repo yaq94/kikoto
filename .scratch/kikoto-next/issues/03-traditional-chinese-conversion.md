@@ -4,8 +4,8 @@
 
 **Blocked by:** [02：浏览内容翻译、原文与有界缓存](02-content-translation-cache.md)
 
-**Status:** ready-for-agent
-**Implementation:** verified-local；HEAD LIVE 与 F 已通过，最终部署验收待 17。
+**Status:** resolved
+**Implementation:** resolved；本地实现与 H/F 已验收；生产部署验收见 17。
 **验收证据:** [03 简繁转换](../evidence/03-traditional-conversion.md)
 
 **依据:** [正式规格](../spec.md) · [工单总览](../ticket-proposal.md)

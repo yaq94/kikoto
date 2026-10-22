@@ -4,8 +4,8 @@
 
 **Blocked by:** [12：系列与单集独立个人评价](12-series-episode-personal-reviews.md)。
 
-**Status:** ready-for-agent
-**Implementation:** verified-local；HEAD H/R/F 已通过，最终部署验收待 17。
+**Status:** resolved
+**Implementation:** resolved；本地实现与 H/F 已验收；生产部署验收见 17。
 
 **依据:** [正式规格](../spec.md) · [工单总览](../ticket-proposal.md)
 

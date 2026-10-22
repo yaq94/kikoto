@@ -7,8 +7,8 @@
 **开发先决条件:** 07 本地接口、069 迁移与 catalog 翻译已集成复验，可开始依赖这些接口的开发和受控测试；依据见[执行记录](../execution.md#开发依赖与发布依赖)。
 **发布依赖:** 07 全部验收（含真实媒体 LIVE）和本票完整清单仍须通过；本地开发不关闭外部缺口，也不删减真实索引覆盖要求。
 
-**Status:** ready-for-agent
-**Implementation:** verified-local；覆盖语义与低空间已修复，真实全量终态待最终部署的新 generation。
+**Status:** resolved
+**Implementation:** resolved；本地实现与 H/F 已验收；生产部署验收见 17（含真实全量 generation 终态）。
 **Evidence:** [08 本地索引证据](../evidence/08-source-index.md)
 
 production 的 runId 41 终态为 `partial`（14,458/14,491 complete、6 failed、

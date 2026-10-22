@@ -4,9 +4,9 @@
 
 **Blocked by:** [01：管理员翻译配置与 Index 试译](01-translation-admin-config.md)
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-**Implementation:** verified-local；HEAD F、远端 description 边界与 edition 复用已通过，最终部署验收待 17。
+**Implementation:** resolved；本地实现与 H/F 已验收；生产部署验收见 17。
 
 **依据:** [正式规格](../spec.md) · [工单总览](../ticket-proposal.md)
 

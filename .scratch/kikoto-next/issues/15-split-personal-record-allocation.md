@@ -4,9 +4,9 @@
 
 **Blocked by:** [13：共享关联、归组预览与本人冲突确认](13-shared-link-conflict-review.md)。
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-**Implementation:** verified-local；系列三对象与版本已补证，最终部署验收待 17。
+**Implementation:** resolved；本地实现与 H/F 已验收；生产部署验收见 17。
 
 **证据:** [拆分验收](../evidence/15-shared-split.md)
 

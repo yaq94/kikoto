@@ -4,8 +4,8 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
-**Implementation:** verified-local；HEAD H/R/F 已通过，最终部署验收待 17。
+**Status:** resolved
+**Implementation:** resolved；本地实现与 H/F 已验收；生产部署验收见 17。
 
 编号作品的个人评价入口、必要登记、隔离、重启与浏览器功能验收完成，见[04 验收证据](../evidence/04-personal-reviews.md)。总流程继续由[执行记录](../execution.md)维护。
 

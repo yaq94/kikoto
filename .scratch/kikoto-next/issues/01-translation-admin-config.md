@@ -4,8 +4,8 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
-**Implementation:** verified-local；HEAD LIVE 与 F 已通过，最终部署验收待 17。
+**Status:** resolved
+**Implementation:** resolved；本地实现与 H/F 已验收；生产部署验收见 17。
 
 H、R、两条真实前后端 F 与一次新客户端 LIVE 均已通过；逐项结果、红绿记录、命令和限制见[本票验收证据](../evidence/01-translation.md)。集成与后续部署由[执行记录](../execution.md)维护。
 
