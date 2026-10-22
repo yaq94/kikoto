@@ -24,6 +24,20 @@ var catalogSeriesPrefix = regexp.MustCompile(`(?i)^(?:series|系列|シリーズ
 var catalogSeriesSuffix = regexp.MustCompile(`(?i)^(.+?)\s*(?:系列|シリーズ|\sseries)$`)
 var catalogNonEpisode = regexp.MustCompile(`(?i)^(?:(?:mp3|flac|wav|m4a|ogg|opus|aac|aiff|dsd|ape|wma)(?:\s*\d+(?:k|bit|hz|kbps).*)?|tracks?|分轨|分軌|音轨|音軌|音声|音聲|audio|disc\s*[._\-]?\s*\d+|cd\s*[._\-]?\s*\d+)$`)
 
+// catalogStructuralPartName reports a directory that numbers a piece of one
+// release (Chapter 2, Part 1, Track 3, Disc 1, Scene 4). Such a name never
+// identifies an episode, even below a directory that carries a series label.
+// Chapter and section markers name a piece of one release as well. The CJK
+// forms are written without a space, so the shared prefix pattern cannot see
+// them; the episode counters 話/集/回 are deliberately missing here because
+// those really are episodes.
+var catalogStructuralPartCJK = regexp.MustCompile(`^第\s*[0-9]{1,6}\s*(?:章|節|节|幕|部分)`)
+
+func catalogStructuralPartName(name string) bool {
+	name = strings.TrimSpace(name)
+	return catalogStructuredTrackPrefix.MatchString(name) || catalogStructuralPartCJK.MatchString(name)
+}
+
 type catalogSeriesEvidence struct {
 	Key, Title string
 	Position   int
@@ -51,6 +65,13 @@ func catalogEpisodeEvidence(root string) (catalogSeriesEvidence, bool) {
 	name := path.Base(root)
 	parent := path.Dir(root)
 	if catalogNonEpisode.MatchString(name) || catalogFormatDirectory(name) || catalogAuxiliaryDirectory(name) {
+		return catalogSeriesEvidence{}, false
+	}
+	// Chapter, Part, Track, Disc and Scene number the pieces of one release.
+	// Even below an explicitly labelled series directory they are parts of one
+	// work, not episodes: turning them into members would split a single
+	// recording into several series entries.
+	if catalogStructuralPartName(name) {
 		return catalogSeriesEvidence{}, false
 	}
 	seriesLabel := catalogSeriesLabel(path.Base(parent))

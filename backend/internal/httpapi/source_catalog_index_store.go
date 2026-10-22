@@ -326,6 +326,41 @@ func verifyCatalogLease(ctx context.Context, tx *sql.Tx, job workflowJobRecord) 
 	return err
 }
 
+// catalogCodedChildWorkTx reports a coded child directory that names a different
+// work than the release it sits in. A child that repeats the parent's code is a
+// nested copy (bonus disc, "RJ... MP3"), so it never turns the parent into a
+// grouping folder: doing that disowned the parent's own format directories and
+// could make the release card disappear when it had no direct audio.
+func catalogCodedChildWorkTx(ctx context.Context, tx *sql.Tx, sourceID int64, directory, parentCode string) (int, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT o.name FROM source_catalog_observation o
+		JOIN source_catalog_directory pd
+			ON pd.file_source_id=o.file_source_id AND pd.path=o.directory_path
+		WHERE o.file_source_id=? AND o.directory_path=? AND o.revision=pd.revision
+			AND o.kind='folder'
+			AND (UPPER(o.name) LIKE 'RJ%' OR UPPER(o.name) LIKE 'BJ%'
+				OR UPPER(o.name) LIKE 'VJ%' OR UPPER(o.name) LIKE 'CC%')`,
+		sourceID, directory)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var name string
+		if err = rows.Scan(&name); err != nil {
+			return 0, err
+		}
+		code := catalogDirectoryCode(name)
+		if code == "" {
+			continue
+		}
+		if parentCode != "" && strings.EqualFold(code, parentCode) {
+			continue
+		}
+		return 1, nil
+	}
+	return 0, rows.Err()
+}
+
 func completeCatalogDirectoryTx(ctx context.Context, tx *sql.Tx, sourceID, generation int64, d *catalogScanDirectory) error {
 	// "Episode 1 (MP3)" sits beside "Episode 1" under the same series. The
 	// format copy is the same episode, so its files join that episode's card
@@ -334,9 +369,13 @@ func completeCatalogDirectoryTx(ctx context.Context, tx *sql.Tx, sourceID, gener
 	// identity rather than pointing at a path that was never observed.
 	if episode, ok := catalogEpisodeFormatCopy(path.Base(d.Path)); ok {
 		sibling := path.Join(path.Dir(d.Path), episode)
+		// The sibling must exist in this generation. A deleted episode leaves an
+		// older directory row behind; folding the copy onto that path made the
+		// copy republish the deleted episode and hid its own directory.
 		var exists int
 		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM source_catalog_directory
-			WHERE file_source_id=? AND path=?)`, sourceID, sibling).Scan(&exists); err != nil {
+			WHERE file_source_id=? AND path=? AND generation=?
+				AND status<>'empty')`, sourceID, sibling, generation).Scan(&exists); err != nil {
 			return err
 		}
 		if exists != 0 {
@@ -404,16 +443,8 @@ func completeCatalogDirectoryTx(ctx context.Context, tx *sql.Tx, sourceID, gener
 			d.Root = catalogAdmissionRoot(d.Path, "", catalogDirectorySummary{audio, formats, auxiliary, tracks, otherDirs})
 			return finish()
 		}
-		var codedChild int
-		if err = tx.QueryRowContext(ctx, `SELECT EXISTS(
-			SELECT 1 FROM source_catalog_observation o
-			JOIN source_catalog_directory pd
-				ON pd.file_source_id=o.file_source_id AND pd.path=o.directory_path
-			WHERE o.file_source_id=? AND o.directory_path=? AND o.revision=pd.revision
-				AND o.kind='folder'
-				AND (UPPER(o.name) LIKE 'RJ%' OR UPPER(o.name) LIKE 'BJ%'
-					OR UPPER(o.name) LIKE 'VJ%' OR UPPER(o.name) LIKE 'CC%'))`,
-			sourceID, d.Path).Scan(&codedChild); err != nil {
+		codedChild, err := catalogCodedChildWorkTx(ctx, tx, sourceID, d.Path, catalogDirectoryCode(d.Path))
+		if err != nil {
 			return err
 		}
 		if codedChild == 0 {
@@ -448,19 +479,14 @@ func completeCatalogDirectoryTx(ctx context.Context, tx *sql.Tx, sourceID, gener
 	// directly below it. An uploader or voice-actor folder that lists coded works
 	// is a grouping directory, so those works must not all inherit its card.
 	if d.Root != "" && d.Root != d.Path {
-		var codedSibling int
-		if err = tx.QueryRowContext(ctx, `SELECT EXISTS(
-			SELECT 1 FROM source_catalog_observation o
-			JOIN source_catalog_directory pd
-				ON pd.file_source_id=o.file_source_id AND pd.path=o.directory_path
-			WHERE o.file_source_id=? AND o.directory_path=? AND o.revision=pd.revision
-				AND o.kind='folder'
-				AND (UPPER(o.name) LIKE 'RJ%' OR UPPER(o.name) LIKE 'BJ%'
-					OR UPPER(o.name) LIKE 'VJ%' OR UPPER(o.name) LIKE 'CC%'))`,
-			sourceID, d.Root).Scan(&codedSibling); err != nil {
-			return err
+		codedSibling, codeErr := catalogCodedChildWorkTx(ctx, tx, sourceID, d.Root, catalogDirectoryCode(d.Root))
+		if codeErr != nil {
+			return codeErr
 		}
-		if codedSibling != 0 {
+		// A coded directory is one release. A nested folder with another code is
+		// a separate work, but it does not turn the release into a grouping
+		// folder: its own format and bonus directories still belong to it.
+		if codedSibling != 0 && catalogDirectoryCode(d.Root) == "" {
 			// The parent was published before its coded children were seen.
 			// This directory decides from its own evidence instead.
 			d.Root = ""
@@ -977,8 +1003,22 @@ func (s *Server) publishCatalogBatch(ctx context.Context, job workflowJobRecord,
 		if sourceRoot != "" {
 			baseRoot = sourceRoot
 		}
-		rel := strings.TrimPrefix(path.Join(p.dir, p.name), strings.TrimRight(baseRoot, "/")+"/")
-		_, err = tx.ExecContext(ctx, `INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes,content_hash,modified_at,observed_generation) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(catalog_entry_id,relative_path) DO UPDATE SET title=excluded.title,kind=excluded.kind,size_bytes=excluded.size_bytes,content_hash=excluded.content_hash,modified_at=excluded.modified_at,observed_generation=excluded.observed_generation`, id, rel, p.name, p.kind, p.size, p.hash, p.modified, job.RunID)
+		fullPath := path.Join(p.dir, p.name)
+		rel := strings.TrimPrefix(fullPath, strings.TrimRight(baseRoot, "/")+"/")
+		// A format copy beside its release publishes into the release card but
+		// its files stay in the copy's own directory. One card-wide base cannot
+		// address both, so the row keeps the directory it really lives in and a
+		// path relative to that directory's parent. Without this the path stayed
+		// absolute and playback joined it to the card root, returning 404.
+		fileRoot := ""
+		if strings.HasPrefix(rel, "/") {
+			fileRoot = path.Dir(baseRoot)
+			rel = strings.TrimPrefix(fullPath, strings.TrimRight(fileRoot, "/")+"/")
+			if strings.HasPrefix(rel, "/") {
+				fileRoot, rel = p.dir, p.name
+			}
+		}
+		_, err = tx.ExecContext(ctx, `INSERT INTO source_catalog_file(catalog_entry_id,relative_path,source_root,title,kind,size_bytes,content_hash,modified_at,observed_generation) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(catalog_entry_id,relative_path) DO UPDATE SET source_root=excluded.source_root,title=excluded.title,kind=excluded.kind,size_bytes=excluded.size_bytes,content_hash=excluded.content_hash,modified_at=excluded.modified_at,observed_generation=excluded.observed_generation`, id, rel, fileRoot, p.name, p.kind, p.size, p.hash, p.modified, job.RunID)
 		if err != nil {
 			return 0, err
 		}

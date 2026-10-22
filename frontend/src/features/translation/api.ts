@@ -9,6 +9,7 @@ export type TranslationSettings = {
   disableThinking: boolean;
   concurrency: number;
   queueLimit: number;
+  maxEntries: number;
   cacheBytes: number;
   minFreeBytes: number;
 };
@@ -22,6 +23,7 @@ export type TranslationSettingsPatch = Partial<
     | "disableThinking"
     | "concurrency"
     | "queueLimit"
+    | "maxEntries"
     | "cacheBytes"
     | "minFreeBytes"
   >

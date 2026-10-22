@@ -21,8 +21,8 @@ func (s *Server) streamSourceCatalogMedia(w http.ResponseWriter, r *http.Request
 	id = entry.ID
 	// The supplied path must be an exact previously listed audio file. Display
 	// names and arbitrary URLs never participate in file selection.
-	var kind string
-	if err = s.db.QueryRowContext(r.Context(), "SELECT kind FROM source_catalog_file WHERE catalog_entry_id=? AND relative_path=?", id, relative).Scan(&kind); err != nil || kind != "audio" {
+	var kind, fileRoot string
+	if err = s.db.QueryRowContext(r.Context(), "SELECT kind,source_root FROM source_catalog_file WHERE catalog_entry_id=? AND relative_path=?", id, relative).Scan(&kind, &fileRoot); err != nil || kind != "audio" {
 		writeAPIError(w, 404, "not_found", "catalog audio file not found", false)
 		return
 	}
@@ -31,6 +31,10 @@ func (s *Server) streamSourceCatalogMedia(w http.ResponseWriter, r *http.Request
 	sourceRoot := entry.SourceRoot
 	if sourceRoot == "" {
 		sourceRoot = entry.RootPath
+	}
+	// A format copy keeps the directory its files really live in.
+	if fileRoot != "" {
+		sourceRoot = fileRoot
 	}
 	for attempt := 0; attempt < 2; attempt++ {
 		object, err := s.openListClient(source).Get(ctx, path.Join(sourceRoot, relative))

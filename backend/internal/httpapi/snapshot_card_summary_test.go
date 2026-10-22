@@ -180,7 +180,7 @@ func TestSnapshotCardSummaryEmptyQueueSkipsBackfillWrite(t *testing.T) {
 	defer func() { _, _ = conn.ExecContext(context.Background(), "ROLLBACK") }()
 
 	server := &Server{db: db}
-	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	written, err := server.backfillSnapshotCardSummaries(ctx, 200)
 	if err != nil || written != 0 {

@@ -7,6 +7,7 @@ export const translationAdmin = {
     translated: "번역문 보기",
     paused: "디스크 공간 부족으로 캐시를 일시 중지했습니다.",
     concurrency: "동시 번역 수",
+    maxEntries: "번역 행 수 제한(0은 무제한)",
     queueLimit: "번역 대기 수 제한",
     cacheBytes: "번역 캐시 제한(바이트)",
     minFreeBytes: "최소 디스크 여유 공간(바이트)",

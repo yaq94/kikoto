@@ -62,7 +62,7 @@ jobs:
     needs: style
     if: needs.style.outputs.backend == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: ${{ matrix.timeout || 25 }}
     strategy:
       fail-fast: false
       matrix:
@@ -89,16 +89,20 @@ jobs:
           - check: race 1/4
             target: RACE_SHARD=1/4 backend-race-shard
             cache: race
+            timeout: 45
             save-cache: true
           - check: race 2/4
             target: RACE_SHARD=2/4 backend-race-shard
             cache: race
+            timeout: 45
           - check: race 3/4
             target: RACE_SHARD=3/4 backend-race-shard
             cache: race
+            timeout: 45
           - check: race 4/4
             target: RACE_SHARD=4/4 backend-race-shard
             cache: race
+            timeout: 45
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7

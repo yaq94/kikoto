@@ -133,15 +133,22 @@ viewer still finds a free worker; inside the window it may use every slot.
 Translated content is durable corpus, not a cache. `content_translation` stores
 one row per `cache_key` with `origin` `native` or `model`; `origin=native` rows
 hold the source text unchanged and never increment model usage. There is no
-least-recently-used eviction and no `last_used_at`. `maxEntries` is reported to
-operators as a planning budget with zero meaning unlimited; the hot path does
-not evict rows to satisfy it, because deleting corpus rows would silently shrink
-search coverage. `cacheBytes` is likewise a soft budget shown to operators;
-`minFreeBytes` pauses new generation when the data volume runs low.
+`last_used_at`: the hot path never deletes a row.
+
+Two administrator budgets bound the corpus in a low-frequency maintenance pass
+that runs beside the prefill worker: `maxEntries` limits the total row count
+(zero means unlimited) and `cacheBytes` roughly bounds the stored text. Only
+`origin=model` rows are evicted, oldest first, because those are rebuildable.
+Native rows carry authored text and are never eviction candidates. A superseded
+row for the same entity, field and language goes before a live one. The pass
+runs in batches so the SQLite writer is never held for a whole trim. When
+`minFreeBytes` is not met, new rows are not written at all: the caller still
+returns the translation it already fetched, and the durable copy waits for
+space.
 
 A content change produces a new `cache_key` because the source text is part of
-it. The previous row stays readable for history and is removed only by an
-explicit maintenance pass; the hot path never deletes rows. `zh-tw` viewers read
+it. The previous row stays readable until the retention pass removes it as
+superseded; the hot path never deletes rows. `zh-tw` viewers read
 the `zh-Hans` row and convert it with OpenCC `s2t` at display time, so the corpus
 does not store a second full-text copy. A title detected as `zh-Hant` is written
 as a native row and participates in searches for both scripts.

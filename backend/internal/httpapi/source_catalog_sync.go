@@ -820,13 +820,17 @@ func (s *Server) applyCatalogSyncListing(ctx context.Context, sourceID, generati
 				return 0, 0, err
 			}
 		} else if root != "" {
-			rel := strings.TrimPrefix(path.Join(dir.Path, row.Name), strings.TrimRight(root, "/")+"/")
 			// A split card keeps the directory in source_root and a group
 			// suffix in root_path, so matching root_path alone would leave the
-			// deleted audio playable through the split card.
-			if _, err = tx.ExecContext(ctx, `DELETE FROM source_catalog_file WHERE relative_path=?
-				AND catalog_entry_id IN (SELECT id FROM source_catalog_entry
-					WHERE file_source_id=? AND `+catalogExclusionBaseRootSQL+`=?)`, rel, sourceID, root); err != nil {
+			// deleted audio playable through the split card. A file published
+			// from a folded format copy also carries its own directory, so the
+			// comparison uses the resolved path instead of one card-wide base.
+			if _, err = tx.ExecContext(ctx, `DELETE FROM source_catalog_file WHERE catalog_entry_id IN (
+					SELECT id FROM source_catalog_entry WHERE file_source_id=? AND `+catalogExclusionBaseRootSQL+`=?)
+				AND (CASE WHEN source_root='' THEN
+					(CASE WHEN ?='/' THEN '/' || relative_path ELSE ? || '/' || relative_path END)
+					ELSE (CASE WHEN source_root='/' THEN '/' || relative_path ELSE source_root || '/' || relative_path END) END)=?`,
+				sourceID, root, root, root, childPath); err != nil {
 				return 0, 0, err
 			}
 		}

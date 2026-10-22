@@ -115,20 +115,27 @@ func catalogSeriesMembershipsCompatibleTx(ctx context.Context, tx *sql.Tx, oldID
 // series directory that moved as a group: both cards belong to different
 // series that describe the same episode set, and the directory name is
 // unchanged. That group correspondence is the evidence a lone file lacks.
+//
+// A group rename is reconciled one card at a time. The first episode folds the
+// fresh series into the established one and the survivor adopts the renamed
+// key, so later episodes are already attached to the same series. For them the
+// shared series plus the unchanged episode name is the group evidence.
 func catalogSeriesRenameMatchesEpisodeTx(ctx context.Context, tx *sql.Tx, old, target catalogRelocationEntry) (bool, error) {
 	oldSeries, err := catalogSeriesMembersOfEntryTx(ctx, tx, old.id)
 	if err != nil || len(oldSeries) != 1 {
 		return false, err
 	}
 	targetSeries, err := catalogSeriesMembersOfEntryTx(ctx, tx, target.id)
-	if err != nil || len(targetSeries) != 1 || targetSeries[0] == oldSeries[0] {
+	if err != nil || len(targetSeries) != 1 {
 		return false, err
 	}
-	renamed, err := catalogSeriesRenameEvidenceTx(ctx, tx, oldSeries[0], targetSeries[0])
-	if err != nil || !renamed {
-		return false, err
+	if !strings.EqualFold(path.Base(catalogEffectiveRoot(old.root, old.sourceRoot)), path.Base(catalogEffectiveRoot(target.root, target.sourceRoot))) {
+		return false, nil
 	}
-	return strings.EqualFold(path.Base(catalogEffectiveRoot(old.root, old.sourceRoot)), path.Base(catalogEffectiveRoot(target.root, target.sourceRoot))), nil
+	if targetSeries[0] == oldSeries[0] {
+		return true, nil
+	}
+	return catalogSeriesRenameEvidenceTx(ctx, tx, oldSeries[0], targetSeries[0])
 }
 
 func catalogEffectiveRoot(root, sourceRoot string) string {
@@ -321,8 +328,8 @@ func relocateCatalogEntryTx(ctx context.Context, tx *sql.Tx, old, target catalog
 	if _, err := tx.ExecContext(ctx, `UPDATE source_catalog_entry SET root_path=?,source_root=?,title=?,last_seen_generation=?,content_fingerprint=?,layout_fingerprint=? WHERE id=?`, target.root, target.sourceRoot, target.title, generation, target.strong, target.layout, old.id); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes,content_hash,modified_at,observed_generation)
-		SELECT ?,relative_path,title,kind,size_bytes,content_hash,modified_at,observed_generation FROM source_catalog_file WHERE catalog_entry_id=?
+	if _, err := tx.ExecContext(ctx, `INSERT INTO source_catalog_file(catalog_entry_id,relative_path,source_root,title,kind,size_bytes,content_hash,modified_at,observed_generation)
+		SELECT ?,relative_path,source_root,title,kind,size_bytes,content_hash,modified_at,observed_generation FROM source_catalog_file WHERE catalog_entry_id=?
 		ON CONFLICT(catalog_entry_id,relative_path) DO UPDATE SET title=excluded.title,kind=excluded.kind,size_bytes=excluded.size_bytes,content_hash=excluded.content_hash,modified_at=excluded.modified_at,observed_generation=excluded.observed_generation`, old.id, target.id); err != nil {
 		return err
 	}

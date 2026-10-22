@@ -7,6 +7,7 @@ export const translationAdmin = {
     translated: "訳文を表示",
     paused: "空き容量が不足し、キャッシュを一時停止しています。",
     concurrency: "同時翻訳数",
+    maxEntries: "訳文行数の上限（0 は無制限）",
     queueLimit: "翻訳待機数の上限",
     cacheBytes: "翻訳キャッシュ上限（バイト）",
     minFreeBytes: "最小ディスク空き容量（バイト）",

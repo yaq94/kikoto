@@ -70,6 +70,7 @@ export function TranslationSettingsPanel({ readOnly = false }: { readOnly?: bool
           disableThinking: settings.disableThinking,
           concurrency: settings.concurrency,
           queueLimit: settings.queueLimit,
+          maxEntries: settings.maxEntries,
           cacheBytes: settings.cacheBytes,
           minFreeBytes: settings.minFreeBytes,
           ...(clearKey ? { apiKey: "" } : apiKey !== "" ? { apiKey } : {}),
@@ -218,6 +219,8 @@ export function TranslationSettingsPanel({ readOnly = false }: { readOnly?: bool
             [
               ["concurrency", 1, 16],
               ["queueLimit", 0, 4096],
+              ["maxEntries", 0, 2000000],
+              ["maxEntries", 0, 2000000],
               ["cacheBytes", 4096, 4294967296],
               ["minFreeBytes", 0, 1099511627776],
             ] as const

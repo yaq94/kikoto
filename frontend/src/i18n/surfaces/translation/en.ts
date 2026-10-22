@@ -7,6 +7,7 @@ export const translationAdmin = {
     translated: "Show translation",
     paused: "Cache paused: low disk space.",
     concurrency: "Concurrent translations",
+    maxEntries: "Translation row limit (0 means unlimited)",
     queueLimit: "Waiting translations",
     cacheBytes: "Translation cache limit (bytes)",
     minFreeBytes: "Minimum free disk space (bytes)",

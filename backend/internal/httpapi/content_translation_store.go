@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/yexca/kikoto/backend/internal/translation"
 )
 
 // contentTranslationRow is one durable translation of a card field.
@@ -121,6 +123,11 @@ func (s *Server) lookupContentTranslations(ctx context.Context, keys []string) (
 // keeps one row and refreshes the text and the model metadata.
 func (s *Server) saveContentTranslations(ctx context.Context, rows []contentTranslationRow) error {
 	if len(rows) == 0 {
+		return nil
+	}
+	// A low-disk pause stops new cache rows. The caller still returns the
+	// translation it already has; only the durable copy waits for space.
+	if cfg, err := translation.NewStore(s.db).Load(ctx); err == nil && s.translationDiskPause(cfg) != "" {
 		return nil
 	}
 	tx, err := s.db.BeginTx(ctx, nil)

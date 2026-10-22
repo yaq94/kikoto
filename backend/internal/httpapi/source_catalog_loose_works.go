@@ -788,8 +788,12 @@ func (g catalogLooseGrouping) keyFor(name string) string {
 	if g.mode == catalogWorkSplitPrefix {
 		prefix := catalogWorkPrefix(name)
 		if prefix == "" {
-			// Direct audio without a work prefix keeps the parent card.
-			return ""
+			// A creator folder can mix coded releases with unrelated uncoded
+			// recordings. Each uncoded recording is its own work: keeping them
+			// on the parent card merged several works and their evaluations
+			// into one. The file identity keeps a single work's tracks together
+			// because a contiguous numbered run is already one split mode above.
+			return catalogWorkIdentityTitle(name)
 		}
 		if g.splitPrefixes[prefix] {
 			// Keep the prefix in the identity so B011 and B012 with the same
@@ -1179,61 +1183,6 @@ func replacementCatalogCardTx(ctx context.Context, tx *sql.Tx, sourceID, generat
 	return 0, nil
 }
 
-// retireStaleFormatCardsTx hides cards for a format copy, auxiliary folder or
-// track container once the release card that owns those files exists. An older
-// generation admitted such a directory as its own root; the rescan publishes the
-// release, so the stale card becomes an alias of it. The id is kept and the
-// relocation is set, so a saved link, a personal review or an import reference
-// still resolves. A card with its own work, a series membership or an incoming
-// relocation keeps its identity and is left for explicit review.
-//
-// The parent must be a card of the current generation at the directory directly
-// above, so the audio really belongs to it. Without that evidence the card
-// stays: guessing a parent would move a personal record to an unrelated work.
-func retireStaleFormatCardsTx(ctx context.Context, tx *sql.Tx, sourceID, generation int64) error {
-	rows, err := tx.QueryContext(ctx, `SELECT id,root_path FROM source_catalog_entry
-		WHERE file_source_id=? AND relocated_to_id IS NULL AND last_seen_generation<>?`, sourceID, generation)
-	if err != nil {
-		return err
-	}
-	type staleCard struct {
-		id   int64
-		root string
-	}
-	stale := []staleCard{}
-	for rows.Next() {
-		var card staleCard
-		if err = rows.Scan(&card.id, &card.root); err != nil {
-			break
-		}
-		if !catalogWorkPartDirectory(path.Base(card.root)) {
-			continue
-		}
-		stale = append(stale, card)
-	}
-	readErr := rows.Err()
-	_ = rows.Close()
-	if err != nil {
-		return err
-	}
-	if readErr != nil {
-		return readErr
-	}
-	for _, card := range stale {
-		parentID, err := catalogFormatCardRetireTargetTx(ctx, tx, sourceID, generation, card.id, card.root)
-		if err != nil {
-			return err
-		}
-		if parentID == 0 {
-			continue
-		}
-		if err = retireCatalogCardTx(ctx, tx, card.id, parentID); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 // catalogFormatCardRetireTargetTx returns the current release card that owns
 // every audio path of a stale format card. Zero means the card must stay: its
 // subtree was not fully observed, it has no unique owner, its files are not
@@ -1306,23 +1255,23 @@ func catalogFormatCardRetireTargetTx(ctx context.Context, tx *sql.Tx, sourceID, 
 }
 
 // catalogCardFilesCoveredTx reports whether every audio path of a stale format
-// card is also published by the current owner card. The relative path of the
-// stale card is rebased onto the owner root, because the owner may be a
-// grandparent such as /Creator while the stale card is /Creator/Release/MP3.
+// card is also published by the current owner card. Both sides are compared as
+// absolute source paths: a stale card that carries its own directory stores the
+// path relative to that directory, while the owner may be a grandparent such as
+// /Creator with /Creator/Release/MP3 poured into one card.
 func catalogCardFilesCoveredTx(ctx context.Context, tx *sql.Tx, staleID, ownerID int64, staleRoot, ownerRoot string) (bool, error) {
-	prefix := strings.TrimPrefix(staleRoot, ownerRoot)
-	prefix = strings.TrimLeft(prefix, "/")
-	if prefix != "" {
-		prefix += "/"
-	}
+	staleBase := `COALESCE(NULLIF(old.source_root,''),?1)`
+	currentBase := `COALESCE(NULLIF(cur.source_root,''),?2)`
+	stalePath := `(CASE WHEN ` + staleBase + `='/' THEN '/' || old.relative_path ELSE ` + staleBase + ` || '/' || old.relative_path END)`
+	currentPath := `(CASE WHEN ` + currentBase + `='/' THEN '/' || cur.relative_path ELSE ` + currentBase + ` || '/' || cur.relative_path END)`
 	var missing int
 	err := tx.QueryRowContext(ctx, `SELECT EXISTS(
 		SELECT 1 FROM source_catalog_file old
-		WHERE old.catalog_entry_id=? AND old.kind='audio'
+		WHERE old.catalog_entry_id=?3 AND old.kind='audio'
 			AND NOT EXISTS(SELECT 1 FROM source_catalog_file cur
-				WHERE cur.catalog_entry_id=? AND cur.kind='audio'
-					AND cur.relative_path=? || old.relative_path))`,
-		staleID, ownerID, prefix).Scan(&missing)
+				WHERE cur.catalog_entry_id=?4 AND cur.kind='audio'
+					AND `+currentPath+`=`+stalePath+`))`,
+		staleRoot, ownerRoot, staleID, ownerID).Scan(&missing)
 	return missing == 0, err
 }
 
@@ -1747,8 +1696,13 @@ func (s *Server) retireCatalogCardPage(ctx context.Context, job workflowJobRecor
 		if pass == catalogRetireCovered {
 			target, err = catalogCoveredContainerRetireTargetTx(ctx, tx.Tx, sourceID, job.RunID, card.id, card.root)
 		} else {
-			if !catalogWorkPartDirectory(path.Base(card.root)) {
-				continue
+			// An episode's format copy ("Episode 1 (MP3)") is a part of that
+			// episode too; only its root name carries an episode marker.
+			base := path.Base(card.root)
+			if !catalogWorkPartDirectory(base) {
+				if _, formatCopy := catalogEpisodeFormatCopy(base); !formatCopy {
+					continue
+				}
 			}
 			target, err = catalogFormatCardRetireTargetTx(ctx, tx.Tx, sourceID, job.RunID, card.id, card.root)
 		}

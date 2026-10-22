@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"path/filepath"
 	"sort"
@@ -181,6 +182,7 @@ func (s *Server) clearTranslationPrefillFailures(entryIDs []int64) {
 func (s *Server) runTranslationPrefillWorker(ctx context.Context) {
 	timer := time.NewTimer(5 * time.Second)
 	defer timer.Stop()
+	retentionTick := 0
 	for {
 		select {
 		case <-ctx.Done():
@@ -188,6 +190,18 @@ func (s *Server) runTranslationPrefillWorker(ctx context.Context) {
 		case <-timer.C:
 		}
 		_, _ = s.runTranslationPrefillBatch(ctx)
+		// The corpus limits are a low-frequency maintenance concern. Running
+		// them on every 15-second tick would take the writer far more often
+		// than the budget can change.
+		retentionTick++
+		if retentionTick >= 40 {
+			retentionTick = 0
+			if cfg, err := translation.NewStore(s.db).Load(ctx); err == nil && s.translationDiskPause(cfg) == "" {
+				if err = s.pruneContentTranslations(ctx, cfg); err != nil {
+					slog.Warn("translation corpus retention failed", "error", err)
+				}
+			}
+		}
 		timer.Reset(translationPrefillInterval)
 	}
 }

@@ -67,6 +67,7 @@ func (s *Server) prepareCatalogPlayback(w http.ResponseWriter, r *http.Request) 
 
 type catalogPlaybackFile struct {
 	relative string
+	base     string
 	title    string
 	size     int64
 }
@@ -164,7 +165,7 @@ func (s *Server) loadCatalogPlaybackFiles(ctx context.Context, q catalogPlayback
 		placeholders = append(placeholders, "?")
 		args = append(args, relative)
 	}
-	rows, err := q.QueryContext(ctx, `SELECT relative_path,title,size_bytes FROM source_catalog_file
+	rows, err := q.QueryContext(ctx, `SELECT relative_path,source_root,title,size_bytes FROM source_catalog_file
 		WHERE catalog_entry_id=? AND kind='audio' AND relative_path IN (`+strings.Join(placeholders, ",")+`)`, args...)
 	if err != nil {
 		return nil, err
@@ -173,7 +174,7 @@ func (s *Server) loadCatalogPlaybackFiles(ctx context.Context, q catalogPlayback
 	files := make(map[string]catalogPlaybackFile, len(paths))
 	for rows.Next() {
 		var file catalogPlaybackFile
-		if err = rows.Scan(&file.relative, &file.title, &file.size); err != nil {
+		if err = rows.Scan(&file.relative, &file.base, &file.title, &file.size); err != nil {
 			return nil, err
 		}
 		files[file.relative] = file

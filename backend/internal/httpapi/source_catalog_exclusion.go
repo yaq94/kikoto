@@ -213,7 +213,9 @@ func applyCatalogExclusionTx(ctx context.Context, tx *sql.Tx, sourceID int64, p 
 	// the excluded path are considered, so a wide source stays cheap.
 	base := `COALESCE(NULLIF(b.source_root,''),b.root_path)`
 	ancestor := `(?=` + base + ` OR substr(?,1,length(` + base + `)+1)=` + base + ` || '/' OR substr(` + base + `,1,length(?)+1)=? || '/')`
-	fullPath := `(CASE WHEN ` + base + `='/' THEN '/' || f.relative_path ELSE ` + base + ` || '/' || f.relative_path END)`
+	// A file published from a folded format copy carries its own directory.
+	fileBase := `COALESCE(NULLIF(f.source_root,''),` + base + `)`
+	fullPath := `(CASE WHEN ` + fileBase + `='/' THEN '/' || f.relative_path ELSE ` + fileBase + ` || '/' || f.relative_path END)`
 	if _, err := tx.ExecContext(ctx, `DELETE FROM source_catalog_file WHERE (catalog_entry_id, relative_path) IN (
 		SELECT f.catalog_entry_id, f.relative_path FROM source_catalog_file f JOIN source_catalog_entry b ON b.id=f.catalog_entry_id
 		WHERE b.file_source_id=? AND `+ancestor+` AND `+catalogPathExcludedSQL("?", fullPath)+`)`,

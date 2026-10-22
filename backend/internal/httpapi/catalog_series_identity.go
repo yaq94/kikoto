@@ -179,26 +179,46 @@ func mergeSameCatalogSeriesMemberTx(ctx context.Context, tx *sql.Tx, fromID, toI
 // foldCatalogSeriesTx moves every member of a renamed series onto the
 // established one, then drops the emptied series row. The established id,
 // title owner and personal state stay in place.
+//
+// A renamed directory also changes the series key. The survivor adopts the new
+// key, otherwise the next episode discovered under that directory creates a
+// second series for the same group.
 func foldCatalogSeriesTx(ctx context.Context, tx *sql.Tx, fromSeries, toSeries int64) error {
-	var newTitle string
-	if err := tx.QueryRowContext(ctx, `SELECT title FROM catalog_series WHERE id=?`, fromSeries).Scan(&newTitle); err != nil {
+	var (
+		newTitle string
+		newKey   sql.NullString
+		fromWork sql.NullInt64
+		toWork   sql.NullInt64
+	)
+	if err := tx.QueryRowContext(ctx, `SELECT title,source_key,work_id FROM catalog_series WHERE id=?`, fromSeries).Scan(&newTitle, &newKey, &fromWork); err != nil {
 		return err
 	}
+	if err := tx.QueryRowContext(ctx, `SELECT work_id FROM catalog_series WHERE id=?`, toSeries).Scan(&toWork); err != nil {
+		return err
+	}
+	// Reviews hang off the series work row. Two registered series cannot be
+	// folded without choosing whose records the survivor keeps, so both stay
+	// for an explicit decision.
+	if fromWork.Valid && toWork.Valid && fromWork.Int64 != toWork.Int64 {
+		return errCatalogSeriesRetireConflict
+	}
+
 	var maxPosition int64
 	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(position),0) FROM catalog_series_member WHERE series_id=?`, toSeries).Scan(&maxPosition); err != nil {
 		return err
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT catalog_entry_id FROM catalog_series_member WHERE series_id=? ORDER BY position`, fromSeries)
+	type foldedMember struct{ id, position int64 }
+	members := []foldedMember{}
+	rows, err := tx.QueryContext(ctx, `SELECT catalog_entry_id,position FROM catalog_series_member WHERE series_id=? ORDER BY position`, fromSeries)
 	if err != nil {
 		return err
 	}
-	ids := []int64{}
 	for rows.Next() {
-		var id int64
-		if err = rows.Scan(&id); err != nil {
+		var member foldedMember
+		if err = rows.Scan(&member.id, &member.position); err != nil {
 			break
 		}
-		ids = append(ids, id)
+		members = append(members, member)
 	}
 	readErr := rows.Err()
 	_ = rows.Close()
@@ -208,15 +228,62 @@ func foldCatalogSeriesTx(ctx context.Context, tx *sql.Tx, fromSeries, toSeries i
 	if readErr != nil {
 		return readErr
 	}
-	for _, id := range ids {
-		maxPosition++
-		if _, err = tx.ExecContext(ctx, `UPDATE catalog_series_member SET series_id=?,position=? WHERE catalog_entry_id=?`, toSeries, maxPosition, id); err != nil {
+	for _, member := range members {
+		// Keep the authored episode number when the slot is free; append only
+		// when another episode already owns it, so folding never renumbers.
+		position := member.position
+		var occupied int
+		if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM catalog_series_member WHERE series_id=? AND position=?)`, toSeries, position).Scan(&occupied); err != nil {
+			return err
+		}
+		if occupied != 0 {
+			maxPosition++
+			position = maxPosition
+		}
+		if _, err = tx.ExecContext(ctx, `UPDATE catalog_series_member SET series_id=?,position=? WHERE catalog_entry_id=?`, toSeries, position, member.id); err != nil {
 			return err
 		}
 	}
-	if _, err = tx.ExecContext(ctx, `UPDATE catalog_series SET title=? WHERE id=? AND title<>?`, newTitle, toSeries, newTitle); err != nil {
+	// Previews and personal import references name the series id, not just its
+	// members. Move them so a pending decision and an exported reference stay
+	// resolvable after the row disappears.
+	if _, err = tx.ExecContext(ctx, `UPDATE catalog_series_preview SET series_id=? WHERE series_id=?`, toSeries, fromSeries); err != nil {
 		return err
 	}
-	_, err = tx.ExecContext(ctx, `DELETE FROM catalog_series WHERE id=? AND NOT EXISTS(SELECT 1 FROM catalog_series_member WHERE series_id=?)`, fromSeries, fromSeries)
+	var fromRef, toRef int
+	if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM personal_transfer_ref WHERE series_id=?),EXISTS(SELECT 1 FROM personal_transfer_ref WHERE series_id=?)`, fromSeries, toSeries).Scan(&fromRef, &toRef); err != nil {
+		return err
+	}
+	if fromRef != 0 {
+		if toRef != 0 {
+			// One stable reference per series: the survivor's own reference wins.
+			if _, err = tx.ExecContext(ctx, `DELETE FROM personal_transfer_ref WHERE series_id=?`, fromSeries); err != nil {
+				return err
+			}
+		} else if _, err = tx.ExecContext(ctx, `UPDATE personal_transfer_ref SET series_id=? WHERE series_id=?`, toSeries, fromSeries); err != nil {
+			return err
+		}
+	}
+	// work_id is UNIQUE, so the retired row must release it before the survivor
+	// takes over the reviews.
+	if fromWork.Valid {
+		if _, err = tx.ExecContext(ctx, `UPDATE catalog_series SET work_id=NULL WHERE id=?`, fromSeries); err != nil {
+			return err
+		}
+	}
+	if _, err = tx.ExecContext(ctx, `DELETE FROM catalog_series WHERE id=? AND NOT EXISTS(SELECT 1 FROM catalog_series_member WHERE series_id=?)`, fromSeries, fromSeries); err != nil {
+		return err
+	}
+	if fromWork.Valid && !toWork.Valid {
+		if _, err = tx.ExecContext(ctx, `UPDATE catalog_series SET work_id=? WHERE id=?`, fromWork.Int64, toSeries); err != nil {
+			return err
+		}
+	}
+	if newKey.Valid && newKey.String != "" {
+		if _, err = tx.ExecContext(ctx, `UPDATE catalog_series SET source_key=? WHERE id=? AND source_key<>?`, newKey.String, toSeries, newKey.String); err != nil {
+			return err
+		}
+	}
+	_, err = tx.ExecContext(ctx, `UPDATE catalog_series SET title=? WHERE id=? AND title<>?`, newTitle, toSeries, newTitle)
 	return err
 }

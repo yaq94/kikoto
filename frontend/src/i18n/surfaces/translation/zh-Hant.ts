@@ -7,6 +7,7 @@ export const translationAdmin = {
     translated: "查看譯文",
     paused: "磁碟空間不足，快取已暫停。",
     concurrency: "翻譯並行數",
+    maxEntries: "譯文行數上限（0 為不限）",
     queueLimit: "排隊翻譯上限",
     cacheBytes: "譯文快取上限（位元組）",
     minFreeBytes: "最低磁碟可用空間（位元組）",

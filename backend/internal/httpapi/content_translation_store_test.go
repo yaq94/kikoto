@@ -11,6 +11,7 @@ import (
 
 	"github.com/yexca/kikoto/backend/internal/buildinfo"
 	"github.com/yexca/kikoto/backend/internal/storage"
+	"github.com/yexca/kikoto/backend/internal/translation"
 	"github.com/yexca/kikoto/backend/migrations"
 )
 
@@ -401,5 +402,46 @@ func TestContentTranslationShortQueryStaysBounded(t *testing.T) {
 		t.Fatal(err)
 	} else if len(ids) != 1 || ids[0] != int64(newest) {
 		t.Fatalf("short query inside the window = %v", ids)
+	}
+}
+
+// The corpus limits remove only model rows, oldest first, and a superseded row
+// goes before a live one.
+func TestContentTranslationRetentionHonoursRowBudget(t *testing.T) {
+	server := openContentTranslationTestServer(t)
+	ctx := context.Background()
+	rows := []contentTranslationRow{
+		{CacheKey: "native-1", EntityKind: "entry", EntityID: 1, Field: "title", Language: "ja", SourceText: "native", TranslatedText: "native", Origin: "native"},
+	}
+	for i := int64(1); i <= 5; i++ {
+		rows = append(rows, contentTranslationRow{CacheKey: fmt.Sprintf("model-%d", i), EntityKind: "entry", EntityID: i, Field: "title", Language: "en", SourceText: "source", TranslatedText: "text", Origin: "model"})
+	}
+	if err := server.saveContentTranslations(ctx, rows); err != nil {
+		t.Fatal(err)
+	}
+	if err := server.pruneContentTranslations(ctx, translation.Config{Limits: translation.Limits{MaxEntries: 3, CacheBytes: 1 << 30}}); err != nil {
+		t.Fatal(err)
+	}
+	var model, native int
+	if err := server.db.QueryRow(`SELECT (SELECT count(*) FROM content_translation WHERE origin='model'),(SELECT count(*) FROM content_translation WHERE origin='native')`).Scan(&model, &native); err != nil {
+		t.Fatal(err)
+	}
+	if model != 2 || native != 1 {
+		t.Fatalf("after trim model=%d native=%d, want 2/1 (budget 3 includes the native row)", model, native)
+	}
+
+	// A newer row for the same entity, field and language supersedes the old
+	// one even when the budget itself is not exceeded.
+	if err := server.saveContentTranslations(ctx, []contentTranslationRow{
+		{CacheKey: "model-new", EntityKind: "entry", EntityID: 5, Field: "title", Language: "en", SourceText: "source", TranslatedText: "new", Origin: "model"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := server.pruneContentTranslations(ctx, translation.Config{Limits: translation.Limits{MaxEntries: 100, CacheBytes: 1 << 30}}); err != nil {
+		t.Fatal(err)
+	}
+	var old int
+	if err := server.db.QueryRow(`SELECT count(*) FROM content_translation WHERE cache_key='model-5'`).Scan(&old); err != nil || old != 0 {
+		t.Fatalf("superseded row still present: %d %v", old, err)
 	}
 }

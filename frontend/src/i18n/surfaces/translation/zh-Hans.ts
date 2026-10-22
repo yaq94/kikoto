@@ -7,6 +7,7 @@ export const translationAdmin = {
     translated: "查看译文",
     paused: "磁盘空间不足，缓存已暂停。",
     concurrency: "翻译并发数",
+    maxEntries: "译文行数上限（0 为不限）",
     queueLimit: "排队翻译上限",
     cacheBytes: "译文缓存上限（字节）",
     minFreeBytes: "最低磁盘可用空间（字节）",
