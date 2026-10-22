@@ -140,7 +140,11 @@ func TestTitleLanguageEmptyQueueSkipsWriteTransaction(t *testing.T) {
 	}
 	defer func() { _, _ = conn.ExecContext(context.Background(), "ROLLBACK") }()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	// The read is one indexed lookup on an empty queue. The deadline only has
+	// to be shorter than the write lock wait, so a batch that opens its write
+	// transaction still fails instead of hanging; three seconds leaves room
+	// for the race detector and a loaded CI host without hiding that mistake.
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	refreshed, err := refreshTitleLanguageBatch(ctx, db, 50)
 	if err != nil || refreshed != 0 {

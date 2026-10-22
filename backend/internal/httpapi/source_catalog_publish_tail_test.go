@@ -172,9 +172,11 @@ func TestSourceCatalogPublishSkipsIncompleteDirectories(t *testing.T) {
 	if published != 0 {
 		t.Fatalf("published %d observations from an incomplete directory", published)
 	}
-	// The bounds are deliberately loose enough for the race detector, which
-	// instruments every SQLite scan. The legacy shape took 36 seconds here.
-	if elapsed > time.Second {
+	// The legacy shape took 36 seconds here, so one second separates the two
+	// by a wide margin on an unloaded host. The race detector instruments
+	// every SQLite scan and the sharded CI job runs four of them at once;
+	// the dedicated non-race job owns this wall-clock contract.
+	if !raceInstrumentation && elapsed > time.Second {
 		t.Fatalf("incomplete-only queue took %s", elapsed)
 	}
 }

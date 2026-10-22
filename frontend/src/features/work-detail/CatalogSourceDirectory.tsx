@@ -40,8 +40,10 @@ export function CatalogSourceDirectory({
   useEffect(() => {
     mounted.current = true;
     return () => {
+      // A manual refresh is a user action that already reached the server; it
+      // must finish even when this panel closes, so only the mount flag is
+      // cleared here. The next refresh still aborts the previous one.
       mounted.current = false;
-      refreshRequest.current?.abort();
     };
   }, []);
   useEffect(() => {
