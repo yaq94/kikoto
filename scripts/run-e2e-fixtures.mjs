@@ -196,7 +196,11 @@ export const bundles = {
   series: ["catalog-series", "catalog-series-review"],
   matching: ["work-matching", "shared-association", "shared-split"],
   personal: ["personal-review-live-api", "personal-transfer"],
-  "source-playback": ["source-lifecycle", "source-playback-live-api", "source-resource-limits-live"],
+  "source-playback": [
+    "source-lifecycle",
+    "source-playback-live-api",
+    "source-resource-limits-live",
+  ],
   "content-translation": ["content-translation", "traditional-translation"],
   "integrated-acceptance": ["integrated-acceptance"],
   "translation-settings": ["translation-settings"],
