@@ -48,6 +48,42 @@ func TestCatalogFormatCopyRecognizesCompanionSuffixes(t *testing.T) {
 	}
 }
 
+// A format marker may be a bracketed tag among circle/code tags, and the
+// release title may follow the tag. Only an audio format with a companion
+// subtitle/lyrics marker is a format copy; arbitrary "+ Lyrics" text is not.
+func TestCatalogFormatCopyRecognizesBracketFormatTag(t *testing.T) {
+	for _, name := range []string{
+		"[团队][RJ01009766][MP3+lrc]标题",
+		"[MP3 320kbps+lrc]标题",
+		"[WAV+lrc] 标题",
+	} {
+		if !catalogFormatDirectory(name) {
+			t.Errorf("%q is not recognized as a format copy", name)
+		}
+	}
+	for _, name := range []string{
+		"[My MP3] Title",
+		"[Audio Drama]",
+		"Song + Lyrics",
+		"[MP3 Collection] Title",
+	} {
+		if catalogFormatDirectory(name) {
+			t.Errorf("%q must stay a title", name)
+		}
+	}
+	for _, tc := range []struct {
+		name, want string
+	}{
+		{"Episode 1 [MP3+lrc] Title", "Episode 1"},
+		{"第1集 [WAV 24bit+lrc] 标题", "第1集"},
+	} {
+		got, ok := catalogEpisodeFormatCopy(tc.name)
+		if !ok || got != tc.want {
+			t.Errorf("catalogEpisodeFormatCopy(%q)=(%q,%v), want (%q,true)", tc.name, got, ok, tc.want)
+		}
+	}
+}
+
 // A wrapper that repeats the release code is part of the release even when the
 // wrapper has no direct audio. The outer release must keep the card, not the
 // inner wrapper.

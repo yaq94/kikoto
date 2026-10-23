@@ -123,16 +123,36 @@ var catalogAudioFormatTokens = []string{
 	"aiff", "aif", "wma", "dsd", "dsf", "dff", "ape", "alac", "wv", "tta",
 }
 
+var catalogFormatQualitySuffix = `(?:\s*(?:vbr|cbr|lossless|hi-?res|无损|無損|[0-9]+(?:kbps|kbit|mbit|khz|bit|bps|hz|k|m)))*`
+var catalogFormatCompanionSuffix = `(?:\s*[+&]\s*(?:lrc|lyrics?|sub(?:title)?s?|字幕|歌詞|歌词))+`
+var catalogFormatCompanion = regexp.MustCompile(`(?i)` + catalogFormatCompanionSuffix)
+
 // A copy may put its format token after a circle/code prefix, and it may name
 // companion lyrics or quality markers in the same folder. Match that trailing
 // form without turning a title such as "MP3 Collection" into a format folder.
 var catalogFormatCopySuffix = regexp.MustCompile(`(?i)(?:^|[^a-z0-9])(?:` +
 	strings.Join(catalogAudioFormatTokens, "|") +
-	`)(?:\s*[+&]\s*(?:lrc|lyrics?|sub(?:title)?s?|字幕|歌詞|歌词))+` +
-	`(?:\s*(?:vbr|cbr|lossless|hi-?res|无损|無損|[0-9]+(?:kbps|kbit|mbit|khz|bit|bps|hz|k|m)))*` +
-	`[)\]】）]*\s*$`)
+	`)` + catalogFormatQualitySuffix + catalogFormatCompanionSuffix +
+	catalogFormatQualitySuffix + `[)\]】）]*\s*$`)
+
+// A format copy may put its marker in a bracket tag, for example
+// "[团队][RJ01009766][MP3+lrc]标题". The tag may be followed by the release
+// title; only the tag itself is inspected.
+var catalogFormatTag = regexp.MustCompile(`[\[\(（【]([^\]\)）】]+)[\]\)）】]`)
 
 func catalogFormatDirectory(name string) bool {
+	if catalogFormatDirectoryCore(name) {
+		return true
+	}
+	for _, match := range catalogFormatTag.FindAllStringSubmatch(name, -1) {
+		if catalogFormatCompanion.MatchString(match[1]) && catalogFormatDirectoryCore(match[1]) {
+			return true
+		}
+	}
+	return false
+}
+
+func catalogFormatDirectoryCore(name string) bool {
 	lower := catalogDirectoryFormatName(name)
 	// Brackets and separators are noise: "MP3 (V0)", "[FLAC]" and "FLAC24bit"
 	// are all copies of the release audio. Comparing the compact form keeps the
