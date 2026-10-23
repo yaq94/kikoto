@@ -37,7 +37,7 @@ calibration harness.
 ## Cleanup pass
 
 After publication the lifecycle pass retires file rows from earlier generations
-and removes folder rows for directories that are now their own entry. Both
+and removes folder rows for directories that are their own entry. Both
 lookups are per card, so they must seek rather than scan. The cleanup query
 orders the current generation's entries by id through the lifecycle index, and
 the child lookup uses two partial indexes: one for a plain card's `root_path`
