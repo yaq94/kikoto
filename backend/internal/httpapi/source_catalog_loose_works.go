@@ -1135,6 +1135,16 @@ func transferRetiredCatalogWorkTx(ctx context.Context, tx *sql.Tx, staleID, targ
 		_, err := tx.ExecContext(ctx, "UPDATE source_catalog_entry SET work_id=NULL WHERE id=?", staleID)
 		return err == nil, err
 	}
+	var staleCode, targetCode string
+	if err := tx.QueryRowContext(ctx, `SELECT stale.primary_code,COALESCE(target.primary_code,'')
+		FROM work AS stale LEFT JOIN work AS target ON target.id=?
+		WHERE stale.id=?`, targetWork, staleWork.Int64).Scan(&staleCode, &targetCode); err != nil {
+		return false, err
+	}
+	staleCode, targetCode = normalizeWorkCode(staleCode), normalizeWorkCode(targetCode)
+	if staleCode != "" && targetCode != "" && staleCode != targetCode {
+		return false, nil
+	}
 	var shared int
 	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM source_catalog_entry
 		WHERE work_id=? AND id<>? AND id<>? AND relocated_to_id IS NULL)`, staleWork.Int64, staleID, targetID).Scan(&shared); err != nil {
@@ -1145,6 +1155,12 @@ func transferRetiredCatalogWorkTx(ctx context.Context, tx *sql.Tx, staleID, targ
 	}
 	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM shared_identity_member
 		WHERE work_id=? OR identity_work_id=?)`, staleWork.Int64, staleWork.Int64).Scan(&shared); err != nil {
+		return false, err
+	}
+	if shared != 0 {
+		return false, nil
+	}
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM catalog_series WHERE work_id=?)`, staleWork.Int64).Scan(&shared); err != nil {
 		return false, err
 	}
 	if shared != 0 {
