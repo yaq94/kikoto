@@ -71,6 +71,49 @@ func TestCatalogSeriesRenameKeepsLaterEpisodesInOneSeries(t *testing.T) {
 	}
 }
 
+// A directory rename and a new episode can be observed in the same generation.
+// The old membership is a stable subset of the new one, so it is still the same
+// series rather than an old two-episode series beside a new three-episode one.
+func TestCatalogSeriesRenameAndNewEpisodeInOneScanStayOneSeries(t *testing.T) {
+	f := newLooseWorkFixture(t, map[string][]map[string]any{
+		"/":                          {looseDir("Series: Example")},
+		"/Series: Example":           {looseDir("Episode 1"), looseDir("Episode 2")},
+		"/Series: Example/Episode 1": {looseAudio("one.mp3")},
+		"/Series: Example/Episode 2": {looseAudio("two.mp3")},
+	})
+	f.request(t, http.MethodPost, "/catalog/index", `{"intervalMs":100}`, 202)
+	if p := f.drain(t); p["status"] != "complete" {
+		t.Fatalf("first scan = %#v", p)
+	}
+	var seriesID int64
+	if err := f.server.db.QueryRow(`SELECT id FROM catalog_series`).Scan(&seriesID); err != nil {
+		t.Fatal(err)
+	}
+
+	f.updates(map[string][]map[string]any{
+		"/":                          {looseDir("Series: Renamed")},
+		"/Series: Renamed":           {looseDir("Episode 1"), looseDir("Episode 2"), looseDir("Episode 3")},
+		"/Series: Renamed/Episode 1": {looseAudio("one.mp3")},
+		"/Series: Renamed/Episode 2": {looseAudio("two.mp3")},
+		"/Series: Renamed/Episode 3": {looseAudio("three.mp3")},
+	})
+	f.request(t, http.MethodPost, "/catalog/index", `{"intervalMs":100,"force":true}`, 202)
+	if p := f.drain(t); p["status"] != "complete" {
+		t.Fatalf("rename scan = %#v", p)
+	}
+
+	var series, members int
+	if err := f.server.db.QueryRow(`SELECT count(*) FROM catalog_series`).Scan(&series); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.server.db.QueryRow(`SELECT count(*) FROM catalog_series_member WHERE series_id=?`, seriesID).Scan(&members); err != nil {
+		t.Fatal(err)
+	}
+	if series != 1 || members != 3 {
+		t.Fatalf("series=%d members=%d, want one series with three episodes", series, members)
+	}
+}
+
 // Folding a renamed series must keep the personal state of the series that is
 // about to disappear. Reviews hang off the series work row, so the survivor
 // takes that row over instead of deleting it with the series.
