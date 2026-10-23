@@ -62,7 +62,6 @@ type importPlan struct {
 	preview          ImportPreview
 	works            map[string]int64
 	matches          map[string]identityMatch
-	conflicts        map[int64]bool
 	reviewConflicts  map[int64]bool
 	progressConflict map[int64]bool
 	statusConflict   map[int64]bool
@@ -310,7 +309,7 @@ func importWork(ctx context.Context, tx *sql.Tx, user, id, media int64, w Backup
 			return err
 		}
 	}
-	if w.Identity != nil && w.Progress != nil {
+	if w.Identity != nil && w.Progress != nil && !keep.progress {
 		if media > 0 {
 			_, err := tx.ExecContext(ctx, `DELETE FROM personal_transfer_progress WHERE user_id=? AND work_id=?`, user, id)
 			if err != nil {

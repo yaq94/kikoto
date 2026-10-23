@@ -53,7 +53,7 @@ func TestCatalogFormatCopyRecognizesCompanionSuffixes(t *testing.T) {
 // subtitle/lyrics marker is a format copy; arbitrary "+ Lyrics" text is not.
 func TestCatalogFormatCopyRecognizesBracketFormatTag(t *testing.T) {
 	for _, name := range []string{
-		"[团队][RJ01009766][MP3+lrc]标题",
+		"[团队][RJ00000001][MP3+lrc]标题",
 		"[MP3 320kbps+lrc]标题",
 		"[WAV+lrc] 标题",
 	} {
@@ -194,7 +194,7 @@ func TestCatalogEpisodeEvidenceIgnoresStructuralChildrenUnderASeriesLabel(t *tes
 // the coded works. They are separate works, not one card that mixes their
 // evaluation.
 func TestCatalogPrefixSplitKeepsUncodedRecordingsSeparate(t *testing.T) {
-	names := []string{"RJ111111 First.mp3", "RJ111111 First (2).mp3", "Second Work.mp3", "Third Work.mp3"}
+	names := []string{"RJ00000011 First.mp3", "RJ00000011 First (2).mp3", "Second Work.mp3", "Third Work.mp3"}
 	plan := newCatalogSplitPlan("/Creator", names, catalogWorkSplitPrefix)
 	second, ok := plan.targetFor("Second Work.mp3")
 	if !ok {
@@ -270,11 +270,11 @@ func TestCatalogFormatCopyKeepsAddressableRelativePaths(t *testing.T) {
 // instead of becoming one card per format.
 func TestCatalogFormatDirectoryPublishesIntoItsRelease(t *testing.T) {
 	f := newLooseWorkFixture(t, map[string][]map[string]any{
-		"/":                      {looseDir("Release")},
-		"/Release":               {looseDir("RJ111111")},
-		"/Release/RJ111111":      {looseDir("MP3"), looseDir("FLAC")},
-		"/Release/RJ111111/MP3":  {looseAudioSized("a.mp3", 100)},
-		"/Release/RJ111111/FLAC": {looseAudioSized("b.flac", 200)},
+		"/":                        {looseDir("Release")},
+		"/Release":                 {looseDir("RJ00000011")},
+		"/Release/RJ00000011":      {looseDir("MP3"), looseDir("FLAC")},
+		"/Release/RJ00000011/MP3":  {looseAudioSized("a.mp3", 100)},
+		"/Release/RJ00000011/FLAC": {looseAudioSized("b.flac", 200)},
 	})
 	f.request(t, http.MethodPost, "/catalog/index", `{"intervalMs":100}`, 202)
 	if p := f.drain(t); p["status"] != "complete" {
@@ -290,7 +290,7 @@ func TestCatalogFormatDirectoryPublishesIntoItsRelease(t *testing.T) {
 	if err := f.server.db.QueryRow(`SELECT root_path FROM source_catalog_entry WHERE relocated_to_id IS NULL AND file_source_id IS NOT NULL`).Scan(&root); err != nil {
 		t.Fatal(err)
 	}
-	if root != "/Release/RJ111111" {
+	if root != "/Release/RJ00000011" {
 		t.Fatalf("card root=%q, want the release", root)
 	}
 }

@@ -37,7 +37,7 @@ func catalogContainerDirectory(name string) bool {
 // identities; callers retain every real parent/child directory observation.
 func catalogAdmissionRoot(directoryPath, parentRoot string, observed catalogDirectorySummary) string {
 	// A child directory that repeats its parent's release code is a format or
-	// packaging copy of the same work (RJ147133/…/RJ147133 MP3+lrc). It must
+	// packaging copy of the same work (RJ00000001/…/RJ00000001 MP3+lrc). It must
 	// not become a second card with the same number.
 	if code := catalogDirectoryCode(directoryPath); code != "" && parentRoot != "" &&
 		strings.EqualFold(code, catalogDirectoryCode(parentRoot)) {
@@ -136,7 +136,7 @@ var catalogFormatCopySuffix = regexp.MustCompile(`(?i)(?:^|[^a-z0-9])(?:` +
 	catalogFormatQualitySuffix + `[)\]】）]*\s*$`)
 
 // A format copy may put its marker in a bracket tag, for example
-// "[团队][RJ01009766][MP3+lrc]标题". The tag may be followed by the release
+// "[团队][RJ00000001][MP3+lrc]标题". The tag may be followed by the release
 // title; only the tag itself is inspected.
 var catalogFormatTag = regexp.MustCompile(`[\[\(（【]([^\]\)）】]+)[\]\)）】]`)
 
@@ -248,6 +248,18 @@ func catalogDirectoryFormatName(name string) string {
 // with its own audio that does not match keeps its own card.
 func catalogWorkPartDirectory(name string) bool {
 	return catalogFormatDirectory(name) || catalogAuxiliaryDirectory(name) || catalogTrackContainerDirectory(name)
+}
+
+// catalogPackageDirectory reports a directory whose name describes a bundle of
+// works rather than one work. No-hash duplicate detection may accept renamed
+// files only inside such an explicitly named package; an ordinary work title
+// still needs exact names or content hashes.
+var catalogPackageName = regexp.MustCompile(`(?i)(?:^|[^a-z0-9])(?:package|pack|bundle|works)(?:[^a-z0-9]|$)|作品集|合集|整合|打包`)
+var catalogPackageSize = regexp.MustCompile(`(?i)(?:^|[^a-z0-9])[0-9]+(?:\.[0-9]+)?\s*(?:kb|mb|gb|tb|k|m|g|t)(?:[^a-z0-9]|$)`)
+
+func catalogPackageDirectory(name string) bool {
+	lower := catalogDirectoryFormatName(name)
+	return catalogPackageName.MatchString(lower) || catalogPackageSize.MatchString(lower)
 }
 
 // catalogTrackContainerDirectory reports a directory that groups the tracks of

@@ -68,9 +68,9 @@ func TestWorkMatchingNonEmptyCodeStillMatches(t *testing.T) {
 	db := openMigratedTestDB(t)
 	if _, err := db.Exec(`INSERT INTO file_source(id,code,display_name,source_type)
 		VALUES(91,'numbered-source','Numbered source','openlist');
-		INSERT INTO work(id,primary_code,title) VALUES(501,'RJ00000501','Numbered work');
+		INSERT INTO work(id,primary_code,title) VALUES(501,'RJ00000051','Numbered work');
 		INSERT INTO source_catalog_entry(id,file_source_id,root_path,primary_code,title)
-		VALUES(1,91,'/numbered','RJ00000501','A different card title')`); err != nil {
+		VALUES(1,91,'/numbered','RJ00000051','A different card title')`); err != nil {
 		t.Fatal(err)
 	}
 	result := runMatchingEvaluation(t, db, associationSubject{Kind: "catalog", ID: 1})
@@ -185,10 +185,10 @@ func TestMigration089AllowsBlankCodesAndRejectsDuplicates(t *testing.T) {
 	if _, err := db.Exec(`INSERT INTO work(primary_code,title) VALUES('','First manual'),('','Second manual')`); err != nil {
 		t.Fatalf("empty codes must coexist: %v", err)
 	}
-	if _, err := db.Exec(`INSERT INTO work(primary_code,title) VALUES('RJ00000891','Numbered')`); err != nil {
+	if _, err := db.Exec(`INSERT INTO work(primary_code,title) VALUES('RJ00000091','Numbered')`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec(`INSERT INTO work(primary_code,title) VALUES('RJ00000891','Duplicate')`); err == nil {
+	if _, err := db.Exec(`INSERT INTO work(primary_code,title) VALUES('RJ00000091','Duplicate')`); err == nil {
 		t.Fatal("duplicate non-empty code was accepted")
 	} else if !strings.Contains(err.Error(), "UNIQUE constraint failed") {
 		t.Fatalf("duplicate error = %v", err)

@@ -15,7 +15,10 @@ is treated as a track container instead. Shared creators, similar titles,
 topics and numeric track names do not. Format and track subdirectories stay
 inside their episode, including `Episode 1 (MP3)` and `Episode 2 [FLAC]`.
 Duplicate episode numbers remain independent for review.
-A series contains at most 100 members; additional entries stay independent.
+Automatic discovery and manual grouping share a 10,000-member safety limit.
+Reaching it is reported as `catalog series exceeds the member safety limit`
+instead of silently dropping an episode. Manual grouping accepts 2–10,000
+selected entries per request.
 A single-member series is not displayed as a series card: the entry keeps its
 own card until a second evidenced member exists, so an isolated `Episode 1`
 does not create a creator-named series.
@@ -56,6 +59,10 @@ A complete refresh marks episode cards that the listing no longer contains as
 `missing`, keeping their id, work link and personal records; the series view
 keeps listing them with `status: "missing"` so their personal records remain
 reachable, and reports them as available again when the source republishes them.
+Retiring or folding a card resolves series membership through its full alias
+closure. Historical rows that still point at a retired alias are normalized to
+the live successor before the alias is collapsed, so a later rename keeps one
+live member and one series instead of losing its evidence.
 
 ## Shared grouping
 
@@ -65,7 +72,7 @@ preview their order and confirm. The preview id remains in the page URL for
 reopening. Saved membership is shared with other readers, including anonymous
 readers when the instance allows anonymous access.
 
-- `POST /api/catalog-series/previews` accepts `title` and 2–100 ordered
+- `POST /api/catalog-series/previews` accepts `title` and 2–10,000 ordered
   `catalogEntryIds`. JSON is limited to 16 KiB; titles to 512 UTF-8 bytes.
 - `GET /api/catalog-series/previews/{id}` reads only the actor's preview.
 - `POST /api/catalog-series/previews/{id}/confirm` rechecks actor permission

@@ -13,7 +13,12 @@ import (
 	"github.com/yexca/kikoto/backend/internal/sqlutil"
 )
 
-const maxCatalogSeriesMembers = 100
+// maxCatalogSeriesMembers is a hard safety bound shared by automatic discovery
+// and manual grouping. Reaching it is reported as an error; neither path drops
+// an episode silently.
+const maxCatalogSeriesMembers = 10000
+
+var errCatalogSeriesTooLarge = errors.New("catalog series exceeds the member safety limit")
 
 var errCatalogGroupingConflict = errors.New("catalog grouping needs a fresh preview or conflict review")
 
@@ -188,7 +193,7 @@ func (s *Server) createCatalogGroupingPreview(w http.ResponseWriter, r *http.Req
 	}
 	input.Title = strings.TrimSpace(input.Title)
 	if input.Title == "" || len(input.Title) > 512 || len(input.EntryIDs) < 2 || len(input.EntryIDs) > maxCatalogSeriesMembers {
-		writeAPIError(w, 400, "invalid_request", "select 2 to 100 entries and a series title", false)
+		writeAPIError(w, 400, "invalid_request", "select 2 to 10000 entries and a series title", false)
 		return
 	}
 	tx, err := s.db.BeginTx(r.Context(), nil)

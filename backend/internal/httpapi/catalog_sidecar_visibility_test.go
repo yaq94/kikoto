@@ -40,7 +40,7 @@ func TestSourceCatalogIndexReportsStoppedSidecarFailures(t *testing.T) {
 	// A second source proves the projection is scoped to one source.
 	otherSource := metadataReviewExec(t, f.server.db, `INSERT INTO file_source(code,display_name,source_type)
 		VALUES('example_remote_b','Example Remote B','openlist')`)
-	metadataReviewExec(t, f.server.db, `INSERT INTO work(id,primary_code,title) VALUES(901,'RJ00000901','Example Work');`)
+	metadataReviewExec(t, f.server.db, `INSERT INTO work(id,primary_code,title) VALUES(901,'RJ00000024','Example Work');`)
 	metadataReviewExec(t, f.server.db, `INSERT INTO source_catalog_entry(id,file_source_id,root_path,title,work_id,sidecar_json,sidecar_pending,sidecar_attempts,sidecar_transient_attempts,sidecar_failure)
 		VALUES(801,?,'/Example Work','Example Work',901,'{"sidecars":[]}',0,0,8,'temporarily_unavailable'),
 			(802,?,'/Settled','Settled card',NULL,'',0,5,0,'unreadable'),

@@ -8,7 +8,7 @@ import (
 )
 
 func buildImportPlan(ctx context.Context, tx *sql.Tx, user int64, b Backup) (importPlan, error) {
-	p := importPlan{preview: ImportPreview{Works: len(b.Works), Playlists: len(b.Playlists), Tags: len(b.Tags), MissingCodes: []string{}}, works: map[string]int64{}, matches: map[string]identityMatch{}, conflicts: map[int64]bool{}, reviewConflicts: map[int64]bool{}, progressConflict: map[int64]bool{}, statusConflict: map[int64]bool{}, media: map[string]int64{}, blocked: map[string]bool{}, identities: map[string]int64{}, reviews: map[int64]TransferReview{}}
+	p := importPlan{preview: ImportPreview{Works: len(b.Works), Playlists: len(b.Playlists), Tags: len(b.Tags), MissingCodes: []string{}}, works: map[string]int64{}, matches: map[string]identityMatch{}, reviewConflicts: map[int64]bool{}, progressConflict: map[int64]bool{}, statusConflict: map[int64]bool{}, media: map[string]int64{}, blocked: map[string]bool{}, identities: map[string]int64{}, reviews: map[int64]TransferReview{}}
 	codes := map[string]bool{}
 	for _, w := range b.Works {
 		if w.Identity == nil {
@@ -114,7 +114,9 @@ func buildImportPlan(ctx context.Context, tx *sql.Tx, user int64, b Backup) (imp
 		statusConflict := incomingStatus && status != "" && status != "none" && status != w.ListeningStatus
 		var progressExists bool
 		if w.Progress != nil {
-			if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM user_work_playback_cursor WHERE user_id=? AND work_id=?)`, user, id).Scan(&progressExists); err != nil {
+			if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM user_work_playback_cursor WHERE user_id=? AND work_id=?)
+					OR EXISTS(SELECT 1 FROM personal_transfer_progress WHERE user_id=? AND work_id=?)`,
+				user, id, user, id).Scan(&progressExists); err != nil {
 				return p, err
 			}
 		}
@@ -124,7 +126,6 @@ func buildImportPlan(ctx context.Context, tx *sql.Tx, user int64, b Backup) (imp
 		p.reviewConflicts[identity] = p.reviewConflicts[identity] || reviewConflict
 		p.statusConflict[id] = statusConflict
 		p.progressConflict[id] = progressExists
-		p.conflicts[id] = reviewConflict || statusConflict || progressExists
 		if reviewConflict {
 			conflictingGroups[identity] = true
 			if err := p.preview.addIssue(ImportIssue{Ref: w.key(), Title: w.label(), Reason: "existing_record", Incoming: &TransferReview{Rating: w.Rating, Note: w.Note}, Existing: &current}); err != nil {

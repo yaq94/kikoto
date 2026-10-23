@@ -28,7 +28,8 @@ func seedCatalogPruneFixture(t *testing.T, db *sql.DB) {
 			(4,90,'/keep','Keep',NULL,'available'),
 			(5,90,'/series-card','Series card',NULL,'available'),
 				(7,90,'/target','Alias target',NULL,'available'),
-				(8,90,'/work-backed-empty','Work-backed empty',2,'available')`,
+					(8,90,'/work-backed-empty','Work-backed empty',2,'available'),
+					(9,90,'/source-only-empty','Source-only empty',NULL,'available')`,
 		`INSERT INTO source_catalog_entry(id,file_source_id,root_path,title,work_id,availability_status,relocated_to_id) VALUES
 			(6,NULL,'/alias','Alias',NULL,'available',7)`,
 		`INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes) VALUES
@@ -54,7 +55,8 @@ func seedCatalogPruneFixture(t *testing.T, db *sql.DB) {
 			(90,'/bulk/audio',900,1,'/bulk','/bulk/audio','complete'),
 			(90,'/other',900,1,'/other','/other','complete'),
 				(90,'/target',900,1,'/target','/target','complete'),
-				(90,'/work-backed-empty',900,1,'/work-backed-empty','/work-backed-empty','complete')`,
+					(90,'/work-backed-empty',900,1,'/work-backed-empty','/work-backed-empty','complete'),
+					(90,'/source-only-empty',900,1,'/source-only-empty','/source-only-empty','complete')`,
 		`INSERT INTO source_catalog_observation(file_source_id,directory_path,name,revision,kind,size_bytes,publish_pending) VALUES
 			(90,'/bulk','n1.jpg',1,'other',1,1),
 			(90,'/bulk','n2.jpg',1,'other',1,1),
@@ -63,7 +65,8 @@ func seedCatalogPruneFixture(t *testing.T, db *sql.DB) {
 			(90,'/bulk/audio','a2.mp3',1,'audio',1,1),
 			(90,'/other','a.mp3',1,'audio',1,1),
 				(90,'/target','n.mp3',1,'other',1,1),
-				(90,'/work-backed-empty','track.mp3',1,'audio',1,1)`,
+					(90,'/work-backed-empty','track.mp3',1,'audio',1,0),
+					(90,'/source-only-empty','track.mp3',1,'audio',1,0)`,
 		`INSERT INTO source_catalog_audio_root(file_source_id,generation,catalog_root) VALUES
 			(90,900,'/bulk'),(90,900,'/bulk/audio')`,
 		`INSERT INTO catalog_series(id,title) VALUES(1,'Retained series')`,
@@ -111,7 +114,7 @@ func TestCatalogPruneDryRunAndApply(t *testing.T) {
 	for _, item := range report.Skipped {
 		skipped[item.EntryID] = item.Reason
 	}
-	if skipped[3] != "transfer_alias" || skipped[5] != "series_member" || skipped[7] != "relocation_target" {
+	if skipped[9] != "transfer_alias" || skipped[5] != "series_member" || skipped[7] != "relocation_target" {
 		t.Fatalf("skipped = %+v", skipped)
 	}
 
@@ -136,8 +139,8 @@ func TestCatalogPruneDryRunAndApply(t *testing.T) {
 		Scan(&scanDirectories, &scanObserved, &scanPending); err != nil {
 		t.Fatal(err)
 	}
-	if scanDirectories != 4 || scanObserved != 7 || scanPending != 5 {
-		t.Fatalf("scan counters = dirs %d obs %d pending %d, want 4/7/5", scanDirectories, scanObserved, scanPending)
+	if scanDirectories != 5 || scanObserved != 8 || scanPending != 5 {
+		t.Fatalf("scan counters = dirs %d obs %d pending %d, want 5/8/5", scanDirectories, scanObserved, scanPending)
 	}
 
 	var deleted, kept, files, refs int
@@ -281,7 +284,7 @@ func TestCatalogPrunePreservesWorkBackedTransferAlias(t *testing.T) {
 		{"directory", `INSERT INTO source_catalog_directory(file_source_id,path,generation,revision,partition_path,catalog_root,status)
 			VALUES(90,'/alias',900,1,'/alias','/alias','complete')`},
 		{"observation", `INSERT INTO source_catalog_observation(file_source_id,directory_path,name,revision,kind,size_bytes,publish_pending)
-			VALUES(90,'/alias','track.mp3',1,'audio',1,1)`},
+			VALUES(90,'/alias','track.mp3',1,'audio',1,0)`},
 	} {
 		if _, err := db.Exec(statement.sql); err != nil {
 			t.Fatalf("%s: %v", statement.name, err)
@@ -329,7 +332,7 @@ func TestCatalogPrunePreservesSourceOnlyTransferAlias(t *testing.T) {
 		{"directory", `INSERT INTO source_catalog_directory(file_source_id,path,generation,revision,partition_path,catalog_root,status)
 			VALUES(90,'/source-only',900,1,'/source-only','/source-only','complete')`},
 		{"observation", `INSERT INTO source_catalog_observation(file_source_id,directory_path,name,revision,kind,size_bytes,publish_pending)
-			VALUES(90,'/source-only','track.mp3',1,'audio',1,1)`},
+			VALUES(90,'/source-only','track.mp3',1,'audio',1,0)`},
 	} {
 		if _, err := db.Exec(statement.sql); err != nil {
 			t.Fatalf("%s: %v", statement.name, err)
@@ -369,5 +372,97 @@ func TestCatalogPrunePreservesSourceOnlyTransferAlias(t *testing.T) {
 	}
 	if entries != 1 || refs != 1 {
 		t.Fatalf("source-only alias remnants: entry=%d ref=%d, want both retained", entries, refs)
+	}
+}
+
+// A metadata-only parent card and a split child share the same effective root:
+// the child records its parent directory in source_root. Pruning the parent
+// must keep the child's observations, directory and audio root even though the
+// path is not deeper than the candidate root.
+func TestCatalogPruneKeepsSplitCardRowsWithSharedRoot(t *testing.T) {
+	db := openMigratedTestDB(t)
+	for _, statement := range []string{
+		`INSERT INTO file_source(id,code,display_name,source_type) VALUES(91,'split-source','Split source','openlist')`,
+		`INSERT INTO work(id,primary_code,title) VALUES(1,'RJ00000001','Creator work')`,
+		`INSERT INTO source_catalog_entry(id,file_source_id,root_path,source_root,title,work_id,availability_status) VALUES
+			(20,91,'/Creator','','Creator metadata',1,'available'),
+			(21,91,'/Creator::work1','/Creator','Work one',NULL,'available')`,
+		`INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes) VALUES
+			(20,'cover.jpg','cover','other',1),
+			(21,'track.mp3','track','audio',1)`,
+		`INSERT INTO source_catalog_directory(file_source_id,path,generation,revision,partition_path,catalog_root,status) VALUES
+			(91,'/Creator',900,1,'/Creator','/Creator','complete'),
+			(91,'/Creator/Work',900,1,'/Creator','/Creator','complete')`,
+		`INSERT INTO source_catalog_observation(file_source_id,directory_path,name,revision,kind,size_bytes,publish_pending) VALUES
+			(91,'/Creator/Work','track.mp3',1,'audio',1,1)`,
+		`INSERT INTO source_catalog_audio_root(file_source_id,generation,catalog_root) VALUES(91,900,'/Creator')`,
+	} {
+		if _, err := db.Exec(statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+	report, err := catalogprune.BuildReport(context.Background(), db, catalogprune.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Totals.Entries != 1 || report.Totals.Observations != 0 ||
+		report.Totals.Directories != 0 || report.Totals.AudioRoots != 0 ||
+		report.Totals.KeptRows != 4 {
+		t.Fatalf("report = %+v, want the parent card and four kept split rows", report.Totals)
+	}
+	if _, err = catalogprune.Apply(context.Background(), db, report, catalogprune.Options{}); err != nil {
+		t.Fatal(err)
+	}
+	var entries, observations, directories, roots int
+	if err = db.QueryRow(`SELECT count(*) FROM source_catalog_entry WHERE id IN (20,21)`).Scan(&entries); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.QueryRow(`SELECT count(*) FROM source_catalog_observation WHERE directory_path='/Creator/Work'`).Scan(&observations); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.QueryRow(`SELECT count(*) FROM source_catalog_directory WHERE path='/Creator/Work'`).Scan(&directories); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.QueryRow(`SELECT count(*) FROM source_catalog_audio_root WHERE catalog_root='/Creator'`).Scan(&roots); err != nil {
+		t.Fatal(err)
+	}
+	if entries != 1 || observations != 1 || directories != 1 || roots != 1 {
+		t.Fatalf("split card remnants: entries=%d observations=%d directories=%d roots=%d, want only the child retained", entries, observations, directories, roots)
+	}
+}
+
+// A zero-file split card uses source_root for its real directory. A pending
+// observation there is not evidence that the card is permanently broken.
+func TestCatalogPrunePendingSplitCardIsNotBroken(t *testing.T) {
+	db := openMigratedTestDB(t)
+	for _, statement := range []string{
+		`INSERT INTO file_source(id,code,display_name,source_type) VALUES(92,'split-pending','Split pending','openlist')`,
+		`INSERT INTO source_catalog_entry(id,file_source_id,root_path,source_root,title,availability_status) VALUES
+			(30,92,'/Creator::work1','/Creator','Work one','available')`,
+		`INSERT INTO source_catalog_directory(file_source_id,path,generation,revision,partition_path,catalog_root,status) VALUES
+			(92,'/Creator',900,1,'/Creator','/Creator','complete')`,
+		`INSERT INTO source_catalog_observation(file_source_id,directory_path,name,revision,kind,size_bytes,publish_pending) VALUES
+			(92,'/Creator','track.mp3',1,'audio',1,1)`,
+	} {
+		if _, err := db.Exec(statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+	report, err := catalogprune.BuildReport(context.Background(), db, catalogprune.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Candidates.Entries != 0 {
+		t.Fatalf("pending split card was treated as broken: %+v", report.Candidates)
+	}
+	if _, err = db.Exec(`UPDATE source_catalog_observation SET publish_pending=0 WHERE file_source_id=92`); err != nil {
+		t.Fatal(err)
+	}
+	report, err = catalogprune.BuildReport(context.Background(), db, catalogprune.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Candidates.Entries != 1 {
+		t.Fatalf("stale split card was not discovered: %+v", report.Candidates)
 	}
 }

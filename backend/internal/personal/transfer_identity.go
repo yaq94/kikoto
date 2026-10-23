@@ -163,9 +163,8 @@ func registerTransferIdentityWork(ctx context.Context, tx *sql.Tx, w BackupWork,
 // source-catalog review endpoint performs: one work, its canonical logical row
 // and edition, then the entry's work_id. It never moves an existing work.
 func registerCatalogTransferWork(ctx context.Context, tx *sql.Tx, w BackupWork, catalogID int64) (int64, error) {
-	var title, code string
-	var linked sql.NullInt64
-	if err := tx.QueryRowContext(ctx, `SELECT title,primary_code,work_id FROM source_catalog_entry WHERE id=?`, catalogID).Scan(&title, &code, &linked); err != nil {
+	catalogID, title, code, linked, err := liveTransferCatalogEntryTx(ctx, tx, catalogID)
+	if err != nil {
 		return 0, err
 	}
 	if linked.Valid {
@@ -179,6 +178,27 @@ func registerCatalogTransferWork(ctx context.Context, tx *sql.Tx, w BackupWork, 
 		return 0, err
 	}
 	return id, nil
+}
+
+// liveTransferCatalogEntryTx follows retirement aliases to the card that still
+// owns the identity. A restore must attach a new work to that successor, never
+// resurrect a hidden work on an alias the catalog can no longer expose.
+func liveTransferCatalogEntryTx(ctx context.Context, tx *sql.Tx, catalogID int64) (int64, string, string, sql.NullInt64, error) {
+	for hop := 0; ; hop++ {
+		var title, code string
+		var linked, next sql.NullInt64
+		if err := tx.QueryRowContext(ctx, `SELECT title,primary_code,work_id,relocated_to_id FROM source_catalog_entry WHERE id=?`, catalogID).
+			Scan(&title, &code, &linked, &next); err != nil {
+			return 0, "", "", sql.NullInt64{}, err
+		}
+		if !next.Valid {
+			return catalogID, title, code, linked, nil
+		}
+		if hop == 8 {
+			return 0, "", "", sql.NullInt64{}, sql.ErrNoRows
+		}
+		catalogID = next.Int64
+	}
 }
 
 func registerSeriesTransferWork(ctx context.Context, tx *sql.Tx, w BackupWork, seriesID int64) (int64, error) {

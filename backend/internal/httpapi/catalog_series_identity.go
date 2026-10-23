@@ -36,6 +36,66 @@ func catalogSeriesMembersOfEntryTx(ctx context.Context, tx *sql.Tx, entryID int6
 	return series, rows.Err()
 }
 
+type catalogSeriesMemberRow struct {
+	seriesID, entryID, position int64
+}
+
+// catalogSeriesMemberRowsTx lists the actual membership rows behind an entry
+// and its aliases. A row on a retired alias still describes the same card, but
+// callers cannot update it by the live entry id alone.
+func catalogSeriesMemberRowsTx(ctx context.Context, tx *sql.Tx, entryID int64) ([]catalogSeriesMemberRow, error) {
+	rows, err := tx.QueryContext(ctx, `WITH RECURSIVE aliases(id,depth) AS (
+			SELECT ?,0
+			UNION ALL
+			SELECT e.id,a.depth+1 FROM source_catalog_entry e JOIN aliases a ON e.relocated_to_id=a.id
+		)
+		SELECT m.series_id,m.catalog_entry_id,m.position
+		FROM aliases a JOIN catalog_series_member m ON m.catalog_entry_id=a.id
+		ORDER BY a.depth,m.position,m.catalog_entry_id`, entryID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	members := []catalogSeriesMemberRow{}
+	for rows.Next() {
+		var member catalogSeriesMemberRow
+		if err = rows.Scan(&member.seriesID, &member.entryID, &member.position); err != nil {
+			return nil, err
+		}
+		members = append(members, member)
+	}
+	return members, rows.Err()
+}
+
+// normalizeCatalogSeriesMemberClosureTx collapses duplicate memberships from
+// an alias closure onto one live row. The anchor's direct row wins; otherwise
+// the closest alias keeps its position. Moving to a different destination is
+// used when a series has no member on the target yet.
+func normalizeCatalogSeriesMemberClosureTx(ctx context.Context, tx *sql.Tx, anchorID, destinationID, seriesID int64) error {
+	members, err := catalogSeriesMemberRowsTx(ctx, tx, anchorID)
+	if err != nil {
+		return err
+	}
+	keep := -1
+	for i, member := range members {
+		if member.seriesID != seriesID {
+			continue
+		}
+		if keep == -1 {
+			keep = i
+			continue
+		}
+		if _, err = tx.ExecContext(ctx, `DELETE FROM catalog_series_member WHERE series_id=? AND catalog_entry_id=?`, seriesID, member.entryID); err != nil {
+			return err
+		}
+	}
+	if keep == -1 || members[keep].entryID == destinationID {
+		return nil
+	}
+	_, err = tx.ExecContext(ctx, `UPDATE catalog_series_member SET catalog_entry_id=? WHERE series_id=? AND catalog_entry_id=?`, destinationID, seriesID, members[keep].entryID)
+	return err
+}
+
 // catalogEffectiveRootSQL names the real directory behind a card. A split card
 // keeps a synthetic root_path and records the directory it came from in
 // source_root, so anything comparing paths against sibling cards must use this
@@ -109,37 +169,45 @@ func catalogSeriesDirectoryParent(key sql.NullString, members []catalogSeriesMem
 }
 
 // catalogSeriesRenameEvidenceTx reports whether two series describe the same
-// group after its own directory was renamed. The old live episode names must
-// still be present in the new series, which allows a rename and a new episode
-// to be published by the same scan. Both series must share a comparable parent
-// directory, and the old members must come from an earlier generation. Every
-// old episode needs one matching fingerprint; a partial match is not enough.
-func catalogSeriesRenameEvidenceTx(ctx context.Context, tx *sql.Tx, oldSeries, newSeries int64) (bool, error) {
-	if oldSeries == newSeries {
+// group after its own directory was renamed. The caller passes the series in
+// either direction: relocation retires the provisional card, while retirement
+// retires the old card. Member generations decide which series is older. The
+// old live episode names must still be present in the new series, which allows
+// a rename and a new episode to be published by the same scan. Both series must
+// share a comparable parent directory. Every old episode needs one matching
+// fingerprint; a partial match is not enough.
+func catalogSeriesRenameEvidenceTx(ctx context.Context, tx *sql.Tx, firstSeries, secondSeries int64) (bool, error) {
+	if firstSeries == secondSeries {
 		return true, nil
 	}
-	var oldSource, newSource sql.NullInt64
-	var oldKey, newKey sql.NullString
+	var firstSource, secondSource sql.NullInt64
+	var firstKey, secondKey sql.NullString
 	if err := tx.QueryRowContext(ctx, `SELECT
 			(SELECT source_id FROM catalog_series WHERE id=?),
 			(SELECT source_key FROM catalog_series WHERE id=?),
 			(SELECT source_id FROM catalog_series WHERE id=?),
-			(SELECT source_key FROM catalog_series WHERE id=?)`, oldSeries, oldSeries, newSeries, newSeries).Scan(&oldSource, &oldKey, &newSource, &newKey); err != nil {
+				(SELECT source_key FROM catalog_series WHERE id=?)`, firstSeries, firstSeries, secondSeries, secondSeries).Scan(&firstSource, &firstKey, &secondSource, &secondKey); err != nil {
 		return false, err
 	}
-	if !oldSource.Valid || !newSource.Valid || oldSource.Int64 != newSource.Int64 {
+	if !firstSource.Valid || !secondSource.Valid || firstSource.Int64 != secondSource.Int64 {
 		return false, nil
 	}
-	oldMembers, err := catalogSeriesLiveMembersTx(ctx, tx, oldSeries)
+	firstMembers, err := catalogSeriesLiveMembersTx(ctx, tx, firstSeries)
 	if err != nil {
 		return false, err
 	}
-	newMembers, err := catalogSeriesLiveMembersTx(ctx, tx, newSeries)
+	secondMembers, err := catalogSeriesLiveMembersTx(ctx, tx, secondSeries)
 	if err != nil {
 		return false, err
 	}
-	if len(oldMembers) == 0 {
+	if len(firstMembers) == 0 || len(secondMembers) == 0 {
 		return false, nil
+	}
+	oldMembers, newMembers := firstMembers, secondMembers
+	oldKey, newKey := firstKey, secondKey
+	if maxCatalogMemberGeneration(firstMembers) > maxCatalogMemberGeneration(secondMembers) {
+		oldMembers, newMembers = secondMembers, firstMembers
+		oldKey, newKey = secondKey, firstKey
 	}
 	oldParent, oldComparable := catalogSeriesDirectoryParent(oldKey, oldMembers)
 	newParent, newComparable := catalogSeriesDirectoryParent(newKey, newMembers)
@@ -160,20 +228,8 @@ func catalogSeriesRenameEvidenceTx(ctx context.Context, tx *sql.Tx, oldSeries, n
 			return false, nil
 		}
 	}
-	if len(newMembers) == 0 {
-		return false, nil
-	}
-	oldGeneration, newGeneration := oldMembers[0].generation, newMembers[0].generation
-	for _, member := range oldMembers[1:] {
-		if member.generation > oldGeneration {
-			oldGeneration = member.generation
-		}
-	}
-	for _, member := range newMembers[1:] {
-		if member.generation < newGeneration {
-			newGeneration = member.generation
-		}
-	}
+	oldGeneration := maxCatalogMemberGeneration(oldMembers)
+	newGeneration := minCatalogMemberGeneration(newMembers)
 	if oldGeneration >= newGeneration {
 		return false, nil
 	}
@@ -197,6 +253,29 @@ func catalogSeriesRenameEvidenceTx(ctx context.Context, tx *sql.Tx, oldSeries, n
 		}
 	}
 	return true, nil
+}
+
+func maxCatalogMemberGeneration(members []catalogSeriesMemberEvidence) int64 {
+	var result int64
+	for _, member := range members {
+		if member.generation > result {
+			result = member.generation
+		}
+	}
+	return result
+}
+
+func minCatalogMemberGeneration(members []catalogSeriesMemberEvidence) int64 {
+	if len(members) == 0 {
+		return 0
+	}
+	result := members[0].generation
+	for _, member := range members[1:] {
+		if member.generation < result {
+			result = member.generation
+		}
+	}
+	return result
 }
 
 // mergeCatalogSeriesMembershipTx moves the membership of a retired alias onto
@@ -223,7 +302,15 @@ func mergeCatalogSeriesMembershipTx(ctx context.Context, tx *sql.Tx, fromID, toI
 		return errCatalogSeriesRetireConflict
 	}
 	if len(toSeries) == 0 {
-		_, err = tx.ExecContext(ctx, `UPDATE catalog_series_member SET catalog_entry_id=? WHERE catalog_entry_id=?`, toID, fromID)
+		// The sole membership may sit on an alias below fromID. Collapse every
+		// actual row in that closure onto the live target instead of updating
+		// only the direct row.
+		return normalizeCatalogSeriesMemberClosureTx(ctx, tx, fromID, toID, fromSeries[0])
+	}
+	if err = normalizeCatalogSeriesMemberClosureTx(ctx, tx, fromID, fromID, fromSeries[0]); err != nil {
+		return err
+	}
+	if err = normalizeCatalogSeriesMemberClosureTx(ctx, tx, toID, toID, toSeries[0]); err != nil {
 		return err
 	}
 	if toSeries[0] == fromSeries[0] {

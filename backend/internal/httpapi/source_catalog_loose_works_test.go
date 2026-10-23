@@ -93,6 +93,16 @@ func looseAudioSized(name string, size int) map[string]any {
 	return map[string]any{"name": name, "size": size}
 }
 
+func looseAudioHashed(name string, size int, digest string) map[string]any {
+	return map[string]any{
+		"name": name,
+		"size": size,
+		"hash_info": map[string]string{
+			"sha256": digest,
+		},
+	}
+}
+
 func looseDir(name string) map[string]any {
 	return map[string]any{"name": name, "is_dir": true}
 }
@@ -522,6 +532,48 @@ func TestSourceCatalogLooseWorksStalePackageCopyRetiresToParent(t *testing.T) {
 	detail := catalogCardByID(t, f, staleID)
 	if int64(detail["catalogEntryId"].(float64)) != int64(cards["Creator"]["catalogEntryId"].(float64)) {
 		t.Fatalf("old id resolves to %#v, want parent card", detail)
+	}
+}
+
+// A stale package copy can gain a unique bonus before the rescan. The bonus is
+// published on the parent, so the old card is still safe to retire instead of
+// remaining as a second visible copy.
+func TestSourceCatalogLooseWorksStalePackageCopyWithBonusRetiresToParent(t *testing.T) {
+	parent := []map[string]any{}
+	copyItems := []map[string]any{}
+	names := []string{}
+	for i := 1; i <= 19; i++ {
+		name := fmt.Sprintf("Work %02d.mp3", i)
+		parent = append(parent, looseAudio(name))
+		copyItems = append(copyItems, looseAudio(name))
+		names = append(names, name)
+	}
+	copyItems = append(copyItems, looseAudio("bonus.mp3"))
+	f := newLooseWorkFixture(t, map[string][]map[string]any{
+		"/":                     {looseDir("Creator")},
+		"/Creator":              append(parent, looseDir("Creator copy")),
+		"/Creator/Creator copy": copyItems,
+	})
+	sourceID := fixtureSourceID(t, f)
+	staleID := seedFormatCard(t, f.server.db, sourceID, "/Creator/Creator copy", "Creator copy", 0, names)
+	f.request(t, http.MethodPost, "/catalog/index", `{"intervalMs":100}`, http.StatusAccepted)
+	if progress := f.drain(t); progress["status"] != "complete" {
+		t.Fatalf("scan = %#v", progress)
+	}
+	cards := f.cards(t)
+	if len(cards) != 1 || cards["Creator"] == nil {
+		t.Fatalf("cards=%v, want only the parent card", cards)
+	}
+	if got := countCatalogAudio(f.tracks(t, cards["Creator"])); got != 20 {
+		t.Fatalf("parent tracks=%d, want 19 copies plus the bonus", got)
+	}
+	var sourceIDAfter sql.NullInt64
+	var relocated sql.NullInt64
+	if err := f.server.db.QueryRow(`SELECT file_source_id,relocated_to_id FROM source_catalog_entry WHERE id=?`, staleID).Scan(&sourceIDAfter, &relocated); err != nil {
+		t.Fatal(err)
+	}
+	if sourceIDAfter.Valid || !relocated.Valid {
+		t.Fatalf("stale card source=%v relocated=%v, want a parent alias", sourceIDAfter, relocated)
 	}
 }
 

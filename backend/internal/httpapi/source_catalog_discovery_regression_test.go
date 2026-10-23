@@ -127,10 +127,11 @@ func TestSourceCatalogTwoTrackPackageCopyDoesNotPublishCard(t *testing.T) {
 // on the exact file identity; a lone track below a larger parent stays a real
 // independent excerpt.
 func TestSourceCatalogSingleFileFormatCopyDoesNotPublishSecondCard(t *testing.T) {
+	const digest = "0000000000000000000000000000000000000000000000000000000000000001"
 	f := newLooseWorkFixture(t, map[string][]map[string]any{
 		"/":             {looseDir("Creator")},
-		"/Creator":      {looseAudioSized("only.mp3", 12345), looseDir("Copy")},
-		"/Creator/Copy": {looseAudioSized("only.mp3", 12345)},
+		"/Creator":      {looseAudioHashed("only.mp3", 12345, digest), looseDir("Copy")},
+		"/Creator/Copy": {looseAudioHashed("only.mp3", 12345, digest)},
 	})
 	f.request(t, http.MethodPost, "/catalog/index", `{"intervalMs":100}`, 202)
 	if progress := f.drain(t); progress["status"] != "complete" {
@@ -139,6 +140,24 @@ func TestSourceCatalogSingleFileFormatCopyDoesNotPublishSecondCard(t *testing.T)
 	card := catalogRegressionCard(t, f.cards(t), "Creator")
 	if got := countCatalogAudio(f.tracks(t, card)); got != 1 {
 		t.Fatalf("parent tracks=%d, want one", got)
+	}
+}
+
+// Equal names and sizes are not proof without provider content hashes. A
+// one-file directory stays a separate work instead of hiding an independent
+// recording.
+func TestSourceCatalogSingleFileWithoutHashKeepsIndependentCard(t *testing.T) {
+	f := newLooseWorkFixture(t, map[string][]map[string]any{
+		"/":              {looseDir("Creator")},
+		"/Creator":       {looseAudioSized("only.mp3", 12345), looseDir("Other")},
+		"/Creator/Other": {looseAudioSized("only.mp3", 12345)},
+	})
+	f.request(t, http.MethodPost, "/catalog/index", `{"intervalMs":100}`, http.StatusAccepted)
+	if progress := f.drain(t); progress["status"] != "complete" {
+		t.Fatalf("scan = %#v", progress)
+	}
+	if got := len(f.cards(t)); got != 2 {
+		t.Fatalf("cards=%d, want two independent one-file works", got)
 	}
 }
 

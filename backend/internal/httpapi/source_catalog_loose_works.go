@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"path"
 	"regexp"
 	"sort"
@@ -130,7 +131,7 @@ func catalogWorkSplitModeNames(names []string) string {
 			prefixes[prefix]++
 		}
 	}
-	// A single repeated prefix is enough: RJ123456 上 / RJ123456 下 is one
+	// A single repeated prefix is enough: RJ00000001 上 / RJ00000001 下 is one
 	// release in two files and must not become two cards just because no other
 	// code appears in the directory. A lone file with a code stays on the
 	// ordinary base-title rule.
@@ -1136,7 +1137,33 @@ func retireCatalogSplitParentTx(ctx context.Context, tx *sql.Tx, sourceID int64,
 // references the alias stays resolvable; only the shared target changes. A
 // format card that already owns a reviewed work first moves that work (or its
 // personal state) to the current release card.
-func retireCatalogCardTx(ctx context.Context, tx *sql.Tx, id, targetID int64) (bool, error) {
+func retireCatalogCardTx(ctx context.Context, tx *sql.Tx, id, targetID int64) (retired bool, err error) {
+	// Retirement performs several dependent writes: work/personal-state
+	// migration, series folding and the final relocation. A series conflict is
+	// an expected review outcome, not an error, so the whole retirement must be
+	// undone before the caller commits. A savepoint keeps those partial writes
+	// out of the caller's transaction without requiring every check to be
+	// duplicated before the first mutation.
+	const savepoint = "retire_catalog_card"
+	if _, err := tx.ExecContext(ctx, "SAVEPOINT "+savepoint); err != nil {
+		return false, err
+	}
+	released := false
+	defer func() {
+		if released {
+			return
+		}
+		rollbackCtx := context.WithoutCancel(ctx)
+		if _, rollbackErr := tx.ExecContext(rollbackCtx, "ROLLBACK TO SAVEPOINT "+savepoint); rollbackErr != nil {
+			retired = false
+			err = errors.Join(err, fmt.Errorf("rollback catalog card retirement: %w", rollbackErr))
+			return
+		}
+		if _, releaseErr := tx.ExecContext(rollbackCtx, "RELEASE SAVEPOINT "+savepoint); releaseErr != nil {
+			retired = false
+			err = errors.Join(err, fmt.Errorf("release catalog card savepoint: %w", releaseErr))
+		}
+	}()
 	moved, err := transferRetiredCatalogWorkTx(ctx, tx, id, targetID)
 	if err != nil {
 		return false, err
@@ -1160,8 +1187,14 @@ func retireCatalogCardTx(ctx context.Context, tx *sql.Tx, id, targetID int64) (b
 	if _, err := tx.ExecContext(ctx, `UPDATE source_catalog_entry SET file_source_id=NULL,relocated_to_id=?,updated_at=CURRENT_TIMESTAMP WHERE id=?`, nullIfZero(targetID), id); err != nil {
 		return false, err
 	}
-	_, err = tx.ExecContext(ctx, `DELETE FROM source_catalog_file WHERE catalog_entry_id=?`, id)
-	return err == nil, err
+	if _, err = tx.ExecContext(ctx, `DELETE FROM source_catalog_file WHERE catalog_entry_id=?`, id); err != nil {
+		return false, err
+	}
+	if _, err = tx.ExecContext(ctx, "RELEASE SAVEPOINT "+savepoint); err != nil {
+		return false, err
+	}
+	released = true
+	return true, nil
 }
 
 // transferRetiredCatalogWorkTx preserves reviews when an old format card is
@@ -1284,6 +1317,12 @@ func transferRetiredCatalogWorkTx(ctx context.Context, tx *sql.Tx, staleID, targ
 		return false, err
 	}
 	if err := moveRetiredCatalogPersonalStateTx(ctx, tx, staleWork.Int64, targetWork.Int64); err != nil {
+		return false, err
+	}
+	// A backup exported before retirement still names the old work. Keep that
+	// alias resolvable but demote it so the target work keeps its single primary
+	// reference. The catalog alias remains available as a secondary reference.
+	if _, err := tx.ExecContext(ctx, `UPDATE personal_transfer_ref SET work_id=?1,is_primary=0 WHERE work_id=?2`, targetWork.Int64, staleWork.Int64); err != nil {
 		return false, err
 	}
 	if _, err := tx.ExecContext(ctx, "UPDATE source_catalog_entry SET work_id=NULL WHERE id=?", staleID); err != nil {
@@ -1779,8 +1818,8 @@ func catalogDuplicateCardRetireTargetTx(ctx context.Context, tx *sql.Tx, sourceI
 	if seriesOrAlias != 0 {
 		return 0, nil
 	}
-	duplicate, err := catalogDuplicateDirectoryTx(ctx, tx, sourceID, generation, root)
-	if err != nil || !duplicate {
+	decision, err := catalogDuplicateDirectoryDecisionTx(ctx, tx, sourceID, generation, root)
+	if err != nil || !decision.Duplicate {
 		return 0, err
 	}
 	var targetID int64
@@ -1790,7 +1829,46 @@ func catalogDuplicateCardRetireTargetTx(ctx context.Context, tx *sql.Tx, sourceI
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, nil
 	}
-	return targetID, err
+	if err != nil {
+		return 0, err
+	}
+	if len(decision.Unique) > 0 {
+		covered, err := catalogDuplicateUniqueCoveredByTargetTx(ctx, tx, targetID, parent, generation, decision.Unique)
+		if err != nil || !covered {
+			return 0, err
+		}
+	}
+	return targetID, nil
+}
+
+// catalogDuplicateUniqueCoveredByTargetTx reports whether every file that was
+// not part of the duplicate set is already published on the canonical parent
+// card. The bonus file is often the only reason a copy still has a card.
+func catalogDuplicateUniqueCoveredByTargetTx(ctx context.Context, tx *sql.Tx, targetID int64, parent string, generation int64, files []catalogAudioFile) (bool, error) {
+	prefix := strings.TrimSuffix(parent, "/") + "/"
+	for _, file := range files {
+		relative := strings.TrimPrefix(path.Join(file.Directory, file.Name), prefix)
+		var exists int
+		var err error
+		if hash := strings.TrimSpace(file.Hash); hash != "" {
+			err = tx.QueryRowContext(ctx, `SELECT EXISTS(
+				SELECT 1 FROM source_catalog_file
+				WHERE catalog_entry_id=? AND relative_path=? AND kind='audio'
+						AND content_hash=? AND observed_generation=?)`, targetID, relative, hash, generation).Scan(&exists)
+		} else {
+			err = tx.QueryRowContext(ctx, `SELECT EXISTS(
+				SELECT 1 FROM source_catalog_file
+				WHERE catalog_entry_id=? AND relative_path=? AND kind='audio'
+						AND size_bytes=? AND observed_generation=?)`, targetID, relative, file.Size, generation).Scan(&exists)
+		}
+		if err != nil {
+			return false, err
+		}
+		if exists == 0 {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 // catalogRetireCardsPerBatch bounds both the rows examined in one transaction
@@ -2132,7 +2210,7 @@ func (s *Server) catalogSplitPlanForRoot(ctx context.Context, tx *sql.Tx, source
 	// parent must remain published.
 	rows, err = tx.QueryContext(ctx, `SELECT o.directory_path,o.name,o.kind FROM source_catalog_observation o
 		JOIN source_catalog_directory d ON d.file_source_id=o.file_source_id AND d.path=o.directory_path
-		WHERE d.file_source_id=? AND d.generation=? AND d.catalog_root=? AND o.kind<>'folder'
+		WHERE d.file_source_id=? AND d.generation=? AND d.catalog_root=? AND o.revision=d.revision AND o.kind<>'folder'
 		ORDER BY o.directory_path,o.name`, sourceID, generation, root)
 	if err != nil {
 		return catalogSplitPlan{}, false, err
@@ -2214,7 +2292,7 @@ func catalogDuplicateDirectoryDecisionTx(ctx context.Context, tx *sql.Tx, source
 		return catalogDuplicateDecision{}, err
 	}
 	if len(parentFiles) > 0 {
-		matched, duplicate := catalogDuplicateMatches(child, parentFiles)
+		matched, duplicate := catalogDuplicateMatches(child, parentFiles, catalogPackageDirectory(path.Base(directoryPath)))
 		if !duplicate {
 			return catalogDuplicateDecision{}, nil
 		}
@@ -2236,6 +2314,9 @@ func catalogDuplicateDirectoryDecisionTx(ctx context.Context, tx *sql.Tx, source
 	root, ancestorFiles, ok, err := catalogDuplicateAncestorTx(ctx, tx, sourceID, generation, directoryPath, parent)
 	if err != nil || !ok {
 		return catalogDuplicateDecision{}, err
+	}
+	if !catalogDuplicateAncestorEvidence(child, ancestorFiles, directoryPath, parent) {
+		return catalogDuplicateDecision{}, nil
 	}
 	if !catalogAudioIsExactSubset(child, ancestorFiles) {
 		return catalogDuplicateDecision{}, nil
@@ -2268,9 +2349,29 @@ func catalogDuplicateAncestorTx(ctx context.Context, tx *sql.Tx, sourceID, gener
 	return "", nil, false, nil
 }
 
+// catalogDuplicateAncestorEvidence keeps the nested-package shortcut narrow.
+// Exact names and sizes can describe unrelated short releases; without hashes
+// on both sides only a directory that names a format/track part of one work is
+// enough evidence to hide the child as a copy.
+func catalogDuplicateAncestorEvidence(child, ancestor []catalogAudioFile, directoryPath, containerPath string) bool {
+	if catalogAudioFilesHaveHashes(child) && catalogAudioFilesHaveHashes(ancestor) {
+		return true
+	}
+	if catalogWorkPartDirectory(path.Base(directoryPath)) {
+		return true
+	}
+	// An explicit package container ("Package", "24 works 14G") is named as a
+	// collection rather than another work. This keeps nested package copies
+	// folded while a plain child folder still needs exact names or hashes.
+	return catalogPackageDirectory(path.Base(containerPath))
+}
+
 // catalogDuplicateMatches returns a per-child match mask and the existing
 // copy decision. The mask is what lets the caller preserve a unique track.
-func catalogDuplicateMatches(child, parent []catalogAudioFile) ([]bool, bool) {
+// allowRenamed permits size-only matching inside a directory whose own name
+// says it is a package; that is the only no-hash case where renamed files are
+// accepted as a copy.
+func catalogDuplicateMatches(child, parent []catalogAudioFile, renamedPackage bool) ([]bool, bool) {
 	// A selection of the parent's tracks is a real release, not a copy. Only a
 	// child that repeats most of the parent's audio can be a format or package
 	// copy; twenty shared tracks below a two-hundred-track collection are two
@@ -2302,6 +2403,12 @@ func catalogDuplicateMatches(child, parent []catalogAudioFile) ([]bool, bool) {
 			matchedCount++
 		}
 	}
+	// A single file has no arrangement evidence. Without provider content
+	// hashes, equal names and sizes are not proof that two files are the same
+	// recording, so keep both cards rather than hiding an independent work.
+	if len(child) == 1 || len(parent) == 1 {
+		return matched, len(child) == 1 && len(parent) == 1 && hashes && matchedCount == 1
+	}
 	// A package may contain every parent recording plus a small number of
 	// bonus files. The parent is still the canonical card; only the bonus
 	// stays pending. Keep the allowance narrow so an unrelated compilation
@@ -2320,24 +2427,43 @@ func catalogDuplicateMatches(child, parent []catalogAudioFile) ([]bool, bool) {
 		return matched, hashed*10 >= len(child)*9
 	}
 	if small {
+		if renamedPackage && len(child) == len(parent) && matchedCount == len(child) {
+			return matched, true
+		}
 		return matched, len(child) == len(parent) && exactNameMatches == len(child)
 	}
-	// A selection of the parent's tracks is a real release, not a copy. Only a
-	// child that repeats most of the parent's audio can be a format copy.
+	// Without hashes, the size-only match mask cannot prove a renamed copy. A
+	// large package still needs a high proportion of matching names; equality of
+	// file counts and sizes alone can describe two unrelated works.
 	if matchedCount*10 < len(child)*9 {
 		return matched, false
 	}
-	return matched, len(child) == len(parent) || namedMatches*10 >= len(child)*9
+	if namedMatches*10 >= len(child)*9 {
+		return matched, len(child) == len(parent)
+	}
+	return matched, renamedPackage && len(child) == len(parent)
 }
 
 func catalogAudioMatchMask(child, parent []catalogAudioFile, hashes bool) []bool {
 	used := make([]bool, len(parent))
 	mask := make([]bool, len(child))
+	parentByName := make(map[string][]int, len(parent))
+	for index, file := range parent {
+		key := strings.ToLower(strings.TrimSpace(file.Name))
+		parentByName[key] = append(parentByName[key], index)
+	}
+	parentByHash := map[string][]int{}
+	if hashes {
+		for index, file := range parent {
+			hash := strings.TrimSpace(file.Hash)
+			parentByHash[hash] = append(parentByHash[hash], index)
+		}
+	}
 	for index, file := range child {
 		if hashes {
 			hash := strings.TrimSpace(file.Hash)
-			for candidate, parentFile := range parent {
-				if !used[candidate] && strings.TrimSpace(parentFile.Hash) == hash {
+			for _, candidate := range parentByHash[hash] {
+				if !used[candidate] {
 					used[candidate], mask[index] = true, true
 					break
 				}
@@ -2345,8 +2471,8 @@ func catalogAudioMatchMask(child, parent []catalogAudioFile, hashes bool) []bool
 			continue
 		}
 		name := strings.ToLower(strings.TrimSpace(file.Name))
-		for candidate, parentFile := range parent {
-			if !used[candidate] && strings.ToLower(strings.TrimSpace(parentFile.Name)) == name && matchingSize([]int64{parentFile.Size}, file.Size) {
+		for _, candidate := range parentByName[name] {
+			if !used[candidate] && matchingSize([]int64{parent[candidate].Size}, file.Size) {
 				used[candidate], mask[index] = true, true
 				break
 			}

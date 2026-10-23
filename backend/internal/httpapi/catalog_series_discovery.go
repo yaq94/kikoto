@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"path"
 	"regexp"
 	"sort"
@@ -41,6 +42,9 @@ func catalogStructuralPartName(name string) bool {
 type catalogSeriesEvidence struct {
 	Key, Title string
 	Position   int
+	// Explicit is true when the source names the series itself, rather than
+	// merely numbering one episode below an ordinary directory.
+	Explicit bool
 }
 
 // catalogSeriesLabel reads the explicit label on a directory: "Series: X",
@@ -64,7 +68,7 @@ func catalogSeriesLabel(name string) string {
 func catalogEpisodeEvidence(root string) (catalogSeriesEvidence, bool) {
 	name := path.Base(root)
 	parent := path.Dir(root)
-	if catalogNonEpisode.MatchString(name) || catalogFormatDirectory(name) || catalogAuxiliaryDirectory(name) {
+	if catalogNonEpisode.MatchString(name) || catalogWorkPartDirectory(name) {
 		return catalogSeriesEvidence{}, false
 	}
 	// Chapter, Part, Track, Disc and Scene number the pieces of one release.
@@ -110,7 +114,12 @@ func catalogEpisodeEvidence(root string) (catalogSeriesEvidence, bool) {
 	if title == "." || title == "/" {
 		title = ""
 	}
-	return catalogSeriesEvidence{Key: parent + "\n" + strings.ToLower(title), Title: title, Position: position}, true
+	return catalogSeriesEvidence{
+		Key:      parent + "\n" + strings.ToLower(title),
+		Title:    title,
+		Position: position,
+		Explicit: seriesLabel != "",
+	}, true
 }
 
 // catalogEpisodeFormatCopy reports a directory that names an episode and a
@@ -144,30 +153,45 @@ func catalogEpisodeFormatCopy(name string) (string, bool) {
 	return episode, true
 }
 
-// catalogEpisodeFormatDirectoryCount counts direct format-copy folders that
-// name the same parent's episodes. Two or more mean the parent publishes a
-// format-only series; their files must share canonical episode cards instead
-// of becoming one card per format folder.
-func catalogEpisodeFormatDirectoryCount(ctx context.Context, tx *sql.Tx, sourceID, generation int64, parent string) (int, error) {
+// catalogEpisodePositionsTx counts distinct episode numbers among the direct
+// child folders of one parent. A format variant and its bare sibling count as
+// the same position; two format folders for one episode do not create a
+// series by themselves.
+func catalogEpisodePositionsTx(ctx context.Context, tx *sql.Tx, sourceID, generation int64, parent string) (int, map[string]int, error) {
+	if generation == 0 {
+		if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(generation),0)
+			FROM source_catalog_directory WHERE file_source_id=? AND path=?`,
+			sourceID, parent).Scan(&generation); err != nil {
+			return 0, nil, err
+		}
+	}
 	rows, err := tx.QueryContext(ctx, `SELECT o.name FROM source_catalog_observation o
 		JOIN source_catalog_directory d ON d.file_source_id=o.file_source_id AND d.path=o.directory_path
 		WHERE o.file_source_id=? AND o.directory_path=? AND o.kind='folder'
 			AND o.revision=d.revision AND d.generation=?`, sourceID, parent, generation)
 	if err != nil {
-		return 0, err
+		return 0, nil, err
 	}
 	defer func() { _ = rows.Close() }()
-	count := 0
+	positions := map[int]bool{}
+	canonicalCounts := map[string]int{}
 	for rows.Next() {
 		var name string
 		if err = rows.Scan(&name); err != nil {
-			return 0, err
+			return 0, nil, err
 		}
-		if _, ok := catalogEpisodeFormatCopy(name); ok {
-			count++
+		canonical, formatCopy := catalogEpisodeFormatCopy(name)
+		if !formatCopy {
+			canonical = name
 		}
+		evidence, ok := catalogEpisodeEvidence(path.Join(parent, canonical))
+		if !ok || evidence.Position <= 0 {
+			continue
+		}
+		positions[evidence.Position] = true
+		canonicalCounts[canonical]++
 	}
-	return count, rows.Err()
+	return len(positions), canonicalCounts, rows.Err()
 }
 
 // catalogLooseEpisode groups direct audio files that name their episode
@@ -188,6 +212,7 @@ func catalogLooseEpisodeFiles(root string, names []string) (map[string]catalogLo
 	}
 	episodes := make(map[string]catalogLooseEpisode, len(names))
 	positions := map[string]map[int]bool{}
+	episodeCounts := map[string]int{}
 	for _, name := range names {
 		stem := strings.TrimSpace(catalogFileStem(name))
 		if stem == "" {
@@ -229,13 +254,18 @@ func catalogLooseEpisodeFiles(root string, names []string) (map[string]catalogLo
 			positions[seriesKey] = map[int]bool{}
 		}
 		positions[seriesKey][evidence.Position] = true
+		episodeCounts[seriesKey]++
 	}
 	complete := true
 	for name, episode := range episodes {
-		if len(positions[episode.SeriesKey]) < 2 {
+		if len(positions[episode.SeriesKey]) < 2 && episodeCounts[episode.SeriesKey] < 2 {
 			delete(episodes, name)
 			complete = false
 		}
+	}
+	for name, episode := range episodes {
+		episode.Evidence.Explicit = len(positions[episode.SeriesKey]) >= 2
+		episodes[name] = episode
 	}
 	if !complete {
 		return nil, false
@@ -252,6 +282,7 @@ func catalogLooseEpisodeSubset(root string, names []string) map[string]catalogLo
 	}
 	episodes := map[string]catalogLooseEpisode{}
 	positions := map[string]map[int]bool{}
+	episodeCounts := map[string]int{}
 	for _, name := range names {
 		stem := strings.TrimSpace(catalogFileStem(name))
 		if stem == "" {
@@ -291,11 +322,16 @@ func catalogLooseEpisodeSubset(root string, names []string) map[string]catalogLo
 			positions[seriesKey] = map[int]bool{}
 		}
 		positions[seriesKey][evidence.Position] = true
+		episodeCounts[seriesKey]++
 	}
 	for name, episode := range episodes {
-		if len(positions[episode.SeriesKey]) < 2 {
+		if len(positions[episode.SeriesKey]) < 2 && episodeCounts[episode.SeriesKey] < 2 {
 			delete(episodes, name)
 		}
+	}
+	for name, episode := range episodes {
+		episode.Evidence.Explicit = len(positions[episode.SeriesKey]) >= 2
+		episodes[name] = episode
 	}
 	return episodes
 }
@@ -362,12 +398,12 @@ func splitCatalogEpisodeRoots(root string, files []openlist.File) (map[string]ca
 	type childEpisode struct {
 		name      string
 		canonical string
-		format    bool
 		evidence  catalogSeriesEvidence
 	}
 	children := map[string]childEpisode{}
-	formatCount := 0
 	canonicalChildren := map[string]int{}
+	positions := map[int]bool{}
+	formatCanonicals := map[string]bool{}
 	for _, file := range files {
 		if file.Kind != "audio" {
 			continue
@@ -387,25 +423,19 @@ func splitCatalogEpisodeRoots(root string, files []openlist.File) (map[string]ca
 		if !ok {
 			return nil, nil
 		}
-		children[parts[0]] = childEpisode{name: parts[0], canonical: canonical, format: formatCopy, evidence: evidence}
+		children[parts[0]] = childEpisode{name: parts[0], canonical: canonical, evidence: evidence}
 		canonicalChildren[canonical]++
+		positions[evidence.Position] = true
 		if formatCopy {
-			formatCount++
+			formatCanonicals[canonical] = true
 		}
 	}
 	if len(children) < 2 {
 		return nil, nil
 	}
 	virtual := map[string]bool{}
-	if formatCount >= 2 {
-		for _, child := range children {
-			if child.format {
-				virtual[child.canonical] = true
-			}
-		}
-	}
 	for canonical, count := range canonicalChildren {
-		if count > 1 {
+		if count > 1 || (len(positions) >= 2 && formatCanonicals[canonical]) {
 			virtual[canonical] = true
 		}
 	}
@@ -420,6 +450,7 @@ func splitCatalogEpisodeRoots(root string, files []openlist.File) (map[string]ca
 		split.SourceRoot = sourceRoot
 		split.Title = child.canonical
 		split.Evidence = child.evidence
+		split.Evidence.Explicit = len(positions) >= 2
 		for _, file := range files {
 			if !strings.HasPrefix(file.Path, child.name+"/") {
 				continue
@@ -470,6 +501,19 @@ func attachCatalogSeriesEvidenceTx(ctx context.Context, tx *sql.Tx, entryID, sou
 	if !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
+	if !evidence.Explicit {
+		parent, _, ok := strings.Cut(evidence.Key, "\n")
+		if !ok {
+			return nil
+		}
+		positions, _, err := catalogEpisodePositionsTx(ctx, tx, sourceID, 0, parent)
+		if err != nil {
+			return err
+		}
+		if positions < 2 {
+			return nil
+		}
+	}
 	title := evidence.Title
 	if title == "" {
 		// Episodes placed directly at the configured root have no directory
@@ -495,7 +539,7 @@ func attachCatalogSeriesEvidenceTx(ctx context.Context, tx *sql.Tx, entryID, sou
 		return err
 	}
 	if count >= maxCatalogSeriesMembers {
-		return nil
+		return fmt.Errorf("%w: series %d has %d members", errCatalogSeriesTooLarge, seriesID, count)
 	}
 	position := evidence.Position
 	if position == 0 {
@@ -530,64 +574,46 @@ func attachCatalogSeriesEvidenceTx(ctx context.Context, tx *sql.Tx, entryID, sou
 	return err
 }
 
+// Keep one episode transaction below the documented 100-object write bound.
+const catalogEpisodeRootsPerBatch = 100
+
 func (s *Server) persistCatalogEpisodeRoots(ctx context.Context, source remoteSourceForUse, root string, files []openlist.File) (int64, bool, error) {
 	split, parentFiles := splitCatalogEpisodeRoots(root, files)
 	if len(split) == 0 {
 		return 0, false, nil
+	}
+	roots := make([]string, 0, len(split))
+	for child := range split {
+		roots = append(roots, child)
+	}
+	sort.Strings(roots)
+	existing, pinned, err := s.catalogEpisodeRootState(ctx, source.ID, root)
+	if err != nil || pinned {
+		return 0, pinned, err
+	}
+	keep := map[int64]bool{}
+	var first int64
+	for start := 0; start < len(roots); start += catalogEpisodeRootsPerBatch {
+		end := start + catalogEpisodeRootsPerBatch
+		if end > len(roots) {
+			end = len(roots)
+		}
+		ids, err := s.persistCatalogEpisodeRootBatch(ctx, source.ID, roots[start:end], split)
+		if err != nil {
+			return 0, true, err
+		}
+		for _, id := range ids {
+			keep[id] = true
+			if first == 0 {
+				first = id
+			}
+		}
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, true, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	roots := make([]string, 0, len(split))
-	for child := range split {
-		roots = append(roots, child)
-	}
-	sort.Strings(roots)
-	var first int64
-	var existing int64
-	err = tx.QueryRowContext(ctx, `SELECT id FROM source_catalog_entry WHERE file_source_id=? AND root_path=?`, source.ID, root).Scan(&existing)
-	switch {
-	case err == nil:
-		// A root published before series discovery understood the evidence
-		// still owns every file below it. Splitting it is safe only while no
-		// shared or personal identity points at it; otherwise the root keeps
-		// its own card and only its direct files.
-		var pinned int
-		if err = tx.QueryRowContext(ctx, `SELECT EXISTS(
-			SELECT 1 FROM source_catalog_entry e WHERE e.id=? AND (
-				e.work_id IS NOT NULL
-				OR EXISTS(SELECT 1 FROM catalog_series_member m WHERE m.catalog_entry_id=e.id)
-				OR EXISTS(SELECT 1 FROM source_catalog_entry r WHERE r.relocated_to_id=e.id)))`, existing).Scan(&pinned); err != nil {
-			return 0, true, err
-		}
-		if pinned != 0 {
-			// A registered work or series member already owns this root. Its
-			// identity and personal records win over later episode evidence;
-			// splitting it needs explicit review.
-			return 0, false, nil
-		}
-	case errors.Is(err, sql.ErrNoRows):
-		// The common first scan: only the episode roots get identities.
-	default:
-		return 0, true, err
-	}
-	keep := map[int64]bool{}
-	for _, child := range roots {
-		part := split[child]
-		id, err := persistOpenListSnapshotTx(ctx, tx, source.ID, child, part.SourceRoot, part.Title, part.Files)
-		if err != nil {
-			return 0, true, err
-		}
-		if err = attachCatalogSeriesEvidenceTx(ctx, tx, id, source.ID, part.Evidence); err != nil {
-			return 0, true, err
-		}
-		keep[id] = true
-		if first == 0 {
-			first = id
-		}
-	}
 	// A metadata-only parent keeps the root's artwork, readmes and subtitles.
 	// It publishes no playable track, so it does not become a second work card,
 	// but its file rows remain available to credit and metadata readers.
@@ -617,4 +643,56 @@ func (s *Server) persistCatalogEpisodeRoots(ctx context.Context, source remoteSo
 		}
 	}
 	return first, true, tx.Commit()
+}
+
+func (s *Server) catalogEpisodeRootState(ctx context.Context, sourceID int64, root string) (existing int64, pinned bool, err error) {
+	err = s.db.QueryRowContext(ctx, `SELECT id FROM source_catalog_entry WHERE file_source_id=? AND root_path=?`, sourceID, root).Scan(&existing)
+	switch {
+	case err == nil:
+		// A root published before series discovery understood the evidence
+		// still owns every file below it. Splitting it is safe only while no
+		// shared or personal identity points at it; otherwise the root keeps
+		// its own card and only its direct files.
+		var busy int
+		if err = s.db.QueryRowContext(ctx, `SELECT EXISTS(
+			SELECT 1 FROM source_catalog_entry e WHERE e.id=? AND (
+				e.work_id IS NOT NULL
+				OR EXISTS(SELECT 1 FROM catalog_series_member m WHERE m.catalog_entry_id=e.id)
+				OR EXISTS(SELECT 1 FROM source_catalog_entry r WHERE r.relocated_to_id=e.id)))`, existing).Scan(&busy); err != nil {
+			return 0, false, err
+		}
+		// A registered work or series member already owns this root. Its
+		// identity and personal records win over later episode evidence;
+		// splitting it needs explicit review.
+		return existing, busy != 0, nil
+	case errors.Is(err, sql.ErrNoRows):
+		// The common first scan: only the episode roots get identities.
+		return 0, false, nil
+	default:
+		return 0, false, err
+	}
+}
+
+func (s *Server) persistCatalogEpisodeRootBatch(ctx context.Context, sourceID int64, roots []string, split map[string]catalogEpisodeRootSplit) ([]int64, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	ids := make([]int64, 0, len(roots))
+	for _, child := range roots {
+		part := split[child]
+		id, err := persistOpenListSnapshotTx(ctx, tx, sourceID, child, part.SourceRoot, part.Title, part.Files)
+		if err != nil {
+			return nil, err
+		}
+		if err = attachCatalogSeriesEvidenceTx(ctx, tx, id, sourceID, part.Evidence); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	if err = tx.Commit(); err != nil {
+		return nil, err
+	}
+	return ids, nil
 }

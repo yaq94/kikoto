@@ -144,7 +144,7 @@ func TestOpenListCatalogSearchFTSCoverage(t *testing.T) {
 	seedCatalogPlanSource(t, db)
 	insertCatalogPlanEntry(t, db, 1, "Alpha Numberless", "")
 	insertCatalogPlanAudio(t, db, 1, "01 opening.mp3", "Opening Track")
-	insertCatalogPlanEntry(t, db, 2, "Second Work", "RJ123456")
+	insertCatalogPlanEntry(t, db, 2, "Second Work", "RJ00000001")
 	insertCatalogPlanAudio(t, db, 2, "hidden.mp3", "Hidden File Name")
 	insertCatalogPlanEntry(t, db, 3, "Episode One", "")
 	insertCatalogPlanAudio(t, db, 3, "e1.mp3", "Episode One Track")
@@ -199,7 +199,7 @@ func TestOpenListCatalogSearchFTSCoverage(t *testing.T) {
 		want  string
 	}{
 		{"Alpha", "1"},
-		{"RJ1234", "2"},
+		{"RJ00000001", "2"},
 		{"Hidden", "2"},
 		{"Beta", "series:1"},
 	}

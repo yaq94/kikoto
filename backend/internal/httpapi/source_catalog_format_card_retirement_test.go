@@ -462,6 +462,29 @@ func TestSourceCatalogReviewedFormatCardMergesNonConflictingStates(t *testing.T)
 	if cursorMedia != 901 || cursorPosition != 30 {
 		t.Fatalf("playback cursor = (%d, %v), want preserved track and position", cursorMedia, cursorPosition)
 	}
+	var cursorWorkID int64
+	if err := f.server.db.QueryRow(`SELECT work_id FROM media_item WHERE id=?`, cursorMedia).Scan(&cursorWorkID); err != nil {
+		t.Fatal(err)
+	}
+	if cursorWorkID != releaseWorkID {
+		t.Fatalf("playback media work=%d, want the release work %d", cursorWorkID, releaseWorkID)
+	}
+	media := reviewRequest(t, f.handler, listener, http.MethodGet, "/api/works/"+strconv.FormatInt(releaseWorkID, 10)+"/media", "", 200)
+	var cursorVisible bool
+	for _, raw := range media["mediaItems"].([]any) {
+		item := raw.(map[string]any)
+		if int64(item["id"].(float64)) != cursorMedia {
+			continue
+		}
+		cursorVisible = true
+		progress, ok := item["progress"].(map[string]any)
+		if !ok || progress["positionSeconds"].(float64) != cursorPosition {
+			t.Fatalf("playback media progress=%#v, want position %v", item["progress"], cursorPosition)
+		}
+	}
+	if !cursorVisible {
+		t.Fatalf("playback media %d is not visible through release work media", cursorMedia)
+	}
 	var sessionWork, importedWork, transferWork int64
 	if err := f.server.db.QueryRow(`SELECT work_id FROM user_listening_session WHERE user_id=? AND session_id='format-session'`, listenerID).Scan(&sessionWork); err != nil {
 		t.Fatal(err)

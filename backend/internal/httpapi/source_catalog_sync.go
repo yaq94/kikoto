@@ -1033,17 +1033,37 @@ func (s *Server) settleCatalogSyncLifecycle(ctx context.Context, job workflowJob
 // observed, otherwise it remains unconfirmed-empty so a transient empty
 // listing does not erase an evaluation object.
 func (s *Server) reconcileCatalogSyncEmptyEntries(ctx context.Context, sourceID, generation int64) error {
+	for {
+		pending, err := s.reconcileCatalogSyncEmptyEntriesBatch(ctx, sourceID, generation)
+		if err != nil {
+			return err
+		}
+		if !pending {
+			return nil
+		}
+		if err := pauseCatalogWriter(ctx); err != nil {
+			return err
+		}
+	}
+}
+
+// catalogReconcileEntriesPerBatch keeps the post-sync status transaction
+// bounded even when a source has accumulated many empty cards.
+const catalogReconcileEntriesPerBatch = 100
+
+func (s *Server) reconcileCatalogSyncEmptyEntriesBatch(ctx context.Context, sourceID, generation int64) (bool, error) {
 	tx, release, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer release()
 	rows, err := tx.QueryContext(ctx, `SELECT e.id,`+catalogEffectiveRootSQL("e")+` FROM source_catalog_entry e
 		WHERE e.file_source_id=? AND e.relocated_to_id IS NULL AND e.availability_status='available'
-			AND NOT EXISTS(SELECT 1 FROM source_catalog_file f WHERE f.catalog_entry_id=e.id AND f.kind='audio')`,
-		sourceID)
+			AND NOT EXISTS(SELECT 1 FROM source_catalog_file f WHERE f.catalog_entry_id=e.id AND f.kind='audio')
+		ORDER BY e.id LIMIT ?`,
+		sourceID, catalogReconcileEntriesPerBatch)
 	if err != nil {
-		return err
+		return false, err
 	}
 	type candidate struct {
 		id   int64
@@ -1054,31 +1074,41 @@ func (s *Server) reconcileCatalogSyncEmptyEntries(ctx context.Context, sourceID,
 		var item candidate
 		if err = rows.Scan(&item.id, &item.base); err != nil {
 			rows.Close()
-			return err
+			return false, err
 		}
 		entries = append(entries, item)
 	}
 	if err = rows.Err(); err != nil {
 		rows.Close()
-		return err
+		return false, err
 	}
 	_ = rows.Close()
+	if len(entries) == 0 {
+		return false, tx.Commit()
+	}
+	bases := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		bases = append(bases, entry.base)
+	}
+	uncertain, err := catalogRangeUncertainSetTx(ctx, tx.Tx, sourceID, generation, bases)
+	if err != nil {
+		return false, err
+	}
 	updates := []catalogEntryStatusUpdate{}
 	for _, entry := range entries {
-		uncertain, checkErr := catalogRangeUncertain(ctx, tx.Tx, sourceID, generation, entry.base)
-		if checkErr != nil {
-			return checkErr
-		}
 		status := "missing"
-		if uncertain {
+		if uncertain[entry.base] {
 			status = "unconfirmed_empty"
 		}
 		updates = append(updates, catalogEntryStatusUpdate{ID: entry.id, Status: status})
 	}
 	if err = setCatalogEntryStatusesTx(ctx, tx.Tx, updates); err != nil {
-		return err
+		return false, err
 	}
-	return tx.Commit()
+	if err = tx.Commit(); err != nil {
+		return false, err
+	}
+	return len(entries) == catalogReconcileEntriesPerBatch, nil
 }
 
 func (s *Server) beginCatalogSyncLease(ctx context.Context, syncRunID, generation int64) (*catalogSyncLease, error) {

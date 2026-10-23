@@ -342,8 +342,12 @@ func BuildReport(ctx context.Context, db *sql.DB, options Options) (Report, erro
 func zeroFileAudioObservations(ctx context.Context, db *sql.DB) (map[int64]bool, error) {
 	rows, err := db.QueryContext(ctx, `SELECT DISTINCT e.id
 		FROM source_catalog_entry e
-		JOIN source_catalog_observation o ON o.file_source_id=e.file_source_id AND o.directory_path=e.root_path AND o.kind='audio'
-		WHERE NOT EXISTS(SELECT 1 FROM source_catalog_file f WHERE f.catalog_entry_id=e.id)`)
+		JOIN source_catalog_directory d ON d.file_source_id=e.file_source_id
+			AND d.path=CASE WHEN e.source_root<>'' THEN e.source_root ELSE e.root_path END
+		JOIN source_catalog_observation o ON o.file_source_id=e.file_source_id
+			AND o.directory_path=d.path AND o.revision=d.revision
+		WHERE d.status='complete' AND o.kind='audio' AND o.publish_pending=0
+			AND NOT EXISTS(SELECT 1 FROM source_catalog_file f WHERE f.catalog_entry_id=e.id)`)
 	if err != nil {
 		return nil, err
 	}
@@ -471,8 +475,16 @@ func (b *reportBuilder) keptBy(sourceID int64, value string) (int, bool) {
 	if !ok {
 		return 0, false
 	}
+	// A split card keeps its parent directory in source_root, so two cards can
+	// share the same effective root. When another card at that root survives,
+	// path alone cannot say which card owns the row; keep it rather than
+	// deleting the surviving card's observations and directories.
+	root := b.entries[owner].EffectiveRoot
+	if b.protected[pathKey{sourceID, root}] || b.protected[pathKey{0, root}] {
+		return owner, true
+	}
 	prefix := value
-	for prefix != b.entries[owner].EffectiveRoot {
+	for prefix != root {
 		if b.protected[pathKey{sourceID, prefix}] || b.protected[pathKey{0, prefix}] {
 			return owner, true
 		}

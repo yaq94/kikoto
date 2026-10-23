@@ -373,15 +373,16 @@ func completeCatalogDirectoryTx(ctx context.Context, tx *sql.Tx, sourceID, gener
 				AND status<>'empty')`, sourceID, sibling, generation).Scan(&exists); err != nil {
 			return err
 		}
-		formatDirectories, err := catalogEpisodeFormatDirectoryCount(ctx, tx, sourceID, generation, path.Dir(d.Path))
+		positions, canonicalCounts, err := catalogEpisodePositionsTx(ctx, tx, sourceID, generation, path.Dir(d.Path))
 		if err != nil {
 			return err
 		}
 		// A bare sibling owns the episode. A format-only series has no bare
-		// directory, so two or more format folders establish the same canonical
-		// episode root. An isolated format copy keeps its own card, which lets a
-		// deleted episode stay missing instead of being revived by its copy.
-		if exists != 0 || formatDirectories >= 2 {
+		// directory, so two format folders for the same canonical episode or a
+		// parent with at least two distinct episode positions establish the
+		// canonical root. An isolated format copy keeps its own card, which lets
+		// a deleted episode stay missing instead of being revived by its copy.
+		if exists != 0 || canonicalCounts[episode] >= 2 || positions >= 2 {
 			d.Root = sibling
 			return decideCatalogWorkSplitTx(ctx, tx, sourceID, generation, d.Path, d.Revision)
 		}

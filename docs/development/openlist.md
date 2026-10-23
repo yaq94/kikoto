@@ -342,7 +342,7 @@ before matching the format word, so a numbered copy is recognized without
 treating a title such as `24.歡迎光臨閃亮銀CV床貓` as a format. Brackets and
 quality markers are ignored for that comparison, so `(MP3)`, `[FLAC]`,
 `MP3 (V0)` and `FLAC24bit` are copies too. A format tag may follow a team and
-work-code prefix, as in `[团队][RJ01009766][MP3+lrc]标题`; every bracket tag is
+work-code prefix, as in `[团队][RJ00000001][MP3+lrc]标题`; every bracket tag is
 checked for a format word and an optional lyric companion. A coded child folder
 such as `[团队][RJ00000001] Bonus` is read through the same work-code parser, so
 its code is not mistaken for part of the release title. A format word
@@ -363,27 +363,38 @@ A release that an older generation already published as its own format card
 keeps that card only until the release card exists again. Once a rescan
 publishes the parent, the stale format card becomes an alias of it: the id is
 kept, `relocated_to_id` points at the release, and its file rows are removed.
-A saved link still resolves through that alias. An import reference is not
-moved to the successor. If the old format card already owns a work,
+A saved link still resolves through that alias. When both cards own works, the
+retired work's personal-transfer references become non-primary aliases of the
+successor work. A catalog reference stays attached to its retained row, but an
+import follows `relocated_to_id` and restores on the live successor instead of
+creating a hidden work on the alias. If the old format card already owns a work,
 account-owned state moves only when both cards represent the same product
 identity, or the successor has no code. The move covers saved lists, tags,
-playback, listening totals and portable progress. If any user has conflicting
-ratings, notes, favorite-list notes or positions, or an existing target
-progress row, retirement keeps both cards and both records until that owner
-reconciles them. Empty favorite fields are filled from the old row. A card that
+playback, listening totals and portable progress. A playback cursor moves only
+when the target has no cursor for that user. Its media item is reused when the
+target work has no playable media; otherwise it must map to one target track by
+title, disc, track, duration and fingerprint. An ambiguous track or location
+clears the location identity rather than attaching the cursor to an unrelated
+file. If any user has conflicting ratings, notes, favorite-list notes or
+positions, an existing target progress row or playback cursor, retirement keeps
+both cards and both records until that owner reconciles them. Empty favorite
+fields are filled from the old row. A card that
 owns a different work, has a series membership or has an incoming relocation
 keeps its identity for explicit review instead of being merged into a guessed
 parent.
 
-Personal-transfer references stay attached to the retained catalog row, so an
-import never has to guess a different object. A known but unregistered catalog
-entry, series or episode is rebuilt at its recorded evaluation level by an
-importer with registration permission rather than reported as blocked.
+Personal-transfer references therefore remain resolvable after retirement
+without moving a catalog row or creating a second visible identity. A known but
+unregistered catalog entry, series or episode is rebuilt at its recorded
+evaluation level by an importer with registration permission rather than
+reported as blocked.
 `TestSourceCatalogStaleFormatCardRetiresToReleaseOnRescan` covers retirement,
 `TestSourceCatalogFormatCardFavoriteConflictsStayForOwner` and
 `TestSourceCatalogFormatCardTransferProgressConflictStaysForOwner` pin the
-conflict guards, and `TestSourceCatalogFormatCardSeriesMemberIsNotRetired`
-pins the identity guard.
+conflict guards, `TestSourceCatalogFormatCardPlaybackCursorConflictKeepsBothCards`
+pins the cursor guard, `TestPersonalTransferRetirementReferencesRestoreToSuccessor`
+covers both the old work reference and the catalog reference after cleanup, and
+`TestSourceCatalogFormatCardSeriesMemberIsNotRetired` pins the identity guard.
 
 `GET /api/works/{id}/catalog-directories` projects catalog entries into the saved
 work's source tabs. Numeric references retain the exact edition; numbered

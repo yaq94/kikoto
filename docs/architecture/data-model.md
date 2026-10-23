@@ -23,10 +23,13 @@ code or a registered work, and an empty value means the scan did not read one.
 carry the source's revision signal so a same-size edit is noticed without
 fetching the body first.
 
-`source_catalog_directory.work_split` records the split decision
-(`single`, `prefix`, `file`) for the current completed revision of a directory
-listing; it is recomputed for each completed revision rather than frozen at the
-first observation. A new generation retires split cards it did not republish:
+`source_catalog_directory.work_split` records the split decision for the current
+completed revision of a directory listing. `single` keeps the directory as one
+card, `prefix` and `file` split its direct audio by release prefix or base
+title, `episode` creates independent episode cards, and `duplicate` marks a
+container that repeats its parent's audio. The decision is recomputed for each
+completed revision rather than frozen at the first observation. A new
+generation retires split cards it did not republish:
 their file rows are deleted and `file_source_id` and `relocated_to_id` are
 cleared, while the entry id stays resolvable for personal records. A card with
 a `work_id`, a `catalog_series_member` row, or another entry's
