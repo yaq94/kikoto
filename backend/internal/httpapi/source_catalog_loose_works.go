@@ -1242,6 +1242,13 @@ func transferRetiredCatalogWorkTx(ctx context.Context, tx *sql.Tx, staleID, targ
 	if conflict != 0 {
 		return false, nil
 	}
+	personalStateConflict, err := retiredCatalogPersonalStateConflictTx(ctx, tx, staleWork.Int64, targetWork.Int64)
+	if err != nil {
+		return false, err
+	}
+	if personalStateConflict {
+		return false, nil
+	}
 	// Merge every user's state into the release work. Empty fields never
 	// overwrite a stored value; favorites are unioned and the latest playback
 	// timestamp survives.

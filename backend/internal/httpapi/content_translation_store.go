@@ -131,9 +131,10 @@ func (s *Server) saveContentTranslations(ctx context.Context, rows []contentTran
 	if len(rows) == 0 {
 		return contentTranslationStored, nil
 	}
+	cfg, cfgErr := translation.NewStore(s.db).Load(ctx)
 	// A low-disk pause stops new cache rows. The caller still returns the
 	// translation it already has; only the durable copy waits for space.
-	if cfg, err := translation.NewStore(s.db).Load(ctx); err == nil && s.translationDiskPause(cfg) != "" {
+	if cfgErr == nil && s.translationDiskPause(cfg) != "" {
 		return contentTranslationPausedLowDisk, nil
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -167,6 +168,18 @@ func (s *Server) saveContentTranslations(ctx context.Context, rows []contentTran
 	}
 	if err := tx.Commit(); err != nil {
 		return "", fmt.Errorf("save content translations: %w", err)
+	}
+	if cfgErr == nil {
+		hasModel := false
+		for _, row := range rows {
+			if row.Origin == "model" {
+				hasModel = true
+				break
+			}
+		}
+		if hasModel {
+			s.pruneTranslationCacheAfterWrite(ctx, cfg)
+		}
 	}
 	return contentTranslationStored, nil
 }

@@ -85,7 +85,7 @@ func TestPersonalTransferKeepsExactReferencesAfterSharedSplit(t *testing.T) {
 	}
 }
 
-func TestPersonalTransferReportsContradictoryAndUnregisteredSources(t *testing.T) {
+func TestPersonalTransferReportsContradictoryAndRetainedSourceReferences(t *testing.T) {
 	db, app, admin, other, _ := openTransferApplication(t, t.TempDir(), true)
 	metadataReviewExec(t, db, `INSERT INTO work(id,primary_code,title) VALUES(1,'RJ00000000','Example A'),(2,'RJ00000001','Example B');
 	 INSERT INTO source_catalog_entry(id,root_path,title,work_id) VALUES(1,'/Example A','Example A',1);`)
@@ -117,15 +117,17 @@ func TestPersonalTransferReportsContradictoryAndUnregisteredSources(t *testing.T
 	assertReview(t, current, float64(2), "Existing owner")
 	workReferenceRequest(t, app, admin, "GET", "/api/works/2?includeMedia=false", "", 200, &current)
 	assertReview(t, current, float64(2), "Safe updated review")
-	// A retained source reference survives loss of its registration. Import cannot
-	// use its title or path to pick an unrelated work with the same display name.
+	// A retained source reference survives loss of its registration. The exact
+	// work reference still wins, so import must not use the title or path to pick
+	// an unrelated work with the same display name.
 	metadataReviewExec(t, db, `UPDATE source_catalog_entry SET work_id=NULL WHERE id=1`)
 	first.Identity = &personal.BackupIdentity{Ref: originalRef, References: []string{first.Identity.References[0]}, Kind: "work", Title: "Example A"}
 	first.PrimaryCode = ""
 	backup.Works = []personal.BackupWork{first}
 	body = mustJSON(map[string]any{"format": "kikoto", "data": backup, "conflict": "overwrite"})
+	result = personal.ImportResult{}
 	workReferenceRequest(t, app, admin, "POST", "/api/user-data/import", body, 200, &result)
-	if result.ImportedWorks != 0 || result.SkippedWorks != 1 || !strings.Contains(mustJSON(result), "unregistered_source") {
-		t.Fatalf("unregistered source=%+v", result)
+	if result.ImportedWorks != 1 || result.SkippedWorks != 0 || strings.Contains(mustJSON(result), "unregistered_source") {
+		t.Fatalf("retained source reference=%+v", result)
 	}
 }

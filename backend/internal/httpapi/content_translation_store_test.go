@@ -32,7 +32,7 @@ func openContentTranslationTestServer(t *testing.T) *Server {
 func TestContentTranslationStoreMigrationCreatesSchema(t *testing.T) {
 	s := openContentTranslationTestServer(t)
 
-	for _, name := range []string{"content_translation", "translation_prefill_state"} {
+	for _, name := range []string{"content_translation", "source_field_translation", "translation_prefill_state"} {
 		var kind string
 		if err := s.db.QueryRow(`SELECT type FROM sqlite_master WHERE name = ?`, name).Scan(&kind); err != nil {
 			t.Fatalf("table %s: %v", name, err)
@@ -54,6 +54,8 @@ func TestContentTranslationStoreMigrationCreatesSchema(t *testing.T) {
 		"idx_content_translation_entity",
 		"idx_content_translation_language",
 		"idx_content_translation_language_id",
+		"idx_source_field_translation_owner",
+		"idx_source_field_translation_updated",
 	} {
 		var type_ string
 		if err := s.db.QueryRow(`SELECT type FROM sqlite_master WHERE name = ?`, name).Scan(&type_); err != nil {

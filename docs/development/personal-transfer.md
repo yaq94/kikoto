@@ -22,12 +22,18 @@ over retained import progress. No source or media request runs during transfer.
 
 The importer acquires the writer before resolving references and reading
 conflicts. It reuses exact local aliases, known numbered codes and declared code
-aliases. Contradictory evidence or a known unregistered source produces an issue
-instead of a guessed assignment. Missing version 2 works can be registered from
-the necessary title and evaluation level with `remote:track`; an absent series
-gets its own series object. Imports never reconstruct shared associations or
-series membership. Unknown source references are retained as transfer aliases
-and reported as having no source connection.
+aliases. Contradictory evidence produces an `identity_conflict` issue instead of
+a guessed assignment. With `remote:track`, a known but unregistered catalog
+entry, series or episode is rebuilt as one minimal work and linked back to the
+existing catalog row; the link is never moved from another work. The same
+reference then resolves to that work on later imports. Without registration
+permission the whole import is rejected, as with any other missing work.
+
+The importer keeps the evaluation level: a catalog episode must not become a
+standalone work or series, and a series reference cannot become a work. It never
+downloads media, starts a media workflow, reconstructs shared associations or
+creates series membership. Unknown source references are retained as transfer
+aliases and reported as having no source connection.
 
 Review planning groups exact references through `shared_work_identity`.
 Different nonempty incoming values block the whole evaluation group, including

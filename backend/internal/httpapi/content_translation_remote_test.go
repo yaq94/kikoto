@@ -45,10 +45,17 @@ func TestContentTranslationRemoteFieldsRecheckSourceBeforeCachedReads(t *testing
 	cfg, _ := json.Marshal(map[string]any{"baseUrl": model.URL})
 	translationRequest(t, host, admin, "PATCH", "/api/settings/translation", string(cfg), 200)
 	const title = `{"sourceId":1,"code":"RJ00000001","field":"title","text":"Example title by Example Voice","language":"zh-cn"}`
-	for range 2 {
+	for index := range 2 {
 		result := translationRequest(t, host, listener, "POST", "/api/content-translations", title, 200)
 		if result["text"] != "Translated: Example title by Example Voice" {
 			t.Fatalf("remote title: %#v", result)
+		}
+		want := "stored"
+		if index == 1 {
+			want = "hit"
+		}
+		if result["cacheStatus"] != want {
+			t.Fatalf("remote title cache status = %#v, want %s", result, want)
 		}
 	}
 	tag := translationRequest(t, host, listener, "POST", "/api/content-translations", `{"sourceId":1,"code":"RJ00000001","field":"tag","text":"Example tag","language":"zh-cn"}`, 200)
@@ -56,7 +63,7 @@ func TestContentTranslationRemoteFieldsRecheckSourceBeforeCachedReads(t *testing
 		t.Fatalf("existing remote tag: %#v", tag)
 	}
 	dir := translationRequest(t, host, listener, "POST", "/api/content-translations", `{"sourceId":1,"code":"RJ00000001","field":"directory","text":"Example track.wav","path":"Example folder/Example track.wav","language":"zh-cn"}`, 200)
-	if dir["text"] != "Translated: Example track.wav" {
+	if dir["text"] != "Translated: Example track.wav" || dir["cacheStatus"] != "stored" {
 		t.Fatalf("directory: %#v", dir)
 	}
 	translationRequest(t, host, listener, "POST", "/api/content-translations", `{"sourceId":1,"code":"RJ00000001","field":"directory","text":"Example track.wav","path":"unlisted/Example track.wav","language":"zh-cn"}`, 409)
@@ -64,10 +71,9 @@ func TestContentTranslationRemoteFieldsRecheckSourceBeforeCachedReads(t *testing
 		t.Fatal(err)
 	}
 	translationRequest(t, host, listener, "POST", "/api/content-translations", title, 503)
-	// A source-level field has no durable entity, so it is regenerated on each
-	// request: the title twice plus the directory. Catalogue cards, which do
-	// have an identity, are the ones that hit the store.
-	if modelCalls.Load() != 3 {
+	// The title was generated once and reused, and the directory was generated
+	// once. Disabling the source must fail before either cache path is read.
+	if modelCalls.Load() != 2 {
 		t.Fatalf("unexpected generations: %d", modelCalls.Load())
 	}
 }

@@ -3,12 +3,49 @@ package httpapi
 import (
 	"context"
 	"database/sql"
+	"errors"
 )
 
+var errRetiredCatalogPersonalStateConflict = errors.New("retired catalog personal state conflict")
+
+// retiredCatalogPersonalStateConflictTx reports account-owned values that
+// cannot be merged without choosing one owner's value over another. Favorite
+// notes and positions conflict only inside the same user's list; a target entry
+// with an empty note or default position is fillable. Portable progress is kept
+// whenever the target work already has a row for that user, matching the
+// import conflict rule.
+func retiredCatalogPersonalStateConflictTx(ctx context.Context, tx *sql.Tx, staleWorkID, targetWorkID int64) (bool, error) {
+	var conflict int
+	err := tx.QueryRowContext(ctx, `SELECT EXISTS(
+			SELECT 1
+			FROM favorite_list_item AS old
+			INNER JOIN favorite_list_item AS current
+				ON current.list_id=old.list_id AND current.work_id=?1
+			WHERE old.work_id=?2 AND (
+				(old.note<>'' AND current.note<>'' AND old.note<>current.note)
+				OR (old.sort_order<>0 AND current.sort_order<>0 AND old.sort_order<>current.sort_order))
+		) OR EXISTS(
+			SELECT 1
+			FROM personal_transfer_progress AS old
+			INNER JOIN personal_transfer_progress AS current
+				ON current.user_id=old.user_id AND current.work_id=?1
+			WHERE old.work_id=?2
+		)`, targetWorkID, staleWorkID).Scan(&conflict)
+	return conflict != 0, err
+}
+
 // moveRetiredCatalogPersonalStateTx moves account-owned state from a format
-// card's work before the card is retired. Rating and note conflicts are handled
-// by the caller because they decide whether retirement may proceed at all.
+// card's work before the card is retired. The caller decides rating and note
+// conflicts; this function rechecks every retained field before deleting the
+// old rows so a stale caller cannot discard an owner's value.
 func moveRetiredCatalogPersonalStateTx(ctx context.Context, tx *sql.Tx, staleWorkID, targetWorkID int64) error {
+	conflict, err := retiredCatalogPersonalStateConflictTx(ctx, tx, staleWorkID, targetWorkID)
+	if err != nil {
+		return err
+	}
+	if conflict {
+		return errRetiredCatalogPersonalStateConflict
+	}
 	statements := []struct {
 		query string
 		args  []any
@@ -16,7 +53,9 @@ func moveRetiredCatalogPersonalStateTx(ctx context.Context, tx *sql.Tx, staleWor
 		{
 			query: `INSERT INTO favorite_list_item(list_id,work_id,note,sort_order,created_at)
 				SELECT list_id,?1,note,sort_order,created_at FROM favorite_list_item WHERE work_id=?2
-				ON CONFLICT(list_id,work_id) DO NOTHING`,
+				ON CONFLICT(list_id,work_id) DO UPDATE SET
+					note=CASE WHEN favorite_list_item.note='' THEN excluded.note ELSE favorite_list_item.note END,
+					sort_order=CASE WHEN favorite_list_item.sort_order=0 THEN excluded.sort_order ELSE favorite_list_item.sort_order END`,
 			args: []any{targetWorkID, staleWorkID},
 		},
 		{

@@ -364,17 +364,26 @@ keeps that card only until the release card exists again. Once a rescan
 publishes the parent, the stale format card becomes an alias of it: the id is
 kept, `relocated_to_id` points at the release, and its file rows are removed.
 A saved link still resolves through that alias. An import reference is not
-moved to the successor. Account-owned state moves only when both cards represent
-the same product identity, or the successor has no code, and no user has
-conflicting ratings or notes; the move covers saved lists, tags, playback,
-listening totals and transfer progress. A conflict keeps both cards visible so
-the record owner can reconcile it. A card that owns a different work, has a
-series membership or has an incoming relocation keeps its identity for explicit
-review instead of being merged into a guessed parent. A retired card without a
-registered work is reported by the importer as an unregistered source.
-`TestSourceCatalogStaleFormatCardRetiresToReleaseOnRescan` covers the
-retirement, and `TestSourceCatalogFormatCardWithWorkOrSeriesIsNotRetired` pins
-the retention guard.
+moved to the successor. If the old format card already owns a work,
+account-owned state moves only when both cards represent the same product
+identity, or the successor has no code. The move covers saved lists, tags,
+playback, listening totals and portable progress. If any user has conflicting
+ratings, notes, favorite-list notes or positions, or an existing target
+progress row, retirement keeps both cards and both records until that owner
+reconciles them. Empty favorite fields are filled from the old row. A card that
+owns a different work, has a series membership or has an incoming relocation
+keeps its identity for explicit review instead of being merged into a guessed
+parent.
+
+Personal-transfer references stay attached to the retained catalog row, so an
+import never has to guess a different object. A known but unregistered catalog
+entry, series or episode is rebuilt at its recorded evaluation level by an
+importer with registration permission rather than reported as blocked.
+`TestSourceCatalogStaleFormatCardRetiresToReleaseOnRescan` covers retirement,
+`TestSourceCatalogFormatCardFavoriteConflictsStayForOwner` and
+`TestSourceCatalogFormatCardTransferProgressConflictStaysForOwner` pin the
+conflict guards, and `TestSourceCatalogFormatCardSeriesMemberIsNotRetired`
+pins the identity guard.
 
 `GET /api/works/{id}/catalog-directories` projects catalog entries into the saved
 work's source tabs. Numeric references retain the exact edition; numbered

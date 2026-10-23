@@ -1,5 +1,9 @@
 # Catalog prune dry-run
 
+> Historical snapshot under the former alias policy. Current reports skip every
+> source-only card that still owns a `personal_transfer_ref`; do not use these
+> deletion counts as a current apply plan.
+
 - Generated: 2026-10-21T11:59:46Z
 - Note: Production copy dry-run on /srv/kikoto/bench/kikoto-before.db: 643 candidate cards / 114,648 files / 643 transfer refs. The plan removes 642 / 114,412 / 642 because entry 1070887 is inside the /source/example/audio whitelist.
 - Candidate cards (failed admission): 643

@@ -61,6 +61,7 @@ type ImportResult struct {
 type importPlan struct {
 	preview          ImportPreview
 	works            map[string]int64
+	matches          map[string]identityMatch
 	conflicts        map[int64]bool
 	reviewConflicts  map[int64]bool
 	progressConflict map[int64]bool
@@ -174,7 +175,7 @@ func (s Store) ImportWithRegistration(ctx context.Context, user int64, b Backup,
 			continue
 		}
 		if id == 0 && w.Identity != nil {
-			id, err = registerTransferWork(ctx, tx, w)
+			id, err = registerTransferIdentityWork(ctx, tx, w, plan.matches[w.key()])
 			if err != nil {
 				return result, err
 			}

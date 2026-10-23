@@ -236,15 +236,15 @@ func (s *Server) translateContentField(ctx context.Context, in contentTranslatio
 	}
 	kind, entityID, entityKey := translationEntity(in)
 	if kind == "" {
-		// A source-level field is not part of the searchable corpus. Translate
-		// it on demand without persisting a row.
-		translated, err := s.translateThroughModel(ctx, in.SourceID, field, text, target)
+		// A source-level field has its own display cache, outside the searchable
+		// content_translation corpus.
+		translated, status, err := s.translateThroughModel(ctx, in, field, text, target)
 		if err != nil {
 			return result, "", err
 		}
-		result.Text = translated
-		result.CacheStatus = "uncached"
-		return result, "translated", nil
+		result.Text = translated.TranslatedText
+		result.CacheStatus = translated.CacheStatus
+		return result, status, nil
 	}
 	row, status, err := s.translateStoredContent(ctx, in, field, text, target, kind, entityID, entityKey)
 	if err != nil {
