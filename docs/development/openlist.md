@@ -391,8 +391,12 @@ set does not publish a second card, and its pending observations are consumed
 without writing file rows. Complete provider hashes are compared as multisets;
 without complete hashes, a small folder requires an exact one-to-one match of
 file names and sizes. Larger package copies retain the bounded size tolerance.
-The parent card and its personal records remain addressable, and a later rescan
-reconsiders the child when its contents change.
+The parent card and its personal records remain addressable, nested bonus and
+track-container audio is published on the parent card, and a later rescan
+reconsiders the child when its contents change. A duplicate card published by
+an older generation is retired into the current parent card through the normal
+conflict-aware retirement path; a user's conflicting review keeps both cards
+until that user resolves the record.
 The old folder card is retired to the first split card only after every row
 below it has been published, so existing personal references still resolve.
 Split cards from an older generation that the current generation did not
