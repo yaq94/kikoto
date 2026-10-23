@@ -25,6 +25,7 @@ type catalogSeriesEpisode struct {
 	PrimaryCode    string `json:"primaryCode"`
 	WorkID         *int64 `json:"workId"`
 	Position       int    `json:"position"`
+	Status         string `json:"status,omitempty"`
 	SeriesID       *int64 `json:"seriesId,omitempty"`
 	RootPath       string `json:"-"`
 	SourceRoot     string `json:"-"`
@@ -58,6 +59,7 @@ func (s *Server) getCatalogSeries(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, 404, "not_found", "series not found", false)
 		return
 	}
+	w.Header().Set("Cache-Control", "private, no-store")
 	id, err := parseInt64PathValue(r, "id")
 	if err != nil {
 		writeAPIError(w, 400, "invalid_request", "invalid series id", false)
@@ -75,17 +77,21 @@ func (s *Server) getCatalogSeries(w http.ResponseWriter, r *http.Request) {
 			COALESCE(NULLIF(successor.file_source_id,0),NULLIF(e.file_source_id,0),0) AS source_id,
 			COALESCE(successor_fs.display_name,fs.display_name,'') AS display_name,
 			COALESCE(successor.primary_code,e.primary_code) AS primary_code,
-			COALESCE(successor.work_id,e.work_id) AS work_id,m.position,
-		ROW_NUMBER() OVER(PARTITION BY COALESCE(identity.identity_work_id,-e.id) ORDER BY m.position,e.id) AS identity_rank
-		FROM catalog_series_member m JOIN source_catalog_entry e ON e.id=m.catalog_entry_id
-		LEFT JOIN source_catalog_entry successor ON successor.id=e.relocated_to_id
-		LEFT JOIN file_source fs ON fs.id=e.file_source_id
-		LEFT JOIN file_source successor_fs ON successor_fs.id=successor.file_source_id
-		LEFT JOIN shared_work_identity identity ON identity.work_id=COALESCE(successor.work_id,e.work_id)
-		WHERE ((e.relocated_to_id IS NULL AND e.file_source_id IS NOT NULL AND e.availability_status<>'missing')
-			OR (e.relocated_to_id IS NOT NULL AND successor.file_source_id IS NOT NULL AND successor.availability_status<>'missing'))
-			AND m.series_id IN (SELECT related.id FROM catalog_series selected JOIN catalog_series related ON related.id=selected.id OR related.work_id IN (SELECT peer.work_id FROM shared_work_identity own JOIN shared_work_identity peer ON peer.identity_work_id=own.identity_work_id WHERE own.work_id=selected.work_id) WHERE selected.id=?))
-		SELECT id,title,source_id,display_name,primary_code,work_id,position FROM grouped WHERE identity_rank=1 ORDER BY position,id`, id)
+				COALESCE(successor.work_id,e.work_id) AS work_id,
+				COALESCE(successor.availability_status,e.availability_status) AS status,m.position,
+				ROW_NUMBER() OVER(
+					PARTITION BY COALESCE(identity.identity_work_id,-e.id)
+					ORDER BY CASE WHEN COALESCE(successor.availability_status,e.availability_status)='available' THEN 0 ELSE 1 END,m.position,e.id
+				) AS identity_rank
+			FROM catalog_series_member m JOIN source_catalog_entry e ON e.id=m.catalog_entry_id
+			LEFT JOIN source_catalog_entry successor ON successor.id=e.relocated_to_id
+			LEFT JOIN file_source fs ON fs.id=e.file_source_id
+			LEFT JOIN file_source successor_fs ON successor_fs.id=successor.file_source_id
+			LEFT JOIN shared_work_identity identity ON identity.work_id=COALESCE(successor.work_id,e.work_id)
+			WHERE ((e.relocated_to_id IS NULL AND e.file_source_id IS NOT NULL)
+				OR (e.relocated_to_id IS NOT NULL AND successor.file_source_id IS NOT NULL))
+				AND m.series_id IN (SELECT related.id FROM catalog_series selected JOIN catalog_series related ON related.id=selected.id OR related.work_id IN (SELECT peer.work_id FROM shared_work_identity own JOIN shared_work_identity peer ON peer.identity_work_id=own.identity_work_id WHERE own.work_id=selected.work_id) WHERE selected.id=?))
+			SELECT id,title,source_id,display_name,primary_code,work_id,status,position FROM grouped WHERE identity_rank=1 ORDER BY position,id`, id)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -93,7 +99,7 @@ func (s *Server) getCatalogSeries(w http.ResponseWriter, r *http.Request) {
 	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var episode catalogSeriesEpisode
-		if err = rows.Scan(&episode.CatalogEntryID, &episode.Title, &episode.SourceID, &episode.SourceName, &episode.PrimaryCode, &episode.WorkID, &episode.Position); err != nil {
+		if err = rows.Scan(&episode.CatalogEntryID, &episode.Title, &episode.SourceID, &episode.SourceName, &episode.PrimaryCode, &episode.WorkID, &episode.Status, &episode.Position); err != nil {
 			writeError(w, err)
 			return
 		}

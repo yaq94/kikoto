@@ -353,6 +353,7 @@ func (s *Server) loadSourceCatalogFiles(ctx context.Context, id int64) ([]Source
 }
 
 func (s *Server) getSourceCatalogEntry(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "private, no-store")
 	id, err := parseInt64PathValue(r, "id")
 	if err != nil {
 		writeAPIError(w, 400, "invalid_request", "invalid catalog id", false)

@@ -203,6 +203,7 @@ func (s *Server) getSharedSplit(w http.ResponseWriter, r *http.Request) {
 		writeAssociationError(w, sql.ErrNoRows)
 		return
 	}
+	w.Header().Set("Cache-Control", "private, no-store")
 	id, err := parseInt64PathValue(r, "id")
 	if err != nil {
 		writeAssociationError(w, sql.ErrNoRows)

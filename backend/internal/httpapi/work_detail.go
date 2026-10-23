@@ -176,6 +176,7 @@ type fileLocationDetail struct {
 
 func (s *Server) getWork(w http.ResponseWriter, r *http.Request) {
 	userID := optionalUserID(r.Context())
+	w.Header().Set("Cache-Control", "private, no-store")
 	id, err := s.workReadID(r)
 	if err != nil {
 		writeWorkReadError(w, err)
