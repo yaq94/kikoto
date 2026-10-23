@@ -29,15 +29,18 @@ func catalogRootAdmissionTx(ctx context.Context, tx *sql.Tx, sourceID, generatio
 		(SELECT count(*) FROM (
 			SELECT 1 FROM source_catalog_directory d
 			JOIN source_catalog_observation o ON o.file_source_id=d.file_source_id AND o.directory_path=d.path AND o.revision=d.revision
-			WHERE d.file_source_id=?1 AND d.generation=?2 AND d.catalog_root=?3 LIMIT 5001)),
+			WHERE d.file_source_id=?1 AND d.generation=?2 AND d.catalog_root=?3
+				AND d.work_split<>'duplicate' LIMIT 5001)),
 		(SELECT count(*) FROM (
 			SELECT 1 FROM source_catalog_directory d
 			JOIN source_catalog_observation o ON o.file_source_id=d.file_source_id AND o.directory_path=d.path AND o.revision=d.revision
-			WHERE d.file_source_id=?1 AND d.generation=?2 AND d.catalog_root=?3 AND o.kind='audio' LIMIT 5)),
+			WHERE d.file_source_id=?1 AND d.generation=?2 AND d.catalog_root=?3
+				AND d.work_split<>'duplicate' AND o.kind='audio' LIMIT 5)),
 		(SELECT count(*) FROM (
 			SELECT 1 FROM source_catalog_directory d
 			JOIN source_catalog_observation o ON o.file_source_id=d.file_source_id AND o.directory_path=d.path AND o.revision=d.revision
-			WHERE d.file_source_id=?1 AND d.generation=?2 AND d.catalog_root=?3 AND o.kind<>'audio' LIMIT 2001)),
+			WHERE d.file_source_id=?1 AND d.generation=?2 AND d.catalog_root=?3
+				AND d.work_split<>'duplicate' AND o.kind<>'audio' LIMIT 2001)),
 		NOT EXISTS(SELECT 1 FROM source_catalog_directory d
 			WHERE d.file_source_id=?1 AND d.generation=?2 AND d.catalog_root=?3
 				AND d.status<>'complete' AND NOT (d.status='empty' AND d.error_code='not_found'))`,

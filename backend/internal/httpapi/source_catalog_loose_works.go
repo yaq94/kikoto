@@ -16,9 +16,10 @@ import (
 )
 
 const (
-	catalogWorkSplitSingle = "single"
-	catalogWorkSplitPrefix = "prefix"
-	catalogWorkSplitFile   = "file"
+	catalogWorkSplitSingle    = "single"
+	catalogWorkSplitPrefix    = "prefix"
+	catalogWorkSplitFile      = "file"
+	catalogWorkSplitDuplicate = "duplicate"
 )
 
 // catalogSplitPinnedSQL reports whether a directory already belongs to a
@@ -1696,6 +1697,40 @@ func catalogCoveredContainerRetireTargetTx(ctx context.Context, tx *sql.Tx, sour
 	return coveredContainerTargetTx(ctx, tx, sourceID, generation, root, cardID)
 }
 
+// catalogDuplicateCardRetireTargetTx retires a stale card whose directory is a
+// duplicate copy of its current parent. The current generation suppresses the
+// child card, so the parent is the only safe successor. Series membership and
+// incoming aliases are identity boundaries and keep the stale card; a work is
+// left to the normal conflict-aware retirement path.
+func catalogDuplicateCardRetireTargetTx(ctx context.Context, tx *sql.Tx, sourceID, generation, cardID int64, root string) (int64, error) {
+	parent := path.Dir(root)
+	if root == "/" || parent == "/" || parent == "." || parent == root {
+		return 0, nil
+	}
+	var seriesOrAlias int
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
+		SELECT 1 FROM catalog_series_member m WHERE m.catalog_entry_id=?
+		UNION ALL
+		SELECT 1 FROM source_catalog_entry r WHERE r.relocated_to_id=? )`, cardID, cardID).Scan(&seriesOrAlias); err != nil {
+		return 0, err
+	}
+	if seriesOrAlias != 0 {
+		return 0, nil
+	}
+	duplicate, err := catalogDuplicateDirectoryTx(ctx, tx, sourceID, generation, root)
+	if err != nil || !duplicate {
+		return 0, err
+	}
+	var targetID int64
+	err = tx.QueryRowContext(ctx, `SELECT id FROM source_catalog_entry
+		WHERE file_source_id=? AND root_path=? AND relocated_to_id IS NULL
+			AND last_seen_generation=?`, sourceID, parent, generation).Scan(&targetID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	return targetID, err
+}
+
 // catalogRetireCardsPerBatch bounds both the rows examined in one transaction
 // and the retirements one call may commit.
 const catalogRetireCardsPerBatch = 100
@@ -1705,6 +1740,7 @@ type catalogRetirePass int
 const (
 	catalogRetireCovered catalogRetirePass = iota
 	catalogRetireFormat
+	catalogRetireDuplicate
 )
 
 // retireCatalogCardsBatch moves stale-card retirement out of the final publish
@@ -1723,7 +1759,7 @@ const (
 // retirements, not examined rows; one call may therefore scan several pages.
 func (s *Server) retireCatalogCardsBatch(ctx context.Context, job workflowJobRecord, sourceID int64) (retired int, done bool, err error) {
 	budget := catalogRetireCardsPerBatch
-	for _, pass := range []catalogRetirePass{catalogRetireCovered, catalogRetireFormat} {
+	for _, pass := range []catalogRetirePass{catalogRetireCovered, catalogRetireFormat, catalogRetireDuplicate} {
 		if budget == 0 {
 			return retired, false, nil
 		}
@@ -1783,6 +1819,13 @@ func (s *Server) retireCatalogCardPage(ctx context.Context, job workflowJobRecor
 				AND NOT EXISTS(SELECT 1 FROM catalog_series_member m WHERE m.catalog_entry_id=e.id)
 				AND NOT EXISTS(SELECT 1 FROM source_catalog_entry r WHERE r.relocated_to_id=e.id)
 			ORDER BY e.id LIMIT ?`
+	} else if pass == catalogRetireDuplicate {
+		query = `SELECT e.id,e.root_path FROM source_catalog_entry e
+			WHERE e.file_source_id=? AND e.relocated_to_id IS NULL AND e.last_seen_generation<>? AND e.id>?
+				AND e.source_root=''
+				AND NOT EXISTS(SELECT 1 FROM catalog_series_member m WHERE m.catalog_entry_id=e.id)
+				AND NOT EXISTS(SELECT 1 FROM source_catalog_entry r WHERE r.relocated_to_id=e.id)
+			ORDER BY e.id LIMIT ?`
 	}
 	rows, err := tx.QueryContext(ctx, query, sourceID, job.RunID, cursor, catalogRetireCardsPerBatch)
 	if err != nil {
@@ -1821,6 +1864,8 @@ func (s *Server) retireCatalogCardPage(ctx context.Context, job workflowJobRecor
 		var target int64
 		if pass == catalogRetireCovered {
 			target, err = catalogCoveredContainerRetireTargetTx(ctx, tx.Tx, sourceID, job.RunID, card.id, card.root)
+		} else if pass == catalogRetireDuplicate {
+			target, err = catalogDuplicateCardRetireTargetTx(ctx, tx.Tx, sourceID, job.RunID, card.id, card.root)
 		} else {
 			// An episode's format copy ("Episode 1 (MP3)") is a part of that
 			// episode too; only its root name carries an episode marker.

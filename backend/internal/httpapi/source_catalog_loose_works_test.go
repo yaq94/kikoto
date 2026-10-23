@@ -479,6 +479,77 @@ func TestSourceCatalogLooseWorksPackageCopyDoesNotPublishSecondCard(t *testing.T
 	}
 }
 
+// A package card published by an older generation must be retired into the
+// parent when the current generation recognizes the copy. The old id remains
+// readable as an alias; its files disappear from the published card set.
+func TestSourceCatalogLooseWorksStalePackageCopyRetiresToParent(t *testing.T) {
+	parent := []map[string]any{}
+	copyItems := []map[string]any{}
+	names := []string{}
+	for i := 1; i <= 19; i++ {
+		name := fmt.Sprintf("Work %02d.mp3", i)
+		parent = append(parent, looseAudio(name))
+		copyItems = append(copyItems, looseAudio(name))
+		names = append(names, name)
+	}
+	f := newLooseWorkFixture(t, map[string][]map[string]any{
+		"/":                     {looseDir("Creator")},
+		"/Creator":              append(parent, looseDir("Creator copy")),
+		"/Creator/Creator copy": copyItems,
+	})
+	sourceID := fixtureSourceID(t, f)
+	staleID := seedFormatCard(t, f.server.db, sourceID, "/Creator/Creator copy", "Creator copy", 0, names)
+	f.request(t, http.MethodPost, "/catalog/index", `{"intervalMs":100}`, http.StatusAccepted)
+	if progress := f.drain(t); progress["status"] != "complete" {
+		t.Fatalf("scan = %#v", progress)
+	}
+	cards := f.cards(t)
+	if len(cards) != 1 || cards["Creator"] == nil {
+		t.Fatalf("cards=%v, want only the parent card", cards)
+	}
+	var sourceIDAfter sql.NullInt64
+	var relocated sql.NullInt64
+	if err := f.server.db.QueryRow(`SELECT file_source_id,relocated_to_id FROM source_catalog_entry WHERE id=?`, staleID).Scan(&sourceIDAfter, &relocated); err != nil {
+		t.Fatal(err)
+	}
+	if sourceIDAfter.Valid || !relocated.Valid || relocated.Int64 != int64(cards["Creator"]["catalogEntryId"].(float64)) {
+		t.Fatalf("stale card source=%v relocated=%v, want parent card", sourceIDAfter, relocated)
+	}
+	detail := catalogCardByID(t, f, staleID)
+	if int64(detail["catalogEntryId"].(float64)) != int64(cards["Creator"]["catalogEntryId"].(float64)) {
+		t.Fatalf("old id resolves to %#v, want parent card", detail)
+	}
+}
+
+// A unique bonus inside a package copy belongs to the parent work. It must not
+// reappear as a separate top-level card after the copy directory is suppressed.
+func TestSourceCatalogLooseWorksPackageCopyKeepsNestedBonusOnParent(t *testing.T) {
+	parent := []map[string]any{}
+	copyItems := []map[string]any{}
+	for i := 1; i <= 19; i++ {
+		name := fmt.Sprintf("Work %02d.mp3", i)
+		parent = append(parent, looseAudio(name))
+		copyItems = append(copyItems, looseAudio(name))
+	}
+	f := newLooseWorkFixture(t, map[string][]map[string]any{
+		"/":                           {looseDir("Creator")},
+		"/Creator":                    append(parent, looseDir("Creator copy")),
+		"/Creator/Creator copy":       append(copyItems, looseDir("Bonus")),
+		"/Creator/Creator copy/Bonus": {looseAudio("bonus.mp3")},
+	})
+	f.request(t, http.MethodPost, "/catalog/index", `{"intervalMs":100}`, http.StatusAccepted)
+	if progress := f.drain(t); progress["status"] != "complete" {
+		t.Fatalf("scan = %#v", progress)
+	}
+	cards := f.cards(t)
+	if len(cards) != 1 || cards["Creator"] == nil {
+		t.Fatalf("cards=%v, want only the parent card", cards)
+	}
+	if got := countCatalogAudio(f.tracks(t, cards["Creator"])); got != 20 {
+		t.Fatalf("parent tracks=%d, want 19 copied tracks plus one bonus", got)
+	}
+}
+
 // A suffix digit is a track number only when a real title remains. Dates and
 // bare counters keep their full stem, so unrelated recordings do not collapse
 // onto a fragment such as 2021 or 12.

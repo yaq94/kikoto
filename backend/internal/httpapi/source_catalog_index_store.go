@@ -434,7 +434,18 @@ func completeCatalogDirectoryTx(ctx context.Context, tx *sql.Tx, sourceID, gener
 					return duplicateErr
 				}
 				if duplicate {
-					d.Root = ""
+					// Keep the copy under the original parent root so nested
+					// bonus tracks still belong to that work. Direct audio in
+					// the duplicate directory is consumed without publishing;
+					// the `duplicate` split marker keeps admission counts and
+					// publication from treating it as another card.
+					d.Root = path.Dir(d.Path)
+					if _, err := tx.ExecContext(ctx, `UPDATE source_catalog_directory
+						SET work_split=?
+						WHERE file_source_id=? AND path=? AND generation=?`,
+						catalogWorkSplitDuplicate, sourceID, d.Path, generation); err != nil {
+						return err
+					}
 					_, err := tx.ExecContext(ctx, `UPDATE source_catalog_observation
 						SET publish_pending=0
 						WHERE file_source_id=? AND directory_path=? AND revision=?`,
@@ -833,6 +844,7 @@ FROM source_catalog_directory d
 CROSS JOIN source_catalog_observation o ON o.file_source_id=d.file_source_id AND o.directory_path=d.path AND o.revision=d.revision
 LEFT JOIN source_catalog_directory rd ON rd.file_source_id=d.file_source_id AND rd.path=d.catalog_root AND rd.generation=d.generation
 WHERE d.file_source_id=?1 AND d.generation=?2 AND d.status='complete' AND d.catalog_root<>''
+	AND d.work_split<>'duplicate'
 	-- Keyset pagination. The comparison uses the same BINARY collation pair
 	-- as ORDER BY d.path,o.name, so a batch never skips a name inside a
 	-- directory or repeats one across a restart. An empty cursor sorts before
