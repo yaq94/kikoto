@@ -18,8 +18,9 @@ import (
 // row it owns. The observation arm bounds directory_path as a half-open range;
 // the pending index is ordered by (file_source_id,directory_path,name), so the
 // range seeks the subtree instead of testing every pending row with substr().
-// catalog_root is always an ancestor of the directory path it labels, so the
-// path range selects the same rows as the former catalog_root equality.
+// A format copy is the exception to the ancestor rule: its directory is a
+// sibling of the episode card and records the episode in catalog_root. A second
+// arm follows that key so a failed copy cannot look like complete coverage.
 // Keeping the builder separate lets a plan guard assert the exact statement.
 func catalogRootIncompleteQuery(sourceID, generation int64, root string) (string, []any) {
 	root = strings.TrimRight(root, "/")
@@ -39,6 +40,13 @@ func catalogRootIncompleteQuery(sourceID, generation int64, root string) (string
 			AND d.path>=? AND d.path<?
 			AND (d.path=? OR d.path>=?)`
 		args = append(args, root, root+"0", root, root+"/")
+		query += `
+			UNION ALL
+			SELECT 1 FROM source_catalog_directory d
+			WHERE d.file_source_id=? AND d.generation=? AND d.catalog_root=?
+				AND d.status<>'complete'
+				AND NOT (d.status='empty' AND d.error_code='not_found')`
+		args = append(args, sourceID, generation, root)
 	}
 	query += `
 		UNION ALL
@@ -58,6 +66,16 @@ func catalogRootIncompleteQuery(sourceID, generation int64, root string) (string
 			AND o.directory_path>=? AND o.directory_path<?
 			AND (o.directory_path=? OR o.directory_path>=?)`
 		args = append(args, root, root+"0", root, root+"/")
+		query += `
+			UNION ALL
+			SELECT 1 FROM source_catalog_directory pd
+			CROSS JOIN source_catalog_observation o
+			WHERE o.file_source_id=pd.file_source_id AND o.directory_path=pd.path AND o.revision=pd.revision
+				AND pd.file_source_id=? AND pd.generation=? AND pd.catalog_root=? AND o.publish_pending=1
+				AND NOT (pd.status='empty' AND pd.error_code='not_found')
+				AND (o.kind='audio' OR EXISTS(SELECT 1 FROM source_catalog_audio_root r
+					WHERE r.file_source_id=pd.file_source_id AND r.generation=pd.generation AND r.catalog_root=pd.catalog_root))`
+		args = append(args, sourceID, generation, root)
 	}
 	query += `
 	)`
@@ -150,6 +168,15 @@ func catalogRangeUncertain(ctx context.Context, tx *sql.Tx, sourceID, generation
 	if base != "/" {
 		query += ` AND (d.path=? OR (d.path>=? AND d.path<?))`
 		args = append(args, base, base+"/", base+"0")
+		// A format copy stores the episode as catalog_root while its directory
+		// sits beside the episode. The subtree predicate alone cannot see that
+		// row, so a second arm follows the recorded root.
+		query += `
+			UNION ALL
+			SELECT 1 FROM source_catalog_directory d
+			WHERE d.file_source_id=? AND d.generation=? AND ` + uncertainStatus + `
+				AND d.catalog_root=?`
+		args = append(args, sourceID, generation, base)
 	}
 	query += `)`
 	var uncertain int
@@ -168,10 +195,25 @@ func catalogRangeUncertainSetSQL(baseCount int) string {
 			AND NOT (d.status='empty' AND d.error_code='not_found')`
 }
 
+// catalogRangeUncertainRootSetSQL is the catalog_root arm of the bounded
+// lifecycle check. Format copies are siblings of the card root rather than
+// descendants, so they need a separate lookup through the root index.
+func catalogRangeUncertainRootSetSQL(baseCount int) string {
+	values := strings.TrimSuffix(strings.Repeat("(?),", baseCount), ",")
+	return `WITH bases(path) AS (VALUES ` + values + `)
+		SELECT DISTINCT b.path
+		FROM source_catalog_directory d
+		JOIN bases b ON d.catalog_root=b.path
+		WHERE d.file_source_id=? AND d.generation=?
+			AND d.status IN ('failed','restricted','empty','pending','listing_complete')
+			AND NOT (d.status='empty' AND d.error_code='not_found')`
+}
+
 // catalogRangeUncertainSetTx answers catalogRangeUncertain for a bounded card
-// batch with two statements: one reads the nearest directory row for every
-// ancestor, and one checks every base for an uncertain descendant. The caller
-// keeps the same per-base verdict the single-card helper produces.
+// batch with three statements: one reads the nearest directory row for every
+// ancestor, one checks every base for an uncertain descendant, and one follows
+// catalog_root for sibling format copies. The caller keeps the same per-base
+// verdict the single-card helper produces.
 func catalogRangeUncertainSetTx(ctx context.Context, tx *sql.Tx, sourceID, generation int64, bases []string) (map[string]bool, error) {
 	uniqueBases := make([]string, 0, len(bases))
 	seenBase := map[string]bool{}
@@ -279,6 +321,32 @@ func catalogRangeUncertainSetTx(ctx context.Context, tx *sql.Tx, sourceID, gener
 	}
 	for _, base := range uniqueBases {
 		result[base] = !observed[base] || matched[base]
+	}
+	if len(uniqueBases) > 0 {
+		rootArgs := append([]any{}, stringArgs(uniqueBases)...)
+		rootArgs = append(rootArgs, sourceID, generation)
+		rows, err = tx.QueryContext(ctx, catalogRangeUncertainRootSetSQL(len(uniqueBases)), rootArgs...)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var base string
+			if err = rows.Scan(&base); err != nil {
+				break
+			}
+			matched[base] = true
+		}
+		readErr = rows.Err()
+		_ = rows.Close()
+		if err != nil {
+			return nil, err
+		}
+		if readErr != nil {
+			return nil, readErr
+		}
+		for _, base := range uniqueBases {
+			result[base] = result[base] || matched[base]
+		}
 	}
 	return result, nil
 }

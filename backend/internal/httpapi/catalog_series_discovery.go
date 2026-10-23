@@ -146,8 +146,10 @@ func catalogEpisodeFormatCopy(name string) (string, bool) {
 
 // splitCatalogEpisodeRoots partitions an unregistered finite scan only when
 // every playable file belongs to an evidenced direct child. Real file paths
-// are rebased below that child; format and track directories stay in it.
-func splitCatalogEpisodeRoots(root string, files []openlist.File) map[string][]openlist.File {
+// are rebased below that child; format and track directories stay in it. Files
+// outside the episode children, including root artwork and readmes, stay on the
+// metadata parent so the split does not discard release evidence.
+func splitCatalogEpisodeRoots(root string, files []openlist.File) (map[string][]openlist.File, []openlist.File) {
 	children := map[string]bool{}
 	for _, file := range files {
 		if file.Kind != "audio" {
@@ -155,16 +157,16 @@ func splitCatalogEpisodeRoots(root string, files []openlist.File) map[string][]o
 		}
 		parts := strings.SplitN(file.Path, "/", 2)
 		if len(parts) != 2 {
-			return nil
+			return nil, nil
 		}
 		if _, ok := catalogEpisodeEvidence(path.Join(root, parts[0])); !ok {
-			return nil
+			return nil, nil
 		}
 		children[parts[0]] = true
 	}
 	if len(children) < 2 {
 		// A lone episode is not a series yet; the entry keeps its own card.
-		return nil
+		return nil, nil
 	}
 	// More than maxCatalogSeriesMembers children are all split into independent
 	// entries. attachCatalogSeriesForRootTx stops adding members at the limit, so the
@@ -179,7 +181,18 @@ func splitCatalogEpisodeRoots(root string, files []openlist.File) map[string][]o
 			result[path.Join(root, child)] = append(result[path.Join(root, child)], file)
 		}
 	}
-	return result
+	parent := []openlist.File{}
+	for _, file := range files {
+		if file.Kind == "folder" {
+			continue
+		}
+		parts := strings.SplitN(file.Path, "/", 2)
+		if len(parts) == 2 && children[parts[0]] {
+			continue
+		}
+		parent = append(parent, file)
+	}
+	return result, parent
 }
 
 // attachCatalogSeriesForRootTx attaches an episode card using the location its
@@ -261,7 +274,7 @@ func attachCatalogSeriesForRootTx(ctx context.Context, tx *sql.Tx, entryID, sour
 }
 
 func (s *Server) persistCatalogEpisodeRoots(ctx context.Context, source remoteSourceForUse, root string, files []openlist.File) (int64, bool, error) {
-	split := splitCatalogEpisodeRoots(root, files)
+	split, parentFiles := splitCatalogEpisodeRoots(root, files)
 	if len(split) == 0 {
 		return 0, false, nil
 	}
@@ -314,13 +327,23 @@ func (s *Server) persistCatalogEpisodeRoots(ctx context.Context, source remoteSo
 			first = id
 		}
 	}
+	// A metadata-only parent keeps the root's artwork, readmes and subtitles.
+	// It publishes no playable track, so it does not become a second work card,
+	// but its file rows remain available to credit and metadata readers.
+	if len(parentFiles) > 0 {
+		parentID, persistErr := persistOpenListSnapshotTx(ctx, tx, source.ID, root, "", path.Base(root), parentFiles)
+		if persistErr != nil {
+			return 0, true, persistErr
+		}
+		keep[parentID] = true
+	}
 	// A removed or renumbered episode must not stay visible in the series or
 	// as a standalone card. The current listing is a complete snapshot of this
 	// directory, so unre-published episode cards are stale.
 	if err = markStaleSnapshotCardsTx(ctx, tx, source.ID, root, keep); err != nil {
 		return 0, true, err
 	}
-	if existing != 0 {
+	if existing != 0 && len(parentFiles) == 0 {
 		// The root had no work, series membership or personal record above, so
 		// retiring it moves no evaluation object. Its files are now owned by
 		// the episode entries. Keep the id as an alias of the first episode so
