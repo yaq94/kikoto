@@ -214,3 +214,19 @@ func TestContentTranslationBatchFitsProductionTitles(t *testing.T) {
 		t.Fatalf("batch returned %d items", len(results))
 	}
 }
+
+// A batch item that asks for a field the resource does not publish uses the
+// same invalid-input code as the single-item endpoint. A different code would
+// tell the client to retry a request that can never succeed.
+func TestContentTranslationBatchReportsMissingFieldAsInvalidInput(t *testing.T) {
+	_, host, admin, _ := translationHTTPFixture(t)
+	result := translationRequest(t, host, admin, "POST", "/api/content-translations/batch", `{"language":"zh-cn","items":[{"key":"missing","sourceId":7,"code":"RJ00000000","field":"description","text":"Example"}]}`, 200)
+	items, _ := result["items"].([]any)
+	if len(items) != 1 {
+		t.Fatalf("batch response: %#v", result)
+	}
+	item := items[0].(map[string]any)
+	if item["status"] != "failed" || item["code"] != "translation_invalid_input" {
+		t.Fatalf("missing field response: %#v", item)
+	}
+}

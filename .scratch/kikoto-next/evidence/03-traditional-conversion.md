@@ -2,9 +2,9 @@
 
 **Implementation:** resolved
 
-本记录对应包含此文件的 03 提交，基线为
-`08b14696c76c63d3a75e5fb0c984dbb2e568ad12`。完成前已 fetch 远端 integration，
-在 `codex/kikoto-next-t03` 执行合并，返回 `Already up to date`；没有操作主工作区。
+本记录最初对应 03 提交 `08b14696`，表中命令与 LIVE 数据保留为当时快照。
+当前集成分支为 `codex/kikoto-catalog-remediation`，简繁实现自那次提交后未改变；
+当前产物的定向测试与真实 LIVE 复验状态见文末“当前产物复验”。
 
 ## 验收清单
 
@@ -46,7 +46,7 @@ Go 1.26.9、Node 24.19.0、npm 11.17.0；每进程 PATH 与 `GOTOOLCHAIN=local`�
 | --- | --- |
 | `go test -race -mod=readonly ./internal/httpapi ./internal/translation -run '^Test(ContentTranslation\|CacheIdentity\|ProtectedNames)' -count=1 -v -timeout=5m` | `j-ema74v` 退出 0；20 个 H/R 顶层、2 个 U 顶层通过，无 race；未配置的 LIVE 正常跳过，另行实测见下。Markdown 管道有转义。 |
 | `make backend-format backend-test backend-vet backend-verify backend-build` | `j-xvebou` 退出 0；全后端通过，httpapi 93.712s；所有模块校验通过，当前可执行文件已构建。 |
-| `make backend-lint GOLANGCI_LINT_BASE=08b14696c76c63d3a75e5fb0c984dbb2e568ad12` | `j-x83nix` 退出 0，0 issues；共享锁正常释放。 |
+| `make backend-lint GOLANGCI_LINT_BASE=08b14696c76c63d3a75e5fb0c984dbb2e568ad12` | `j-x83nix` 退出 0，0 issues；共享锁正常释放（当时基线）。 |
 | `make -o frontend-install frontend-format frontend-lint frontend-i18n frontend-build` | `j-jxgy3z` 退出 0；0 lint 警告/错误，E2E 类型检查与构建通过。Vite 保留既有 configLoader 和大 chunk 提示。 |
 | `make -o frontend-install -o frontend-playwright-install frontend-e2e E2E_ARGS='content-translation.spec.ts traditional-translation.spec.ts --project=desktop-chromium --workers=1'` | `j-3uj1pp` 退出 0，5/5，11.1s。F 当前 Vite 3113 → production API 17613 → 迁移 SQLite，只有外部模型用桩。 |
 | `make -o frontend-install frontend-docs sensitive-check`、`git diff --check` | `j-tbi1hb` 退出 0；122 公开 Markdown 链接、5 locale/11 用户页通过，19 个当时变更文件隐私扫描通过。工单与本证据加入后提交前再次扫描。 |
@@ -87,7 +87,7 @@ Go 1.26.9、Node 24.19.0、npm 11.17.0；每进程 PATH 与 `GOTOOLCHAIN=local`�
   测量程序仅保存在仓库外。它测量库初始化与短句转换，不是完整服务峰值内存。
 - 当前 Windows Go 构建文件 **31,170,560 bytes**；未重建无依赖基线作二进制
   体积差分，因此不将上述词典大小当作准确可执行文件增量。
-- 没有数据库迁移；现有最高 069 保持。服务器内存、Linux 镜像和组合负载由
+- 本票不新增数据库迁移；译文持久表由 02 的 `092` 建立，当前迁移链头为 `094`。服务器内存、Linux 镜像和组合负载由
   整体验收在部署产物上实测，不用本机数字代替。
 
 ## 进程与保留项
@@ -104,4 +104,5 @@ Go 1.26.9、Node 24.19.0、npm 11.17.0；每进程 PATH 与 `GOTOOLCHAIN=local`�
 
 - 样例 1：简中“今天天气真好。我听示例声优和示例社团的音乐。”，繁中转换 11 ms；样例 2 同样只有一次生成。
 - 两个样例均为 `translated`，`cacheStatus` 依次 stored/hit/hit；示例声优、示例社团保持原文；繁体请求复用简体生成，没有第二次模型调用。
+- 这次 LIVE 使用的是当时的两个日文/中文样例。当前 `TestContentTranslationTraditionalLiveConfiguredService` 的样例 2 是 “风吹过森林……” 的简体原文，按契约应记为 `native` 且不产生第二次模型调用；样例 1 仍为 `translated`。两者合计只有一次生成。本地模型桩已按当前断言运行通过，真实模型调用待部署后按 17 复验。
 - 日志保存在仓库外 `.kikoto-work/live-test-head.log`。

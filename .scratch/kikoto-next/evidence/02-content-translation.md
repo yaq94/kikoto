@@ -11,12 +11,12 @@ HTTP 断言及本证据、工单状态，不改变生产代码。原作者交接
 
 | 本票清单 | AC | 当前证据 |
 | --- | --- | --- |
-| 两用户独立保存显示语言与界面语言，共用配置；对象身份保持 | AC-03 | `TestContentTranslationCacheAndIndependentPreferencesSurviveRestart` 真正关闭 Server、HTTP host、SQLite 后重开同库，复核两用户语言、UI locale、个人评分备注；F 第三例覆盖分页、重载、换账户与原账户偏好。四字段 H 由公共详情确认 id/title/description 不变。 |
+| 两用户独立保存显示语言与界面语言，共用配置；对象身份保持 | AC-03 | `TestContentTranslationCorpusAndIndependentPreferencesSurviveRestart` 真正关闭 Server、HTTP host、SQLite 后重开同库，复核两用户语言、UI locale、个人评分备注；F 第三例覆盖分页、重载、换账户与原账户偏好。四字段 H 由公共详情确认 id/title/description 不变。 |
 | 已有目标字段优先，四类和动态内容一致 | AC-03 | 标题名称保护/手写字段 H、Traditional 手写标题 H、系统标签多语言 H、远端标签 H、description/tag/directory H；F 第一例贯通真实 API 的卡片详情与动态目录，第三例翻页。 |
 | 名称和私人文字不外发，原文与纯文本可读 | AC-04 | `ReadsOnlyPublicWorkFields` 先用公开 API 保存个人备注与标签，再验证伪装为公共字段的请求被拒绝，上游仅收到公共标题，最后由详情回读私人原文；本地和远端名称 H 检查模型请求无社团/声优，恢复名称；F 原文切换及字面 `<script>` 无 script 节点。 |
 | 等待、失败、重试与旧结果隔离 | AC-05 | 超时/失败 H 保留原文且不自动重试；F 第二例覆盖 pending、限流、显式重试、换语言取消和离页读者释放，第三例覆盖会话与分页。 |
-| 缓存身份、权限、去重与失效 | AC-06 | `CacheInvalidatesAndHonorsDiskBudget`、远端关闭后缓存不可读、删除作品后缓存不可读；共享队列 H 验证去重和最后读者取消；`TestCacheIdentitySeparatesContentLanguageModelAndTemplate` 验证原文、目标、模型、模板等分离。 |
-| 可调预算、淘汰、低空间与恢复 | AC-06、AC-25 的翻译部分 | 默认值/非法配置/超时 H，共享 trial 队列 H，双并发及在途降低预算 H，4096 字节缓存淘汰 H；冷启动先低盘暂停，再恢复写入，真重启命中；个人记录经公开读取保持。 |
+| 缓存身份、权限、去重与失效 | AC-06 | 远端关闭后缓存不可读、删除作品后缓存不可读；共享队列 H 验证去重和最后读者取消；`TestContentTranslationCacheKeyTracksInputs` 验证原文、目标、模型、模板等分离，`TestContentTranslationInvalidatesOnModelChangeAndReportsSoftBudget` 验证模型变更后的失效。 |
+| 可调预算、淘汰、低空间与恢复 | AC-06、AC-25 的翻译部分 | 默认值/非法配置/超时 H，共享 trial 队列 H，双并发及在途降低预算 H；`TestContentTranslationRetentionHonoursRowBudget` 验证行数预算只淘汰可重建的 model 行、优先淘汰被替代行；`TestContentTranslationLimitsAndTimeoutAreObservableWithoutAutomaticRetry` 覆盖低空间暂停写入；真重启命中；个人记录经公开读取保持。 |
 
 共同 AC-27：当前组合下重新执行配置 URL、重定向禁止转发凭据、DNS 固定、
 地址策略、超大响应、取消、服务错误分类等 HTTP 测试。自动翻译使用同一
@@ -58,10 +58,13 @@ screenshot、trace、video，没有像素、布局或人工视觉验收。
 
 ## 缓存与后续接入边界
 
-默认并发 1、待处理 32、超时 60 秒、缓存 256 MiB、低于 2 GiB 暂停新增缓存。
-缓存独立存放于 `CacheRoot/translations`；按每个 JSON 文件长度向上取整 4 KiB
-计费并限制 8192 条，不声称是所有文件系统的精确分配量。不修改业务数据库
-结构，无新增迁移；069 由 07 使用。
+默认并发 8、待处理 2048、超时 60 秒、行数不限、缓存 256 MiB、低于 2 GiB
+暂停新增缓存。译文存放于迁移 `092` 建立的 SQLite 表 `content_translation`，
+按 `cache_key` 一行一条，`origin` 为 `native` 或 `model`。`maxEntries` 与
+`cacheBytes` 是管理员可见的预算，由预填 worker 旁的低频维护批次执行：
+只删除 `model` 行，优先删除被同一实体、字段、语言的新行替代的旧行，并按
+创建顺序从旧到新淘汰；`native` 行保存原文，不参与淘汰。`minFreeBytes` 未满足
+时不再写入新行，已取得的译文仍返回给调用方。
 
 `catalogEntryId` 仅预留并明确返回 404。本票没有复制 07 的未提交实现，
 没有执行或声称通过 OpenList catalog 翻译联测。07 负责将已批准 loader 接入

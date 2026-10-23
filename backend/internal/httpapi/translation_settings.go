@@ -12,7 +12,15 @@ import (
 )
 
 func (s *Server) getTranslationSettings(w http.ResponseWriter, r *http.Request) {
-	if _, ok := s.requirePermission(w, r, "sources:write"); !ok {
+	user, ok := s.requirePermission(w, r, "sources:write")
+	if !ok {
+		return
+	}
+	// The demo read exemption exists for public catalogue data. A redacted
+	// service configuration still names an upstream endpoint, so an ordinary
+	// viewer must not read it even in Demo mode.
+	if s.cfg.IsDemo() && !userHasPermission(user, "sources:write") {
+		writeAPIError(w, http.StatusForbidden, "permission_denied", "permission denied", false)
 		return
 	}
 	cfg, err := translation.NewStore(s.db).Load(r.Context())

@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -162,4 +163,21 @@ func TestTranslationTrialUsesSavedModelKeyAndOfficialSingleUserTemplate(t *testi
 	if sent = <-requests; sent["authorization"] != "" {
 		t.Fatal("cleared key was still sent")
 	}
+}
+
+// Demo mode skips permission checks for public reads, but a redacted service
+// configuration still points at an upstream endpoint. An ordinary viewer must
+// not read it there either.
+func TestTranslationConfigurationStaysPrivateInDemoMode(t *testing.T) {
+	s := NewServer(openMigratedTestDB(t), config.Config{Mode: config.ModeDemo, RootUsername: "root", CacheRoot: t.TempDir()})
+	if err := s.accountStore.BootstrapDemo(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	host := httptest.NewServer(s.Routes())
+	t.Cleanup(host.Close)
+	// Demo requests run as the shared demo account, which may read public
+	// catalogue data but not a service configuration.
+	const path = "/api/settings/translation"
+	translationRequest(t, host, nil, "GET", path, "", 403)
+	translationRequest(t, host, nil, "PATCH", path, `{"model":"unauthorized"}`, 403)
 }

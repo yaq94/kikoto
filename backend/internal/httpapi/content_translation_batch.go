@@ -128,9 +128,15 @@ func (s *Server) translateBatchItem(ctx context.Context, language string, item c
 	if err != nil {
 		result.Status = "failed"
 		var public *translation.Error
-		if errors.As(err, &public) {
+		switch {
+		case errors.Is(err, errFieldAbsent):
+			// The single-item endpoint rejects a missing field as invalid input.
+			// A batch client must see the same code, otherwise it treats a bad
+			// request as a retryable source outage.
+			result.Code = "translation_invalid_input"
+		case errors.As(err, &public):
 			result.Code = public.Code
-		} else {
+		default:
 			result.Code = "translation_content_unavailable"
 		}
 		return result
