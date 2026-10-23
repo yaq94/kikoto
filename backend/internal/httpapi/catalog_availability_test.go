@@ -83,27 +83,28 @@ func TestCatalogDirectoryListingChecksUnknownAndStaleTabs(t *testing.T) {
 		t.Fatalf("directories = %#v", directories)
 	}
 	deadline := time.Now().Add(5 * time.Second)
+	var path string
 	for {
 		var first, second, checked string
 		if err := f.server.db.QueryRow(`SELECT
 			(SELECT availability_status FROM source_catalog_entry WHERE id=1),
 			(SELECT availability_status FROM source_catalog_entry WHERE id=2),
-			(SELECT status_checked_at FROM source_catalog_entry WHERE id=2)`).Scan(&first, &second, &checked); err != nil {
+				(SELECT status_checked_at FROM source_catalog_entry WHERE id=2),
+				(SELECT relative_path FROM source_catalog_file WHERE catalog_entry_id=2)`).Scan(&first, &second, &checked, &path); err != nil {
 			t.Fatal(err)
 		}
-		if first == "available" && second == "available" && checked != "" && calls.Load() >= 2 {
+		// The seeded card already has an old check timestamp. Wait for the
+		// published file, not the row status, otherwise the read below races
+		// the commit that replaces the snapshot.
+		if first == "available" && second == "available" && checked != "" && path == "checked.wav" {
 			break
 		}
 		if time.Now().After(deadline) {
 			pathsMu.Lock()
-			t.Fatalf("background checks did not finish: first=%s second=%s checked=%s calls=%d paths=%v", first, second, checked, calls.Load(), paths)
+			t.Fatalf("background checks did not finish: first=%s second=%s checked=%s path=%s calls=%d paths=%v", first, second, checked, path, calls.Load(), paths)
 			pathsMu.Unlock()
 		}
 		time.Sleep(25 * time.Millisecond)
-	}
-	var path string
-	if err := f.server.db.QueryRow("SELECT relative_path FROM source_catalog_file WHERE catalog_entry_id=2").Scan(&path); err != nil {
-		t.Fatal(err)
 	}
 	if path != "checked.wav" {
 		t.Fatalf("stale tab kept the old snapshot: %s", path)

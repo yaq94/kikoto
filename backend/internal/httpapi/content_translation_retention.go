@@ -2,7 +2,6 @@ package httpapi
 
 import (
 	"context"
-	"database/sql"
 
 	"github.com/yexca/kikoto/backend/internal/translation"
 )
@@ -81,16 +80,4 @@ func (s *Server) pruneContentTranslations(ctx context.Context, cfg translation.C
 		SELECT id FROM content_translation WHERE origin='model'
 		ORDER BY updated_at,id LIMIT ?)`, remove)
 	return err
-}
-
-// contentTranslationModelRows reports the rows a retention pass may remove.
-// The runtime endpoint uses it to show the budget honestly instead of implying
-// the whole table is evictable.
-func (s *Server) contentTranslationModelRows(ctx context.Context) (int64, error) {
-	var rows int64
-	err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM content_translation WHERE origin='model'`).Scan(&rows)
-	if err == sql.ErrNoRows {
-		return 0, nil
-	}
-	return rows, err
 }
