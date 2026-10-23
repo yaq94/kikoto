@@ -232,3 +232,30 @@ G4–G6 与 G12–G15 不依赖上述改动。
 ## 6. 回滚
 
 H 包没有产品代码、迁移或部署改动。回滚只需删除 `scripts/catalog-bench/` 与本文件；删除本地/服务器 `/tmp` 副本不影响生产。基准脚本对源库只读，写路径全部在副本事务内回滚。
+
+## 7. C1–C9 最终外部探针
+
+时间：2026-10-24。工作树：`E:/项目/服务器/.kikoto-work/worktrees/catalog-probe`；
+分支 `codex/kikoto-catalog-probe`；HEAD `8b44f2b3`。探针文件
+`backend/internal/httpapi/audit_probe_test.go` 未跟踪，未提交。
+
+命令：`go test ./internal/httpapi -run '^TestAudit' -count=1 -v -timeout=25m`
+
+结果：9 PASS / 0 FAIL，exit 0，9.84 秒。
+
+| 项 | 行为 | 结果 |
+|---|---|---|
+| C1 | `MP3+lrc`、`MP3+LRC`、`WAV+lrc` 与团队括号标签 | PASS |
+| C2 | 同编号嵌套包装层不生成第二张卡 | PASS |
+| C3 | 根覆盖判断包含失败的格式副本目录 | PASS（`incomplete=true uncertain=true`） |
+| C4 | 可比较父目录下的系列改名并新增单集 | PASS（`series=1 members=3`） |
+| C5 | 不同父目录的同名系列不 fold | PASS |
+| C6 | 系列根拆分为单集后保留 sidecar 文件行 | PASS（`root sidecar rows=2`） |
+| C7 | 只有辅助目录的发行保留发行标题 | PASS |
+| C8 | 辅助包装层下同编号 bonus 不单独成卡 | PASS |
+| C9 | 19 文件父子包拷贝不发布第二张卡 | PASS（`card count=1`） |
+
+边界：C4 的根目录系列改名仍保持独立待确认，探针使用同一 creator 父目录验证
+可比较改名；C9 无完整哈希时的小集合匹配要求文件名与大小精确一一对应，
+少于 3 个文件的父子拷贝不在自动判重范围。上述边界与已确认的系列父容器、
+证据不足保留和最小包阈值规则一致。
