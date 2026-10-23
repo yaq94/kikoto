@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -21,6 +22,56 @@ type catalogSyncTestEntry struct {
 	IsDir    bool
 	Size     int64
 	Modified string
+}
+
+func TestManualFullIndexRefusesWhileIncrementalSyncRuns(t *testing.T) {
+	tree := newCatalogSyncTestTree()
+	tree.set("/", catalogSyncTestEntry{Name: "Partition A", IsDir: true, Modified: "p1"})
+	tree.set("/Partition A", catalogSyncTestEntry{Name: "Work 001", IsDir: true, Modified: "w1"})
+	tree.set("/Partition A/Work 001", catalogSyncTestEntry{Name: "01.mp3", Size: 100, Modified: "f1"})
+	f := newCatalogSyncFixture(t, tree)
+	if p := f.runFullScan(t, ""); p["status"] != "complete" {
+		t.Fatalf("full scan did not complete: %#v", p)
+	}
+	sourceID := f.sourceID(t)
+	var generation int64
+	if err := f.server.db.QueryRow(`SELECT workflow_run_id FROM source_catalog_scan WHERE file_source_id=?`, sourceID).Scan(&generation); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.server.db.Exec(`INSERT INTO source_catalog_sync_run(file_source_id,status,note) VALUES(?,'running','')`, sourceID); err != nil {
+		t.Fatal(err)
+	}
+	resp := f.request(t, http.MethodPost, "/catalog/index", `{}`, http.StatusConflict)
+	if resp["code"] != "catalog_sync_running" {
+		t.Fatalf("manual full response = %#v", resp)
+	}
+	var after int64
+	if err := f.server.db.QueryRow(`SELECT workflow_run_id FROM source_catalog_scan WHERE file_source_id=?`, sourceID).Scan(&after); err != nil {
+		t.Fatal(err)
+	}
+	if after != generation {
+		t.Fatalf("manual full replaced generation %d with %d", generation, after)
+	}
+}
+
+func TestIncrementalSyncRefusesWhileFullGenerationRuns(t *testing.T) {
+	tree := newCatalogSyncTestTree()
+	tree.set("/", catalogSyncTestEntry{Name: "Partition A", IsDir: true, Modified: "p1"})
+	tree.set("/Partition A", catalogSyncTestEntry{Name: "Work 001", IsDir: true, Modified: "w1"})
+	tree.set("/Partition A/Work 001", catalogSyncTestEntry{Name: "01.mp3", Size: 100, Modified: "f1"})
+	f := newCatalogSyncFixture(t, tree)
+	f.request(t, http.MethodPost, "/catalog/index", `{}`, http.StatusAccepted)
+	ctx := context.WithValue(context.Background(), catalogIndexNoPacingKey{}, true)
+	if _, err := f.server.runCatalogIncrementalSync(ctx, f.sourceID(t), false); !errors.Is(err, errCatalogIndexRunning) {
+		t.Fatalf("incremental sync error = %v, want errCatalogIndexRunning", err)
+	}
+	var runs int
+	if err := f.server.db.QueryRow(`SELECT count(*) FROM source_catalog_sync_run WHERE file_source_id=?`, f.sourceID(t)).Scan(&runs); err != nil {
+		t.Fatal(err)
+	}
+	if runs != 0 {
+		t.Fatalf("incremental sync started %d run(s) while the full generation was queued", runs)
+	}
 }
 
 type catalogSyncTestTree struct {

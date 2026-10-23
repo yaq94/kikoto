@@ -414,6 +414,14 @@ func (s *Server) settleCatalogBatchAt(ctx context.Context, job workflowJobRecord
 			return err
 		}
 	}
+	if reason == "low_disk_space" || reason == "disk_space_unknown" {
+		// A full scan and an incremental sync share the same disk policy:
+		// leave the generation resumable and retry after the condition has a
+		// chance to clear. The next pause re-arms this one-hour window.
+		if err = setCatalogDailyDueAt(ctx, tx.Tx, sourceID, s.catalogTime().Add(time.Hour)); err != nil {
+			return err
+		}
+	}
 	if _, err = tx.ExecContext(ctx, `UPDATE source_catalog_scan SET pause_reason=?,updated_at=CURRENT_TIMESTAMP WHERE file_source_id=?`, reason, sourceID); err != nil {
 		return err
 	}

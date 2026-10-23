@@ -220,6 +220,10 @@ func (s *Server) startSourceCatalogIndex(w http.ResponseWriter, r *http.Request)
 	}
 	result, err := s.enqueueSourceCatalogIndex(r.Context(), id, request.catalogIndexOptions, request.Force)
 	if err != nil {
+		if errors.Is(err, errCatalogSyncRunning) {
+			writeAPIError(w, http.StatusConflict, "catalog_sync_running", "An incremental catalog update is already running.", true)
+			return
+		}
 		writeError(w, err)
 		return
 	}
@@ -243,9 +247,16 @@ func (s *Server) enqueueSourceCatalogIndex(ctx context.Context, sourceID int64, 
 }
 
 func (s *Server) enqueueSourceCatalogIndexTx(ctx context.Context, tx *sql.Tx, sourceID int64, options catalogIndexOptions, trigger string, force bool) (catalogIndexQueued, error) {
+	syncRunning, err := catalogIncrementalSyncRunningTx(ctx, tx, sourceID)
+	if err != nil {
+		return catalogIndexQueued{}, err
+	}
+	if syncRunning {
+		return catalogIndexQueued{}, errCatalogSyncRunning
+	}
 	var runID int64
 	var status string
-	err := tx.QueryRowContext(ctx, `SELECT scan.workflow_run_id,run.status FROM source_catalog_scan scan JOIN workflow_run run ON run.id=scan.workflow_run_id WHERE scan.file_source_id=?`, sourceID).Scan(&runID, &status)
+	err = tx.QueryRowContext(ctx, `SELECT scan.workflow_run_id,run.status FROM source_catalog_scan scan JOIN workflow_run run ON run.id=scan.workflow_run_id WHERE scan.file_source_id=?`, sourceID).Scan(&runID, &status)
 	if err == nil && (status == "queued" || status == "running") {
 		return catalogIndexQueued{runID, true}, nil
 	}

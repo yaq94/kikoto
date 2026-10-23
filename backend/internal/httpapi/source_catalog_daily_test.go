@@ -375,10 +375,9 @@ func TestSourceCatalogDailyRetriesAFailedRun(t *testing.T) {
 	}
 }
 
-// A low-disk pause is not a source failure. The operator has to free space;
-// retrying it every day would keep creating paused generations and would hide
-// the real cause.
-func TestSourceCatalogDailyDoesNotRetryALowDiskPause(t *testing.T) {
+// A low-disk pause is resumable: the same generation is retried after the
+// shared one-hour disk backoff, not replaced by a new generation.
+func TestSourceCatalogDailyRetriesALowDiskPauseAfterOneHour(t *testing.T) {
 	var now atomic.Int64
 	now.Store(time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC).Unix())
 	f := newCatalogIndexFixture(t, emptyCatalogUpstream(t))
@@ -388,19 +387,15 @@ func TestSourceCatalogDailyDoesNotRetryALowDiskPause(t *testing.T) {
 	if _, err := f.server.db.Exec(`UPDATE workflow_run SET status='partial',finished_at=CURRENT_TIMESTAMP WHERE id=?`, runID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.server.db.Exec(`UPDATE source_catalog_scan SET pause_reason='low_disk_space' WHERE file_source_id=1`); err != nil {
+	if _, err := f.server.db.Exec(`UPDATE source_catalog_scan
+		SET pause_reason='low_disk_space',updated_at=datetime(?, 'unixepoch')
+		WHERE file_source_id=1`, now.Load()); err != nil {
 		t.Fatal(err)
 	}
-	// Keep a due date left by an earlier successful scan. A low-disk pause
-	// must override it instead of silently retrying the paused run.
-	if _, err := f.server.db.Exec(`INSERT INTO app_setting(key,value_json) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json`, catalogDailySettingPrefix+"1", strconv.FormatInt(now.Load()-1, 10)); err != nil {
+	if _, err := f.server.db.Exec(`DELETE FROM app_setting WHERE key=?`, catalogDailySettingPrefix+"1"); err != nil {
 		t.Fatal(err)
 	}
-	var scheduled int
-	if err := f.server.db.QueryRow(`SELECT count(*) FROM app_setting WHERE key=?`, catalogDailySettingPrefix+"1").Scan(&scheduled); err != nil || scheduled != 1 {
-		t.Fatalf("daily setting missing: %v", err)
-	}
-	now.Add(int64(48 * time.Hour / time.Second))
+	// Before the backoff ends the paused generation is left alone.
 	if err := f.server.dispatchDueCatalogUpdates(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -409,6 +404,23 @@ func TestSourceCatalogDailyDoesNotRetryALowDiskPause(t *testing.T) {
 		t.Fatal(err)
 	}
 	if current != int64(runID.(float64)) {
-		t.Fatal("low-disk pause was retried without operator action")
+		t.Fatal("low-disk pause replaced its resumable generation")
+	}
+	now.Add(int64(time.Hour/time.Second) + 1)
+	if err := f.server.dispatchDueCatalogUpdates(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.server.db.QueryRow(`SELECT workflow_run_id FROM source_catalog_scan WHERE file_source_id=1`).Scan(&current); err != nil {
+		t.Fatal(err)
+	}
+	if current != int64(runID.(float64)) {
+		t.Fatal("low-disk retry did not resume the same generation")
+	}
+	var jobStatus string
+	if err := f.server.db.QueryRow(`SELECT status FROM workflow_job WHERE workflow_run_id=? AND worker_type=?`, runID, sourceCatalogIndexWorkerType).Scan(&jobStatus); err != nil {
+		t.Fatal(err)
+	}
+	if jobStatus != "queued" {
+		t.Fatalf("low-disk retry job status = %q, want queued", jobStatus)
 	}
 }

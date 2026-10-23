@@ -14,6 +14,12 @@ const (
 	catalogFullSettingPrefix  = "source_catalog_full:"
 )
 
+const catalogDailyDueSQL = `COALESCE(CAST(setting.value_json AS INTEGER),CASE
+	WHEN scan.pause_reason IN ('low_disk_space','disk_space_unknown') THEN unixepoch(scan.updated_at)+3600
+	WHEN scan.pause_reason='' AND run.status IN ('succeeded','partial') THEN unixepoch(run.finished_at)+86400
+	WHEN run.status IN ('failed','cancelled') THEN unixepoch(run.finished_at)+86400
+END)`
+
 func (s *Server) catalogTime() time.Time {
 	if s.catalogNow != nil {
 		return s.catalogNow().UTC()
@@ -34,7 +40,15 @@ func setCatalogDailyNextUpdateTx(ctx context.Context, tx *sql.Tx, sourceID int64
 // low-disk pause uses it so the source is retried when the condition ends
 // instead of waiting a full day.
 func (s *Server) setCatalogDailyDue(ctx context.Context, sourceID int64, due time.Time) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO app_setting(key,value_json) VALUES(?,?)
+	return setCatalogDailyDueAt(ctx, s.db, sourceID, due)
+}
+
+type appSettingExecer interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}
+
+func setCatalogDailyDueAt(ctx context.Context, exec appSettingExecer, sourceID int64, due time.Time) error {
+	_, err := exec.ExecContext(ctx, `INSERT INTO app_setting(key,value_json) VALUES(?,?)
 		ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json`, catalogDailySettingPrefix+strconv.FormatInt(sourceID, 10), due.UTC().Unix())
 	return err
 }
@@ -57,15 +71,7 @@ func (s *Server) dispatchDueCatalogUpdates(ctx context.Context) error {
 		JOIN file_source source ON source.id=scan.file_source_id
 		JOIN workflow_run run ON run.id=scan.workflow_run_id
 		LEFT JOIN app_setting setting ON setting.key=? || scan.file_source_id
-		WHERE source.enabled=1 AND source.source_type=? AND
-			-- A failed or cancelled run also owns a finished_at and a pause
-			-- reason. It must still retry: its incomplete range otherwise
-			-- keeps matching paused forever. A low-disk pause is different:
-			-- it is not finished coverage and waits for the operator.
-			(CASE WHEN scan.pause_reason='low_disk_space' THEN NULL ELSE COALESCE(CAST(setting.value_json AS INTEGER),CASE
-				WHEN scan.pause_reason='' AND run.status IN ('succeeded','partial') THEN unixepoch(run.finished_at)+86400
-				WHEN run.status IN ('failed','cancelled') THEN unixepoch(run.finished_at)+86400
-			END) END)<=?
+			WHERE source.enabled=1 AND source.source_type=? AND `+catalogDailyDueSQL+`<=?
 			AND NOT EXISTS(SELECT 1 FROM source_catalog_sync_run sync WHERE sync.file_source_id=scan.file_source_id AND sync.status='running')
 		ORDER BY scan.file_source_id LIMIT 16`, catalogDailySettingPrefix, sourceTypeOpenList, now.Unix())
 	if err != nil {
@@ -114,11 +120,7 @@ func (s *Server) dispatchCatalogUpdate(ctx context.Context, sourceID int64, now 
 	var due, lastFull sql.NullInt64
 	var generation int64
 	var status string
-	err = tx.QueryRowContext(ctx, `SELECT scan.options_json,
-			(CASE WHEN scan.pause_reason='low_disk_space' THEN NULL ELSE COALESCE(CAST(setting.value_json AS INTEGER),CASE
-				WHEN scan.pause_reason='' AND run.status IN ('succeeded','partial') THEN unixepoch(run.finished_at)+86400
-				WHEN run.status IN ('failed','cancelled') THEN unixepoch(run.finished_at)+86400
-			END) END),
+	err = tx.QueryRowContext(ctx, `SELECT scan.options_json,`+catalogDailyDueSQL+`,
 			scan.workflow_run_id,run.status,
 			CAST(full_setting.value_json AS INTEGER)
 		FROM source_catalog_scan scan JOIN workflow_run run ON run.id=scan.workflow_run_id

@@ -30,6 +30,11 @@ const (
 	catalogSyncMaxNote          = 600
 )
 
+var (
+	errCatalogSyncRunning  = errors.New("catalog incremental sync is already running")
+	errCatalogIndexRunning = errors.New("catalog full index is already running")
+)
+
 type catalogSyncRunState struct {
 	ID               int64
 	SourceID         int64
@@ -84,6 +89,30 @@ func catalogSyncBoolInt(value bool) int {
 	return 0
 }
 
+func catalogIncrementalSyncRunningTx(ctx context.Context, tx *sql.Tx, sourceID int64) (bool, error) {
+	var id int64
+	err := tx.QueryRowContext(ctx, `SELECT id FROM source_catalog_sync_run
+		WHERE file_source_id=? AND status='running'`, sourceID).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+func catalogFullIndexRunningTx(ctx context.Context, tx *sql.Tx, sourceID int64) (bool, error) {
+	var status string
+	err := tx.QueryRowContext(ctx, `SELECT run.status FROM source_catalog_scan scan
+		JOIN workflow_run run ON run.id=scan.workflow_run_id
+		WHERE scan.file_source_id=?`, sourceID).Scan(&status)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return status == "queued" || status == "running", nil
+}
+
 func enqueueCatalogSyncTx(ctx context.Context, tx *sql.Tx, sourceID int64, force bool) (int64, error) {
 	// A process that stopped during a long probe leaves one running row. Six
 	// hours is well above a full 3k-directory pass at the observed latency and
@@ -98,6 +127,13 @@ func enqueueCatalogSyncTx(ctx context.Context, tx *sql.Tx, sourceID int64, force
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
 		return 0, err
+	}
+	fullRunning, err := catalogFullIndexRunningTx(ctx, tx, sourceID)
+	if err != nil {
+		return 0, err
+	}
+	if fullRunning {
+		return 0, errCatalogIndexRunning
 	}
 	result, err := tx.ExecContext(ctx, `INSERT INTO source_catalog_sync_run(file_source_id,status,force) VALUES(?, 'running', ?)`, sourceID, catalogSyncBoolInt(force))
 	if err != nil {
