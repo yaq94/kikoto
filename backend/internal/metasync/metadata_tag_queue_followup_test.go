@@ -60,7 +60,10 @@ func TestMetadataTagQueueEmptyQueueSkipsWriteTransaction(t *testing.T) {
 	}
 	defer func() { _, _ = conn.ExecContext(context.Background(), "ROLLBACK") }()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	// The held writer lock must not be entered at all. Allow the empty
+	// pre-check enough time to run under the race detector; a real write
+	// attempt still fails when its five-second lock budget expires.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	count, err := processMetadataTagQueue(ctx, db, 8, nil, time.Now(), 5*time.Second)
 	if err != nil || count != 0 {

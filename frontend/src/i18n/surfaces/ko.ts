@@ -111,6 +111,7 @@ export const surfaceKorean = {
     episodeReview: "에피소드 개인 평가: {{title}}",
     series: "시리즈",
     episodes: "에피소드",
+    missing: "소스에 없음",
     openEpisode: "에피소드 열기",
     openSeries: "시리즈 열기",
     group: "시리즈로 묶기",

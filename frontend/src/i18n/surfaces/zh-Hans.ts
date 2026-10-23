@@ -110,6 +110,7 @@ export const surfaceHans = {
     episodeReview: "单集评价：{{title}}",
     series: "音声系列",
     episodes: "单集",
+    missing: "来源中缺失",
     openEpisode: "打开单集",
     openSeries: "打开系列",
     group: "归入系列",

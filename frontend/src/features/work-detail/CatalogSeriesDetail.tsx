@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "@/auth/AuthProvider";
-import { api, type CatalogSeries } from "@/lib/api";
+import { api, type CatalogSeries, type CatalogSeriesEpisode } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import {
   ContentTranslationScope,
@@ -11,6 +11,46 @@ import {
 import { openWorkDetail } from "@/app/workDetailNavigation";
 import { PersonalReviewEditor } from "./PersonalReviewEditor";
 import { SharedAssociationPanel } from "./SharedAssociationPanel";
+
+export function openCatalogSeriesEpisode(seriesId: number, seriesTitle: string, episodeId: number) {
+  return openWorkDetail(
+    { kind: "catalog", catalogEntryId: episodeId },
+    { returnTo: `/catalog-series/${seriesId}`, returnLabel: seriesTitle },
+  );
+}
+
+export function CatalogSeriesEpisodeItem({
+  episode,
+  seriesId,
+  seriesTitle,
+}: {
+  episode: CatalogSeriesEpisode;
+  seriesId: number;
+  seriesTitle: string;
+}) {
+  const { t } = useTranslation();
+  const missing = episode.status === "missing";
+  return (
+    <li className="flex items-center justify-between gap-3 py-3" data-episode-status={episode.status ?? "available"}>
+      <ContentResourceScope resource={{ catalogEntryId: episode.catalogEntryId }}>
+        <span className="flex min-w-0 flex-wrap items-center gap-2">
+          <span>
+            {episode.position}. <TranslatedText text={episode.title} field="title" />
+          </span>
+          {missing && (
+            <span className="rounded bg-muted px-1.5 py-0.5 text-xs font-medium text-muted-foreground">
+              {t("catalogSeries.missing")}
+            </span>
+          )}
+        </span>
+      </ContentResourceScope>
+      <span className="text-sm text-muted-foreground">{episode.sourceName}</span>
+      <Button variant="outline" onClick={() => openCatalogSeriesEpisode(seriesId, seriesTitle, episode.catalogEntryId)}>
+        {t("catalogSeries.openEpisode")}
+      </Button>
+    </li>
+  );
+}
 
 export function CatalogSeriesDetail({ id, onBack }: { id: number; onBack: () => void }) {
   const { t } = useTranslation();
@@ -47,25 +87,12 @@ export function CatalogSeriesDetail({ id, onBack }: { id: number; onBack: () => 
           </header>
           <ol className="divide-y divide-border" aria-label={t("catalogSeries.episodes")}>
             {series.episodes.map((episode) => (
-              <li key={episode.catalogEntryId} className="flex items-center justify-between gap-3 py-3">
-                <ContentResourceScope resource={{ catalogEntryId: episode.catalogEntryId }}>
-                  <span>
-                    {episode.position}. <TranslatedText text={episode.title} field="title" />
-                  </span>
-                </ContentResourceScope>
-                <span className="text-sm text-muted-foreground">{episode.sourceName}</span>
-                <Button
-                  variant="outline"
-                  onClick={() =>
-                    openWorkDetail(
-                      { kind: "catalog", catalogEntryId: episode.catalogEntryId },
-                      { returnTo: `/catalog-series/${id}`, returnLabel: series.title },
-                    )
-                  }
-                >
-                  {t("catalogSeries.openEpisode")}
-                </Button>
-              </li>
+              <CatalogSeriesEpisodeItem
+                key={episode.catalogEntryId}
+                episode={episode}
+                seriesId={id}
+                seriesTitle={series.title}
+              />
             ))}
           </ol>
           <SharedAssociationPanel
