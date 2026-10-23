@@ -123,6 +123,47 @@ func TestSourceCatalogTwoTrackPackageCopyDoesNotPublishCard(t *testing.T) {
 	}
 }
 
+// A complete one-file copy is still a format copy. Parent and child must agree
+// on the exact file identity; a lone track below a larger parent stays a real
+// independent excerpt.
+func TestSourceCatalogSingleFileFormatCopyDoesNotPublishSecondCard(t *testing.T) {
+	f := newLooseWorkFixture(t, map[string][]map[string]any{
+		"/":             {looseDir("Creator")},
+		"/Creator":      {looseAudioSized("only.mp3", 12345), looseDir("Copy")},
+		"/Creator/Copy": {looseAudioSized("only.mp3", 12345)},
+	})
+	f.request(t, http.MethodPost, "/catalog/index", `{"intervalMs":100}`, 202)
+	if progress := f.drain(t); progress["status"] != "complete" {
+		t.Fatalf("scan = %#v", progress)
+	}
+	card := catalogRegressionCard(t, f.cards(t), "Creator")
+	if got := countCatalogAudio(f.tracks(t, card)); got != 1 {
+		t.Fatalf("parent tracks=%d, want one", got)
+	}
+}
+
+// The bonus allowance also applies to small packages: every parent file plus
+// one extra recording remains one canonical card and keeps the bonus playable.
+func TestSourceCatalogSmallPackageCopyKeepsUniqueBonus(t *testing.T) {
+	f := newLooseWorkFixture(t, map[string][]map[string]any{
+		"/":             {looseDir("Creator")},
+		"/Creator":      {looseAudioSized("01.mp3", 1000), looseAudioSized("02.mp3", 2000), looseDir("Copy")},
+		"/Creator/Copy": {looseAudioSized("01.mp3", 1000), looseAudioSized("02.mp3", 2000), looseAudioSized("bonus.mp3", 3000)},
+	})
+	f.request(t, http.MethodPost, "/catalog/index", `{"intervalMs":100}`, 202)
+	if progress := f.drain(t); progress["status"] != "complete" {
+		t.Fatalf("scan = %#v", progress)
+	}
+	card := catalogRegressionCard(t, f.cards(t), "Creator")
+	tracks := f.tracks(t, card)
+	if got := countCatalogAudio(tracks); got != 3 {
+		t.Fatalf("parent tracks=%d, want two originals plus bonus", got)
+	}
+	if !catalogRegressionPaths(tracks)["Copy/bonus.mp3"] {
+		t.Fatalf("bonus is not addressable: %#v", catalogRegressionPaths(tracks))
+	}
+}
+
 // Explicit episode numbers on loose files describe a series, not one work with
 // six tracks. Each episode remains independently addressable and reviewable.
 func TestSourceCatalogLooseEpisodeFilesBecomeASeries(t *testing.T) {

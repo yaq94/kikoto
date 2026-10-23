@@ -2206,14 +2206,14 @@ func catalogDuplicateDirectoryDecisionTx(ctx context.Context, tx *sql.Tx, source
 		return catalogDuplicateDecision{}, nil
 	}
 	child, err := catalogAudioFilesTx(ctx, tx, sourceID, generation, directoryPath, true)
-	if err != nil || len(child) < catalogDuplicateMinimumFiles {
+	if err != nil || len(child) == 0 {
 		return catalogDuplicateDecision{}, err
 	}
 	parentFiles, err := catalogAudioFilesTx(ctx, tx, sourceID, generation, parent, false)
 	if err != nil {
 		return catalogDuplicateDecision{}, err
 	}
-	if len(parentFiles) >= catalogDuplicateMinimumFiles {
+	if len(parentFiles) > 0 {
 		matched, duplicate := catalogDuplicateMatches(child, parentFiles)
 		if !duplicate {
 			return catalogDuplicateDecision{}, nil
@@ -2301,6 +2301,15 @@ func catalogDuplicateMatches(child, parent []catalogAudioFile) ([]bool, bool) {
 		if ok {
 			matchedCount++
 		}
+	}
+	// A package may contain every parent recording plus a small number of
+	// bonus files. The parent is still the canonical card; only the bonus
+	// stays pending. Keep the allowance narrow so an unrelated compilation
+	// that happens to reuse a few tracks is not folded into the parent.
+	if matchedCount == len(parent) && len(child) >= len(parent) &&
+		(len(child) <= len(parent)+2 || len(child)*10 <= len(parent)*12) &&
+		(hashes || exactNameMatches >= len(parent)) {
+		return matched, true
 	}
 	small := len(child) < catalogDuplicateSmallSet || len(parent) < catalogDuplicateSmallSet
 	if hashes {
