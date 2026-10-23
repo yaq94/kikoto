@@ -227,27 +227,158 @@ func TestSourceCatalogFormatCardStaysWhenSubtreeFails(t *testing.T) {
 	}
 }
 
-// A card that already owns a work or a series episode is never retired
-// automatically; choosing a parent would merge two identities.
-func TestSourceCatalogFormatCardWithWorkOrSeriesIsNotRetired(t *testing.T) {
+// A review saved on an old format card creates a work for that card. Once the
+// release card owns the same audio, retirement must move that work to the
+// release instead of leaving both cards visible.
+func TestSourceCatalogReviewedFormatCardRetiresIntoReleaseWork(t *testing.T) {
 	f := newLooseWorkFixture(t, formatCardTree())
 	sourceID := fixtureSourceID(t, f)
+	f.request(t, http.MethodPost, "/catalog/index", `{"intervalMs":100}`, 202)
+	if p := f.drain(t); p["status"] != "complete" {
+		t.Fatalf("first scan = %#v", p)
+	}
+	release := f.cards(t)["Release"]
+	if release == nil {
+		t.Fatalf("cards=%v, want the release card", f.cards(t))
+	}
+	releaseID := int64(release["catalogEntryId"].(float64))
+	staleID := seedFormatCard(t, f.server.db, sourceID, "/Creator/Release/MP3", "MP3", 0, []string{"01 first.mp3", "02 second.mp3"})
+	saved := reviewRequest(t, f.handler, f.cookie, http.MethodPatch, "/api/source-catalog/"+strconv.FormatInt(staleID, 10)+"/user-state", `{"rating":4,"note":"Format review"}`, 200)
+	staleWorkID := int64(saved["workId"].(float64))
 
-	result, err := f.server.db.Exec(`INSERT INTO work(primary_code,title) VALUES('','Retained format work')`)
-	if err != nil {
+	f.request(t, http.MethodPost, "/catalog/index", `{"intervalMs":100,"force":true}`, 202)
+	if p := f.drain(t); p["status"] != "complete" {
+		t.Fatalf("rescan = %#v", p)
+	}
+	cards := f.cards(t)
+	if len(cards) != 1 || cards["Release"] == nil {
+		t.Fatalf("cards=%v, want only the release card", cards)
+	}
+	var releaseWork, staleWork sql.NullInt64
+	if err := f.server.db.QueryRow(`SELECT work_id FROM source_catalog_entry WHERE id=?`, releaseID).Scan(&releaseWork); err != nil {
 		t.Fatal(err)
 	}
-	workID, err := result.LastInsertId()
-	if err != nil {
+	if err := f.server.db.QueryRow(`SELECT work_id FROM source_catalog_entry WHERE id=?`, staleID).Scan(&staleWork); err != nil {
 		t.Fatal(err)
 	}
-	workCard := seedFormatCard(t, f.server.db, sourceID, "/Creator/Release/MP3", "MP3", 0, []string{"01 first.mp3"})
-	if _, err = f.server.db.Exec(`UPDATE source_catalog_entry SET work_id=? WHERE id=?`, workID, workCard); err != nil {
+	if !releaseWork.Valid || releaseWork.Int64 != staleWorkID || staleWork.Valid {
+		t.Fatalf("release work=%v stale work=%v, want work %d moved to the release", releaseWork, staleWork, staleWorkID)
+	}
+	detail := catalogCardByID(t, f, staleID)
+	if int64(detail["catalogEntryId"].(float64)) != releaseID {
+		t.Fatalf("old id resolves to %#v, want the release", detail)
+	}
+	assertReview(t, detail, float64(4), "Format review")
+}
+
+// Conflicting reviews stay on their original works. The old card must remain
+// visible so its owner can resolve the conflict instead of one value silently
+// replacing the other.
+func TestSourceCatalogReviewedFormatCardKeepsConflictingReviews(t *testing.T) {
+	f := newLooseWorkFixture(t, formatCardTree())
+	sourceID := fixtureSourceID(t, f)
+	f.request(t, http.MethodPost, "/catalog/index", `{"intervalMs":100}`, 202)
+	if p := f.drain(t); p["status"] != "complete" {
+		t.Fatalf("first scan = %#v", p)
+	}
+	release := f.cards(t)["Release"]
+	if release == nil {
+		t.Fatalf("cards=%v, want the release card", f.cards(t))
+	}
+	releaseID := int64(release["catalogEntryId"].(float64))
+	reviewRequest(t, f.handler, f.cookie, http.MethodPatch, "/api/source-catalog/"+strconv.FormatInt(releaseID, 10)+"/user-state", `{"rating":4,"note":"Release review"}`, 200)
+	staleID := seedFormatCard(t, f.server.db, sourceID, "/Creator/Release/MP3", "MP3", 0, []string{"01 first.mp3", "02 second.mp3"})
+	reviewRequest(t, f.handler, f.cookie, http.MethodPatch, "/api/source-catalog/"+strconv.FormatInt(staleID, 10)+"/user-state", `{"rating":5,"note":"Format review"}`, 200)
+
+	f.request(t, http.MethodPost, "/catalog/index", `{"intervalMs":100,"force":true}`, 202)
+	if p := f.drain(t); p["status"] != "complete" {
+		t.Fatalf("rescan = %#v", p)
+	}
+	var source sql.NullInt64
+	var relocated sql.NullInt64
+	if err := f.server.db.QueryRow(`SELECT file_source_id,relocated_to_id FROM source_catalog_entry WHERE id=?`, staleID).Scan(&source, &relocated); err != nil {
+		t.Fatal(err)
+	}
+	if !source.Valid || source.Int64 != sourceID || relocated.Valid {
+		t.Fatalf("conflicting format card source=%v relocated=%v, want it retained", source, relocated)
+	}
+	var files int
+	if err := f.server.db.QueryRow(`SELECT count(*) FROM source_catalog_file WHERE catalog_entry_id=? AND kind='audio'`, staleID).Scan(&files); err != nil {
+		t.Fatal(err)
+	}
+	if files != 2 {
+		t.Fatalf("conflicting format card kept %d of 2 audio rows", files)
+	}
+	assertReview(t, catalogCardByID(t, f, releaseID), float64(4), "Release review")
+	assertReview(t, catalogCardByID(t, f, staleID), float64(5), "Format review")
+}
+
+// Non-conflicting records from every user move to the release work. A value the
+// release already stores wins; empty fields are filled from the retired work.
+func TestSourceCatalogReviewedFormatCardMergesNonConflictingStates(t *testing.T) {
+	f := newLooseWorkFixture(t, formatCardTree())
+	sourceID := fixtureSourceID(t, f)
+	f.request(t, http.MethodPost, "/catalog/index", `{"intervalMs":100}`, 202)
+	if p := f.drain(t); p["status"] != "complete" {
+		t.Fatalf("first scan = %#v", p)
+	}
+	release := f.cards(t)["Release"]
+	if release == nil {
+		t.Fatalf("cards=%v, want the release card", f.cards(t))
+	}
+	releaseID := int64(release["catalogEntryId"].(float64))
+	reviewRequest(t, f.handler, f.cookie, http.MethodPatch, "/api/source-catalog/"+strconv.FormatInt(releaseID, 10)+"/user-state", `{"rating":4}`, 200)
+	staleID := seedFormatCard(t, f.server.db, sourceID, "/Creator/Release/MP3", "MP3", 0, []string{"01 first.mp3", "02 second.mp3"})
+	saved := reviewRequest(t, f.handler, f.cookie, http.MethodPatch, "/api/source-catalog/"+strconv.FormatInt(staleID, 10)+"/user-state", `{"rating":4,"note":"Format review"}`, 200)
+	staleWorkID := int64(saved["workId"].(float64))
+
+	createAccountManagedTestUser(t, f.server, "format-listener", "format-password")
+	listener := loginTestSession(t, f.handler, "format-listener", "format-password")
+	var listenerID int64
+	if err := f.server.db.QueryRow(`SELECT id FROM user_account WHERE username='format-listener'`).Scan(&listenerID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.server.db.Exec(`INSERT INTO user_work_state(user_id,work_id,rating,note) VALUES(?,?,5,'Listener note')`, listenerID, staleWorkID); err != nil {
 		t.Fatal(err)
 	}
 
+	f.request(t, http.MethodPost, "/catalog/index", `{"intervalMs":100,"force":true}`, 202)
+	if p := f.drain(t); p["status"] != "complete" {
+		t.Fatalf("rescan = %#v", p)
+	}
+	cards := f.cards(t)
+	if len(cards) != 1 || cards["Release"] == nil {
+		t.Fatalf("cards=%v, want only the release card", cards)
+	}
+	var releaseWork, staleWork sql.NullInt64
+	if err := f.server.db.QueryRow(`SELECT work_id FROM source_catalog_entry WHERE id=?`, releaseID).Scan(&releaseWork); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.server.db.QueryRow(`SELECT work_id FROM source_catalog_entry WHERE id=?`, staleID).Scan(&staleWork); err != nil {
+		t.Fatal(err)
+	}
+	if !releaseWork.Valid || releaseWork.Int64 == staleWorkID || staleWork.Valid {
+		t.Fatalf("release work=%v stale work=%v, want records merged into the release work", releaseWork, staleWork)
+	}
+	assertReview(t, catalogCardByID(t, f, releaseID), float64(4), "Format review")
+	assertReview(t, catalogCardByID(t, f, staleID), float64(4), "Format review")
+	assertReview(t, reviewRequest(t, f.handler, listener, http.MethodGet, "/api/source-catalog/"+strconv.FormatInt(releaseID, 10), "", 200), float64(5), "Listener note")
+	var remaining int
+	if err := f.server.db.QueryRow(`SELECT count(*) FROM user_work_state WHERE work_id=?`, staleWorkID).Scan(&remaining); err != nil {
+		t.Fatal(err)
+	}
+	if remaining != 0 {
+		t.Fatalf("retired work kept %d personal state rows", remaining)
+	}
+}
+
+// A series member is a separate evaluation object; moving it into a release
+// card would merge two identities.
+func TestSourceCatalogFormatCardSeriesMemberIsNotRetired(t *testing.T) {
+	f := newLooseWorkFixture(t, formatCardTree())
+	sourceID := fixtureSourceID(t, f)
 	seriesCard := seedFormatCard(t, f.server.db, sourceID, "/Creator/Release/FLAC", "FLAC", 0, []string{"01 first.flac"})
-	result, err = f.server.db.Exec(`INSERT INTO catalog_series(title,source_id,source_key) VALUES('Retained series',?,'retained-format-series')`, sourceID)
+	result, err := f.server.db.Exec(`INSERT INTO catalog_series(title,source_id,source_key) VALUES('Retained series',?,'retained-format-series')`, sourceID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -263,21 +394,19 @@ func TestSourceCatalogFormatCardWithWorkOrSeriesIsNotRetired(t *testing.T) {
 	if p := f.drain(t); p["status"] != "complete" {
 		t.Fatalf("rescan = %#v", p)
 	}
-	for name, id := range map[string]int64{"work": workCard, "series": seriesCard} {
-		var source sql.NullInt64
-		var relocated sql.NullInt64
-		if err := f.server.db.QueryRow(`SELECT file_source_id,relocated_to_id FROM source_catalog_entry WHERE id=?`, id).Scan(&source, &relocated); err != nil {
-			t.Fatal(err)
-		}
-		if !source.Valid || source.Int64 != sourceID || relocated.Valid {
-			t.Fatalf("%s card source=%v relocated=%v, want it retained", name, source, relocated)
-		}
-		var files int
-		if err := f.server.db.QueryRow(`SELECT count(*) FROM source_catalog_file WHERE catalog_entry_id=?`, id).Scan(&files); err != nil {
-			t.Fatal(err)
-		}
-		if files == 0 {
-			t.Fatalf("%s card lost its file rows", name)
-		}
+	var source sql.NullInt64
+	var relocated sql.NullInt64
+	if err := f.server.db.QueryRow(`SELECT file_source_id,relocated_to_id FROM source_catalog_entry WHERE id=?`, seriesCard).Scan(&source, &relocated); err != nil {
+		t.Fatal(err)
+	}
+	if !source.Valid || source.Int64 != sourceID || relocated.Valid {
+		t.Fatalf("series card source=%v relocated=%v, want it retained", source, relocated)
+	}
+	var files int
+	if err := f.server.db.QueryRow(`SELECT count(*) FROM source_catalog_file WHERE catalog_entry_id=?`, seriesCard).Scan(&files); err != nil {
+		t.Fatal(err)
+	}
+	if files == 0 {
+		t.Fatal("series card lost its file rows")
 	}
 }

@@ -7,15 +7,29 @@ import (
 	"testing"
 )
 
+type catalogAudioTestFile struct {
+	name string
+	size int64
+}
+
 func seedCatalogAudioDirectory(t *testing.T, db *sql.DB, sourceID int64, directory string, sizes []int64) {
+	t.Helper()
+	files := make([]catalogAudioTestFile, 0, len(sizes))
+	for index, size := range sizes {
+		files = append(files, catalogAudioTestFile{name: fmt.Sprintf("%02d.mp3", index), size: size})
+	}
+	seedCatalogAudioDirectoryFiles(t, db, sourceID, directory, files)
+}
+
+func seedCatalogAudioDirectoryFiles(t *testing.T, db *sql.DB, sourceID int64, directory string, files []catalogAudioTestFile) {
 	t.Helper()
 	if _, err := db.Exec(`INSERT INTO source_catalog_directory(file_source_id,path,generation,revision,partition_path,catalog_root,status)
 		VALUES(?,?,1,1,?,?,'complete')`, sourceID, directory, directory, directory); err != nil {
 		t.Fatal(err)
 	}
-	for index, size := range sizes {
+	for _, file := range files {
 		if _, err := db.Exec(`INSERT INTO source_catalog_observation(file_source_id,directory_path,name,revision,kind,size_bytes)
-			VALUES(?,?,?,1,'audio',?)`, sourceID, directory, fmt.Sprintf("%02d.mp3", index), size); err != nil {
+				VALUES(?,?,?,1,'audio',?)`, sourceID, directory, file.name, file.size); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -23,11 +37,24 @@ func seedCatalogAudioDirectory(t *testing.T, db *sql.DB, sourceID int64, directo
 
 func duplicateDirectoryResult(t *testing.T, parentSizes, childSizes []int64) bool {
 	t.Helper()
+	parent := make([]catalogAudioTestFile, 0, len(parentSizes))
+	child := make([]catalogAudioTestFile, 0, len(childSizes))
+	for index, size := range parentSizes {
+		parent = append(parent, catalogAudioTestFile{name: fmt.Sprintf("%02d.mp3", index), size: size})
+	}
+	for index, size := range childSizes {
+		child = append(child, catalogAudioTestFile{name: fmt.Sprintf("%02d.mp3", index), size: size})
+	}
+	return duplicateDirectoryFilesResult(t, parent, child)
+}
+
+func duplicateDirectoryFilesResult(t *testing.T, parent, child []catalogAudioTestFile) bool {
+	t.Helper()
 	db := openMigratedTestDB(t)
 	const sourceID = int64(84)
 	seedCatalogCleanupJob(t, db, sourceID, 804)
-	seedCatalogAudioDirectory(t, db, sourceID, "/collection", parentSizes)
-	seedCatalogAudioDirectory(t, db, sourceID, "/collection/copy", childSizes)
+	seedCatalogAudioDirectoryFiles(t, db, sourceID, "/collection", parent)
+	seedCatalogAudioDirectoryFiles(t, db, sourceID, "/collection/copy", child)
 	tx, err := db.BeginTx(context.Background(), &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		t.Fatal(err)
@@ -47,6 +74,37 @@ func TestCatalogDuplicateDirectoryMatchesFilesOneToOne(t *testing.T) {
 	}
 	if !duplicateDirectoryResult(t, sizes, sizes) {
 		t.Fatal("an identical audio set must be treated as a format copy")
+	}
+}
+
+func TestCatalogDuplicateDirectoryMatchesSmallPackageCopy(t *testing.T) {
+	files := make([]catalogAudioTestFile, 19)
+	for index := range files {
+		files[index] = catalogAudioTestFile{
+			name: fmt.Sprintf("Track %02d.mp3", index+1),
+			size: 10_000_000 + int64(index)*4_096,
+		}
+	}
+	if !duplicateDirectoryFilesResult(t, files, files) {
+		t.Fatal("a small package copy must still be treated as a duplicate")
+	}
+}
+
+func TestCatalogDuplicateDirectoryKeepsDistinctSmallWork(t *testing.T) {
+	parent := make([]catalogAudioTestFile, 19)
+	child := make([]catalogAudioTestFile, 19)
+	for index := range parent {
+		parent[index] = catalogAudioTestFile{
+			name: fmt.Sprintf("Track %02d.mp3", index+1),
+			size: 10_000_000 + int64(index)*4_096,
+		}
+		child[index] = catalogAudioTestFile{
+			name: fmt.Sprintf("Track %02d.mp3", index+1),
+			size: 20_000_000 + int64(index)*8_192,
+		}
+	}
+	if duplicateDirectoryFilesResult(t, parent, child) {
+		t.Fatal("two small works with different recordings must not be merged")
 	}
 }
 

@@ -217,12 +217,11 @@ func TestCatalogRetireBatchStopsAfterOneHundredRetirements(t *testing.T) {
 }
 
 // Identity and coverage keep their old meaning after the move out of publish:
-// work, series and inbound aliases retain the stale card, partial coverage
+// series members and inbound aliases retain the stale card, partial coverage
 // retains it, and only the covered container becomes an alias.
 func TestCatalogRetireBatchKeepsIdentityAndPartialCoverage(t *testing.T) {
 	s, db := newRetireTestServer(t)
 	const generation = int64(1)
-	metadataReviewExec(t, db, `INSERT INTO work(id,primary_code,title) VALUES(77,'','Retained work')`)
 
 	tx, err := db.Begin()
 	if err != nil {
@@ -234,14 +233,6 @@ func TestCatalogRetireBatchKeepsIdentityAndPartialCoverage(t *testing.T) {
 	coveredLive := insertRetireEntry(t, tx, 4, "/Example/Covered/Release", "", "Covered", generation)
 	insertRetireFile(t, tx, coveredStale, "Release/track.mp3", 0)
 	insertRetireFile(t, tx, coveredLive, "track.mp3", generation)
-
-	workStale := insertRetireEntry(t, tx, 4, "/Example/Work", "", "Work", 0)
-	workLive := insertRetireEntry(t, tx, 4, "/Example/Work/Release", "", "Work", generation)
-	insertRetireFile(t, tx, workStale, "Release/track.mp3", 0)
-	insertRetireFile(t, tx, workLive, "track.mp3", generation)
-	if _, err = tx.Exec(`UPDATE source_catalog_entry SET work_id=77 WHERE id=?`, workStale); err != nil {
-		t.Fatal(err)
-	}
 
 	seriesStale := insertRetireEntry(t, tx, 4, "/Example/Series", "", "Series", 0)
 	seriesLive := insertRetireEntry(t, tx, 4, "/Example/Series/Release", "", "Series", generation)
@@ -291,7 +282,7 @@ func TestCatalogRetireBatchKeepsIdentityAndPartialCoverage(t *testing.T) {
 	if source.Valid || !relocated.Valid || relocated.Int64 != coveredLive || files != 0 {
 		t.Fatalf("covered stale source=%v relocated=%v files=%d, want alias of %d", source, relocated, files, coveredLive)
 	}
-	for name, id := range map[string]int64{"work": workStale, "series": seriesStale, "alias": aliasStale, "partial": partialStale} {
+	for name, id := range map[string]int64{"series": seriesStale, "alias": aliasStale, "partial": partialStale} {
 		source, relocated, files = retireCardState(t, db, id)
 		if !source.Valid || source.Int64 != 4 || relocated.Valid {
 			t.Fatalf("%s stale source=%v relocated=%v, want it retained", name, source, relocated)
