@@ -359,9 +359,10 @@ identity, or the successor has no code. The move covers saved lists, tags,
 playback, listening totals and portable progress. If any user has conflicting
 ratings, notes, favorite-list notes or positions, or an existing target
 progress row, retirement keeps both cards and both records until that owner
-reconciles them. Empty favorite fields are filled from the old row. A series
-member or an incoming relocation keeps its identity for explicit review
-instead of being merged into a guessed parent.
+reconciles them. Empty favorite fields are filled from the old row. A card that
+owns a different work, has a series membership or has an incoming relocation
+keeps its identity for explicit review instead of being merged into a guessed
+parent.
 
 Personal-transfer references stay attached to the retained catalog row, so an
 import never has to guess a different object. A known but unregistered catalog

@@ -1,5 +1,9 @@
 # 个人记录保留、冲突与 catalog alias
 
+## 基线
+
+- 起点 `73366b65`；实现提交 `49ce1c7a`；合并 `codex/kikoto-catalog-remediation` tip `d690571c` 的 merge commit `f247cf38`；测试补充提交 `a1e9214d`。
+
 ## 保留规则
 
 - 格式卡退休时，同一用户在同一收藏列表的旧卡与目标卡都有已填写备注或非零排序且值不同，保留两张卡及两条记录，自动退休保持待处理。
@@ -11,9 +15,10 @@
 
 ## 证据
 
-- `go test ./internal/httpapi -run 'TestSourceCatalog.*FormatCard|TestCatalogPrune|TestPersonalTransfer' -count=1 -timeout=15m`：退出 0，53.299s。
-- `go test ./internal/personal ./internal/catalogprune -count=1 -timeout=10m`：退出 0，personal 19.974s；catalogprune 无测试文件。
-- `go test ./internal/httpapi -count=1 -timeout=20m`：退出 0，418.824s。
+- `go test ./internal/httpapi -run 'TestSourceCatalog.*FormatCard|TestCatalogPrune|TestPersonalTransfer' -count=1 -timeout=15m`：正确合并基线上退出 0，49.099s。
+- `go test ./internal/personal -count=1 -timeout=10m`：正确合并基线上退出 0，14.886s。
+- `go test ./internal/httpapi -count=1 -timeout=20m`：正确合并基线上退出 0，416.428s。
+- `node scripts/check-doc-links.mjs` 与 `node scripts/check-doc-locales.mjs`：退出 0，132 个公开 Markdown 链接及 5 个文档语言/11 个用户页检查通过。
 - H/R 场景 `TestPersonalTransferRestoresKnownUnregisteredCatalogSeriesAndEpisodeAcrossRestart`：无码 catalog、episode、series 三类对象预览均需新建工作，普通用户无登记权限时 403 且零工作；管理员导入 3 条、重复导入仍 3 条、导出层级和备注一致、重启后仍 3 个工作且目录/系列关联保留；其他用户导出为空；无媒体、工作流或共享成员写入。
 - 冲突场景覆盖收藏备注、收藏排序、空目标迁移、transfer progress 已有值、不同用户不冲突、任一用户冲突阻塞以及该用户解决后恢复退休。
 
