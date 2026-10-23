@@ -12,10 +12,11 @@ import (
 // though the parent path, and therefore the derived series key, changed.
 func TestCatalogSeriesDirectoryRenameKeepsOneSeries(t *testing.T) {
 	f := newLooseWorkFixture(t, map[string][]map[string]any{
-		"/":                          {looseDir("Series: Example")},
-		"/Series: Example":           {looseDir("Episode 1"), looseDir("Episode 2")},
-		"/Series: Example/Episode 1": {looseAudioSized("01.mp3", 100), looseAudioSized("02.mp3", 200)},
-		"/Series: Example/Episode 2": {looseAudioSized("01.mp3", 300), looseAudioSized("02.mp3", 400)},
+		"/":                                  {looseDir("Creator")},
+		"/Creator":                           {looseDir("Series: Example")},
+		"/Creator/Series: Example":           {looseDir("Episode 1"), looseDir("Episode 2")},
+		"/Creator/Series: Example/Episode 1": {looseAudioSized("01.mp3", 100), looseAudioSized("02.mp3", 200)},
+		"/Creator/Series: Example/Episode 2": {looseAudioSized("01.mp3", 300), looseAudioSized("02.mp3", 400)},
 	})
 	f.request(t, http.MethodPost, "/catalog/index", `{"intervalMs":100}`, 202)
 	if p := f.drain(t); p["status"] != "complete" {
@@ -26,17 +27,18 @@ func TestCatalogSeriesDirectoryRenameKeepsOneSeries(t *testing.T) {
 		t.Fatal(err)
 	}
 	var oldOne, oldTwo int64
-	if err := f.server.db.QueryRow(`SELECT id FROM source_catalog_entry WHERE root_path='/Series: Example/Episode 1' AND relocated_to_id IS NULL`).Scan(&oldOne); err != nil {
+	if err := f.server.db.QueryRow(`SELECT id FROM source_catalog_entry WHERE root_path='/Creator/Series: Example/Episode 1' AND relocated_to_id IS NULL`).Scan(&oldOne); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.server.db.QueryRow(`SELECT id FROM source_catalog_entry WHERE root_path='/Series: Example/Episode 2' AND relocated_to_id IS NULL`).Scan(&oldTwo); err != nil {
+	if err := f.server.db.QueryRow(`SELECT id FROM source_catalog_entry WHERE root_path='/Creator/Series: Example/Episode 2' AND relocated_to_id IS NULL`).Scan(&oldTwo); err != nil {
 		t.Fatal(err)
 	}
 	f.updates(map[string][]map[string]any{
-		"/":                          {looseDir("Series: Renamed")},
-		"/Series: Renamed":           {looseDir("Episode 1"), looseDir("Episode 2")},
-		"/Series: Renamed/Episode 1": {looseAudioSized("01.mp3", 100), looseAudioSized("02.mp3", 200)},
-		"/Series: Renamed/Episode 2": {looseAudioSized("01.mp3", 300), looseAudioSized("02.mp3", 400)},
+		"/":                                  {looseDir("Creator")},
+		"/Creator":                           {looseDir("Series: Renamed")},
+		"/Creator/Series: Renamed":           {looseDir("Episode 1"), looseDir("Episode 2")},
+		"/Creator/Series: Renamed/Episode 1": {looseAudioSized("01.mp3", 100), looseAudioSized("02.mp3", 200)},
+		"/Creator/Series: Renamed/Episode 2": {looseAudioSized("01.mp3", 300), looseAudioSized("02.mp3", 400)},
 	})
 	f.request(t, http.MethodPost, "/catalog/index", `{"intervalMs":100,"force":true}`, 202)
 	if p := f.drain(t); p["status"] != "complete" {

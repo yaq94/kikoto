@@ -14,10 +14,11 @@ import (
 // creates a second series for the same group.
 func TestCatalogSeriesRenameKeepsLaterEpisodesInOneSeries(t *testing.T) {
 	f := newLooseWorkFixture(t, map[string][]map[string]any{
-		"/":                          {looseDir("Series: Example")},
-		"/Series: Example":           {looseDir("Episode 1"), looseDir("Episode 2")},
-		"/Series: Example/Episode 1": {looseAudioSized("one.mp3", 111)},
-		"/Series: Example/Episode 2": {looseAudioSized("01.mp3", 222)},
+		"/":                                  {looseDir("Creator")},
+		"/Creator":                           {looseDir("Series: Example")},
+		"/Creator/Series: Example":           {looseDir("Episode 1"), looseDir("Episode 2")},
+		"/Creator/Series: Example/Episode 1": {looseAudioSized("one.mp3", 111)},
+		"/Creator/Series: Example/Episode 2": {looseAudioSized("01.mp3", 222)},
 	})
 	f.request(t, http.MethodPost, "/catalog/index", `{"intervalMs":100}`, 202)
 	if p := f.drain(t); p["status"] != "complete" {
@@ -29,10 +30,11 @@ func TestCatalogSeriesRenameKeepsLaterEpisodesInOneSeries(t *testing.T) {
 	}
 
 	f.updates(map[string][]map[string]any{
-		"/":                          {looseDir("Series: Renamed")},
-		"/Series: Renamed":           {looseDir("Episode 1"), looseDir("Episode 2")},
-		"/Series: Renamed/Episode 1": {looseAudioSized("one.mp3", 111)},
-		"/Series: Renamed/Episode 2": {looseAudioSized("01.mp3", 222)},
+		"/":                                  {looseDir("Creator")},
+		"/Creator":                           {looseDir("Series: Renamed")},
+		"/Creator/Series: Renamed":           {looseDir("Episode 1"), looseDir("Episode 2")},
+		"/Creator/Series: Renamed/Episode 1": {looseAudioSized("one.mp3", 111)},
+		"/Creator/Series: Renamed/Episode 2": {looseAudioSized("01.mp3", 222)},
 	})
 	f.request(t, http.MethodPost, "/catalog/index", `{"intervalMs":100,"force":true}`, 202)
 	if p := f.drain(t); p["status"] != "complete" {
@@ -52,11 +54,12 @@ func TestCatalogSeriesRenameKeepsLaterEpisodesInOneSeries(t *testing.T) {
 	}
 
 	f.updates(map[string][]map[string]any{
-		"/":                          {looseDir("Series: Renamed")},
-		"/Series: Renamed":           {looseDir("Episode 1"), looseDir("Episode 2"), looseDir("Episode 3")},
-		"/Series: Renamed/Episode 1": {looseAudioSized("one.mp3", 111)},
-		"/Series: Renamed/Episode 2": {looseAudioSized("01.mp3", 222)},
-		"/Series: Renamed/Episode 3": {looseAudioSized("03.mp3", 333)},
+		"/":                                  {looseDir("Creator")},
+		"/Creator":                           {looseDir("Series: Renamed")},
+		"/Creator/Series: Renamed":           {looseDir("Episode 1"), looseDir("Episode 2"), looseDir("Episode 3")},
+		"/Creator/Series: Renamed/Episode 1": {looseAudioSized("one.mp3", 111)},
+		"/Creator/Series: Renamed/Episode 2": {looseAudioSized("01.mp3", 222)},
+		"/Creator/Series: Renamed/Episode 3": {looseAudioSized("03.mp3", 333)},
 	})
 	f.request(t, http.MethodPost, "/catalog/index", `{"intervalMs":100,"force":true}`, 202)
 	if p := f.drain(t); p["status"] != "complete" {
@@ -76,10 +79,11 @@ func TestCatalogSeriesRenameKeepsLaterEpisodesInOneSeries(t *testing.T) {
 // series rather than an old two-episode series beside a new three-episode one.
 func TestCatalogSeriesRenameAndNewEpisodeInOneScanStayOneSeries(t *testing.T) {
 	f := newLooseWorkFixture(t, map[string][]map[string]any{
-		"/":                          {looseDir("Series: Example")},
-		"/Series: Example":           {looseDir("Episode 1"), looseDir("Episode 2")},
-		"/Series: Example/Episode 1": {looseAudio("one.mp3")},
-		"/Series: Example/Episode 2": {looseAudio("two.mp3")},
+		"/":                                  {looseDir("Library")},
+		"/Library":                           {looseDir("Series: Example")},
+		"/Library/Series: Example":           {looseDir("Episode 1"), looseDir("Episode 2")},
+		"/Library/Series: Example/Episode 1": {looseAudio("one.mp3")},
+		"/Library/Series: Example/Episode 2": {looseAudio("two.mp3")},
 	})
 	f.request(t, http.MethodPost, "/catalog/index", `{"intervalMs":100}`, 202)
 	if p := f.drain(t); p["status"] != "complete" {
@@ -91,11 +95,12 @@ func TestCatalogSeriesRenameAndNewEpisodeInOneScanStayOneSeries(t *testing.T) {
 	}
 
 	f.updates(map[string][]map[string]any{
-		"/":                          {looseDir("Series: Renamed")},
-		"/Series: Renamed":           {looseDir("Episode 1"), looseDir("Episode 2"), looseDir("Episode 3")},
-		"/Series: Renamed/Episode 1": {looseAudio("one.mp3")},
-		"/Series: Renamed/Episode 2": {looseAudio("two.mp3")},
-		"/Series: Renamed/Episode 3": {looseAudio("three.mp3")},
+		"/":                                  {looseDir("Library")},
+		"/Library":                           {looseDir("Series: Renamed")},
+		"/Library/Series: Renamed":           {looseDir("Episode 1"), looseDir("Episode 2"), looseDir("Episode 3")},
+		"/Library/Series: Renamed/Episode 1": {looseAudio("one.mp3")},
+		"/Library/Series: Renamed/Episode 2": {looseAudio("two.mp3")},
+		"/Library/Series: Renamed/Episode 3": {looseAudio("three.mp3")},
 	})
 	f.request(t, http.MethodPost, "/catalog/index", `{"intervalMs":100,"force":true}`, 202)
 	if p := f.drain(t); p["status"] != "complete" {
