@@ -45,8 +45,8 @@ func catalogEffectiveRootSQL(alias string) string {
 }
 
 type catalogSeriesMemberEvidence struct {
-	name, content, layout string
-	generation            int64
+	root, name, content, layout string
+	generation                  int64
 }
 
 func catalogSeriesLiveMembersTx(ctx context.Context, tx *sql.Tx, seriesID int64) ([]catalogSeriesMemberEvidence, error) {
@@ -65,27 +65,66 @@ func catalogSeriesLiveMembersTx(ctx context.Context, tx *sql.Tx, seriesID int64)
 		if err = rows.Scan(&root, &member.content, &member.layout, &member.generation); err != nil {
 			return nil, err
 		}
+		member.root = root
 		member.name = strings.ToLower(path.Base(root))
 		members = append(members, member)
 	}
 	return members, rows.Err()
 }
 
+// catalogSeriesDirectoryParent returns the directory that contains the series
+// directory. source_key normally records the episode parent before the newline;
+// older rows may lack that separator, so derive the same path from every live
+// member instead. A series directly below the source root has no usable parent
+// for distinguishing a rename from an unrelated sibling series.
+func catalogSeriesDirectoryParent(key sql.NullString, members []catalogSeriesMemberEvidence) (string, bool) {
+	seriesDir := ""
+	if key.Valid {
+		if parent, _, ok := strings.Cut(key.String, "\n"); ok {
+			if candidate := path.Clean(strings.TrimSpace(parent)); candidate != "." {
+				seriesDir = candidate
+			}
+		}
+	}
+	if seriesDir == "" {
+		for _, member := range members {
+			candidate := path.Clean(path.Dir(member.root))
+			if seriesDir == "" {
+				seriesDir = candidate
+				continue
+			}
+			if candidate != seriesDir {
+				return "", false
+			}
+		}
+	}
+	if seriesDir == "" || seriesDir == "/" || !path.IsAbs(seriesDir) {
+		return "", false
+	}
+	parent := path.Dir(seriesDir)
+	if parent == "/" || parent == "." {
+		return "", false
+	}
+	return parent, true
+}
+
 // catalogSeriesRenameEvidenceTx reports whether two series describe the same
 // group after its own directory was renamed. The old live episode names must
 // still be present in the new series, which allows a rename and a new episode
-// to be published by the same scan. A previous generation, matching source and
-// at least one matching episode fingerprint distinguish that rename from two
-// current, unrelated series that happen to use the same episode names. Every
+// to be published by the same scan. Both series must share a comparable parent
+// directory, and the old members must come from an earlier generation. Every
 // old episode needs one matching fingerprint; a partial match is not enough.
 func catalogSeriesRenameEvidenceTx(ctx context.Context, tx *sql.Tx, oldSeries, newSeries int64) (bool, error) {
 	if oldSeries == newSeries {
 		return true, nil
 	}
 	var oldSource, newSource sql.NullInt64
+	var oldKey, newKey sql.NullString
 	if err := tx.QueryRowContext(ctx, `SELECT
 			(SELECT source_id FROM catalog_series WHERE id=?),
-			(SELECT source_id FROM catalog_series WHERE id=?)`, oldSeries, newSeries).Scan(&oldSource, &newSource); err != nil {
+			(SELECT source_key FROM catalog_series WHERE id=?),
+			(SELECT source_id FROM catalog_series WHERE id=?),
+			(SELECT source_key FROM catalog_series WHERE id=?)`, oldSeries, oldSeries, newSeries, newSeries).Scan(&oldSource, &oldKey, &newSource, &newKey); err != nil {
 		return false, err
 	}
 	if !oldSource.Valid || !newSource.Valid || oldSource.Int64 != newSource.Int64 {
@@ -100,6 +139,11 @@ func catalogSeriesRenameEvidenceTx(ctx context.Context, tx *sql.Tx, oldSeries, n
 		return false, err
 	}
 	if len(oldMembers) == 0 {
+		return false, nil
+	}
+	oldParent, oldComparable := catalogSeriesDirectoryParent(oldKey, oldMembers)
+	newParent, newComparable := catalogSeriesDirectoryParent(newKey, newMembers)
+	if !oldComparable || !newComparable || oldParent != newParent {
 		return false, nil
 	}
 	remaining := map[string]int{}
