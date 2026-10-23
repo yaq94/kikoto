@@ -36,6 +36,16 @@ directory, and grouping on the shared prefix would mix different works
 (US-30). These entries stay independent; an editor groups the ones that really
 belong together through the preview and confirm flow described below (AC-14).
 
+Loose audio files can carry the same explicit evidence: a folder containing
+`Example Episode1` through `Example Episode6` becomes one series with six
+independently addressable episodes. A bare numbered run such as `01.mp3` through
+`06.mp3`, or track containers such as `Disc1`/`Disc2`, stays one work. A folder
+whose direct children are only format copies (`Episode 1 (MP3)`,
+`Episode 1 (FLAC)`, `Episode 2 (MP3)`) likewise forms one series: both formats
+of Episode 1 belong to that episode, and no format directory becomes a card.
+Format variants without an episode marker, such as `MP3` beside `FLAC`, remain
+formats of the enclosing release.
+
 A finite scan partitions a new root only when every playable file belongs to
 an evidenced direct child. Full indexing attaches membership in the same
 transaction as catalog publication. Published containers keep their existing

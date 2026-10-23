@@ -399,6 +399,9 @@ func (s *Server) executeCatalogIncrementalSync(ctx context.Context, runID, sourc
 		if lifecycleErr != nil {
 			return lifecycleErr
 		}
+		if lifecycleErr = s.reconcileCatalogSyncEmptyEntries(ctx, sourceID, generation); lifecycleErr != nil {
+			return lifecycleErr
+		}
 	}
 	if failed {
 		state.Status = "partial"
@@ -474,7 +477,8 @@ func (s *Server) seedCatalogSyncDirectories(ctx context.Context, sourceID, gener
 	} else {
 		_, err = tx.ExecContext(ctx, `UPDATE source_catalog_directory SET sync_state='changed'
 			WHERE file_source_id=? AND generation=? AND sync_state<>'excluded'
-			AND (status IN ('pending','listing_complete','failed','restricted') OR (status='empty' AND error_code<>'not_found'))`, sourceID, generation)
+			AND (path='/' OR status IN ('pending','listing_complete','failed','restricted')
+				OR (status='empty' AND error_code<>'not_found'))`, sourceID, generation)
 	}
 	if err != nil {
 		return err
@@ -904,6 +908,18 @@ func (s *Server) applyCatalogSyncListing(ctx context.Context, sourceID, generati
 			return 0, 0, err
 		}
 	}
+	if newStatus == "empty" {
+		// A successful but empty listing remains unconfirmed. The card keeps
+		// its identity and personal records, but it must stop advertising the
+		// old files as playable while the range is unresolved.
+		target := root
+		if target == "" {
+			target = dir.Path
+		}
+		if err = markCatalogRangeStatusTx(ctx, tx.Tx, sourceID, target, "unconfirmed_empty"); err != nil {
+			return 0, 0, err
+		}
+	}
 	change, err := refreshCatalogAudioRootStateTx(ctx, tx.Tx, sourceID, generation, dir.Path)
 	if err != nil {
 		return 0, 0, err
@@ -1008,6 +1024,61 @@ func (s *Server) settleCatalogSyncLifecycle(ctx context.Context, job workflowJob
 		}
 	}
 	return nil
+}
+
+// reconcileCatalogSyncEmptyEntries applies the deletion rule after lifecycle.
+// The lifecycle pass marks every card seen in the current generation available;
+// an incremental sync can remove the last file without republishing the card.
+// A card with no playable file is missing only when its range was fully
+// observed, otherwise it remains unconfirmed-empty so a transient empty
+// listing does not erase an evaluation object.
+func (s *Server) reconcileCatalogSyncEmptyEntries(ctx context.Context, sourceID, generation int64) error {
+	tx, release, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
+	if err != nil {
+		return err
+	}
+	defer release()
+	rows, err := tx.QueryContext(ctx, `SELECT e.id,`+catalogEffectiveRootSQL("e")+` FROM source_catalog_entry e
+		WHERE e.file_source_id=? AND e.relocated_to_id IS NULL AND e.availability_status='available'
+			AND NOT EXISTS(SELECT 1 FROM source_catalog_file f WHERE f.catalog_entry_id=e.id AND f.kind='audio')`,
+		sourceID)
+	if err != nil {
+		return err
+	}
+	type candidate struct {
+		id   int64
+		base string
+	}
+	entries := []candidate{}
+	for rows.Next() {
+		var item candidate
+		if err = rows.Scan(&item.id, &item.base); err != nil {
+			rows.Close()
+			return err
+		}
+		entries = append(entries, item)
+	}
+	if err = rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	_ = rows.Close()
+	updates := []catalogEntryStatusUpdate{}
+	for _, entry := range entries {
+		uncertain, checkErr := catalogRangeUncertain(ctx, tx.Tx, sourceID, generation, entry.base)
+		if checkErr != nil {
+			return checkErr
+		}
+		status := "missing"
+		if uncertain {
+			status = "unconfirmed_empty"
+		}
+		updates = append(updates, catalogEntryStatusUpdate{ID: entry.id, Status: status})
+	}
+	if err = setCatalogEntryStatusesTx(ctx, tx.Tx, updates); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Server) beginCatalogSyncLease(ctx context.Context, syncRunID, generation int64) (*catalogSyncLease, error) {
