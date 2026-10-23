@@ -108,6 +108,19 @@ func TestCatalogDuplicateDirectoryKeepsDistinctSmallWork(t *testing.T) {
 	}
 }
 
+func TestCatalogDuplicateDirectoryKeepsSmallEqualSizeDifferentNames(t *testing.T) {
+	parent := make([]catalogAudioTestFile, 19)
+	child := make([]catalogAudioTestFile, 19)
+	for index := range parent {
+		size := 10_000_000 + int64(index)*4_096
+		parent[index] = catalogAudioTestFile{name: fmt.Sprintf("Parent %02d.mp3", index+1), size: size}
+		child[index] = catalogAudioTestFile{name: fmt.Sprintf("Child %02d.mp3", index+1), size: size}
+	}
+	if duplicateDirectoryFilesResult(t, parent, child) {
+		t.Fatal("two small works with different names must not be merged even when their sizes match")
+	}
+}
+
 func TestCatalogDuplicateDirectoryRejectsRepeatedSizesWithoutCounterparts(t *testing.T) {
 	// Two parent files happen to share the child's size. The other eighteen
 	// parent files do not, so the child repeats no copied tree.
