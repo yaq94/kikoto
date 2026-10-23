@@ -90,6 +90,82 @@ func TestCatalogSeriesFiniteRescanSplitsPublishedRoot(t *testing.T) {
 	}
 }
 
+// A split must not discard sidecars that belong to the series root. They are
+// the release's artwork and credit evidence, and the full index keeps them on a
+// metadata-only parent card.
+func TestCatalogSeriesFiniteRescanRetainsRootSidecars(t *testing.T) {
+	var episodes atomic.Bool
+	tree := func() map[string][]map[string]any {
+		root := []map[string]any{{"name": "track.mp3", "size": 100}}
+		if episodes.Load() {
+			root = []map[string]any{
+				{"name": "cover.jpg", "size": 100},
+				{"name": "readme.txt", "size": 100},
+				{"name": "Episode 1", "is_dir": true},
+				{"name": "Episode 2", "is_dir": true},
+			}
+		}
+		result := map[string][]map[string]any{"/Example series": root}
+		if episodes.Load() {
+			result["/Example series/Episode 1"] = []map[string]any{{"name": "track.mp3", "size": 100}}
+			result["/Example series/Episode 2"] = []map[string]any{{"name": "track.mp3", "size": 100}}
+		}
+		return result
+	}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/fs/list" {
+			http.NotFound(w, r)
+			return
+		}
+		var in struct {
+			Path string `json:"path"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&in)
+		files, ok := tree()[in.Path]
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"code": 200, "data": map[string]any{"content": files, "total": len(files)}})
+	}))
+	defer upstream.Close()
+
+	db := openMigratedTestDB(t)
+	server := NewServer(db, config.Config{Mode: config.ModeProduction, RootUsername: "synthetic-user", DataRoot: t.TempDir(), CacheRoot: t.TempDir()})
+	defer func() { _ = server.Shutdown(context.Background()) }()
+	createTestAdministrator(t, server, "synthetic-user", "synthetic-password")
+	handler := server.Routes()
+	admin := loginTestSession(t, handler, "synthetic-user", "synthetic-password")
+	input, _ := json.Marshal(map[string]any{
+		"displayName": "Example Remote A", "sourceType": "openlist", "enabled": true,
+		"config":   map[string]any{"openListRoots": []string{"/Example series"}, "openListIntervalMs": 100},
+		"endpoint": map[string]any{"apiUrl": upstream.URL, "baseUrl": upstream.URL},
+	})
+	source := reviewRequest(t, handler, admin, http.MethodPost, "/api/file-sources", string(input), 201)
+	sid := strconv.Itoa(int(source["id"].(float64)))
+
+	reviewRequest(t, handler, admin, http.MethodPost, "/api/remote-sources/"+sid+"/catalog/scan", "{}", 200)
+	episodes.Store(true)
+	reviewRequest(t, handler, admin, http.MethodPost, "/api/remote-sources/"+sid+"/catalog/scan", "{}", 200)
+
+	var liveEntry, sidecars int
+	if err := db.QueryRow(`SELECT count(*) FROM source_catalog_entry
+		WHERE root_path='/Example series' AND relocated_to_id IS NULL`).Scan(&liveEntry); err != nil {
+		t.Fatal(err)
+	}
+	if liveEntry != 1 {
+		t.Fatalf("series root entry count=%d, want one metadata parent", liveEntry)
+	}
+	if err := db.QueryRow(`SELECT count(*) FROM source_catalog_file f
+		JOIN source_catalog_entry e ON e.id=f.catalog_entry_id
+		WHERE e.root_path='/Example series' AND f.relative_path IN ('cover.jpg','readme.txt')`).Scan(&sidecars); err != nil {
+		t.Fatal(err)
+	}
+	if sidecars != 2 {
+		t.Fatalf("root sidecar rows=%d, want cover and readme", sidecars)
+	}
+}
+
 // Once a root has a registered work, splitting it would move that identity and
 // any personal record. The rescan leaves the card alone until a reviewer
 // decides, even though the episode evidence is now present.
