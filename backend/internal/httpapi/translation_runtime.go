@@ -53,9 +53,9 @@ type translationLanguageCount struct {
 	Model    int64  `json:"model"`
 }
 
-// getTranslationRuntime reports the persistent corpus and scheduler state. The
-// old JSON cache is gone, so cacheBytes is a soft budget rather than an eviction
-// bound.
+// getTranslationRuntime reports the persistent corpus and scheduler state.
+// cacheBytes is the configured model-text budget; the maintenance pass enforces
+// it in bounded batches.
 func (s *Server) getTranslationRuntime(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.requirePermission(w, r, "sources:write"); !ok {
 		return

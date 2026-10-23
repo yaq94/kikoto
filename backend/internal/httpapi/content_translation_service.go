@@ -30,14 +30,15 @@ func (s *Server) translateStoredContent(ctx context.Context, in contentTranslati
 			Field: in.Field, Language: nativeLanguage, SourceText: text,
 			TranslatedText: text, Origin: "native",
 		}
-		if err = s.saveContentTranslations(ctx, []contentTranslationRow{row}); err != nil {
+		cacheStatus, err := s.saveContentTranslations(ctx, []contentTranslationRow{row})
+		if err != nil {
 			return translatedContent{}, "", err
 		}
 		display, err := displayText(text, nativeLanguage, target, field.Names)
 		if err != nil {
 			return translatedContent{}, "", err
 		}
-		return translatedContent{TranslatedText: display, CacheStatus: "stored"}, "native", nil
+		return translatedContent{TranslatedText: display, CacheStatus: cacheStatus}, "native", nil
 	}
 
 	key := contentTranslationCacheKey(kind, entityID, entityKey, in.Field, target.modelLanguage, text, "model", cfg.Model, cfg.BaseURL, translation.TemplateVersion, cfg.DisableThinking)
@@ -66,14 +67,15 @@ func (s *Server) translateStoredContent(ctx context.Context, in contentTranslati
 		TranslatedText: translated, Origin: "model", Model: cfg.Model,
 		TemplateVersion: translation.TemplateVersion,
 	}
-	if err = s.saveContentTranslations(ctx, []contentTranslationRow{row}); err != nil {
+	cacheStatus, err := s.saveContentTranslations(ctx, []contentTranslationRow{row})
+	if err != nil {
 		return translatedContent{}, "", err
 	}
 	display, err := displayText(translated, target.modelLanguage, target, field.Names)
 	if err != nil {
 		return translatedContent{}, "", err
 	}
-	return translatedContent{TranslatedText: display, CacheStatus: "stored"}, "translated", nil
+	return translatedContent{TranslatedText: display, CacheStatus: cacheStatus}, "translated", nil
 }
 
 // nativeContentLanguage reports whether the stored text already is the target

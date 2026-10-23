@@ -169,11 +169,16 @@ func TestContentTranslationBatchIsolatesItemFailures(t *testing.T) {
 	if got := byKey["stale"]; got["status"] != "failed" || got["code"] != "translation_content_changed" || got["text"] != "" {
 		t.Fatalf("stale item: %#v", got)
 	}
-	if got := byKey["missing"]; got["status"] != "failed" || got["code"] != "translation_content_unavailable" {
+	if got := byKey["missing"]; got["status"] != "failed" || got["code"] != "not_found" {
 		t.Fatalf("missing item: %#v", got)
 	}
 	if got := byKey["bad-field"]; got["status"] != "failed" || got["code"] != "translation_invalid_input" {
 		t.Fatalf("invalid field item: %#v", got)
+	}
+	single := translationRequest(t, host, listener, "POST", "/api/content-translations",
+		`{"workId":999,"field":"title","text":"no such work","language":"zh-cn"}`, 404)
+	if single["code"] != "not_found" {
+		t.Fatalf("single missing item: %#v", single)
 	}
 	translationRequest(t, host, nil, "POST", "/api/content-translations/batch", string(body), 401)
 }

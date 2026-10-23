@@ -21,9 +21,8 @@ var ErrInvalidConfig = errors.New("invalid translation configuration")
 type Limits struct {
 	Concurrency int `json:"concurrency"`
 	QueueLimit  int `json:"queueLimit"`
-	// MaxEntries is a soft row budget for the persistent translation table.
-	// Zero means unlimited: translations are corpus, not a cache, so a low
-	// bound would silently reduce search coverage over time.
+	// MaxEntries bounds rebuildable model rows in the persistent translation
+	// table. Zero means unlimited; authored native rows are not cache entries.
 	MaxEntries   int   `json:"maxEntries"`
 	CacheBytes   int64 `json:"cacheBytes"`
 	MinFreeBytes int64 `json:"minFreeBytes"`

@@ -13,9 +13,9 @@ Administrator routes require `sources:write`:
 
 - `GET /api/settings/translation` returns `baseUrl`, `model`, `hasApiKey`,
   `apiKeyMask`, `timeoutSeconds`, `disableThinking`, `concurrency`, `queueLimit`,
-  `cacheBytes` and `minFreeBytes`.
+  `maxEntries`, `cacheBytes` and `minFreeBytes`.
 - `PATCH /api/settings/translation` accepts optional `baseUrl`, `model`, `apiKey`,
-  `timeoutSeconds`, `disableThinking` and the four resource limits above. An omitted key is preserved and an
+  `timeoutSeconds`, `disableThinking` and the five resource limits above. An omitted key is preserved and an
   empty string clears it. The response uses the same redacted projection as GET.
 - `POST /api/settings/translation/test` accepts `text` and `targetLanguage`
   (`zh-Hans`, `en`, `ja` or `ko`). It returns complete plain text, the configured
@@ -135,16 +135,16 @@ one row per `cache_key` with `origin` `native` or `model`; `origin=native` rows
 hold the source text unchanged and never increment model usage. There is no
 `last_used_at`: the hot path never deletes a row.
 
-Two administrator budgets bound the corpus in a low-frequency maintenance pass
-that runs beside the prefill worker: `maxEntries` limits the total row count
-(zero means unlimited) and `cacheBytes` roughly bounds the stored text. Only
-`origin=model` rows are evicted, oldest first, because those are rebuildable.
-Native rows carry authored text and are never eviction candidates. A superseded
-row for the same entity, field and language goes before a live one. The pass
-runs in batches so the SQLite writer is never held for a whole trim. When
-`minFreeBytes` is not met, new rows are not written at all: the caller still
-returns the translation it already fetched, and the durable copy waits for
-space.
+Two administrator budgets bound the model corpus in a maintenance pass that runs
+beside the prefill worker: `maxEntries` limits the number of `origin=model` rows
+(zero means unlimited) and `cacheBytes` roughly bounds their UTF-8 text bytes.
+Only `origin=model` rows are counted and evicted, oldest first, because those
+are rebuildable. Native rows carry authored text and are never eviction
+candidates. A superseded row for the same entity, field and language goes before
+a live one. The pass runs bounded batches so the SQLite writer is never held for
+a whole trim. When `minFreeBytes` is not met, new rows are not written at all:
+the caller still returns the translation it already fetched, reports
+`paused_low_disk`, and the durable copy waits for space.
 
 A content change produces a new `cache_key` because the source text is part of
 it. The previous row stays readable until the retention pass removes it as
@@ -160,10 +160,11 @@ prefill worker checks `minFreeBytes` plus a write headroom before starting a
 batch, records `paused_low_disk` in `translation_prefill_state.last_error`, and
 resumes on its own once the floor is met again; an operator-requested `paused`
 status has an empty `last_error` and stays paused. An interactive request keeps
-its model result rather than discarding a paid call: the corpus row is durable
-and is written even when the volume is below the floor, while the rebuildable
-file cache and the source index stop. Failed generations are never stored.
-Stored rows report `hit`, freshly generated rows `stored`.
+its model result rather than discarding a paid call, but the corpus row is not
+written while the volume is below the floor. The response reports
+`paused_low_disk`; the prefill cursor keeps the affected entry pending so it can
+be retried. Failed generations are never stored. Stored rows report `hit`,
+freshly generated rows `stored`.
 ## Model contract and limits
 
 The default model invocation name is `Index-Translate-35B-A3B`; a configured name

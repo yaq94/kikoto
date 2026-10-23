@@ -190,13 +190,13 @@ func (s *Server) runTranslationPrefillWorker(ctx context.Context) {
 		case <-timer.C:
 		}
 		_, _ = s.runTranslationPrefillBatch(ctx)
-		// The corpus limits are a low-frequency maintenance concern. Running
-		// them on every 15-second tick would take the writer far more often
-		// than the budget can change.
+		// The corpus limits are a low-frequency maintenance concern. A pass
+		// runs once a minute and may delete several bounded batches; this
+		// keeps up with a prefill burst without taking the writer every tick.
 		retentionTick++
-		if retentionTick >= 40 {
+		if retentionTick >= 4 {
 			retentionTick = 0
-			if cfg, err := translation.NewStore(s.db).Load(ctx); err == nil && s.translationDiskPause(cfg) == "" {
+			if cfg, err := translation.NewStore(s.db).Load(ctx); err == nil {
 				if err = s.pruneContentTranslations(ctx, cfg); err != nil {
 					slog.Warn("translation corpus retention failed", "error", err)
 				}
@@ -441,8 +441,13 @@ func (s *Server) translationPrefillFields(ctx context.Context, cfg translation.C
 		if detected == translation.SourceHant {
 			key := contentTranslationCacheKey("entry", entry.id, "", "title", translation.SourceHant, entry.title, "native", "", "", "", false)
 			row := contentTranslationRow{CacheKey: key, EntityKind: "entry", EntityID: entry.id, Field: "title", Language: translation.SourceHant, SourceText: entry.title, TranslatedText: entry.title, Origin: "native"}
-			if err := s.saveContentTranslations(ctx, []contentTranslationRow{row}); err != nil {
+			cacheStatus, err := s.saveContentTranslations(ctx, []contentTranslationRow{row})
+			if err != nil {
 				failed[entry.id] = err
+				continue
+			}
+			if cacheStatus != contentTranslationStored {
+				failed[entry.id] = errTranslationCachePaused
 				continue
 			}
 			written++
@@ -451,9 +456,16 @@ func (s *Server) translationPrefillFields(ctx context.Context, cfg translation.C
 			if detected == language {
 				key := contentTranslationCacheKey("entry", entry.id, "", "title", language, entry.title, "native", "", "", "", false)
 				row := contentTranslationRow{CacheKey: key, EntityKind: "entry", EntityID: entry.id, Field: "title", Language: language, SourceText: entry.title, TranslatedText: entry.title, Origin: "native"}
-				if err := s.saveContentTranslations(ctx, []contentTranslationRow{row}); err != nil {
+				cacheStatus, err := s.saveContentTranslations(ctx, []contentTranslationRow{row})
+				if err != nil {
 					if _, ok := failed[entry.id]; !ok {
 						failed[entry.id] = err
+					}
+					continue
+				}
+				if cacheStatus != contentTranslationStored {
+					if _, ok := failed[entry.id]; !ok {
+						failed[entry.id] = errTranslationCachePaused
 					}
 					continue
 				}
@@ -514,8 +526,13 @@ func (s *Server) translationPrefillFields(ctx context.Context, cfg translation.C
 				return
 			}
 			row := contentTranslationRow{CacheKey: item.key, EntityKind: "entry", EntityID: item.work.entry.id, Field: "title", Language: item.language, SourceText: item.work.entry.title, TranslatedText: text, Origin: "model", Model: cfg.Model, TemplateVersion: translation.TemplateVersion}
-			if saveErr := s.saveContentTranslations(ctx, []contentTranslationRow{row}); saveErr != nil {
+			cacheStatus, saveErr := s.saveContentTranslations(ctx, []contentTranslationRow{row})
+			if saveErr != nil {
 				recordFailure(item.work.entry.id, saveErr)
+				return
+			}
+			if cacheStatus != contentTranslationStored {
+				recordFailure(item.work.entry.id, errTranslationCachePaused)
 				return
 			}
 			mu.Lock()

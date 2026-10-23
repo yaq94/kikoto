@@ -40,7 +40,11 @@ const (
 	// trigram index cannot answer those queries, so instr() only walks the
 	// newest rows of the requested language instead of the whole table.
 	contentTranslationShortScanLimit = 50000
+	contentTranslationStored         = "stored"
+	contentTranslationPausedLowDisk  = "paused_low_disk"
 )
+
+var errTranslationCachePaused = errors.New("translation cache paused: low disk space")
 
 // contentTranslationCacheKey hashes every input that changes the stored text.
 // The field order is fixed: changing it would orphan every existing row.
@@ -120,19 +124,21 @@ func (s *Server) lookupContentTranslations(ctx context.Context, keys []string) (
 }
 
 // saveContentTranslations upserts rows by cache key. Re-saving the same key
-// keeps one row and refreshes the text and the model metadata.
-func (s *Server) saveContentTranslations(ctx context.Context, rows []contentTranslationRow) error {
+// keeps one row and refreshes the text and the model metadata. The returned
+// status distinguishes a durable write from a low-disk skip so callers do not
+// report an uncached result as stored.
+func (s *Server) saveContentTranslations(ctx context.Context, rows []contentTranslationRow) (string, error) {
 	if len(rows) == 0 {
-		return nil
+		return contentTranslationStored, nil
 	}
 	// A low-disk pause stops new cache rows. The caller still returns the
 	// translation it already has; only the durable copy waits for space.
 	if cfg, err := translation.NewStore(s.db).Load(ctx); err == nil && s.translationDiskPause(cfg) != "" {
-		return nil
+		return contentTranslationPausedLowDisk, nil
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("save content translations: %w", err)
+		return "", fmt.Errorf("save content translations: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 	stmt, err := tx.PrepareContext(ctx, `
@@ -146,23 +152,23 @@ func (s *Server) saveContentTranslations(ctx context.Context, rows []contentTran
 		  template_version = excluded.template_version,
 		  updated_at = CURRENT_TIMESTAMP`)
 	if err != nil {
-		return fmt.Errorf("save content translations: %w", err)
+		return "", fmt.Errorf("save content translations: %w", err)
 	}
 	defer stmt.Close()
 	for _, row := range rows {
 		if row.CacheKey == "" {
-			return errors.New("save content translations: empty cache key")
+			return "", errors.New("save content translations: empty cache key")
 		}
 		if _, err := stmt.ExecContext(ctx, row.CacheKey, row.EntityKind, row.EntityID, row.EntityKey,
 			row.Field, row.Language, row.SourceText, row.TranslatedText,
 			row.Origin, row.Model, row.TemplateVersion); err != nil {
-			return fmt.Errorf("save content translation %q: %w", row.Field, err)
+			return "", fmt.Errorf("save content translation %q: %w", row.Field, err)
 		}
 	}
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("save content translations: %w", err)
+		return "", fmt.Errorf("save content translations: %w", err)
 	}
-	return nil
+	return contentTranslationStored, nil
 }
 
 // translatedEntityIDs returns entities whose translated text contains the

@@ -129,6 +129,11 @@ func (s *Server) translateBatchItem(ctx context.Context, language string, item c
 		result.Status = "failed"
 		var public *translation.Error
 		switch {
+		case errors.Is(err, sql.ErrNoRows):
+			// The single-item endpoint reports an unknown object as 404.
+			// A batch can address the same object, so it must not turn
+			// that answer into a retryable source outage.
+			result.Code = "not_found"
 		case errors.Is(err, errFieldAbsent):
 			// The single-item endpoint rejects a missing field as invalid input.
 			// A batch client must see the same code, otherwise it treats a bad

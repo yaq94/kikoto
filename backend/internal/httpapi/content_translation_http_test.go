@@ -249,7 +249,7 @@ func TestContentTranslationProtectsNamesForCatalogAndSeries(t *testing.T) {
 	}
 }
 
-func TestContentTranslationInvalidatesOnModelChangeAndReportsSoftBudget(t *testing.T) {
+func TestContentTranslationInvalidatesOnModelChangeAndReportsLowDiskPause(t *testing.T) {
 	var calls atomic.Int32
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
@@ -288,14 +288,21 @@ func TestContentTranslationInvalidatesOnModelChangeAndReportsSoftBudget(t *testi
 	translationRequest(t, host, admin, "PATCH", "/api/settings/translation", `{"minFreeBytes":1099511627776,"cacheBytes":4096}`, 200)
 	cached := translationRequest(t, host, listener, "POST", "/api/content-translations", body, 200)
 	if cached["cacheStatus"] != "hit" {
-		t.Fatalf("soft budget lost a stored row: %#v", cached)
+		t.Fatalf("low-disk pause lost a stored row: %#v", cached)
 	}
 	if _, err := s.db.Exec(`UPDATE work SET title='Changed title' WHERE id=1`); err != nil {
 		t.Fatal(err)
 	}
 	changed := translationRequest(t, host, listener, "POST", "/api/content-translations", strings.ReplaceAll(body, "Example title", "Changed title"), 200)
-	if changed["cacheStatus"] != "stored" || changed["text"] != "示例译文" {
-		t.Fatalf("a soft budget blocked a write: %#v", changed)
+	if changed["cacheStatus"] != "paused_low_disk" || changed["text"] != "示例译文" {
+		t.Fatalf("low-disk translation status = %#v", changed)
+	}
+	var rows int
+	if err := s.db.QueryRow(`SELECT count(*) FROM content_translation`).Scan(&rows); err != nil {
+		t.Fatal(err)
+	}
+	if rows != 2 {
+		t.Fatalf("low-disk pause wrote %d rows, want the two existing rows", rows)
 	}
 	translationRequest(t, host, listener, "GET", "/api/settings/translation/runtime", "", 403)
 	if calls.Load() != 3 {
