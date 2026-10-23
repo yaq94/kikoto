@@ -1074,31 +1074,159 @@ func retireCatalogSplitParentTx(ctx context.Context, tx *sql.Tx, sourceID int64,
 	if workID.Valid || series != 0 || relocated != 0 || id == targetID {
 		return nil
 	}
-	return retireCatalogCardTx(ctx, tx, id, targetID)
+	_, err = retireCatalogCardTx(ctx, tx, id, targetID)
+	return err
 }
 
 // retireCatalogCardTx retires one card after re-pointing any card that was
 // relocated to it. The alias rows keep their id, so every personal record that
-// references the alias stays resolvable; only the shared target changes.
-func retireCatalogCardTx(ctx context.Context, tx *sql.Tx, id, targetID int64) error {
+// references the alias stays resolvable; only the shared target changes. A
+// format card that already owns a reviewed work first moves that work (or its
+// personal state) to the current release card.
+func retireCatalogCardTx(ctx context.Context, tx *sql.Tx, id, targetID int64) (bool, error) {
+	moved, err := transferRetiredCatalogWorkTx(ctx, tx, id, targetID)
+	if err != nil {
+		return false, err
+	}
+	if !moved {
+		return false, nil
+	}
 	if targetID != 0 && targetID != id {
 		if err := mergeCatalogSeriesMembershipTx(ctx, tx, id, targetID); err != nil {
 			if errors.Is(err, errCatalogSeriesRetireConflict) {
 				// Two different series claim one successor. Keeping the stale
 				// card addressable is safer than silently moving an episode.
-				return nil
+				return false, nil
 			}
-			return err
+			return false, err
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE source_catalog_entry SET relocated_to_id=? WHERE relocated_to_id=? AND id<>?`, targetID, id, targetID); err != nil {
-			return err
+			return false, err
 		}
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE source_catalog_entry SET file_source_id=NULL,relocated_to_id=?,updated_at=CURRENT_TIMESTAMP WHERE id=?`, nullIfZero(targetID), id); err != nil {
-		return err
+		return false, err
 	}
-	_, err := tx.ExecContext(ctx, `DELETE FROM source_catalog_file WHERE catalog_entry_id=?`, id)
-	return err
+	_, err = tx.ExecContext(ctx, `DELETE FROM source_catalog_file WHERE catalog_entry_id=?`, id)
+	return err == nil, err
+}
+
+// transferRetiredCatalogWorkTx preserves reviews when an old format card is
+// folded into its release. A work referenced by another active catalog row is a
+// separate identity and is left for review. When both cards already have
+// different works, all users' states move only if no user has conflicting
+// rating or note values; a conflict keeps both cards visible for owner choice.
+func transferRetiredCatalogWorkTx(ctx context.Context, tx *sql.Tx, staleID, targetID int64) (bool, error) {
+	var staleWork sql.NullInt64
+	if err := tx.QueryRowContext(ctx, "SELECT work_id FROM source_catalog_entry WHERE id=?", staleID).Scan(&staleWork); err != nil {
+		return false, err
+	}
+	if !staleWork.Valid {
+		return true, nil
+	}
+	if targetID == 0 || targetID == staleID {
+		return false, nil
+	}
+	var targetWork sql.NullInt64
+	if err := tx.QueryRowContext(ctx, "SELECT work_id FROM source_catalog_entry WHERE id=?", targetID).Scan(&targetWork); err != nil {
+		return false, err
+	}
+	if targetWork.Valid && targetWork.Int64 == staleWork.Int64 {
+		_, err := tx.ExecContext(ctx, "UPDATE source_catalog_entry SET work_id=NULL WHERE id=?", staleID)
+		return err == nil, err
+	}
+	var staleCode, targetCode string
+	if err := tx.QueryRowContext(ctx, `SELECT stale.primary_code,COALESCE(target.primary_code,'')
+		FROM work AS stale LEFT JOIN work AS target ON target.id=?
+		WHERE stale.id=?`, targetWork, staleWork.Int64).Scan(&staleCode, &targetCode); err != nil {
+		return false, err
+	}
+	staleCode, targetCode = normalizeWorkCode(staleCode), normalizeWorkCode(targetCode)
+	if staleCode != "" && targetCode != "" && staleCode != targetCode {
+		return false, nil
+	}
+	var shared int
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM source_catalog_entry
+		WHERE work_id=? AND id<>? AND id<>? AND relocated_to_id IS NULL)`, staleWork.Int64, staleID, targetID).Scan(&shared); err != nil {
+		return false, err
+	}
+	if shared != 0 {
+		return false, nil
+	}
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM shared_identity_member
+		WHERE work_id=? OR identity_work_id=?)`, staleWork.Int64, staleWork.Int64).Scan(&shared); err != nil {
+		return false, err
+	}
+	if shared != 0 {
+		return false, nil
+	}
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM catalog_series WHERE work_id=?)`, staleWork.Int64).Scan(&shared); err != nil {
+		return false, err
+	}
+	if shared != 0 {
+		return false, nil
+	}
+	if !targetWork.Valid {
+		if _, err := tx.ExecContext(ctx, "UPDATE source_catalog_entry SET work_id=? WHERE id=?", staleWork.Int64, targetID); err != nil {
+			return false, err
+		}
+		if _, err := tx.ExecContext(ctx, "UPDATE source_catalog_entry SET work_id=NULL WHERE id=?", staleID); err != nil {
+			return false, err
+		}
+		return true, nil
+	}
+
+	var conflict int
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
+		SELECT 1 FROM user_work_state AS old
+		INNER JOIN user_work_state AS current ON current.user_id=old.user_id AND current.work_id=?
+		WHERE old.work_id=? AND (
+			(old.rating IS NOT NULL AND current.rating IS NOT NULL AND old.rating<>current.rating)
+			OR (old.note<>'' AND current.note<>'' AND old.note<>current.note)))`,
+		targetWork.Int64, staleWork.Int64).Scan(&conflict); err != nil {
+		return false, err
+	}
+	if conflict != 0 {
+		return false, nil
+	}
+	// Merge every user's state into the release work. Empty fields never
+	// overwrite a stored value; favorites are unioned and the latest playback
+	// timestamp survives.
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO user_work_state(user_id,work_id,listening_status,favorite,rating,note,last_played_at,created_at,updated_at)
+		SELECT old.user_id,?1,
+			CASE WHEN current.user_id IS NULL OR current.listening_status='none' THEN old.listening_status ELSE current.listening_status END,
+			CASE WHEN current.user_id IS NULL THEN old.favorite ELSE MAX(current.favorite,old.favorite) END,
+			CASE WHEN current.rating IS NOT NULL THEN current.rating ELSE old.rating END,
+			CASE WHEN current.note IS NOT NULL AND current.note<>'' THEN current.note ELSE old.note END,
+			CASE
+				WHEN current.last_played_at IS NULL THEN old.last_played_at
+				WHEN old.last_played_at IS NULL THEN current.last_played_at
+				WHEN old.last_played_at>current.last_played_at THEN old.last_played_at
+				ELSE current.last_played_at
+			END,
+			CASE WHEN current.user_id IS NULL THEN old.created_at ELSE current.created_at END,
+			CURRENT_TIMESTAMP
+		FROM user_work_state AS old
+		LEFT JOIN user_work_state AS current ON current.user_id=old.user_id AND current.work_id=?2
+		WHERE old.work_id=?3
+		ON CONFLICT(user_id,work_id) DO UPDATE SET
+			listening_status=excluded.listening_status,
+			favorite=excluded.favorite,
+			rating=excluded.rating,
+			note=excluded.note,
+			last_played_at=excluded.last_played_at,
+			updated_at=CURRENT_TIMESTAMP`,
+		targetWork.Int64, targetWork.Int64, staleWork.Int64); err != nil {
+		return false, err
+	}
+	if _, err := tx.ExecContext(ctx, "DELETE FROM user_work_state WHERE work_id=?", staleWork.Int64); err != nil {
+		return false, err
+	}
+	if _, err := tx.ExecContext(ctx, "UPDATE source_catalog_entry SET work_id=NULL WHERE id=?", staleID); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func nullIfZero(value int64) any {
@@ -1186,7 +1314,7 @@ func replacementCatalogCardTx(ctx context.Context, tx *sql.Tx, sourceID, generat
 // catalogFormatCardRetireTargetTx returns the current release card that owns
 // every audio path of a stale format card. Zero means the card must stay: its
 // subtree was not fully observed, it has no unique owner, its files are not
-// covered, or it carries identity that needs review.
+// covered, or a series/alias identity needs review.
 func catalogFormatCardRetireTargetTx(ctx context.Context, tx *sql.Tx, sourceID, generation, cardID int64, root string) (int64, error) {
 	// The format directory must have been observed completely in this
 	// generation before its old card can be retired. A failed or restricted
@@ -1243,8 +1371,7 @@ func catalogFormatCardRetireTargetTx(ctx context.Context, tx *sql.Tx, sourceID, 
 	}
 	var blocked int
 	if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM source_catalog_entry e WHERE e.id=? AND (
-		e.work_id IS NOT NULL
-		OR EXISTS(SELECT 1 FROM catalog_series_member m WHERE m.catalog_entry_id=e.id)
+			EXISTS(SELECT 1 FROM catalog_series_member m WHERE m.catalog_entry_id=e.id)
 		OR EXISTS(SELECT 1 FROM source_catalog_entry r WHERE r.relocated_to_id=e.id)))`, cardID).Scan(&blocked); err != nil {
 		return 0, err
 	}
@@ -1492,7 +1619,7 @@ func retireStaleSplitCardsTx(ctx context.Context, tx *sql.Tx, sourceID, generati
 			// conflict visible for review instead of guessing a target.
 			continue
 		}
-		if err = retireCatalogCardTx(ctx, tx, id, target); err != nil {
+		if _, err = retireCatalogCardTx(ctx, tx, id, target); err != nil {
 			return err
 		}
 	}
@@ -1539,7 +1666,7 @@ func retireCoveredContainerCardsTx(ctx context.Context, tx *sql.Tx, sourceID, ge
 		if target == 0 {
 			continue
 		}
-		if err = retireCatalogCardTx(ctx, tx, card.id, target); err != nil {
+		if _, err = retireCatalogCardTx(ctx, tx, card.id, target); err != nil {
 			return err
 		}
 	}
@@ -1653,7 +1780,6 @@ func (s *Server) retireCatalogCardPage(ctx context.Context, job workflowJobRecor
 	if pass == catalogRetireFormat {
 		query = `SELECT e.id,e.root_path FROM source_catalog_entry e
 			WHERE e.file_source_id=? AND e.relocated_to_id IS NULL AND e.last_seen_generation<>? AND e.id>?
-				AND e.work_id IS NULL
 				AND NOT EXISTS(SELECT 1 FROM catalog_series_member m WHERE m.catalog_entry_id=e.id)
 				AND NOT EXISTS(SELECT 1 FROM source_catalog_entry r WHERE r.relocated_to_id=e.id)
 			ORDER BY e.id LIMIT ?`
@@ -1712,10 +1838,13 @@ func (s *Server) retireCatalogCardPage(ctx context.Context, job workflowJobRecor
 		if target == 0 {
 			continue
 		}
-		if err = retireCatalogCardTx(ctx, tx.Tx, card.id, target); err != nil {
-			return retired, lastID, false, err
+		retiredCard, retireErr := retireCatalogCardTx(ctx, tx.Tx, card.id, target)
+		if retireErr != nil {
+			return retired, lastID, false, retireErr
 		}
-		retired++
+		if retiredCard {
+			retired++
+		}
 	}
 	if retired > 0 {
 		if _, err = tx.ExecContext(ctx, `UPDATE source_catalog_scan SET indexed=(SELECT count(*) FROM source_catalog_entry WHERE file_source_id=? AND last_seen_generation=?) WHERE file_source_id=?`, sourceID, job.RunID, sourceID); err != nil {
@@ -1936,41 +2065,76 @@ func (s *Server) catalogSplitPlanForRoot(ctx context.Context, tx *sql.Tx, source
 // copies. Publishing it would create a second card for every work inside it,
 // while the parent already carries the same recordings.
 //
-// The check needs a large, almost entirely size-identical subset, so a real
-// disc, a differently mastered edition or a partial bonus folder keeps its own
-// card. Duplicates stay unpublished rather than being merged into the parent,
-// because the parent already holds the original files.
+// Provider content hashes identify the same bytes even when a package renamed
+// its files. Without a complete hash set, small folders require exact names and
+// sizes; a tolerance is used only for larger package copies. Duplicates stay
+// unpublished rather than being merged into the parent, because the parent
+// already holds the original files.
+const (
+	catalogDuplicateMinimumFiles = 3
+	catalogDuplicateSmallSet     = 20
+)
+
 func catalogDuplicateDirectoryTx(ctx context.Context, tx *sql.Tx, sourceID, generation int64, directoryPath string) (bool, error) {
 	parent := path.Dir(directoryPath)
 	if directoryPath == "/" || parent == "." || parent == directoryPath || parent == "/" {
 		return false, nil
 	}
-	child, err := catalogAudioSizesTx(ctx, tx, sourceID, generation, directoryPath)
-	if err != nil || len(child) < 20 {
+	child, err := catalogAudioFilesTx(ctx, tx, sourceID, generation, directoryPath)
+	if err != nil || len(child) < catalogDuplicateMinimumFiles {
 		return false, err
 	}
-	parentSizes, err := catalogAudioSizesTx(ctx, tx, sourceID, generation, parent)
+	parentFiles, err := catalogAudioFilesTx(ctx, tx, sourceID, generation, parent)
 	if err != nil {
 		return false, err
 	}
-	if len(parentSizes) < 20 {
+	if len(parentFiles) < catalogDuplicateMinimumFiles {
 		return false, nil
 	}
 	// A selection of the parent's tracks is a real release, not a copy. Only a
 	// child that repeats most of the parent's audio can be a format or package
 	// copy; twenty shared tracks below a two-hundred-track collection are two
 	// different works.
-	if len(child)*5 < len(parentSizes)*4 {
+	if len(child)*5 < len(parentFiles)*4 {
 		return false, nil
 	}
-	sort.Slice(child, func(i, j int) bool { return child[i] < child[j] })
+	parentNames := make(map[string][]int64, len(parentFiles))
+	for _, file := range parentFiles {
+		key := strings.ToLower(strings.TrimSpace(file.Name))
+		parentNames[key] = append(parentNames[key], file.Size)
+	}
+	childSizes := make([]int64, 0, len(child))
+	parentSizes := make([]int64, 0, len(parentFiles))
+	namedMatches, exactNameMatches := 0, 0
+	for _, file := range child {
+		childSizes = append(childSizes, file.Size)
+		if sizes, ok := parentNames[strings.ToLower(strings.TrimSpace(file.Name))]; ok {
+			if matchingSize(sizes, file.Size) {
+				namedMatches++
+			}
+			if containsExactSize(sizes, file.Size) {
+				exactNameMatches++
+			}
+		}
+	}
+	for _, file := range parentFiles {
+		parentSizes = append(parentSizes, file.Size)
+	}
+	if catalogAudioFilesHaveHashes(child) && catalogAudioFilesHaveHashes(parentFiles) {
+		hashed := catalogAudioHashMatches(child, parentFiles)
+		if len(child) < catalogDuplicateSmallSet || len(parentFiles) < catalogDuplicateSmallSet {
+			return len(child) == len(parentFiles) && hashed == len(child), nil
+		}
+		return hashed*10 >= len(child)*9, nil
+	}
+	sort.Slice(childSizes, func(i, j int) bool { return childSizes[i] < childSizes[j] })
 	sort.Slice(parentSizes, func(i, j int) bool { return parentSizes[i] < parentSizes[j] })
 	// Match one parent file per child file. Counting every child against any
 	// parent with a similar size lets a few repeated sizes stand in for a whole
 	// copied tree and classifies an unrelated work as a format copy.
 	matched := 0
 	parentIndex := 0
-	for _, size := range child {
+	for _, size := range childSizes {
 		tolerance := max(int64(1024), size/1000)
 		for parentIndex < len(parentSizes) && parentSizes[parentIndex] < size-tolerance {
 			parentIndex++
@@ -1980,16 +2144,78 @@ func catalogDuplicateDirectoryTx(ctx context.Context, tx *sql.Tx, sourceID, gene
 			parentIndex++
 		}
 	}
+	if len(child) < catalogDuplicateSmallSet || len(parentFiles) < catalogDuplicateSmallSet {
+		// A small folder has little statistical evidence. Without hashes, require
+		// the exact name and size pair for every file; 800 bytes of drift is a
+		// different recording, not a copy.
+		return len(child) == len(parentFiles) && exactNameMatches == len(child), nil
+	}
 	// A folder with a handful of shared tracks is a real work with a reused
 	// intro; a package copy repeats nearly all of its audio.
-	return matched*10 >= len(child)*9, nil
+	if matched*10 < len(child)*9 {
+		return false, nil
+	}
+	// Renamed package copies still match one-to-one by size. When the file names
+	// survive a copy, require most of them to agree as well instead of relying
+	// on size alone.
+	return len(child) == len(parentFiles) || namedMatches*10 >= len(child)*9, nil
 }
 
-func catalogAudioSizesTx(ctx context.Context, tx *sql.Tx, sourceID, generation int64, directoryPath string) ([]int64, error) {
+type catalogAudioFile struct {
+	Name string
+	Size int64
+	Hash string
+}
+
+func matchingSize(sizes []int64, size int64) bool {
+	tolerance := max(int64(1024), size/1000)
+	for _, candidate := range sizes {
+		if candidate >= size-tolerance && candidate <= size+tolerance {
+			return true
+		}
+	}
+	return false
+}
+
+func containsExactSize(sizes []int64, size int64) bool {
+	for _, candidate := range sizes {
+		if candidate == size {
+			return true
+		}
+	}
+	return false
+}
+
+func catalogAudioFilesHaveHashes(files []catalogAudioFile) bool {
+	for _, file := range files {
+		if strings.TrimSpace(file.Hash) == "" {
+			return false
+		}
+	}
+	return len(files) > 0
+}
+
+func catalogAudioHashMatches(child, parent []catalogAudioFile) int {
+	available := make(map[string]int, len(parent))
+	for _, file := range parent {
+		available[strings.TrimSpace(file.Hash)]++
+	}
+	matched := 0
+	for _, file := range child {
+		hash := strings.TrimSpace(file.Hash)
+		if available[hash] > 0 {
+			available[hash]--
+			matched++
+		}
+	}
+	return matched
+}
+
+func catalogAudioFilesTx(ctx context.Context, tx *sql.Tx, sourceID, generation int64, directoryPath string) ([]catalogAudioFile, error) {
 	// Only a directory this generation completed can describe the current copy.
 	// A failed or stale parent keeps its old listing, which must not decide how
 	// a newly observed child is admitted.
-	rows, err := tx.QueryContext(ctx, `SELECT o.size_bytes FROM source_catalog_observation o
+	rows, err := tx.QueryContext(ctx, `SELECT o.name,o.size_bytes,COALESCE(o.content_hash,'') FROM source_catalog_observation o
 		JOIN source_catalog_directory d ON d.file_source_id=o.file_source_id AND d.path=o.directory_path
 		WHERE o.file_source_id=? AND o.directory_path=? AND o.kind='audio' AND o.revision=d.revision
 			AND d.generation=? AND d.status='complete'`,
@@ -1998,13 +2224,13 @@ func catalogAudioSizesTx(ctx context.Context, tx *sql.Tx, sourceID, generation i
 		return nil, err
 	}
 	defer func() { _ = rows.Close() }()
-	sizes := []int64{}
+	files := []catalogAudioFile{}
 	for rows.Next() {
-		var size int64
-		if err = rows.Scan(&size); err != nil {
+		var file catalogAudioFile
+		if err = rows.Scan(&file.Name, &file.Size, &file.Hash); err != nil {
 			return nil, err
 		}
-		sizes = append(sizes, size)
+		files = append(files, file)
 	}
-	return sizes, rows.Err()
+	return files, rows.Err()
 }

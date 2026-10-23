@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -40,25 +41,13 @@ func (s *Server) updateSourceCatalogUserState(w http.ResponseWriter, r *http.Req
 		writeAPIError(w, 400, "invalid_request", "personal review is required", false)
 		return
 	}
-	entry, source, err := s.loadRetainedSourceCatalogEntry(r.Context(), id)
+	// Reject a missing or unusable source before opening a write transaction.
+	// Its identity fields are deliberately not reused below: a rescan can rename
+	// the entry or move it to another source before this request takes the lock.
+	retained, _, err := s.loadRetainedSourceCatalogEntry(r.Context(), id)
 	if err != nil {
 		writeUpstreamError(w, err)
 		return
-	}
-	var resolvedID int64
-	if entry.PrimaryCode != "" {
-		identity, resolveErr := s.resolveWorkCodeIdentity(r.Context(), entry.PrimaryCode)
-		if resolveErr == nil {
-			resolvedID = identity.WorkID
-		} else if !errors.Is(resolveErr, sql.ErrNoRows) {
-			writeError(w, resolveErr)
-			return
-		}
-	}
-	if entry.WorkID == nil && resolvedID == 0 {
-		if _, ok = s.requirePermission(w, r, "remote:track"); !ok {
-			return
-		}
 	}
 	tx, err := s.db.BeginTx(r.Context(), nil)
 	if err != nil {
@@ -66,17 +55,40 @@ func (s *Server) updateSourceCatalogUserState(w http.ResponseWriter, r *http.Req
 		return
 	}
 	defer func() { _ = tx.Rollback() }()
-	entry, err = resolveCatalogEntry(r.Context(), tx, id)
+	// Take the writer lock before reading identity. Every field used below is
+	// then the row a concurrent rename or source move committed before the lock,
+	// never a pre-transaction snapshot.
+	if _, err = tx.ExecContext(r.Context(), "UPDATE source_catalog_entry SET id=id WHERE id=?", retained.ID); err != nil {
+		writeError(w, err)
+		return
+	}
+	entry, err := resolveCatalogEntry(r.Context(), tx, retained.ID)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
 	id = entry.ID
-	// Obtain the writer lock before reading registration state. Concurrent saves
-	// cannot both observe an unregistered entry and publish separate works.
-	if _, err = tx.ExecContext(r.Context(), "UPDATE source_catalog_entry SET id=id WHERE id=?", id); err != nil {
-		writeError(w, err)
-		return
+	if entry.SourceID != 0 {
+		admission, admissionErr := catalogPublishedEntryAdmission(r.Context(), tx, entry.ID)
+		if admissionErr != nil {
+			writeError(w, admissionErr)
+			return
+		}
+		if admission.Files > 0 && admission.Audio == 0 {
+			writeCatalogEntryNotAvailable(w, admission)
+			return
+		}
+	}
+	var resolvedID int64
+	if entry.PrimaryCode != "" {
+		resolvedID, err = resolveCatalogReviewWorkID(r.Context(), tx, entry.PrimaryCode)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			writeError(w, err)
+			return
+		}
+		if errors.Is(err, sql.ErrNoRows) {
+			resolvedID = 0
+		}
 	}
 	var workID sql.NullInt64
 	if err = tx.QueryRowContext(r.Context(), "SELECT work_id FROM source_catalog_entry WHERE id=?", id).Scan(&workID); err != nil {
@@ -120,8 +132,8 @@ func (s *Server) updateSourceCatalogUserState(w http.ResponseWriter, r *http.Req
 		writeError(w, err)
 		return
 	}
-	if source.ID != 0 {
-		if err = upsertWorkSourcePresence(r.Context(), tx, workSourcePresence{WorkID: workID.Int64, FileSourceID: source.ID, PresenceType: sourcePresenceTypeRemoteSource, RemoteID: strconv.FormatInt(id, 10), RemoteCode: entry.PrimaryCode, Availability: entry.Status, RawJSON: mustJSON(map[string]any{"catalogEntryId": id})}); err != nil {
+	if entry.SourceID != 0 {
+		if err = upsertWorkSourcePresence(r.Context(), tx, workSourcePresence{WorkID: workID.Int64, FileSourceID: entry.SourceID, PresenceType: sourcePresenceTypeRemoteSource, RemoteID: strconv.FormatInt(id, 10), RemoteCode: entry.PrimaryCode, Availability: entry.Status, RawJSON: mustJSON(map[string]any{"catalogEntryId": id})}); err != nil {
 			writeError(w, err)
 			return
 		}
@@ -136,4 +148,95 @@ func (s *Server) updateSourceCatalogUserState(w http.ResponseWriter, r *http.Req
 		return
 	}
 	writeJSON(w, http.StatusOK, state)
+}
+
+// resolveCatalogReviewWorkID applies the same canonical-code precedence as
+// resolveWorkCodeIdentity, but reads through the review transaction. Using the
+// server pool here would need a second connection while the writer lock is held
+// and could wait forever on a single-connection deployment or test pool.
+func resolveCatalogReviewWorkID(ctx context.Context, tx *sql.Tx, code string) (int64, error) {
+	code = normalizeWorkCode(code)
+	if code == "" {
+		return 0, sql.ErrNoRows
+	}
+	var workID int64
+	err := tx.QueryRowContext(ctx, `
+		SELECT id FROM work
+		WHERE UPPER(primary_code)=UPPER(?)
+		LIMIT 1`, code).Scan(&workID)
+	if errors.Is(err, sql.ErrNoRows) {
+		err = tx.QueryRowContext(ctx, `
+			SELECT edition.work_id
+			FROM work_edition AS edition
+			WHERE UPPER(edition.primary_code)=UPPER(?)
+			LIMIT 1`, code).Scan(&workID)
+	}
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return 0, err
+	}
+	if err == nil {
+		return canonicalCatalogReviewWorkID(ctx, tx, workID, code)
+	}
+
+	var canonicalID sql.NullInt64
+	var canonicalCode string
+	err = tx.QueryRowContext(ctx, `
+		SELECT logical.canonical_work_id,logical.canonical_code
+		FROM work_code_alias AS alias
+		INNER JOIN logical_work AS logical ON logical.id=alias.logical_work_id
+		WHERE UPPER(alias.primary_code)=UPPER(?)
+		ORDER BY CASE WHEN alias.source_work_id IS NOT NULL THEN 0 ELSE 1 END,alias.id
+		LIMIT 1`, code).Scan(&canonicalID, &canonicalCode)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, sql.ErrNoRows
+	}
+	if err != nil {
+		return 0, err
+	}
+	if canonicalID.Valid {
+		return canonicalID.Int64, nil
+	}
+	if canonicalCode == "" {
+		return 0, sql.ErrNoRows
+	}
+	err = tx.QueryRowContext(ctx, "SELECT id FROM work WHERE UPPER(primary_code)=UPPER(?) LIMIT 1", normalizeWorkCode(canonicalCode)).Scan(&workID)
+	return workID, err
+}
+
+func canonicalCatalogReviewWorkID(ctx context.Context, tx *sql.Tx, workID int64, code string) (int64, error) {
+	var canonicalID sql.NullInt64
+	var canonicalCode, baseCode string
+	err := tx.QueryRowContext(ctx, `
+		SELECT logical.canonical_work_id,logical.canonical_code,edition.base_code
+		FROM work_edition AS edition
+		INNER JOIN logical_work AS logical ON logical.id=edition.logical_work_id
+		WHERE edition.work_id=?`, workID).Scan(&canonicalID, &canonicalCode, &baseCode)
+	if errors.Is(err, sql.ErrNoRows) {
+		return workID, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	if canonicalID.Valid {
+		return canonicalID.Int64, nil
+	}
+	if canonicalCode != "" && normalizeWorkCode(canonicalCode) != code {
+		var canonicalWorkID int64
+		err = tx.QueryRowContext(ctx, "SELECT id FROM work WHERE UPPER(primary_code)=UPPER(?) LIMIT 1", normalizeWorkCode(canonicalCode)).Scan(&canonicalWorkID)
+		if err == nil {
+			return canonicalWorkID, nil
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return 0, err
+		}
+	}
+	if baseCode == "" || normalizeWorkCode(baseCode) == code {
+		return workID, nil
+	}
+	var baseID int64
+	err = tx.QueryRowContext(ctx, "SELECT id FROM work WHERE UPPER(primary_code)=UPPER(?) LIMIT 1", normalizeWorkCode(baseCode)).Scan(&baseID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return workID, nil
+	}
+	return baseID, err
 }

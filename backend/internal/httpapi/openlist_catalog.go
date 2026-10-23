@@ -352,6 +352,15 @@ func (s *Server) loadSourceCatalogFiles(ctx context.Context, id int64) ([]Source
 	return files, rows.Err()
 }
 
+func writeCatalogEntryNotAvailable(w http.ResponseWriter, admission catalogEntryAdmission) {
+	writeAPIErrorDetails(w, http.StatusNotFound, "not_found", "catalog entry is not available", map[string]any{
+		"reason":   admission.Reason,
+		"files":    admission.Files,
+		"audio":    admission.Audio,
+		"nonAudio": admission.NonAudio,
+	}, false)
+}
+
 func (s *Server) getSourceCatalogEntry(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "private, no-store")
 	id, err := parseInt64PathValue(r, "id")
@@ -363,6 +372,20 @@ func (s *Server) getSourceCatalogEntry(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeUpstreamError(w, err)
 		return
+	}
+	// A metadata-only parent can exist as catalog provenance with sidecars but
+	// no playable audio. Hide that parent; zero-file entries remain readable
+	// because work matching and shared identities use them as synthetic rows.
+	if entry.SourceID != 0 {
+		admission, err := catalogPublishedEntryAdmission(r.Context(), s.db, entry.ID)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		if admission.Files > 0 && admission.Audio == 0 {
+			writeCatalogEntryNotAvailable(w, admission)
+			return
+		}
 	}
 	var rating sql.NullInt64
 	note := ""
@@ -417,12 +440,7 @@ func (s *Server) getSourceCatalogTracks(w http.ResponseWriter, r *http.Request) 
 	if !admission.Admitted() {
 		// The card exists for provenance but never passed the publish threshold.
 		// It has no playable tracks, so it must not answer a track request.
-		writeAPIErrorDetails(w, http.StatusNotFound, "not_found", "catalog entry is not available", map[string]any{
-			"reason":   admission.Reason,
-			"files":    admission.Files,
-			"audio":    admission.Audio,
-			"nonAudio": admission.NonAudio,
-		}, false)
+		writeCatalogEntryNotAvailable(w, admission)
 		return
 	}
 	id = entry.ID
