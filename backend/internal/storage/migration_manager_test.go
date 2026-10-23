@@ -947,7 +947,7 @@ func TestCatalogSearchMigrationBackfillsExistingRows(t *testing.T) {
 		t.Fatalf("create schema 084: %v", err)
 	}
 	if _, err := db.Exec(`INSERT INTO file_source(id,code,display_name,source_type) VALUES(7,'legacy_source','Legacy Source','openlist');
-		INSERT INTO source_catalog_entry(id,file_source_id,root_path,title,primary_code) VALUES(1,7,'/legacy','Legacy Work','RJ00999999');
+		INSERT INTO source_catalog_entry(id,file_source_id,root_path,title,primary_code) VALUES(1,7,'/legacy','Legacy Work','RJ00000099');
 		INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes) VALUES(1,'Disc/legacy.mp3','Legacy Track','audio',10);`); err != nil {
 		t.Fatalf("seed schema 084: %v", err)
 	}

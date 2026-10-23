@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -18,6 +19,11 @@ const (
 	// The cap still bounds one tick; the next tick continues if the budget is
 	// not reached.
 	contentTranslationRetentionBatches = 20
+	// Below this budget SQLite's page granularity dominates the measurement (a
+	// single page is already larger than the configured value), so tests and
+	// deliberately tiny limits keep the historical text-byte meaning. Real
+	// cache budgets, including the 256 MiB default, use measured pages.
+	contentTranslationDiskBudgetFloor = 1 << 20
 )
 
 // One maintenance pass at a time keeps concurrent model completions from
@@ -39,11 +45,12 @@ func (s *Server) pruneTranslationCacheAfterWrite(ctx context.Context, cfg transl
 }
 
 // pruneContentTranslations enforces the two administrator limits on the
-// durable translation cache: a maximum number of model rows and an approximate
-// byte budget for model text. It covers both the searchable content corpus and
-// the source-field display cache. Native rows cost no model call and carry
-// authored text, so they are neither counted nor eviction material. Source
-// identities and personal records live in other tables and are never touched.
+// durable translation cache: a maximum number of model rows and a disk budget
+// measured from the cache tables' pages. It covers both the searchable content
+// corpus and the source-field display cache. Native rows cost no model call and
+// carry authored text, so they are neither counted nor eviction material.
+// Source identities and personal records live in other tables and are never
+// touched.
 //
 // Superseded rows (an older cache key for the same entity or source field) are
 // removed first: the newer row already answers every lookup, and the old one
@@ -60,7 +67,13 @@ func (s *Server) pruneTranslationCache(ctx context.Context, cfg translation.Conf
 	contentTranslationRetentionMu.Lock()
 	defer contentTranslationRetentionMu.Unlock()
 
-	for range contentTranslationRetentionBatches {
+	// The write path only needs to keep a burst from growing without bound; the
+	// periodic pass has the larger batch allowance and can finish the trim.
+	batches := contentTranslationRetentionBatches
+	if !removeSuperseded {
+		batches = 1
+	}
+	for range batches {
 		if removeSuperseded {
 			// A superseded row is unreachable by the current lookup key. It is
 			// cheaper to remove than to count against either budget.
@@ -89,7 +102,7 @@ func (s *Server) pruneTranslationCache(ctx context.Context, cfg translation.Conf
 		if cfg.MaxEntries <= 0 && cfg.CacheBytes <= 0 {
 			return nil
 		}
-		var rows, bytes int64
+		var rows, logicalBytes int64
 		if err := s.db.QueryRowContext(ctx, `SELECT count(*),COALESCE(sum(
 					byte_count),0)
 				FROM (
@@ -98,8 +111,24 @@ func (s *Server) pruneTranslationCache(ctx context.Context, cfg translation.Conf
 					UNION ALL
 					SELECT length(CAST(source_text AS BLOB))+length(CAST(translated_text AS BLOB)) AS byte_count
 					FROM source_field_translation
-				)`).Scan(&rows, &bytes); err != nil {
+					)`).Scan(&rows, &logicalBytes); err != nil {
 			return err
+		}
+		// dbstat walks every page in the database. On the write path skip that
+		// measurement until the logical cache text is at least one third of the
+		// configured disk budget; row-count trimming does not need page data.
+		// A periodic pass always measures so page overhead is never ignored.
+		measureDisk := cfg.CacheBytes >= contentTranslationDiskBudgetFloor
+		if !removeSuperseded && cfg.CacheBytes > 0 && logicalBytes*3 < cfg.CacheBytes {
+			measureDisk = false
+		}
+		bytes := logicalBytes
+		measuredDisk := false
+		if measureDisk {
+			if measured, ok := s.translationCacheDiskBytes(ctx); ok {
+				bytes = measured
+				measuredDisk = true
+			}
 		}
 		overRows := cfg.MaxEntries > 0 && rows > int64(cfg.MaxEntries)
 		overBytes := cfg.CacheBytes > 0 && bytes > cfg.CacheBytes
@@ -112,13 +141,15 @@ func (s *Server) pruneTranslationCache(ctx context.Context, cfg translation.Conf
 		}
 		if overBytes {
 			// The byte budget wins when it is tighter: estimate the average row
-			// and keep only what fits. Page and index overhead are not included;
-			// this bounds the stored text itself.
+			// and keep only what fits. For real budgets `bytes` is the measured
+			// page footprint of both cache tables and their indexes/FTS shadow
+			// tables, so the configured disk limit includes page overhead.
 			average := bytes / max(rows, 1)
 			if average < 1 {
 				average = 1
 			}
-			if fits := cfg.CacheBytes / average; fits < keep {
+			fits := cfg.CacheBytes * rows / max(bytes, 1)
+			if fits < keep {
 				keep = fits
 			}
 		}
@@ -126,11 +157,23 @@ func (s *Server) pruneTranslationCache(ctx context.Context, cfg translation.Conf
 		if remove <= 0 {
 			return nil
 		}
+		if overBytes && measuredDisk {
+			// A measured page budget can be one page over while the row-count
+			// estimate says nothing must go. Free at least a page's worth of
+			// rows so dbstat can observe the reduction and the loop converges.
+			average := bytes / max(rows, 1)
+			pageSize := int64(4096)
+			_ = s.db.QueryRowContext(ctx, `PRAGMA page_size`).Scan(&pageSize)
+			pageRows := pageSize*2/max(average, 1) + 1
+			if remove < pageRows {
+				remove = min(pageRows, rows)
+			}
+		}
 		if remove > contentTranslationRetentionBatch {
 			remove = contentTranslationRetentionBatch
 		}
-		// Oldest first: a recently used translation is the most likely to be
-		// asked for again, and updated_at keeps the order stable across restarts.
+		// Oldest writes first. The budget bounds rebuildable model output, not
+		// durable corpus; updated_at keeps the order stable across restarts.
 		affected, err := s.deleteOldestTranslationRows(ctx, remove)
 		if err != nil {
 			return err
@@ -140,6 +183,55 @@ func (s *Server) pruneTranslationCache(ctx context.Context, cfg translation.Conf
 		}
 	}
 	return nil
+}
+
+// translationCacheDiskBytes measures the pages owned by the durable translation
+// cache. A small text row still occupies a B-tree page slot and index entries,
+// so counting only text bytes can grow the database well past the configured
+// limit. dbstat is optional in some SQLite builds; when it is unavailable the
+// caller falls back to the text budget rather than failing translation.
+func (s *Server) translationCacheDiskBytes(ctx context.Context) (int64, bool) {
+	var contentPages, sourcePages sql.NullInt64
+	err := s.db.QueryRowContext(ctx, `SELECT
+		COALESCE(sum(CASE WHEN name='content_translation'
+			OR name LIKE 'content_translation_search%'
+			OR name LIKE 'idx_content_translation%'
+			OR name LIKE 'sqlite_autoindex_content_translation%'
+			THEN pgsize END),0),
+		COALESCE(sum(CASE WHEN name='source_field_translation'
+			OR name LIKE 'idx_source_field_translation%'
+			OR name LIKE 'sqlite_autoindex_source_field_translation%'
+			THEN pgsize END),0)
+		FROM dbstat`).Scan(&contentPages, &sourcePages)
+	if err != nil {
+		return 0, false
+	}
+	// The content_translation table also stores authored native rows, which are
+	// not cache and are never evicted. Attribute its pages by model text share so
+	// a large native corpus cannot empty the model cache.
+	var totalText, modelText sql.NullInt64
+	if err = s.db.QueryRowContext(ctx, `SELECT
+		COALESCE(sum(length(CAST(source_text AS BLOB))+length(CAST(translated_text AS BLOB))),0),
+		COALESCE(sum(CASE WHEN origin='model'
+			THEN length(CAST(source_text AS BLOB))+length(CAST(translated_text AS BLOB)) ELSE 0 END),0)
+		FROM content_translation`).Scan(&totalText, &modelText); err != nil {
+		return 0, false
+	}
+	modelContentPages := int64(0)
+	if totalText.Valid && totalText.Int64 > 0 {
+		modelContentPages = contentPages.Int64 * modelText.Int64 / totalText.Int64
+	} else if contentPages.Int64 > 0 {
+		var totalRows, modelRows int64
+		if err = s.db.QueryRowContext(ctx, `SELECT count(*),
+			COALESCE(sum(CASE WHEN origin='model' THEN 1 ELSE 0 END),0)
+			FROM content_translation`).Scan(&totalRows, &modelRows); err != nil {
+			return 0, false
+		}
+		if totalRows > 0 {
+			modelContentPages = contentPages.Int64 * modelRows / totalRows
+		}
+	}
+	return modelContentPages + sourcePages.Int64, true
 }
 
 // deleteOldestTranslationRows removes the oldest model rows across both cache

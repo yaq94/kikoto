@@ -151,16 +151,23 @@ searchable corpus.
 Two administrator budgets bound the model cache in a maintenance pass that runs
 beside the prefill worker: `maxEntries` limits the number of model rows across
 `content_translation` and `source_field_translation` (zero means unlimited), and
-`cacheBytes` roughly bounds their UTF-8 text bytes. Only model rows are counted
-and evicted, oldest first, because those are rebuildable. Native rows carry
+`cacheBytes` bounds their measured SQLite page footprint through `dbstat`,
+including the cache indexes and the FTS shadow tables. Budgets below 1 MiB fall
+back to UTF-8 text bytes because one SQLite page is already larger than the
+configured value. Only model rows are counted and evicted, oldest first, because
+those are rebuildable. Native rows carry
 authored text and are never eviction candidates; personal records and source
 identities are in other tables and are never touched. A superseded row for the
 same entity or source field goes before a live one. The pass runs bounded batches
 so the SQLite writer is never held for a whole trim. Every successful model-row
 write also invokes the budget part of that same pass, while the periodic pass
-also removes superseded rows. When `minFreeBytes` is not met, new rows are not
-written at all: the caller still returns the translation it already fetched,
-reports `paused_low_disk`, and the durable copy waits for space.
+also removes superseded rows. The write path trims at most one batch and skips
+the `dbstat` measurement until logical cache text reaches one third of
+`cacheBytes`; a large cache therefore stays bounded without walking every
+database page on each completion. The periodic pass always measures pages and
+may run the full batch allowance. When `minFreeBytes` is not met, new rows are
+not written at all: the caller still returns the translation it already
+fetched, reports `paused_low_disk`, and the durable copy waits for space.
 
 A content change produces a new `cache_key` because the source text is part of
 it. The previous row stays readable until the periodic retention pass removes it

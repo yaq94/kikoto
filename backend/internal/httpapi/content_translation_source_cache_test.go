@@ -282,6 +282,10 @@ func TestTranslationRetentionCountsSourceFieldCacheAndKeepsNativeRows(t *testing
 // test does not call the retention function itself.
 func TestTranslationCacheBudgetIsEnforcedByWrites(t *testing.T) {
 	server, host, admin, _ := translationHTTPFixture(t)
+	if _, err := server.db.Exec(`INSERT INTO file_source(id,code,display_name,source_type)
+		VALUES(1,'cache_budget','Cache budget','openlist')`); err != nil {
+		t.Fatal(err)
+	}
 	translationRequest(t, host, admin, "PATCH", "/api/settings/translation", `{"cacheBytes":4096,"maxEntries":0,"minFreeBytes":0}`, 200)
 	rows := make([]sourceFieldTranslationRow, 0, 120)
 	for index := range 120 {
@@ -309,6 +313,10 @@ func TestTranslationCacheBudgetIsEnforcedByWrites(t *testing.T) {
 func TestSourceFieldTranslationCacheStaysOutOfSearchCorpus(t *testing.T) {
 	server := openContentTranslationTestServer(t)
 	ctx := context.Background()
+	if _, err := server.db.Exec(`INSERT INTO file_source(id,code,display_name,source_type)
+		VALUES(1,'source_cache','Source cache','openlist')`); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := server.saveSourceFieldTranslations(ctx, []sourceFieldTranslationRow{{
 		CacheKey: "source-only", SourceID: 1, WorkCode: "RJ00000001", Field: "tag",
 		Language: "zh-Hans", SourceText: "Source tag", TranslatedText: "SourceOnlyNeedle",

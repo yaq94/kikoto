@@ -262,7 +262,7 @@ matches the backup.
 | v0.8.0 | `059` | `059_v0.8.0.sql` |
 | v0.8.1, v0.8.2 | `066` | `066_v0.8.1.sql` |
 | v0.8.3 | `068` | `068_v0.8.3.sql` |
-| development build (unreleased) | `095` | Development baseline only; `compat/094_dev.sql` |
+| development build (unreleased) | `095` | Development baseline only; `compat/095_dev.sql` |
 
 Per-release upgrade steps are in the [release notes](../history/index.md).
 

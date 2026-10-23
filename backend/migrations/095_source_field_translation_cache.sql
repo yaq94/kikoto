@@ -9,7 +9,7 @@
 CREATE TABLE source_field_translation (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   cache_key TEXT NOT NULL UNIQUE,
-  source_id INTEGER NOT NULL,
+  source_id INTEGER NOT NULL REFERENCES file_source(id) ON DELETE CASCADE,
   work_code TEXT NOT NULL DEFAULT '',
   field TEXT NOT NULL CHECK(field IN ('title','tag','directory')),
   path TEXT NOT NULL DEFAULT '',

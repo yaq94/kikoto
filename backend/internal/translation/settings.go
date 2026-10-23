@@ -23,7 +23,9 @@ type Limits struct {
 	QueueLimit  int `json:"queueLimit"`
 	// MaxEntries bounds rebuildable model rows in the persistent translation
 	// table. Zero means unlimited; authored native rows are not cache entries.
-	MaxEntries   int   `json:"maxEntries"`
+	MaxEntries int `json:"maxEntries"`
+	// CacheBytes bounds the measured SQLite page footprint of the rebuildable
+	// translation cache, including indexes and FTS shadow tables.
 	CacheBytes   int64 `json:"cacheBytes"`
 	MinFreeBytes int64 `json:"minFreeBytes"`
 }
