@@ -39,8 +39,17 @@ func catalogAdmissionRoot(directoryPath, parentRoot string, observed catalogDire
 	// A child directory that repeats its parent's release code is a format or
 	// packaging copy of the same work (RJ147133/…/RJ147133 MP3+lrc). It must
 	// not become a second card with the same number.
+	if code := catalogDirectoryCode(directoryPath); code != "" && parentRoot != "" &&
+		strings.EqualFold(code, catalogDirectoryCode(parentRoot)) {
+		// The direct parent may be a wrapper such as "MP3+lrc" or "特典";
+		// the already inherited root is the release identity.
+		return parentRoot
+	}
 	if parent := path.Dir(directoryPath); parent != directoryPath {
 		if code := catalogDirectoryCode(directoryPath); code != "" && code == catalogDirectoryCode(parent) {
+			if parentRoot != "" && strings.EqualFold(code, catalogDirectoryCode(parentRoot)) {
+				return parentRoot
+			}
 			return parent
 		}
 
@@ -92,10 +101,11 @@ func catalogAdmissionRoot(directoryPath, parentRoot string, observed catalogDire
 }
 
 // catalogSelfWorkRoot reports a directory whose own contents make it playable
-// without a parent: a work code, direct audio, or nothing but format copies and
-// track containers. A release that only ships Disc 1/Disc 2 or MP3 files still
-// owns one identity; admitting the discs separately would create one card per
-// disc and break the "tracks do not become works" rule.
+// without a parent: a work code, direct audio, or nothing but format copies,
+// auxiliary attachments and track containers. A release that only ships
+// Disc 1/Disc 2, MP3 files or a 特典 folder still owns one identity; admitting
+// those containers separately would create one card per folder and break the
+// "attachments do not become works" rule.
 //
 // Unknown subdirectories do not veto admission. A directory with audio-bearing
 // children is handled child by child, so admitting the parent only gives its own
@@ -104,8 +114,23 @@ func catalogAdmissionRoot(directoryPath, parentRoot string, observed catalogDire
 // source display name supplies the card title.
 func catalogSelfWorkRoot(directoryPath string, observed catalogDirectorySummary) bool {
 	return catalogDirectoryCode(directoryPath) != "" || observed.Audio > 0 ||
-		(observed.FormatDirectories > 0 || observed.TrackContainers > 0)
+		(observed.FormatDirectories > 0 || observed.TrackContainers > 0 ||
+			observed.AuxiliaryDirectories > 0)
 }
+
+var catalogAudioFormatTokens = []string{
+	"mp3", "flac", "wav", "ogg", "opus", "m4a", "aac",
+	"aiff", "aif", "wma", "dsd", "dsf", "dff", "ape", "alac", "wv", "tta",
+}
+
+// A copy may put its format token after a circle/code prefix, and it may name
+// companion lyrics or quality markers in the same folder. Match that trailing
+// form without turning a title such as "MP3 Collection" into a format folder.
+var catalogFormatCopySuffix = regexp.MustCompile(`(?i)(?:^|[^a-z0-9])(?:` +
+	strings.Join(catalogAudioFormatTokens, "|") +
+	`)(?:\s*[+&]\s*(?:lrc|lyrics?|sub(?:title)?s?|字幕|歌詞|歌词))+` +
+	`(?:\s*(?:vbr|cbr|lossless|hi-?res|无损|無損|[0-9]+(?:kbps|kbit|mbit|khz|bit|bps|hz|k|m)))*` +
+	`[)\]】）]*\s*$`)
 
 func catalogFormatDirectory(name string) bool {
 	lower := catalogDirectoryFormatName(name)
@@ -115,15 +140,19 @@ func catalogFormatDirectory(name string) bool {
 	compact := strings.NewReplacer("(", "", ")", "", "[", "", "]", "",
 		"（", "", "）", "", "【", "", "】", "", " ", "", "_", "", "-", "",
 		"/", "", ",", "", ":", "", ".", "").Replace(lower)
-	for _, token := range []string{"mp3", "flac", "wav", "ogg", "opus", "m4a", "aac",
-		"aiff", "aif", "wma", "dsd", "dsf", "dff", "ape", "alac", "wv", "tta"} {
+	for _, token := range catalogAudioFormatTokens {
 		if !strings.HasPrefix(compact, token) {
 			continue
 		}
 		rest := compact[len(token):]
 		// Only a quality marker may follow the format word. "MP3Collection"
 		// is a title; "MP3 320kbps" and "FLAC24bit" are copies.
-		return rest == "" || catalogFormatQualityOnly(rest)
+		if rest == "" || catalogFormatQualityOnly(rest) {
+			return true
+		}
+	}
+	if catalogFormatCopySuffix.MatchString(lower) {
+		return true
 	}
 	// A Japanese release names its audio copy "音声" or "ボイス". These words
 	// are also ordinary title words ("Audio Drama", "音声剧"), so only the

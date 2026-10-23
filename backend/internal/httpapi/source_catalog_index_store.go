@@ -468,7 +468,7 @@ func completeCatalogDirectoryTx(ctx context.Context, tx *sql.Tx, sourceID, gener
 		}
 	}
 	if catalogDirectoryCode(d.Path) != "" {
-		d.Root = catalogAdmissionRoot(d.Path, "", catalogDirectorySummary{audio, formats, auxiliary, tracks, otherDirs})
+		d.Root = catalogAdmissionRoot(d.Path, d.Root, catalogDirectorySummary{audio, formats, auxiliary, tracks, otherDirs})
 		return finish()
 	}
 	if catalogContainerDirectory(path.Base(d.Path)) {

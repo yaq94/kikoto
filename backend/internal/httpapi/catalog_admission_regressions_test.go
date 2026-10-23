@@ -17,6 +17,130 @@ func TestCatalogSplitModeTreatsZeroPaddedRunAsOneWork(t *testing.T) {
 	}
 }
 
+// A format copy may carry a companion subtitle suffix or a circle/code prefix.
+// These are still the release's audio folder, not a separate work title.
+func TestCatalogFormatCopyRecognizesCompanionSuffixes(t *testing.T) {
+	for _, name := range []string{
+		"MP3+lrc",
+		"MP3+LRC",
+		"WAV+lrc",
+		"[团队]RJ00000001 MP3+lrc",
+	} {
+		if !catalogFormatDirectory(name) {
+			t.Errorf("%q is not recognized as a format copy", name)
+		}
+	}
+	for _, name := range []string{"MP3 Collection", "Audio Drama", "Example Release 2", "My MP3"} {
+		if catalogFormatDirectory(name) {
+			t.Errorf("%q must stay a title", name)
+		}
+	}
+	for _, tc := range []struct {
+		name, want string
+	}{
+		{"Episode 1 (MP3+lrc)", "Episode 1"},
+		{"第1集 (WAV+lrc)", "第1集"},
+	} {
+		got, ok := catalogEpisodeFormatCopy(tc.name)
+		if !ok || got != tc.want {
+			t.Errorf("catalogEpisodeFormatCopy(%q)=(%q,%v), want (%q,true)", tc.name, got, ok, tc.want)
+		}
+	}
+}
+
+// A wrapper that repeats the release code is part of the release even when the
+// wrapper has no direct audio. The outer release must keep the card, not the
+// inner wrapper.
+func TestCatalogNestedSameCodeWrapperKeepsOuterRelease(t *testing.T) {
+	f := newLooseWorkFixture(t, map[string][]map[string]any{
+		"/":        {looseDir("Creator")},
+		"/Creator": {looseDir("[RJ00000001] Release")},
+		"/Creator/[RJ00000001] Release": {
+			looseDir("[RJ00000001] MP3+lrc"),
+		},
+		"/Creator/[RJ00000001] Release/[RJ00000001] MP3+lrc": {
+			looseDir("[RJ00000001] Main"),
+		},
+		"/Creator/[RJ00000001] Release/[RJ00000001] MP3+lrc/[RJ00000001] Main": {
+			looseAudio("track.mp3"),
+		},
+	})
+	f.request(t, http.MethodPost, "/catalog/index", `{"intervalMs":100}`, 202)
+	if p := f.drain(t); p["status"] != "complete" {
+		t.Fatalf("scan = %#v", p)
+	}
+	cards := f.cards(t)
+	if len(cards) != 1 {
+		t.Fatalf("cards=%v, want one outer release card", cards)
+	}
+	card := cards["[RJ00000001] Release"]
+	if card == nil {
+		t.Fatalf("outer release card missing: %v", cards)
+	}
+	if got := countCatalogAudio(f.tracks(t, card)); got != 1 {
+		t.Fatalf("tracks=%d, want 1", got)
+	}
+}
+
+// An auxiliary folder belongs to the release even when it is the only place
+// with playable audio. The release keeps the card title.
+func TestCatalogAuxiliaryOnlyReleaseKeepsReleaseTitle(t *testing.T) {
+	f := newLooseWorkFixture(t, map[string][]map[string]any{
+		"/":           {looseDir("Release")},
+		"/Release":    {looseDir("特典")},
+		"/Release/特典": {looseAudio("track.mp3")},
+	})
+	f.request(t, http.MethodPost, "/catalog/index", `{"intervalMs":100}`, 202)
+	if p := f.drain(t); p["status"] != "complete" {
+		t.Fatalf("scan = %#v", p)
+	}
+	cards := f.cards(t)
+	if len(cards) != 1 {
+		t.Fatalf("cards=%v, want one release card", cards)
+	}
+	card := cards["Release"]
+	if card == nil {
+		t.Fatalf("release card missing: %v", cards)
+	}
+	if got := countCatalogAudio(f.tracks(t, card)); got != 1 {
+		t.Fatalf("tracks=%d, want 1", got)
+	}
+}
+
+// A coded bonus directory below an auxiliary wrapper still belongs to the
+// release; it must not become a second card with the same code.
+func TestCatalogNestedCodedBonusStaysInRelease(t *testing.T) {
+	f := newLooseWorkFixture(t, map[string][]map[string]any{
+		"/":        {looseDir("Creator")},
+		"/Creator": {looseDir("RJ00000001 Release")},
+		"/Creator/RJ00000001 Release": {
+			looseAudio("track.mp3"),
+			looseDir("特典"),
+		},
+		"/Creator/RJ00000001 Release/特典": {
+			looseDir("RJ00000001 Bonus"),
+		},
+		"/Creator/RJ00000001 Release/特典/RJ00000001 Bonus": {
+			looseAudio("bonus.mp3"),
+		},
+	})
+	f.request(t, http.MethodPost, "/catalog/index", `{"intervalMs":100}`, 202)
+	if p := f.drain(t); p["status"] != "complete" {
+		t.Fatalf("scan = %#v", p)
+	}
+	cards := f.cards(t)
+	if len(cards) != 1 {
+		t.Fatalf("cards=%v, want one release card", cards)
+	}
+	card := cards["RJ00000001 Release"]
+	if card == nil {
+		t.Fatalf("release card missing: %v", cards)
+	}
+	if got := countCatalogAudio(f.tracks(t, card)); got != 2 {
+		t.Fatalf("tracks=%d, want 2", got)
+	}
+}
+
 // Chapter, Part, Track, Disc and Scene number the pieces of one release. An
 // explicit series label must not turn those pieces into episodes.
 func TestCatalogEpisodeEvidenceIgnoresStructuralChildrenUnderASeriesLabel(t *testing.T) {
