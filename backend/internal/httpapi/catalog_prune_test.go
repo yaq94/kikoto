@@ -82,25 +82,25 @@ func TestCatalogPruneDryRunAndApply(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if report.Totals.Entries != 2 || report.Totals.Files != 6001 || report.Totals.TransferRefs != 2 {
-		t.Fatalf("report totals = %+v, want 2 cards/6001 files/2 refs", report.Totals)
+	if report.Totals.Entries != 1 || report.Totals.Files != 0 || report.Totals.TransferRefs != 1 {
+		t.Fatalf("report totals = %+v, want the empty card with one ref", report.Totals)
 	}
-	// Four cards fail admission; the series member and the alias target are
-	// reported as candidates but preserved by reference.
-	if report.Candidates.Entries != 4 || report.Candidates.Files != 6013 || report.Candidates.TransferRefs != 4 {
-		t.Fatalf("candidate totals = %+v, want 4 cards/6013 files/4 refs", report.Candidates)
+	// Cards with audio are playable regardless of attachment count. Only the
+	// empty card and the two reference-protected cards remain candidates.
+	if report.Candidates.Entries != 3 || report.Candidates.Files != 12 || report.Candidates.TransferRefs != 3 {
+		t.Fatalf("candidate totals = %+v, want 3 cards/12 files/3 refs", report.Candidates)
 	}
-	if report.Totals.Observations != 4 || report.Totals.Directories != 2 || report.Totals.AudioRoots != 1 {
-		t.Fatalf("path totals = %+v, want 4 obs/2 dirs/1 audio root", report.Totals)
+	if report.Totals.Observations != 1 || report.Totals.Directories != 1 || report.Totals.AudioRoots != 0 {
+		t.Fatalf("path totals = %+v, want 1 obs/1 dir/0 audio roots", report.Totals)
 	}
-	if report.Totals.KeptRows != 4 {
-		t.Fatalf("kept rows = %d, want 4 whitelisted rows", report.Totals.KeptRows)
+	if report.Totals.KeptRows != 0 {
+		t.Fatalf("kept rows = %d, want 0 for the empty card", report.Totals.KeptRows)
 	}
 	reasons := map[int64]string{}
 	for _, entry := range report.Entries {
 		reasons[entry.EntryID] = entry.Reason
 	}
-	if reasons[1] != "too_many_files" || reasons[3] != "empty_audio_card" {
+	if len(reasons) != 1 || reasons[3] != "empty_audio_card" {
 		t.Fatalf("reasons = %+v", reasons)
 	}
 	skipped := map[int64]string{}
@@ -115,8 +115,8 @@ func TestCatalogPruneDryRunAndApply(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(result.Batches) != 2 {
-		t.Fatalf("batches = %d, want 2", len(result.Batches))
+	if len(result.Batches) != 1 {
+		t.Fatalf("batches = %d, want 1", len(result.Batches))
 	}
 	if result.Totals.Entries != report.Totals.Entries ||
 		result.Totals.Files != report.Totals.Files ||
@@ -132,22 +132,25 @@ func TestCatalogPruneDryRunAndApply(t *testing.T) {
 		Scan(&scanDirectories, &scanObserved, &scanPending); err != nil {
 		t.Fatal(err)
 	}
-	if scanDirectories != 2 || scanObserved != 3 || scanPending != 2 {
-		t.Fatalf("scan counters = dirs %d obs %d pending %d, want 2/3/2", scanDirectories, scanObserved, scanPending)
+	if scanDirectories != 3 || scanObserved != 6 || scanPending != 5 {
+		t.Fatalf("scan counters = dirs %d obs %d pending %d, want 3/6/5", scanDirectories, scanObserved, scanPending)
 	}
 
-	var entries, files, refs int
-	if err = db.QueryRow(`SELECT count(*) FROM source_catalog_entry WHERE id IN (1,3)`).Scan(&entries); err != nil {
+	var deleted, kept, files, refs int
+	if err = db.QueryRow(`SELECT count(*) FROM source_catalog_entry WHERE id=3`).Scan(&deleted); err != nil {
 		t.Fatal(err)
 	}
-	if err = db.QueryRow(`SELECT count(*) FROM source_catalog_file WHERE catalog_entry_id IN (1,3)`).Scan(&files); err != nil {
+	if err = db.QueryRow(`SELECT count(*) FROM source_catalog_entry WHERE id=1`).Scan(&kept); err != nil {
 		t.Fatal(err)
 	}
-	if err = db.QueryRow(`SELECT count(*) FROM personal_transfer_ref WHERE catalog_entry_id IN (1,3)`).Scan(&refs); err != nil {
+	if err = db.QueryRow(`SELECT count(*) FROM source_catalog_file WHERE catalog_entry_id=3`).Scan(&files); err != nil {
 		t.Fatal(err)
 	}
-	if entries != 0 || files != 0 || refs != 0 {
-		t.Fatalf("deleted remnants: entries=%d files=%d refs=%d", entries, files, refs)
+	if err = db.QueryRow(`SELECT count(*) FROM personal_transfer_ref WHERE catalog_entry_id=3`).Scan(&refs); err != nil {
+		t.Fatal(err)
+	}
+	if deleted != 0 || kept != 1 || files != 0 || refs != 0 {
+		t.Fatalf("prune remnants: deleted=%d kept=%d files=%d refs=%d", deleted, kept, files, refs)
 	}
 
 	// Whitelisted child keeps its entry, audio files, observations, directory
@@ -222,8 +225,8 @@ func TestCatalogPruneDryRunAndApply(t *testing.T) {
 	if err != nil {
 		t.Fatalf("idempotent apply: %v", err)
 	}
-	if len(second.Batches) != 0 || second.AlreadyApplied != 2 {
-		t.Fatalf("second apply = %+v, want 2 already applied and no batches", second)
+	if len(second.Batches) != 0 || second.AlreadyApplied != 1 {
+		t.Fatalf("second apply = %+v, want 1 already applied and no batches", second)
 	}
 }
 
@@ -248,5 +251,51 @@ func TestCatalogPruneRefusesChangedReport(t *testing.T) {
 	}
 	if entries != 2 {
 		t.Fatalf("a refused apply deleted %d rows", 2-entries)
+	}
+}
+
+func TestCatalogPrunePreservesWorkBackedTransferAlias(t *testing.T) {
+	db := openMigratedTestDB(t)
+	for _, statement := range []struct {
+		name, sql string
+	}{
+		{"work", `INSERT INTO work(id,primary_code,title) VALUES(1,'RJ00000001','Alias work')`},
+		{"source", `INSERT INTO file_source(id,code,display_name,source_type) VALUES(90,'alias-source','Alias source','openlist')`},
+		{"run", `INSERT INTO workflow_run(id,workflow_code,display_name,status,trigger_type)
+			VALUES(900,'source_catalog_index','Alias fixture','succeeded','manual')`},
+		{"scan", `INSERT INTO source_catalog_scan(file_source_id,workflow_run_id,options_json,directories,observed,publish_pending_remaining)
+			VALUES(90,900,'{}',1,1,1)`},
+		{"entry", `INSERT INTO source_catalog_entry(id,file_source_id,root_path,title,work_id,availability_status)
+			VALUES(10,90,'/alias','Empty alias',1,'available')`},
+		{"directory", `INSERT INTO source_catalog_directory(file_source_id,path,generation,revision,partition_path,catalog_root,status)
+			VALUES(90,'/alias',900,1,'/alias','/alias','complete')`},
+		{"observation", `INSERT INTO source_catalog_observation(file_source_id,directory_path,name,revision,kind,size_bytes,publish_pending)
+			VALUES(90,'/alias','track.mp3',1,'audio',1,1)`},
+	} {
+		if _, err := db.Exec(statement.sql); err != nil {
+			t.Fatalf("%s: %v", statement.name, err)
+		}
+	}
+	var ref string
+	if err := db.QueryRow(`SELECT ref FROM personal_transfer_ref WHERE catalog_entry_id=10`).Scan(&ref); err != nil {
+		t.Fatal(err)
+	}
+	report, err := catalogprune.BuildReport(context.Background(), db, catalogprune.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Totals.Entries != 1 {
+		t.Fatalf("report entries = %d, want the empty card", report.Totals.Entries)
+	}
+	if _, err = catalogprune.Apply(context.Background(), db, report, catalogprune.Options{}); err != nil {
+		t.Fatal(err)
+	}
+	var workID int64
+	var catalogID sql.NullInt64
+	if err = db.QueryRow(`SELECT work_id,catalog_entry_id FROM personal_transfer_ref WHERE ref=?`, ref).Scan(&workID, &catalogID); err != nil {
+		t.Fatalf("transfer alias was deleted: %v", err)
+	}
+	if workID != 1 || catalogID.Valid {
+		t.Fatalf("transfer alias = work:%d catalog:%v, want work 1", workID, catalogID)
 	}
 }

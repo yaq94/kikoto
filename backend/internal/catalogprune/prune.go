@@ -752,6 +752,10 @@ func applyBatch(ctx context.Context, db *sql.DB, batch []Entry, paths map[int64]
 			return BatchResult{}, fmt.Errorf("entry %d counts changed: files %d->%d refs %d->%d", entry.EntryID, entry.Files, files, entry.TransferRefs, refs)
 		}
 	}
+	var refRows int
+	if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM personal_transfer_ref WHERE catalog_entry_id IN (`+in+`)`, args...).Scan(&refRows); err != nil {
+		return BatchResult{}, err
+	}
 
 	if _, err = tx.ExecContext(ctx, `CREATE TEMP TABLE IF NOT EXISTS prune_paths(source_id INTEGER NOT NULL, path TEXT NOT NULL, PRIMARY KEY(source_id,path)) WITHOUT ROWID`); err != nil {
 		return BatchResult{}, err
@@ -774,12 +778,6 @@ func applyBatch(ctx context.Context, db *sql.DB, batch []Entry, paths map[int64]
 	if err = insertPath.Close(); err != nil {
 		return BatchResult{}, err
 	}
-	var pathRows int
-	if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM prune_paths`).Scan(&pathRows); err != nil {
-		return BatchResult{}, err
-	}
-	_ = pathRows
-
 	var observationRows, directoryRows, audioRootRows int64
 	result, err := tx.ExecContext(ctx, `DELETE FROM source_catalog_observation
 		WHERE (file_source_id,directory_path) IN (SELECT source_id,path FROM prune_paths)`)
@@ -805,11 +803,21 @@ func applyBatch(ctx context.Context, db *sql.DB, batch []Entry, paths map[int64]
 		return BatchResult{}, err
 	}
 	fileRows, _ := result.RowsAffected()
-	result, err = tx.ExecContext(ctx, `DELETE FROM personal_transfer_ref WHERE catalog_entry_id IN (`+in+`)`, args...)
-	if err != nil {
+	// A catalog alias can outlive the card when the card owns a work. Keep the
+	// opaque reference and repoint it at that work; aliases for unregistered
+	// source-only cards have no surviving object and are removed with the card.
+	if _, err = tx.ExecContext(ctx, `UPDATE personal_transfer_ref
+		SET work_id=(SELECT e.work_id FROM source_catalog_entry e WHERE e.id=personal_transfer_ref.catalog_entry_id),
+			catalog_entry_id=NULL,
+			object_kind='work',
+			is_primary=0
+		WHERE catalog_entry_id IN (`+in+`)
+			AND (SELECT e.work_id FROM source_catalog_entry e WHERE e.id=personal_transfer_ref.catalog_entry_id) IS NOT NULL`, args...); err != nil {
 		return BatchResult{}, err
 	}
-	refRows, _ := result.RowsAffected()
+	if _, err = tx.ExecContext(ctx, `DELETE FROM personal_transfer_ref WHERE catalog_entry_id IN (`+in+`)`, args...); err != nil {
+		return BatchResult{}, err
+	}
 	result, err = tx.ExecContext(ctx, `DELETE FROM source_catalog_entry WHERE id IN (`+in+`)`, args...)
 	if err != nil {
 		return BatchResult{}, err
