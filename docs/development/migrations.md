@@ -262,13 +262,13 @@ matches the backup.
 | v0.8.0 | `059` | `059_v0.8.0.sql` |
 | v0.8.1, v0.8.2 | `066` | `066_v0.8.1.sql` |
 | v0.8.3 | `068` | `068_v0.8.3.sql` |
-| development build (unreleased) | `094` | Development baseline only; `compat/094_dev.sql` |
+| development build (unreleased) | `095` | Development baseline only; `compat/094_dev.sql` |
 
 Per-release upgrade steps are in the [release notes](../history/index.md).
 
 ## Kikoto-next Schema Additions
 
-Migrations `069` through `094` extend the source catalog, shared associations,
+Migrations `069` through `095` extend the source catalog, shared associations,
 personal transfer, and the recoverable index. Pending release notes and upgrade
 steps are in [Unreleased](../history/unreleased.md).
 
@@ -300,6 +300,7 @@ steps are in [Unreleased](../history/unreleased.md).
 | `092_content_translation_store.sql` | `content_translation`, its FTS5 trigram index, and `translation_prefill_state` | Stored translations and the prefill cursor survive restart; a failed generation writes no row |
 | `093_source_catalog_partition_index.sql` | `source_catalog_directory_partition` on `(file_source_id, generation, partition_path)` | The progress endpoint groups and counts partitions from the index instead of building a temporary b-tree |
 | `094_source_catalog_file_root.sql` | `source_catalog_file.source_root` | A folded format copy keeps the directory its files live in; an empty value keeps the card-wide base |
+| `095_source_field_translation_cache.sql` | `source_field_translation` for remote titles, tags and directory display names | Model output is rebuildable display cache outside search; every write participates in the translation byte budget |
 
 The Release To Schema Map above lists every numbered file. `069` rebuilds `work`
 and `logical_work` to relax code uniqueness and creates the catalog entry and
@@ -342,14 +343,17 @@ over non-empty trimmed work codes and aborts with an actionable message when an
 existing database still contains duplicates. `090` records per-phase catalog
 timings. `091` keeps damaged source names in a separate fix-list table. `092`
 stores the durable translation corpus, its FTS5 index and the prefill cursor.
-`093` adds one covering index; `094` adds one text column with an empty default. Neither changes a row, and an older binary that never
-reads it still runs every other query.
+`093` adds one covering index; `094` adds one text column with an empty default;
+`095` adds an independent display-cache table and two indexes. None changes an
+existing catalog or personal row, and an older binary that never reads them
+still runs every other query.
 
-The `084` through `094` changes retain existing rows. `087` is the only table
+The `084` through `095` changes retain existing rows. `087` is the only table
 rebuild; it copies every entry column and then recreates the indexes, triggers
 and view. `085`, `088`, `090`, `091` and `092` add tables or columns with
-defaults, `093` adds an index and `094` adds one column default, so an older binary that never reads them
-still reads every other table. Startup refuses a database newer than the binary before running a
+defaults, `093` adds an index, `094` adds one column default and `095` adds a
+rebuildable cache table, so an older binary that never reads them still reads
+every other table. Startup refuses a database newer than the binary before running a
 handler. Rolling back any of these schemas requires a database snapshot, not a
 reverse migration; see [Release rollback](release-rollback.md).
 

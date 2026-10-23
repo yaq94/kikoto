@@ -1,7 +1,7 @@
 # Release Rollback
 
 This page gives the operator procedure for rolling back a Kikoto deployment
-whose schema reached `094`. It states which image can read which schema, how to
+whose schema reached `095`. It states which image can read which schema, how to
 take and restore a database snapshot, and what to check afterwards. It records
 no deployment result; run the commands on the target host and keep their output
 with the release record.
@@ -13,15 +13,13 @@ a database snapshot and starts a binary whose packaged migration catalog ends
 at that snapshot's schema. The image names are the ones used by the current
 next-release deployment; prefer a digest when the deployment recorded one.
 
-| Image | Highest packaged migration | Schema `091` | Schema `092` | Schema `094` |
+| Image | Highest packaged migration | Schema `092` | Schema `094` | Schema `095` |
 | --- | --- | --- | --- | --- |
-| current build | `094` | Migrates to `094` | Migrates to `094` | Keeps `094` |
-| 092 image | `092` | Migrates to `092` | Keeps `092` | Refuses |
+| current build | `095` | Migrates to `095` | Migrates to `095` | Migrates to `095` |
+| 094 image | `094` | Migrates to `094` | Keeps `094` | Refuses |
+| 092 image | `092` | Keeps `092` | Refuses | Refuses |
 | 084 image | `084` | Refuses | Refuses | Refuses |
 | 083 image | `083` | Refuses | Refuses | Refuses |
-| 081 image | `081` | Refuses | Refuses | Refuses |
-| 080 image | `080` | Refuses | Refuses | Refuses |
-| 079 image | `079` | Refuses | Refuses | Refuses |
 
 Numbered migrations have no down path. A rollback restores a snapshot taken
 before the upgrade and starts an image whose packaged catalog ends at that
@@ -59,15 +57,19 @@ adds the directory sync columns, the sync run table and a partial unique index
 for one running sync per source. `089` adds a unique index over non-empty
 trimmed work codes; an existing duplicate aborts the upgrade before the index
 is created. `090` records per-phase catalog timings. `091` keeps damaged source
-names in a separate fix-list table. `092` stores the durable translation
-corpus, its FTS5 index and the prefill cursor. `093` adds one covering index on
-the catalog directory table. `094` adds one text column, `source_catalog_file.source_root`,
-with an empty default so an existing row keeps the card-wide base.
+names in a separate fix-list table. `092` stores the translation corpus, its
+FTS5 index and the prefill cursor. `093` adds one covering index on the catalog
+directory table. `094` adds one text column,
+`source_catalog_file.source_root`, with an empty default so an existing row
+keeps the card-wide base. `095` adds `source_field_translation`, a rebuildable
+display cache for remote titles, tags and directory names; it has no FTS index
+and is bounded by the same translation cache budget as `content_translation`.
 
-No migration deletes or rewrites card or personal rows. A `068`–`093`
+No migration deletes or rewrites card or personal rows. A `068`–`094`
 snapshot restored into the current image upgrades along the numbered chain; a
-`094` database needs a binary that packages `094`. An `083` binary must be
-paired with an `083` snapshot, and an `084` binary refuses `085` and later.
+`095` database needs a binary that packages `095`. An `094` binary refuses
+`095`, an `083` binary must be paired with an `083` snapshot, and an `084`
+binary refuses `085` and later.
 
 ## Back Up Before A Deployment
 
@@ -91,8 +93,8 @@ Compose file. For the development stack, use `KIKOTO_DEV_CONFIG_DIR` (default
 The application also writes a `pre-migration` backup to
 `KIKOTO_DB_BACKUP_DIR` (default `config/backups`) before the first numbered
 migration of an existing database. Its name has the form
-`kikoto-pre-migration-<UTC>-v084-to-v094.db`; the first version in the suffix
-is the schema being left, so a `v084-to-v094` file is a `084` snapshot. Keep
+`kikoto-pre-migration-<UTC>-v084-to-v095.db`; the first version in the suffix
+is the schema being left, so a `v084-to-v095` file is a `084` snapshot. Keep
 the snapshot and the previous image reference (`KIKOTO_IMAGE` or the Compose
 override) together. The `rollbacks/` directory is outside `config/`, so the
 copy does not recurse into itself.
@@ -121,11 +123,11 @@ uses one can wait with `up -d --wait`. The production stack in this repository
 does not define that check; poll `/health` as shown under
 [Verify The Restored Instance](#verify-the-restored-instance).
 
-## Restore A Schema 94 Snapshot
+## Restore A Schema 95 Snapshot
 
 Use this to return to the current build after a failed start or to recover a
-damaged `094` database. A `094` snapshot is readable by the current `094`
-image only; to return to schema `092` or `083`, restore that schema's snapshot
+damaged `095` database. A `095` snapshot is readable by the current `095`
+image only; to return to schema `094`, `092` or `083`, restore that schema's snapshot
 and start an image that packages it.
 
 ```sh
@@ -177,8 +179,13 @@ Then confirm:
    never give it an `081` database.
 5. A `092` instance lists the expected `content_translation` row count and
    reads a translated title. A failed generation leaves no new row.
-6. A `094` instance reports the scan progress endpoint below 20 ms with the
+6. A `095` instance reports the scan progress endpoint below 20 ms with the
    catalog counters and `?exact=1` below 200 ms on the production copy.
+
+The packaged `rollback-kikoto.sh` performs this restore with staged files,
+checksum verification, schema/integrity checks and the health gate. Prefer it
+over the manual procedure when the rollback directory was written by the
+deployment helper.
 
 Restoring only `kikoto.db` does not revert Fetch staging, backup, or trash
 directories under `/data`. Review unmatched transaction directories as

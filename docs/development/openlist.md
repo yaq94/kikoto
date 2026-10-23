@@ -410,10 +410,11 @@ Split cards store the real directory in `source_catalog_entry.source_root` and a
 through `source_root`. A folder whose audio is almost entirely a size-identical
 copy of its parent's files keeps one card instead of republishing every work.
 The duplicate check runs before publication, not only when choosing the split
-mode: a child with at least two audio files that repeats the parent's audio
-set does not publish a second card. Matched observations are consumed without
-writing duplicate file rows; a unique bonus track stays pending and publishes
-on the canonical parent card, so a format copy cannot hide playable content.
+mode: a child that exactly repeats a one-file parent, or has at least two audio
+files and repeats the parent's audio set, does not publish a second card.
+Matched observations are consumed without writing duplicate file rows; a unique
+bonus track stays pending and publishes on the canonical parent card, so a
+format copy cannot hide playable content.
 Nested package folders are compared through their parent audio as well, so
 several `Package/Work 01…10` copies do not become separate work cards. Complete
 provider hashes are compared as multisets;
