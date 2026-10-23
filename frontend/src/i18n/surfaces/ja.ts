@@ -111,6 +111,7 @@ export const surfaceJapanese = {
     episodeReview: "エピソードの個人評価：{{title}}",
     series: "シリーズ",
     episodes: "各エピソード",
+    missing: "ソースに存在しません",
     openEpisode: "エピソードを開く",
     openSeries: "シリーズを開く",
     group: "シリーズにまとめる",
