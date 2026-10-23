@@ -447,8 +447,8 @@ func TestSourceCatalogLooseWorksRegisteredCardIsNotSplit(t *testing.T) {
 }
 
 // A package copy of the parent's loose audio is one version of that folder.
-// Splitting it would publish every recording a second time under a new card.
-func TestSourceCatalogLooseWorksPackageCopyStaysOneCard(t *testing.T) {
+// Publishing it as a card would expose every recording a second time.
+func TestSourceCatalogLooseWorksPackageCopyDoesNotPublishSecondCard(t *testing.T) {
 	parent := []map[string]any{}
 	copyItems := []map[string]any{}
 	for i := 1; i <= 24; i++ {
@@ -466,17 +466,16 @@ func TestSourceCatalogLooseWorksPackageCopyStaysOneCard(t *testing.T) {
 		t.Fatalf("scan = %#v", p)
 	}
 	cards := f.cards(t)
-	copied := cards["Creator 24 works 14G"]
-	if copied == nil {
-		t.Fatalf("cards=%v, want the package copy card", cards)
-	}
-	if got := len(f.tracks(t, copied)); got != len(copyItems) {
-		t.Fatalf("package copy tracks=%d, want %d on one card", got, len(copyItems))
+	if len(cards) != 1 || cards["Creator"] == nil {
+		t.Fatalf("cards=%v, want only the parent card", cards)
 	}
 	for title := range cards {
-		if strings.HasPrefix(title, "Creator ") && title != "Creator 24 works 14G" {
-			t.Fatalf("package copy split into card %q: %v", title, cards)
+		if strings.HasPrefix(title, "Creator ") {
+			t.Fatalf("package copy published card %q: %v", title, cards)
 		}
+	}
+	if got := countCatalogAudio(f.tracks(t, cards["Creator"])); got != len(parent) {
+		t.Fatalf("parent tracks=%d, want %d", got, len(parent))
 	}
 }
 
