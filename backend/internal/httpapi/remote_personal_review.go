@@ -18,26 +18,26 @@ func (s *Server) updateRemoteWorkUserState(w http.ResponseWriter, r *http.Reques
 	sourceID, err := parseInt64PathValue(r, "id")
 	code := normalizeWorkCode(r.PathValue("code"))
 	if err != nil || code == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid source id or work code"})
+		writeAPIError(w, http.StatusBadRequest, "invalid_request", "invalid source id or work code", false)
 		return
 	}
 	var patch workUserStatePatch
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&patch); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
+		writeAPIError(w, http.StatusBadRequest, "invalid_request", jsonBodyErrorMessage(err), false)
 		return
 	}
 	if decoder.Decode(new(any)) != io.EOF {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
+		writeAPIError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body", false)
 		return
 	}
 	if err := patch.validate(); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		writeAPIError(w, http.StatusBadRequest, "invalid_personal_review", err.Error(), false)
 		return
 	}
 	if len(patch.Rating) == 0 && len(patch.Note) == 0 {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "personal review is required"})
+		writeAPIError(w, http.StatusBadRequest, "invalid_personal_review", "personal review is required", false)
 		return
 	}
 	source, err := s.loadRemoteSourceForUse(r.Context(), sourceID)
@@ -73,7 +73,7 @@ func (s *Server) updateRemoteWorkUserState(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if normalizeWorkCode(normalizedRemoteWorkCode(remoteWork)) != code {
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "remote work identity does not match requested code"})
+		writeAPIError(w, http.StatusBadGateway, "upstream_identity_mismatch", "remote work identity does not match requested code", false)
 		return
 	}
 	tx, err := s.db.BeginTx(r.Context(), nil)

@@ -58,7 +58,7 @@ func (s *Server) updateWorkUserState(w http.ResponseWriter, r *http.Request) {
 	var exists int
 	if err := s.db.QueryRowContext(r.Context(), "SELECT 1 FROM work WHERE id = ?", workID).Scan(&exists); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			writeJSON(w, http.StatusNotFound, map[string]string{"error": "work not found"})
+			writeAPIError(w, http.StatusNotFound, "not_found", "work not found", false)
 			return
 		}
 		writeError(w, err)
@@ -69,15 +69,15 @@ func (s *Server) updateWorkUserState(w http.ResponseWriter, r *http.Request) {
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&payload); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
+		writeAPIError(w, http.StatusBadRequest, "invalid_request", jsonBodyErrorMessage(err), false)
 		return
 	}
 	if decoder.Decode(new(any)) != io.EOF {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
+		writeAPIError(w, http.StatusBadRequest, "invalid_request", "invalid JSON body", false)
 		return
 	}
 	if err := payload.validate(); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		writeAPIError(w, http.StatusBadRequest, "invalid_personal_state", err.Error(), false)
 		return
 	}
 	state, err := patchWorkUserState(r.Context(), s.db, user.ID, workID, payload)

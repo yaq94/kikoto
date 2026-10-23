@@ -701,20 +701,20 @@ type fileSourcePayload struct {
 func parseFileSourcePayload(w http.ResponseWriter, r *http.Request, allowLocal bool, allowLegacy bool) (fileSourcePayload, bool) {
 	payload, err := decodeFileSourcePayload(r)
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		writeAPIError(w, http.StatusBadRequest, "invalid_source_config", err.Error(), false)
 		return fileSourcePayload{}, false
 	}
 	// Validate the submitted request options before normalization can drop an
 	// unsafe value: a rejected header must produce an explanation.
 	if strings.TrimSpace(payload.SourceType) == sourceTypeOpenList {
 		if err := validateOpenListRequestConfig(payload.Config); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			writeAPIError(w, http.StatusBadRequest, "invalid_source_config", err.Error(), false)
 			return fileSourcePayload{}, false
 		}
 	}
 	normalizeFileSourcePayload(&payload)
 	if err := validateFileSourcePayload(&payload, allowLocal, allowLegacy); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		writeAPIError(w, http.StatusBadRequest, "invalid_source_config", err.Error(), false)
 		return fileSourcePayload{}, false
 	}
 	return payload, true

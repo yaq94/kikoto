@@ -191,6 +191,67 @@ func TestPersonalReviewValidationAndPermissions(t *testing.T) {
 	assertReview(t, reviewRequest(t, handler, cookie, http.MethodGet, "/api/works/1?includeMedia=false", "", http.StatusOK), float64(2), "")
 }
 
+func TestPersonalReviewErrorsUseStableContract(t *testing.T) {
+	db := openMigratedTestDB(t)
+	if _, err := db.Exec(`INSERT INTO work (id, primary_code, title) VALUES (1, 'RJ00000000', 'Example Work')`); err != nil {
+		t.Fatal(err)
+	}
+	server := NewServer(db, config.Config{Mode: config.ModeProduction, RootUsername: "synthetic-user"})
+	createTestAdministrator(t, server, "synthetic-user", "synthetic-password")
+	handler := server.Routes()
+	cookie := loginTestSession(t, handler, "synthetic-user", "synthetic-password")
+
+	tests := []struct {
+		name   string
+		path   string
+		body   string
+		status int
+		code   string
+	}{
+		{
+			name:   "work state malformed JSON",
+			path:   "/api/works/1/user-state",
+			body:   `{"rating":`,
+			status: http.StatusBadRequest,
+			code:   "invalid_request",
+		},
+		{
+			name:   "remote review malformed JSON",
+			path:   "/api/remote-sources/1/works/RJ00000000/user-state",
+			body:   `{"rating":`,
+			status: http.StatusBadRequest,
+			code:   "invalid_request",
+		},
+		{
+			name:   "remote review missing fields",
+			path:   "/api/remote-sources/1/works/RJ00000000/user-state",
+			body:   `{}`,
+			status: http.StatusBadRequest,
+			code:   "invalid_personal_review",
+		},
+		{
+			name:   "missing work",
+			path:   "/api/works/999/user-state",
+			body:   `{"rating":4}`,
+			status: http.StatusNotFound,
+			code:   "not_found",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			result := reviewRequest(t, handler, cookie, http.MethodPatch, test.path, test.body, test.status)
+			code, _ := result["code"].(string)
+			retryable, ok := result["retryable"].(bool)
+			if code != test.code || !ok || retryable {
+				t.Fatalf("error = %#v, want code=%q retryable=false", result, test.code)
+			}
+			if message, _ := result["error"].(string); message == "" {
+				t.Fatalf("error = %#v, want a message", result)
+			}
+		})
+	}
+}
+
 func TestPersonalReviewSurvivesApplicationRestart(t *testing.T) {
 	path, db := openRestartableMigrationDB(t)
 	if _, err := db.Exec(`INSERT INTO work (id, primary_code, title) VALUES (1, 'RJ00000000', 'Example Work')`); err != nil {

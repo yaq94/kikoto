@@ -34,6 +34,14 @@ func TestLegacyNumber178SourceTypeCannotBeCreated(t *testing.T) {
 	if response.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want %d", response.Code, http.StatusBadRequest)
 	}
+	var result map[string]any
+	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	retryable, hasRetryable := result["retryable"].(bool)
+	if result["code"] != "invalid_source_config" || !hasRetryable || retryable {
+		t.Fatalf("error = %#v, want invalid_source_config with retryable=false", result)
+	}
 }
 
 func TestFileSourcePayloadEnforcesOutboundURLContract(t *testing.T) {
