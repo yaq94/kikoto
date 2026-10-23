@@ -152,3 +152,157 @@ func TestPersonalTransferEmptyLibraryRoundTripAndRestart(t *testing.T) {
 		closeApp()
 	}
 }
+
+// A library can know a numberless catalog entry, its series and an episode
+// before any work is registered. Restoring personal records must register the
+// minimum work identity for each known source object, keep the exact source
+// references, and remain idempotent across a real application restart.
+func TestPersonalTransferRestoresKnownUnregisteredCatalogSeriesAndEpisodeAcrossRestart(t *testing.T) {
+	root := t.TempDir()
+	db, source, owner, listener, closeSource := openTransferApplication(t, root, true)
+	metadataReviewExec(t, db, `INSERT INTO source_catalog_entry(id,root_path,title,primary_code) VALUES
+			(101,'/Numberless','Numberless Work',''),
+			(102,'/Numberless/Episode 1','Episode One','');
+		INSERT INTO catalog_series(id,title) VALUES(201,'Numberless Series');
+		INSERT INTO catalog_series_member(series_id,catalog_entry_id,position,evidence)
+			VALUES(201,102,1,'manual');`)
+	var standaloneRef, episodeRef, seriesRef string
+	if err := db.QueryRow(`SELECT ref FROM personal_transfer_ref WHERE catalog_entry_id=101`).Scan(&standaloneRef); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(`SELECT ref FROM personal_transfer_ref WHERE catalog_entry_id=102`).Scan(&episodeRef); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(`SELECT ref FROM personal_transfer_ref WHERE series_id=201`).Scan(&seriesRef); err != nil {
+		t.Fatal(err)
+	}
+	rating4, rating5, rating3 := 4, 5, 3
+	backup := personal.Backup{Format: "kikoto-user-data", Version: 2, Works: []personal.BackupWork{
+		{Identity: &personal.BackupIdentity{Ref: standaloneRef, Kind: "work", Title: "Numberless Work"}, ListeningStatus: "finished", Rating: &rating4, Note: "Standalone note"},
+		{Identity: &personal.BackupIdentity{Ref: episodeRef, Kind: "episode", Title: "Episode One"}, ListeningStatus: "listening", Rating: &rating5, Note: "Episode note"},
+		{Identity: &personal.BackupIdentity{Ref: seriesRef, Kind: "series", Title: "Numberless Series"}, ListeningStatus: "paused", Rating: &rating3, Note: "Series note"},
+	}}
+	body := mustJSON(map[string]any{"format": "kikoto", "data": backup, "conflict": "keep"})
+
+	var preview personal.ImportPreview
+	workReferenceRequest(t, source, listener, "POST", "/api/user-data/import/preview", body, 200, &preview)
+	if preview.NewWorks != 3 || preview.MatchedWorks != 0 || preview.Conflicts != 0 || len(preview.Issues) != 0 {
+		t.Fatalf("preview = %+v, want three known-but-unregistered identities", preview)
+	}
+	workReferenceRequest(t, source, listener, "POST", "/api/user-data/import", body, 403, nil)
+	var works int
+	if err := db.QueryRow(`SELECT count(*) FROM work`).Scan(&works); err != nil {
+		t.Fatal(err)
+	}
+	if works != 0 {
+		t.Fatalf("unauthorized import registered %d works", works)
+	}
+	var result personal.ImportResult
+	workReferenceRequest(t, source, owner, "POST", "/api/user-data/import", body, 200, &result)
+	if result.ImportedWorks != 3 || result.SkippedWorks != 0 {
+		t.Fatalf("restore = %+v, want all three known source objects imported", result)
+	}
+	workReferenceRequest(t, source, owner, "POST", "/api/user-data/import", body, 200, &result)
+	if result.ImportedWorks != 3 || result.SkippedWorks != 0 {
+		t.Fatalf("duplicate restore = %+v", result)
+	}
+
+	var ownerID int64
+	if err := db.QueryRow(`SELECT id FROM user_account WHERE username='synthetic-user'`).Scan(&ownerID); err != nil {
+		t.Fatal(err)
+	}
+	var standaloneWork, episodeWork, seriesWork sql.NullInt64
+	if err := db.QueryRow(`SELECT work_id FROM source_catalog_entry WHERE id=101`).Scan(&standaloneWork); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(`SELECT work_id FROM source_catalog_entry WHERE id=102`).Scan(&episodeWork); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(`SELECT work_id FROM catalog_series WHERE id=201`).Scan(&seriesWork); err != nil {
+		t.Fatal(err)
+	}
+	if !standaloneWork.Valid || !episodeWork.Valid || !seriesWork.Valid ||
+		standaloneWork.Int64 == episodeWork.Int64 || standaloneWork.Int64 == seriesWork.Int64 || episodeWork.Int64 == seriesWork.Int64 {
+		t.Fatalf("registered identities = standalone %v episode %v series %v, want three distinct works", standaloneWork, episodeWork, seriesWork)
+	}
+	if err := db.QueryRow(`SELECT count(*) FROM work`).Scan(&works); err != nil {
+		t.Fatal(err)
+	}
+	if works != 3 {
+		t.Fatalf("works=%d, want one per known evaluation object", works)
+	}
+	for workID, want := range map[int64]struct {
+		rating int
+		note   string
+	}{
+		standaloneWork.Int64: {4, "Standalone note"},
+		episodeWork.Int64:    {5, "Episode note"},
+		seriesWork.Int64:     {3, "Series note"},
+	} {
+		var rating int
+		var note string
+		if err := db.QueryRow(`SELECT rating,note FROM user_work_state WHERE user_id=? AND work_id=?`, ownerID, workID).Scan(&rating, &note); err != nil {
+			t.Fatal(err)
+		}
+		if rating != want.rating || note != want.note {
+			t.Fatalf("work %d review = %d/%q, want %d/%q", workID, rating, note, want.rating, want.note)
+		}
+	}
+	var sharedMembers, workflows, media int
+	if err := db.QueryRow(`SELECT count(*) FROM shared_identity_member`).Scan(&sharedMembers); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(`SELECT count(*) FROM workflow_run`).Scan(&workflows); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(`SELECT count(*) FROM media_item`).Scan(&media); err != nil {
+		t.Fatal(err)
+	}
+	if sharedMembers != 0 || workflows != 0 || media != 0 {
+		t.Fatalf("import changed shared relations or media: members=%d workflows=%d media=%d", sharedMembers, workflows, media)
+	}
+	if files, err := os.ReadDir(filepath.Join(root, "data")); err != nil || len(files) != 0 {
+		t.Fatalf("import wrote media files: %v %v", files, err)
+	}
+	closeSource()
+
+	restartedDB, restarted, admin, other, closeRestarted := openTransferApplication(t, root, false)
+	var restored personal.Backup
+	workReferenceRequest(t, restarted, admin, "GET", "/api/user-data/export", "", 200, &restored)
+	if len(restored.Works) != 3 {
+		t.Fatalf("restarted export = %+v, want three works", restored)
+	}
+	kinds := map[string]int{}
+	notes := map[string]string{}
+	for _, w := range restored.Works {
+		kinds[w.Identity.Kind]++
+		notes[w.Identity.Kind] = w.Note
+	}
+	if kinds["work"] != 1 || kinds["episode"] != 1 || kinds["series"] != 1 ||
+		notes["work"] != "Standalone note" || notes["episode"] != "Episode note" || notes["series"] != "Series note" {
+		t.Fatalf("restarted records = kinds %#v notes %#v", kinds, notes)
+	}
+	var otherBackup personal.Backup
+	workReferenceRequest(t, restarted, other, "GET", "/api/user-data/export", "", 200, &otherBackup)
+	if len(otherBackup.Works) != 0 {
+		t.Fatal("restart exposed another user's records")
+	}
+	var afterRestart int
+	if err := restartedDB.QueryRow(`SELECT count(*) FROM work`).Scan(&afterRestart); err != nil {
+		t.Fatal(err)
+	}
+	if afterRestart != 3 {
+		t.Fatalf("restart created duplicate works: %d", afterRestart)
+	}
+	var linkedEntries, linkedSeries int
+	if err := restartedDB.QueryRow(`SELECT count(*) FROM source_catalog_entry WHERE id IN (101,102) AND work_id IS NOT NULL`).Scan(&linkedEntries); err != nil {
+		t.Fatal(err)
+	}
+	if err := restartedDB.QueryRow(`SELECT count(*) FROM catalog_series WHERE id=201 AND work_id IS NOT NULL`).Scan(&linkedSeries); err != nil {
+		t.Fatal(err)
+	}
+	if linkedEntries != 2 || linkedSeries != 1 {
+		t.Fatalf("restart lost source registrations: entries=%d series=%d", linkedEntries, linkedSeries)
+	}
+	closeRestarted()
+}

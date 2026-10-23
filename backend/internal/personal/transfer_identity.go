@@ -114,14 +114,94 @@ func resolveTransferIdentity(ctx context.Context, tx *sql.Tx, i *BackupIdentity,
 			m.problem = "identity_conflict"
 		}
 	}
-	if m.catalog != 0 || m.series != 0 {
-		m.problem = "unregistered_source"
-	}
 	return m, nil
 }
 
-func registerTransferWork(ctx context.Context, tx *sql.Tx, w BackupWork) (int64, error) {
-	result, err := tx.ExecContext(ctx, `INSERT INTO work(primary_code,title) VALUES(?,?)`, w.PrimaryCode, w.Identity.Title)
+// transferIdentityKindProblem checks the evaluation level that an unregistered
+// source reference implies. A known catalog episode must not be restored as a
+// series or standalone work, because those identities keep separate reviews.
+func transferIdentityKindProblem(ctx context.Context, tx *sql.Tx, w BackupWork, m identityMatch) (string, error) {
+	if m.catalog != 0 {
+		expected := "work"
+		var episode bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM catalog_series_member WHERE catalog_entry_id=?)`, m.catalog).Scan(&episode); err != nil {
+			return "", err
+		}
+		if episode {
+			expected = "episode"
+		}
+		if w.Identity.Kind != expected {
+			return "identity_conflict", nil
+		}
+		var code string
+		if err := tx.QueryRowContext(ctx, `SELECT primary_code FROM source_catalog_entry WHERE id=?`, m.catalog).Scan(&code); err != nil {
+			return "", err
+		}
+		if w.PrimaryCode != "" && w.PrimaryCode != code {
+			return "identity_conflict", nil
+		}
+	}
+	if m.catalog == 0 && m.series != 0 {
+		if w.Identity.Kind != "series" || w.PrimaryCode != "" {
+			return "identity_conflict", nil
+		}
+	}
+	return "", nil
+}
+
+func registerTransferIdentityWork(ctx context.Context, tx *sql.Tx, w BackupWork, m identityMatch) (int64, error) {
+	if m.catalog != 0 {
+		return registerCatalogTransferWork(ctx, tx, w, m.catalog)
+	}
+	if m.series != 0 {
+		return registerSeriesTransferWork(ctx, tx, w, m.series)
+	}
+	return registerTransferWork(ctx, tx, w)
+}
+
+// registerCatalogTransferWork rebuilds the same minimal registration that the
+// source-catalog review endpoint performs: one work, its canonical logical row
+// and edition, then the entry's work_id. It never moves an existing work.
+func registerCatalogTransferWork(ctx context.Context, tx *sql.Tx, w BackupWork, catalogID int64) (int64, error) {
+	var title, code string
+	var linked sql.NullInt64
+	if err := tx.QueryRowContext(ctx, `SELECT title,primary_code,work_id FROM source_catalog_entry WHERE id=?`, catalogID).Scan(&title, &code, &linked); err != nil {
+		return 0, err
+	}
+	if linked.Valid {
+		return linked.Int64, nil
+	}
+	id, err := insertTransferWork(ctx, tx, code, title, w.Identity.Kind)
+	if err != nil {
+		return 0, err
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE source_catalog_entry SET work_id=? WHERE id=? AND work_id IS NULL`, id, catalogID); err != nil {
+		return 0, err
+	}
+	return id, nil
+}
+
+func registerSeriesTransferWork(ctx context.Context, tx *sql.Tx, w BackupWork, seriesID int64) (int64, error) {
+	var title string
+	var linked sql.NullInt64
+	if err := tx.QueryRowContext(ctx, `SELECT title,work_id FROM catalog_series WHERE id=?`, seriesID).Scan(&title, &linked); err != nil {
+		return 0, err
+	}
+	if linked.Valid {
+		return linked.Int64, nil
+	}
+	id, err := insertTransferWork(ctx, tx, "", title, "series")
+	if err != nil {
+		return 0, err
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE catalog_series SET work_id=? WHERE id=? AND work_id IS NULL`, id, seriesID); err != nil {
+		return 0, err
+	}
+	return id, nil
+}
+
+func insertTransferWork(ctx context.Context, tx *sql.Tx, code, title, kind string) (int64, error) {
+	result, err := tx.ExecContext(ctx, `INSERT INTO work(primary_code,title) VALUES(?,?)`, code, title)
 	if err != nil {
 		return 0, err
 	}
@@ -129,7 +209,7 @@ func registerTransferWork(ctx context.Context, tx *sql.Tx, w BackupWork) (int64,
 	if err != nil {
 		return 0, err
 	}
-	result, err = tx.ExecContext(ctx, `INSERT INTO logical_work(canonical_work_id,canonical_code) VALUES(?,?)`, id, w.PrimaryCode)
+	result, err = tx.ExecContext(ctx, `INSERT INTO logical_work(canonical_work_id,canonical_code) VALUES(?,?)`, id, code)
 	if err != nil {
 		return 0, err
 	}
@@ -137,10 +217,18 @@ func registerTransferWork(ctx context.Context, tx *sql.Tx, w BackupWork) (int64,
 	if err != nil {
 		return 0, err
 	}
-	if _, err = tx.ExecContext(ctx, `INSERT INTO work_edition(work_id,logical_work_id,primary_code,is_canonical) VALUES(?,?,?,1)`, id, logical, w.PrimaryCode); err != nil {
+	if _, err = tx.ExecContext(ctx, `INSERT INTO work_edition(work_id,logical_work_id,primary_code,is_canonical) VALUES(?,?,?,1)`, id, logical, code); err != nil {
 		return 0, err
 	}
-	if _, err = tx.ExecContext(ctx, `UPDATE personal_transfer_ref SET object_kind=? WHERE work_id=? AND is_primary=1`, w.Identity.Kind, id); err != nil {
+	if _, err = tx.ExecContext(ctx, `UPDATE personal_transfer_ref SET object_kind=? WHERE work_id=? AND is_primary=1`, kind, id); err != nil {
+		return 0, err
+	}
+	return id, nil
+}
+
+func registerTransferWork(ctx context.Context, tx *sql.Tx, w BackupWork) (int64, error) {
+	id, err := insertTransferWork(ctx, tx, w.PrimaryCode, w.Identity.Title, w.Identity.Kind)
+	if err != nil {
 		return 0, err
 	}
 	if w.Identity.Kind == "series" {

@@ -114,6 +114,7 @@ type entryRow struct {
 	files        int
 	audio        int
 	nonAudio     int
+	workID       sql.NullInt64
 }
 
 type pathKey struct {
@@ -157,8 +158,9 @@ func effectiveRoot(root, sourceRoot string) string {
 func rootDepth(value string) int { return strings.Count(value, "/") }
 
 // BuildReport reads the catalog and produces the audited deletion plan. It
-// never writes. Cards referenced by a series or a relocation alias are listed
-// as skipped instead of being removed, because those references must survive.
+// never writes. Cards referenced by a series, a relocation alias or an
+// unresolved source-only transfer alias are listed as skipped instead of being
+// removed, because those references must survive.
 func BuildReport(ctx context.Context, db *sql.DB, options Options) (Report, error) {
 	if options.BatchSize <= 0 {
 		options.BatchSize = 100
@@ -175,7 +177,8 @@ func BuildReport(ctx context.Context, db *sql.DB, options Options) (Report, erro
 	rows, err := db.QueryContext(ctx, `SELECT e.id, COALESCE(e.file_source_id,0), e.root_path, e.source_root, e.title,
 		(SELECT count(*) FROM source_catalog_file f WHERE f.catalog_entry_id=e.id),
 		(SELECT count(*) FROM source_catalog_file f WHERE f.catalog_entry_id=e.id AND f.kind='audio'),
-		(SELECT count(*) FROM source_catalog_file f WHERE f.catalog_entry_id=e.id AND f.kind<>'audio')
+			(SELECT count(*) FROM source_catalog_file f WHERE f.catalog_entry_id=e.id AND f.kind<>'audio'),
+			e.work_id
 		FROM source_catalog_entry e
 		WHERE e.relocated_to_id IS NULL AND e.file_source_id IS NOT NULL
 		ORDER BY e.id`)
@@ -185,7 +188,7 @@ func BuildReport(ctx context.Context, db *sql.DB, options Options) (Report, erro
 	all := []entryRow{}
 	for rows.Next() {
 		var r entryRow
-		if err = rows.Scan(&r.id, &r.sourceID, &r.root, &r.src, &r.title, &r.files, &r.audio, &r.nonAudio); err != nil {
+		if err = rows.Scan(&r.id, &r.sourceID, &r.root, &r.src, &r.title, &r.files, &r.audio, &r.nonAudio, &r.workID); err != nil {
 			break
 		}
 		all = append(all, r)
@@ -224,6 +227,10 @@ func BuildReport(ctx context.Context, db *sql.DB, options Options) (Report, erro
 	for _, r := range candidates {
 		candidateIDs = append(candidateIDs, r.id)
 	}
+	refs, err := transferRefCounts(ctx, db)
+	if err != nil {
+		return Report{}, err
+	}
 	seriesMembers, err := idSet(ctx, db, `SELECT catalog_entry_id FROM catalog_series_member WHERE catalog_entry_id IN (`+placeholders(len(candidateIDs))+`)`, candidateIDs)
 	if err != nil {
 		return Report{}, err
@@ -253,6 +260,12 @@ func BuildReport(ctx context.Context, db *sql.DB, options Options) (Report, erro
 			continue
 		case relocationTargets[r.id]:
 			report.Skipped = append(report.Skipped, Skipped{EntryID: r.id, Root: r.root, Reason: "relocation_target"})
+			continue
+		case refs[r.id] > 0 && !r.workID.Valid:
+			// A source-only card owns no surviving object that can inherit its
+			// opaque transfer reference. Deleting the card would delete the only
+			// resolvable identity, so the card stays for explicit review.
+			report.Skipped = append(report.Skipped, Skipped{EntryID: r.id, Root: r.root, Reason: "transfer_alias"})
 			continue
 		}
 		deleted[r.id] = true
@@ -301,10 +314,6 @@ func BuildReport(ctx context.Context, db *sql.DB, options Options) (Report, erro
 	}
 
 	if err = attributePaths(ctx, db, &builder); err != nil {
-		return Report{}, err
-	}
-	refs, err := transferRefCounts(ctx, db)
-	if err != nil {
 		return Report{}, err
 	}
 	for _, r := range candidates {
@@ -742,14 +751,21 @@ func applyBatch(ctx context.Context, db *sql.DB, batch []Entry, paths map[int64]
 	}
 	for _, entry := range batch {
 		var files, refs int
+		var workID sql.NullInt64
 		if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM source_catalog_file WHERE catalog_entry_id=?`, entry.EntryID).Scan(&files); err != nil {
 			return BatchResult{}, err
 		}
 		if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM personal_transfer_ref WHERE catalog_entry_id=?`, entry.EntryID).Scan(&refs); err != nil {
 			return BatchResult{}, err
 		}
+		if err = tx.QueryRowContext(ctx, `SELECT work_id FROM source_catalog_entry WHERE id=?`, entry.EntryID).Scan(&workID); err != nil {
+			return BatchResult{}, err
+		}
 		if files != entry.Files || refs != entry.TransferRefs {
 			return BatchResult{}, fmt.Errorf("entry %d counts changed: files %d->%d refs %d->%d", entry.EntryID, entry.Files, files, entry.TransferRefs, refs)
+		}
+		if refs > 0 && !workID.Valid {
+			return BatchResult{}, fmt.Errorf("entry %d has an unresolved source-only transfer alias", entry.EntryID)
 		}
 	}
 	var refRows int
@@ -804,8 +820,9 @@ func applyBatch(ctx context.Context, db *sql.DB, batch []Entry, paths map[int64]
 	}
 	fileRows, _ := result.RowsAffected()
 	// A catalog alias can outlive the card when the card owns a work. Keep the
-	// opaque reference and repoint it at that work; aliases for unregistered
-	// source-only cards have no surviving object and are removed with the card.
+	// opaque reference and repoint it at that work. A source-only card has no
+	// surviving object for the reference, so apply refuses it above and never
+	// reaches this transfer.
 	if _, err = tx.ExecContext(ctx, `UPDATE personal_transfer_ref
 		SET work_id=(SELECT e.work_id FROM source_catalog_entry e WHERE e.id=personal_transfer_ref.catalog_entry_id),
 			catalog_entry_id=NULL,
@@ -814,6 +831,13 @@ func applyBatch(ctx context.Context, db *sql.DB, batch []Entry, paths map[int64]
 		WHERE catalog_entry_id IN (`+in+`)
 			AND (SELECT e.work_id FROM source_catalog_entry e WHERE e.id=personal_transfer_ref.catalog_entry_id) IS NOT NULL`, args...); err != nil {
 		return BatchResult{}, err
+	}
+	var unresolvedRefs int
+	if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM personal_transfer_ref WHERE catalog_entry_id IN (`+in+`)`, args...).Scan(&unresolvedRefs); err != nil {
+		return BatchResult{}, err
+	}
+	if unresolvedRefs != 0 {
+		return BatchResult{}, fmt.Errorf("batch %d has %d unresolved transfer aliases", number, unresolvedRefs)
 	}
 	if _, err = tx.ExecContext(ctx, `DELETE FROM personal_transfer_ref WHERE catalog_entry_id IN (`+in+`)`, args...); err != nil {
 		return BatchResult{}, err

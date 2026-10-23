@@ -2,6 +2,7 @@ package personal
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -59,6 +60,58 @@ func TestImportedProgressRejectsEarlierOfflineReportsAndAllowsLaterBackwardSeeks
 				if err != nil || later.Progress[0].Cursor == nil || later.Progress[0].Cursor.PositionSeconds != position {
 					t.Fatalf("later backward checkpoint = %+v %v", later, err)
 				}
+			}
+		})
+	}
+}
+
+// A known but unregistered source is recoverable only at its real evaluation
+// level. A mismatched level is an explicit identity conflict, never a guessed
+// registration or a silent skip.
+func TestImportKnownUnregisteredSourceRejectsWrongEvaluationLevel(t *testing.T) {
+	for _, tc := range []struct {
+		name, state, refQuery, kind string
+	}{
+		{
+			name:     "catalog as series",
+			state:    `INSERT INTO source_catalog_entry(id,root_path,title) VALUES(201,'/episode','Known catalog object');`,
+			refQuery: `SELECT ref FROM personal_transfer_ref WHERE catalog_entry_id=201`,
+			kind:     "series",
+		},
+		{
+			name:     "series as work",
+			state:    `INSERT INTO catalog_series(id,title) VALUES(301,'Known series');`,
+			refQuery: `SELECT ref FROM personal_transfer_ref WHERE series_id=301`,
+			kind:     "work",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := testStore(t)
+			ctx := context.Background()
+			execFixture(t, s.DB, tc.state)
+			var before int
+			if err := s.DB.QueryRow(`SELECT count(*) FROM work`).Scan(&before); err != nil {
+				t.Fatal(err)
+			}
+			var ref string
+			if err := s.DB.QueryRow(tc.refQuery).Scan(&ref); err != nil {
+				t.Fatal(err)
+			}
+			b := Backup{Format: "kikoto-user-data", Version: 2, Works: []BackupWork{{
+				Identity: &BackupIdentity{Ref: ref, Kind: tc.kind, Title: "Known source"},
+				Note:     "Private note",
+			}}}
+			preview, err := s.PreviewImport(ctx, 2, b)
+			if err != nil || preview.NewWorks != 0 || len(preview.Issues) != 1 || !strings.Contains(preview.Issues[0].Reason, "identity_conflict") {
+				t.Fatalf("preview = %+v, %v; want an explicit identity conflict", preview, err)
+			}
+			result, err := s.Import(ctx, 2, b, false)
+			if err != nil || result.ImportedWorks != 0 || result.SkippedWorks != 1 {
+				t.Fatalf("import = %+v, %v; want the mismatch retained for review", result, err)
+			}
+			var after int
+			if err := s.DB.QueryRow(`SELECT count(*) FROM work`).Scan(&after); err != nil || after != before {
+				t.Fatalf("mismatched identity changed work count %d->%d, %v", before, after, err)
 			}
 		})
 	}
