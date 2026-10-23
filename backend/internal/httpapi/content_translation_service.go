@@ -57,7 +57,7 @@ func (s *Server) translateStoredContent(ctx context.Context, in contentTranslati
 	// the same name-protection boundary.
 	laneTarget := target
 	laneTarget.traditional = false
-	translated, err := s.translateWithQueue(ctx, cfg, key, field.Names, text, laneTarget, in.Language)
+	translated, err := s.translateWithQueue(ctx, cfg, key, field.Names, text, laneTarget)
 	if err != nil {
 		return translatedContent{}, "", err
 	}
@@ -117,7 +117,7 @@ func displayText(text, language string, target translationTarget, names []string
 // translateWithQueue protects names, calls the model through the interactive
 // lane, then restores the protected names. The queue deduplicates readers of
 // the same key, so two panels asking for one title share a single call.
-func (s *Server) translateWithQueue(ctx context.Context, cfg translation.Config, key string, names []string, text string, target translationTarget, displayLanguage string) (string, error) {
+func (s *Server) translateWithQueue(ctx context.Context, cfg translation.Config, key string, names []string, text string, target translationTarget) (string, error) {
 	return s.translateOnLane(ctx, cfg, key, names, text, target, false)
 }
 
@@ -171,11 +171,11 @@ func (s *Server) translateOnLane(ctx context.Context, cfg translation.Config, ke
 
 // translateThroughModel is the uncached path for a source-level field that has
 // no durable object identity.
-func (s *Server) translateThroughModel(ctx context.Context, sourceID int64, field readableTranslationField, text string, target translationTarget, displayLanguage string) (string, error) {
+func (s *Server) translateThroughModel(ctx context.Context, sourceID int64, field readableTranslationField, text string, target translationTarget) (string, error) {
 	cfg, err := translation.NewStore(s.db).Load(ctx)
 	if err != nil {
 		return "", err
 	}
 	key := contentTranslationCacheKey("source", sourceID, "", "tag", target.modelLanguage, text, "model", cfg.Model, cfg.BaseURL, translation.TemplateVersion, cfg.DisableThinking)
-	return s.translateWithQueue(ctx, cfg, key, field.Names, text, target, displayLanguage)
+	return s.translateWithQueue(ctx, cfg, key, field.Names, text, target)
 }

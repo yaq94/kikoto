@@ -238,7 +238,7 @@ func (s *Server) translateContentField(ctx context.Context, in contentTranslatio
 	if kind == "" {
 		// A source-level field is not part of the searchable corpus. Translate
 		// it on demand without persisting a row.
-		translated, err := s.translateThroughModel(ctx, in.SourceID, field, text, target, in.Language)
+		translated, err := s.translateThroughModel(ctx, in.SourceID, field, text, target)
 		if err != nil {
 			return result, "", err
 		}
