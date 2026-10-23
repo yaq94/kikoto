@@ -252,14 +252,21 @@ func TestPersonalTransferRestoresKnownUnregisteredCatalogSeriesAndEpisodeAcrossR
 	if err := db.QueryRow(`SELECT count(*) FROM shared_identity_member`).Scan(&sharedMembers); err != nil {
 		t.Fatal(err)
 	}
+	var seriesRows, seriesMembers int
+	if err := db.QueryRow(`SELECT count(*) FROM catalog_series`).Scan(&seriesRows); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(`SELECT count(*) FROM catalog_series_member WHERE series_id=201 AND catalog_entry_id=102`).Scan(&seriesMembers); err != nil {
+		t.Fatal(err)
+	}
 	if err := db.QueryRow(`SELECT count(*) FROM workflow_run`).Scan(&workflows); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.QueryRow(`SELECT count(*) FROM media_item`).Scan(&media); err != nil {
 		t.Fatal(err)
 	}
-	if sharedMembers != 0 || workflows != 0 || media != 0 {
-		t.Fatalf("import changed shared relations or media: members=%d workflows=%d media=%d", sharedMembers, workflows, media)
+	if sharedMembers != 0 || seriesRows != 1 || seriesMembers != 1 || workflows != 0 || media != 0 {
+		t.Fatalf("import changed shared relations or media: shared=%d series=%d members=%d workflows=%d media=%d", sharedMembers, seriesRows, seriesMembers, workflows, media)
 	}
 	if files, err := os.ReadDir(filepath.Join(root, "data")); err != nil || len(files) != 0 {
 		t.Fatalf("import wrote media files: %v %v", files, err)
