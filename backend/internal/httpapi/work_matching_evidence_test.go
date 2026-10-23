@@ -39,20 +39,20 @@ func TestMatchWorkEvidenceRules(t *testing.T) {
 			name: "sidecar voice with different circles conflicts",
 			left: workMatchEvidence{Title: "Example Work", Sidecar: catalogSidecarEvidence{
 				VoiceActors: []string{"Example Voice"}, Circles: []string{"Circle A"},
-			}},
+			}, VoiceNames: []string{"Example Voice"}, CircleNames: []string{"Circle A"}},
 			right: workMatchEvidence{Title: "Example Work", Sidecar: catalogSidecarEvidence{
 				VoiceActors: []string{"Example Voice"}, Circles: []string{"Circle B"},
-			}},
+			}, VoiceNames: []string{"Example Voice"}, CircleNames: []string{"Circle B"}},
 			wantRule: "conflicting_evidence", wantConf: "review", wantReason: "circles",
 		},
 		{
 			name: "sidecar voice with one circle is enough",
 			left: workMatchEvidence{Title: "Example Work", Sidecar: catalogSidecarEvidence{
 				VoiceActors: []string{"Example Voice"}, Circles: []string{"Circle A"},
-			}},
+			}, VoiceNames: []string{"Example Voice"}, CircleNames: []string{"Circle A"}},
 			right: workMatchEvidence{Title: "Example Work", Sidecar: catalogSidecarEvidence{
 				VoiceActors: []string{"Example Voice"},
-			}},
+			}, VoiceNames: []string{"Example Voice"}},
 			wantRule: "title_voice_credits", wantConf: "high", wantReason: "voice_actors",
 		},
 		{
