@@ -315,6 +315,12 @@ repeating the `playback:use` gate: a session is required, or an enabled
 anonymous-read policy for `GET`/`HEAD`. Playback preparation creates media
 identities, so it keeps its own `playback:use` permission.
 
+A metadata-only parent with files but no playable audio remains catalog
+provenance for its sidecars. The detail and personal-review routes answer
+`404` for that parent, while a zero-file synthetic entry remains readable for
+work matching and shared identities. Tracks are never served for a hidden
+parent.
+
 ### Format copies and auxiliary folders
 
 A release often publishes its audio below a copy folder rather than beside the
@@ -324,7 +330,11 @@ own. The admission rule strips a leading order marker (`2-`, `01_`, `[2] `)
 before matching the format word, so a numbered copy is recognized without
 treating a title such as `24.歡迎光臨閃亮銀CV床貓` as a format. Brackets and
 quality markers are ignored for that comparison, so `(MP3)`, `[FLAC]`,
-`MP3 (V0)` and `FLAC24bit` are copies too. A format word
+`MP3 (V0)` and `FLAC24bit` are copies too. A format tag may follow a team and
+work-code prefix, as in `[团队][RJ01009766][MP3+lrc]标题`; every bracket tag is
+checked for a format word and an optional lyric companion. A coded child folder
+such as `[团队][RJ00000001] Bonus` is read through the same work-code parser, so
+its code is not mistaken for part of the release title. A format word
 followed by a quality marker (`MP3 320kbps`, `FLAC 24bit`) still matches; a
 title that merely starts with one (`MP3 Collection`) does not. Artwork and
 script folders (`ART`, `photo`, `3-photo`, `台本`) are auxiliary for the same
@@ -375,6 +385,14 @@ Split cards store the real directory in `source_catalog_entry.source_root` and a
 `::<group>` identity suffix in `root_path`; playback and refresh resolve files
 through `source_root`. A folder whose audio is almost entirely a size-identical
 copy of its parent's files keeps one card instead of republishing every work.
+The duplicate check runs before publication, not only when choosing the split
+mode: a child with at least three audio files that repeats the parent's audio
+set does not publish a second card, and its pending observations are consumed
+without writing file rows. Complete provider hashes are compared as multisets;
+without complete hashes, a small folder requires an exact one-to-one match of
+file names and sizes. Larger package copies retain the bounded size tolerance.
+The parent card and its personal records remain addressable, and a later rescan
+reconsiders the child when its contents change.
 The old folder card is retired to the first split card only after every row
 below it has been published, so existing personal references still resolve.
 Split cards from an older generation that the current generation did not

@@ -19,6 +19,12 @@ A series contains at most 100 members; additional entries stay independent.
 A single-member series is not displayed as a series card: the entry keeps its
 own card until a second evidenced member exists, so an isolated `Episode 1`
 does not create a creator-named series.
+When a complete scan sees the same episode set under a renamed series
+directory, the old series is folded into the new one only when both series
+directories share the same comparable parent container. A series directly
+below the source root, or one whose parent cannot be derived from live members,
+stays separate for explicit review rather than being matched by episode names
+alone.
 `ep` and `ep.` count as episode markers only at a word boundary. An `ep`
 inside an English word, as in `Deep 2` or `Step 2`, is not series evidence.
 
