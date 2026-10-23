@@ -50,10 +50,9 @@ func remoteWorkIDs(response remoteWorksResponse) []int64 {
 	return ids
 }
 
-// A display language returns only rows translated into it, or authored in it.
-// An untranslated Japanese entry must stay invisible even though its source
-// title contains the query text.
-func TestContentTranslationSearchRemoteLanguageStrict(t *testing.T) {
+// A display language searches its translated corpus together with the original
+// source text. An untranslated entry stays reachable by its original title.
+func TestContentTranslationSearchRemoteIncludesOriginalText(t *testing.T) {
 	db := openMigratedTestDB(t)
 	seedCatalogPlanSource(t, db)
 	insertCatalogPlanEntry(t, db, 1, "Yoru no Monogatari", "")
@@ -74,17 +73,12 @@ func TestContentTranslationSearchRemoteLanguageStrict(t *testing.T) {
 	insertTranslatedContent(t, db, "entry", 5, "title", "zh-Hans", "晴天", "model")
 
 	simplified := requestRemoteWorks(t, db, "q="+url.QueryEscape("雨夜")+"&lang=zh-cn&pageSize=24")
-	if simplified.Total != 2 {
-		t.Fatalf("zh-cn total = %d, want 2: %#v", simplified.Total, remoteWorkIDs(simplified))
+	if simplified.Total != 3 {
+		t.Fatalf("zh-cn total = %d, want 3: %#v", simplified.Total, remoteWorkIDs(simplified))
 	}
 	got := remoteWorkIDs(simplified)
-	if len(got) != 2 || got[0] != 2 || got[1] != 1 {
-		t.Fatalf("zh-cn ids = %v, want [2 1] (updated desc, id desc)", got)
-	}
-	for _, id := range got {
-		if id == 3 || id == 4 || id == 5 {
-			t.Fatalf("zh-cn leaked untranslated or other-language entry %d", id)
-		}
+	if len(got) != 3 || got[0] != 3 || got[1] != 2 || got[2] != 1 {
+		t.Fatalf("zh-cn ids = %v, want [3 2 1] (updated desc, id desc)", got)
 	}
 
 	fts := requestRemoteWorks(t, db, "q="+url.QueryEscape("雨夜的故事")+"&lang=zh-cn&pageSize=24")
@@ -227,5 +221,26 @@ func TestContentTranslationSearchRemoteExactFirst(t *testing.T) {
 	got := remoteWorkIDs(response)
 	if len(got) != 2 || got[0] != 1 || got[1] != 2 {
 		t.Fatalf("exact-first order = %v, want [1 2]: %#v", got, response)
+	}
+}
+
+func TestContentTranslationSearchRemoteDoesNotTruncateLargeMatchSet(t *testing.T) {
+	db := openMigratedTestDB(t)
+	seedCatalogPlanSource(t, db)
+	if _, err := db.Exec(`
+		WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<5001)
+		INSERT INTO source_catalog_entry(id,file_source_id,root_path,title,availability_status)
+		SELECT i,7,'/bulk/'||i,'Original '||i,'available' FROM n;
+		WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<5001)
+		INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes)
+		SELECT i,'01.mp3','01.mp3','audio',1 FROM n;
+		WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<5001)
+		INSERT INTO content_translation(cache_key,entity_kind,entity_id,field,language,source_text,translated_text,origin)
+		SELECT 'limit-'||i,'entry',i,'title','zh-Hans','Original '||i,'作品'||i,'model' FROM n`); err != nil {
+		t.Fatal(err)
+	}
+	response := requestRemoteWorks(t, db, "q="+url.QueryEscape("作品")+"&lang=zh-cn&pageSize=100&page=51")
+	if response.Total != 5001 || len(response.Works) != 1 {
+		t.Fatalf("bounded search = total %d rows %d, want 5001/1", response.Total, len(response.Works))
 	}
 }
