@@ -259,3 +259,18 @@ H 包没有产品代码、迁移或部署改动。回滚只需删除 `scripts/ca
 可比较改名；C9 无完整哈希时的小集合匹配要求文件名与大小精确一一对应，
 少于 3 个文件的父子拷贝不在自动判重范围。上述边界与已确认的系列父容器、
 证据不足保留和最小包阈值规则一致。
+
+### 7.1 旧重复卡与嵌套音频
+
+`67533c77` 在重复目录判定后：
+
+- 把副本目录的 `catalog_root` 指回父卡，并标记 `work_split='duplicate'`；
+- 消费副本目录的直接 pending 行，不写入父卡重复文件；
+- 通过 `catalogRetireDuplicate` 把旧 generation 的重复卡退休到当前父卡，
+  仍沿用 work/series/alias 保护和 `transferRetiredCatalogWorkTx` 的冲突检查；
+- 让副本中的 `Bonus` 等轨/附伴目录继承父卡根，而不是生成第二张卡。
+
+回归：`TestSourceCatalogLooseWorksStalePackageCopyRetiresToParent` 证明旧卡
+在新的强制扫描后 `file_source_id=NULL`、`relocated_to_id=父卡`，旧 id 可解析；
+`TestSourceCatalogLooseWorksPackageCopyKeepsNestedBonusOnParent` 证明父卡
+保留 19 条直接音轨并吸收 1 条 Bonus，`/works` 只有父卡。定向测试全部通过。
