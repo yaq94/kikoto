@@ -367,16 +367,21 @@ func completeCatalogDirectoryTx(ctx context.Context, tx *sql.Tx, sourceID, gener
 	// identity rather than pointing at a path that was never observed.
 	if episode, ok := catalogEpisodeFormatCopy(path.Base(d.Path)); ok {
 		sibling := path.Join(path.Dir(d.Path), episode)
-		// The sibling must exist in this generation. A deleted episode leaves an
-		// older directory row behind; folding the copy onto that path made the
-		// copy republish the deleted episode and hid its own directory.
 		var exists int
 		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM source_catalog_directory
 			WHERE file_source_id=? AND path=? AND generation=?
 				AND status<>'empty')`, sourceID, sibling, generation).Scan(&exists); err != nil {
 			return err
 		}
-		if exists != 0 {
+		formatDirectories, err := catalogEpisodeFormatDirectoryCount(ctx, tx, sourceID, generation, path.Dir(d.Path))
+		if err != nil {
+			return err
+		}
+		// A bare sibling owns the episode. A format-only series has no bare
+		// directory, so two or more format folders establish the same canonical
+		// episode root. An isolated format copy keeps its own card, which lets a
+		// deleted episode stay missing instead of being revived by its copy.
+		if exists != 0 || formatDirectories >= 2 {
 			d.Root = sibling
 			return decideCatalogWorkSplitTx(ctx, tx, sourceID, generation, d.Path, d.Revision)
 		}
@@ -429,28 +434,45 @@ func completeCatalogDirectoryTx(ctx context.Context, tx *sql.Tx, sourceID, gener
 				return err
 			}
 			if pinned == 0 {
-				duplicate, duplicateErr := catalogDuplicateDirectoryTx(ctx, tx, sourceID, generation, d.Path)
+				decision, duplicateErr := catalogDuplicateDirectoryDecisionTx(ctx, tx, sourceID, generation, d.Path)
 				if duplicateErr != nil {
 					return duplicateErr
 				}
-				if duplicate {
-					// Keep the copy under the original parent root so nested
-					// bonus tracks still belong to that work. Direct audio in
-					// the duplicate directory is consumed without publishing;
-					// the `duplicate` split marker keeps admission counts and
-					// publication from treating it as another card.
-					d.Root = path.Dir(d.Path)
+				if decision.Duplicate {
+					// Keep the copy under the canonical parent root. Files that
+					// repeat the canonical recording are consumed, while a
+					// unique bonus stays pending and publishes into that card.
+					// Only a copy with no unique audio receives the duplicate
+					// split marker, which keeps the whole directory out of the
+					// publisher as a second card.
+					d.Root = decision.Root
+					mode := catalogWorkSplitSingle
+					if len(decision.Unique) == 0 {
+						mode = catalogWorkSplitDuplicate
+					}
 					if _, err := tx.ExecContext(ctx, `UPDATE source_catalog_directory
 						SET work_split=?
 						WHERE file_source_id=? AND path=? AND generation=?`,
-						catalogWorkSplitDuplicate, sourceID, d.Path, generation); err != nil {
+						mode, sourceID, d.Path, generation); err != nil {
 						return err
 					}
-					_, err := tx.ExecContext(ctx, `UPDATE source_catalog_observation
+					for _, file := range decision.Matched {
+						if _, err := tx.ExecContext(ctx, `UPDATE source_catalog_observation
+							SET publish_pending=0
+							WHERE file_source_id=? AND directory_path=? AND revision=? AND name=?`,
+							sourceID, file.Directory, d.Revision, file.Name); err != nil {
+							return err
+						}
+					}
+					// Readmes and covers of a copy describe the same release and
+					// must not create a second card either.
+					if _, err := tx.ExecContext(ctx, `UPDATE source_catalog_observation
 						SET publish_pending=0
-						WHERE file_source_id=? AND directory_path=? AND revision=?`,
-						sourceID, d.Path, d.Revision)
-					return err
+						WHERE file_source_id=? AND directory_path=? AND revision=? AND kind<>'audio'`,
+						sourceID, d.Path, d.Revision); err != nil {
+						return err
+					}
+					return nil
 				}
 			}
 			return decideCatalogWorkSplitTx(ctx, tx, sourceID, generation, d.Path, d.Revision)
@@ -912,7 +934,7 @@ func (s *Server) publishCatalogBatch(ctx context.Context, job workflowJobRecord,
 	parentNeeded := map[string]bool{}
 	splitRoots := map[string]bool{}
 	for _, p := range items {
-		if p.split == catalogWorkSplitPrefix || p.split == catalogWorkSplitFile {
+		if p.split == catalogWorkSplitPrefix || p.split == catalogWorkSplitFile || p.split == catalogWorkSplitEpisode {
 			if _, ok := splitPlans[p.root]; ok {
 				continue
 			}
@@ -948,6 +970,7 @@ func (s *Server) publishCatalogBatch(ctx context.Context, job workflowJobRecord,
 	// Per-batch admission cache. The prepass already refuses fully observed
 	// cards; this guard covers a row that reached the batch by another path.
 	blockedRoots := map[string]bool{}
+	resolvedSourceRoots := map[string]string{}
 	for _, p := range items {
 		if _, checked := blockedRoots[p.root]; !checked {
 			blocked, adm, checkErr := s.catalogRootBlockedTx(ctx, tx.Tx, sourceID, job.RunID, p.root)
@@ -963,6 +986,8 @@ func (s *Server) publishCatalogBatch(ctx context.Context, job workflowJobRecord,
 			}
 		}
 		root, sourceRoot, title := p.root, "", path.Base(p.root)
+		var episodeEvidence catalogSeriesEvidence
+		hasEpisode := false
 		if p.root == "/" {
 			title = rootTitle
 		}
@@ -975,6 +1000,30 @@ func (s *Server) publishCatalogBatch(ctx context.Context, job workflowJobRecord,
 			rel := strings.TrimPrefix(path.Join(p.dir, p.name), strings.TrimRight(p.root, "/")+"/")
 			if target, ok := plan.targetFor(rel); ok {
 				root, sourceRoot, title = target.Root, target.SourceRoot, target.Title
+				episodeEvidence, hasEpisode = target.Episode, target.HasEpisode
+			}
+		}
+		if sourceRoot == "" && p.root != "/" {
+			if cached, ok := resolvedSourceRoots[p.root]; ok {
+				sourceRoot = cached
+			} else {
+				var exists int
+				if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM source_catalog_directory
+					WHERE file_source_id=? AND generation=? AND path=?)`, sourceID, job.RunID, p.root).Scan(&exists); err != nil {
+					return 0, err
+				}
+				if exists == 0 {
+					// A virtual episode root has no directory of its own. Its
+					// files live under the observed parent, which is also the
+					// refresh boundary for the card.
+					sourceRoot = path.Dir(p.root)
+				}
+				resolvedSourceRoots[p.root] = sourceRoot
+			}
+		}
+		if !hasEpisode && sourceRoot != "" {
+			if evidence, ok := catalogEpisodeEvidence(root); ok {
+				episodeEvidence, hasEpisode = evidence, true
 			}
 		}
 		if blockedRoots[p.root] {
@@ -1027,6 +1076,10 @@ func (s *Server) publishCatalogBatch(ctx context.Context, job workflowJobRecord,
 			// A split card is already one work. Its title or file name is not
 			// episode evidence, so it must not create or join a series.
 			if err = attachCatalogSeriesForRootTx(ctx, tx.Tx, id, sourceID, root); err != nil {
+				return 0, err
+			}
+		} else if hasEpisode {
+			if err = attachCatalogSeriesEvidenceTx(ctx, tx.Tx, id, sourceID, episodeEvidence); err != nil {
 				return 0, err
 			}
 		}
@@ -1303,7 +1356,7 @@ func (s *Server) sourceCatalogProgress(ctx context.Context, sourceID int64, page
 	if err != nil {
 		return p, err
 	}
-	rows, err = s.db.QueryContext(ctx, `SELECT path,status,next_page,error_code FROM source_catalog_directory WHERE file_source_id=? AND generation=? AND status<>'complete' ORDER BY path LIMIT 50 OFFSET ?`, sourceID, p.RunID, (page-1)*50)
+	rows, err = s.db.QueryContext(ctx, `SELECT path,status,next_page,error_code FROM source_catalog_directory WHERE file_source_id=? AND generation=? AND status<>'complete' AND NOT(status='empty' AND error_code='not_found') ORDER BY path LIMIT 50 OFFSET ?`, sourceID, p.RunID, (page-1)*50)
 	if err != nil {
 		return p, err
 	}
@@ -1382,7 +1435,7 @@ func (s *Server) sourceCatalogProgressExact(ctx context.Context, sourceID int64,
 		return p, err
 	}
 	p.DetailsTotal = p.Directories - p.Completed
-	rows, err = s.db.QueryContext(ctx, `SELECT path,status,next_page,error_code FROM source_catalog_directory WHERE file_source_id=? AND generation=? AND status<>'complete' ORDER BY path LIMIT 50 OFFSET ?`, sourceID, p.RunID, (page-1)*50)
+	rows, err = s.db.QueryContext(ctx, `SELECT path,status,next_page,error_code FROM source_catalog_directory WHERE file_source_id=? AND generation=? AND status<>'complete' AND NOT(status='empty' AND error_code='not_found') ORDER BY path LIMIT 50 OFFSET ?`, sourceID, p.RunID, (page-1)*50)
 	if err != nil {
 		return p, err
 	}

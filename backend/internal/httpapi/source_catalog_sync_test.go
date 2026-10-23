@@ -250,16 +250,16 @@ func TestCatalogSyncNoChangeSecondRunListsNothing(t *testing.T) {
 	tree.resetHits()
 
 	first := f.runCatalogSync(t, false)
-	if first.Status != "succeeded" || first.DirsProbed == 0 || first.DirsListed != 0 || first.EntriesPublished != 0 {
+	if first.Status != "succeeded" || first.DirsProbed == 0 || first.DirsListed != 1 || first.EntriesPublished != 0 {
 		t.Fatalf("baseline sync did not adopt mtimes: %#v", first)
 	}
 	tree.resetHits()
 	second := f.runCatalogSync(t, false)
 	t.Logf("no-change sync requests=%d dirs_probed=%d dirs_changed=%d dirs_listed=%d entries_published=%d list_requests=%d", second.Requests, second.DirsProbed, second.DirsChanged, second.DirsListed, second.EntriesPublished, tree.totalListHits())
-	if second.Status != "succeeded" || second.DirsListed != 0 || second.EntriesPublished != 0 {
+	if second.Status != "succeeded" || second.DirsListed != 1 || second.EntriesPublished != 0 {
 		t.Fatalf("unchanged sync published work: %#v", second)
 	}
-	if got := tree.totalListHits(); got != 0 {
+	if got := tree.totalListHits(); got != 1 || tree.listCount("/") != 1 {
 		t.Fatalf("unchanged sync issued %d list requests, dirs=%v list=%v", got, tree.dirsHits, tree.listHits)
 	}
 	if after := catalogSyncTestObservationCount(t, f, sourceID); after != before {
@@ -285,13 +285,19 @@ func TestCatalogSyncDeepDirectoryAddsOnlyOneRow(t *testing.T) {
 	tree.resetHits()
 	state := f.runCatalogSync(t, false)
 	t.Logf("deep-add sync requests=%d dirs_probed=%d dirs_changed=%d dirs_listed=%d entries_published=%d target_list_requests=%d", state.Requests, state.DirsProbed, state.DirsChanged, state.DirsListed, state.EntriesPublished, tree.listCount("/Partition A/Work 001/MP3"))
-	if state.Status != "succeeded" || state.DirsListed != 1 || state.EntriesPublished != 1 {
+	if state.Status != "succeeded" || state.DirsListed != 2 || state.EntriesPublished != 1 {
 		t.Fatalf("deep sync state = %#v", state)
 	}
 	if got := tree.listCount("/Partition A/Work 001/MP3"); got != 1 {
 		t.Fatalf("changed leaf list requests = %d, want 1; all=%v", got, tree.listHits)
 	}
+	if got := tree.listCount("/"); got != 1 {
+		t.Fatalf("root relist requests = %d, want 1; all=%v", got, tree.listHits)
+	}
 	for _, path := range []string{"/", "/Partition A", "/Partition A/Work 001"} {
+		if path == "/" {
+			continue
+		}
 		if got := tree.listCount(path); got != 0 {
 			t.Fatalf("unrelated directory %s issued %d list requests", path, got)
 		}
@@ -320,11 +326,11 @@ func TestCatalogSyncMissesContentOnlyChangeAndFullReconcileFindsIt(t *testing.T)
 	tree.addFile("/Partition A/Work 001", "02.mp3", 999, "f2")
 	tree.resetHits()
 	state := f.runCatalogSync(t, false)
-	if state.DirsListed != 0 || state.EntriesPublished != 0 {
+	if state.DirsListed != 1 || state.EntriesPublished != 0 {
 		t.Fatalf("directory mtime did not move but sync listed: %#v", state)
 	}
-	if tree.totalListHits() != 0 {
-		t.Fatal("unchanged mtime still issued list requests")
+	if tree.totalListHits() != 1 || tree.listCount("/") != 1 {
+		t.Fatalf("unchanged mtime still issued unexpected list requests: %v", tree.listHits)
 	}
 	// The weekly full reconcile is the backstop.
 	if p := f.runFullScan(t, `{"force":true,"intervalMs":100,"concurrency":1}`); p["status"] != "complete" {

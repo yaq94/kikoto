@@ -35,6 +35,9 @@ size restarts only incomplete page sequences.
 `GET /api/remote-sources/{id}/catalog/index?page=1` requires the same permission.
 It returns run id, timestamps, attempted pages, observed entries, indexed entries,
 completed/pending/failed/restricted/unconfirmed-empty directory counts and
+the unresolved detail rows. The detail total uses the same completed predicate
+as the counters: a confirmed `not_found` directory is completed coverage and is
+not listed as an unresolved detail.
 paginated partition and unresolved-directory details (50 per list). It never
 reports a whole-source percentage with an unknown denominator. An empty answer
 remains unconfirmed; permission failures and unfinished ranges prevent complete
@@ -93,6 +96,14 @@ checks do not continually retry a paused source. A complete success schedules
 the next update for 24 hours later. Daily work uses the saved limits, existing
 source request policy and low-space pause, and only complete coverage reports
 success. Manual starts still require `sources:write`.
+
+Every incremental update re-lists the source root in addition to probing child
+directories. Root-level files are not visible through the directory probe, so
+the root listing is the comparison point for additions and deletions. An added
+file becomes searchable after publication. Removing the last root file leaves
+the card, work link and personal records intact; the range is reported as
+unconfirmed-empty, or missing when coverage confirms the absence, instead of
+staying falsely available.
 
 | Option | Starting value | Accepted range |
 | --- | --- | --- |
@@ -377,8 +388,10 @@ A creator or tag folder that holds many independent works as loose audio is
 published as several cards. Each completed directory revision recomputes the
 split decision in `source_catalog_directory.work_split`: `single` keeps one
 card, `prefix` groups files by a repeated work code such as `N006`, and `file`
-groups direct audio by work title. A small trailing number (up to 30) is a
-track marker, so `Example Episode1..6` and `Alpha Rain 1..3` stay one work each.
+groups direct audio by work title. `episode` groups explicit authored episode
+markers such as `Example Episode1..6` into one series whose members are
+independently addressable and reviewable. A small trailing number (up to 30)
+without an episode word is a track marker, so `Alpha Rain 1..3` stays one work.
 A larger number belongs to the title, so `Room 101` and `Room 102` stay two
 works; a zero-padded code such as `T001`/`T002` is likewise part of the identity.
 Named parts of one release (`Prologue`/`Main Story`/`Epilogue`, `表妹上`/`中`/`下`)
@@ -388,9 +401,13 @@ Split cards store the real directory in `source_catalog_entry.source_root` and a
 through `source_root`. A folder whose audio is almost entirely a size-identical
 copy of its parent's files keeps one card instead of republishing every work.
 The duplicate check runs before publication, not only when choosing the split
-mode: a child with at least three audio files that repeats the parent's audio
-set does not publish a second card, and its pending observations are consumed
-without writing file rows. Complete provider hashes are compared as multisets;
+mode: a child with at least two audio files that repeats the parent's audio
+set does not publish a second card. Matched observations are consumed without
+writing duplicate file rows; a unique bonus track stays pending and publishes
+on the canonical parent card, so a format copy cannot hide playable content.
+Nested package folders are compared through their parent audio as well, so
+several `Package/Work 01…10` copies do not become separate work cards. Complete
+provider hashes are compared as multisets;
 without complete hashes, a small folder requires an exact one-to-one match of
 file names and sizes. Larger package copies retain the bounded size tolerance.
 The parent card and its personal records remain addressable, nested bonus and

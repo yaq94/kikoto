@@ -346,10 +346,9 @@ func TestSourceCatalogLooseWorksFileCardsAndPlayback(t *testing.T) {
 	}
 }
 
-// A creator folder can mix independent works with multi-episode works whose
-// episodes have different titles. Grouping by base title keeps Example
-// Episode1..6 and Ending1..3 on one card each instead of splitting every
-// episode into a work.
+// A creator folder can mix independent works with an explicit episode series
+// and a plain numbered work. Example Episode1..6 becomes one series while
+// Ending1..3 stays one work card because it has no authored episode marker.
 func TestSourceCatalogLooseWorksGroupsEpisodesByBaseTitle(t *testing.T) {
 	names := []string{
 		"Alpha Rain.mp3", "Beta Wind.mp3", "Cobalt Night.mp3", "Delta Snow.mp3",
@@ -372,18 +371,23 @@ func TestSourceCatalogLooseWorksGroupsEpisodesByBaseTitle(t *testing.T) {
 		t.Fatalf("scan = %#v", p)
 	}
 	cards := f.cards(t)
-	// Ten independent works plus the two multi-episode works.
+	// Ten independent works plus the episode series and the numbered work.
 	if len(cards) != 12 {
 		t.Fatalf("cards=%d, want 12: %v", len(cards), cards)
 	}
-	for title, want := range map[string]int{"Example Episode1": 6, "Ending1": 3} {
-		card := cards[title]
-		if card == nil {
-			t.Fatalf("cards=%v, want %q as the group title", cards, title)
-		}
-		if got := len(f.tracks(t, card)); got != want {
-			t.Fatalf("%s tracks=%d, want %d", title, got, want)
-		}
+	if card := cards["Ending1"]; card == nil {
+		t.Fatalf("cards=%v, want Ending1 as one work", cards)
+	} else if got := len(f.tracks(t, card)); got != 3 {
+		t.Fatalf("Ending1 tracks=%d, want 3", got)
+	}
+	seriesCard := cards["Example"]
+	if seriesCard == nil || seriesCard["seriesId"] == nil {
+		t.Fatalf("cards=%v, want the Example series", cards)
+	}
+	seriesID := strconv.Itoa(int(seriesCard["seriesId"].(float64)))
+	view := reviewRequest(t, f.handler, f.cookie, http.MethodGet, "/api/catalog-series/"+seriesID, "", 200)
+	if got := len(view["episodes"].([]any)); got != 6 {
+		t.Fatalf("Example series episodes=%d, want 6", got)
 	}
 	if _, ok := cards["Example Episode2"]; ok {
 		t.Fatal("episode 2 became its own work")

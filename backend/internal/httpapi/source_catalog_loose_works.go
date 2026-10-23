@@ -19,6 +19,7 @@ const (
 	catalogWorkSplitSingle    = "single"
 	catalogWorkSplitPrefix    = "prefix"
 	catalogWorkSplitFile      = "file"
+	catalogWorkSplitEpisode   = "episode"
 	catalogWorkSplitDuplicate = "duplicate"
 )
 
@@ -110,6 +111,9 @@ func catalogWorkSplitMode(files []openlist.File) string {
 func catalogWorkSplitModeNames(names []string) string {
 	if len(names) == 0 {
 		return catalogWorkSplitSingle
+	}
+	if _, ok := catalogLooseEpisodeFiles("", names); ok {
+		return catalogWorkSplitEpisode
 	}
 	// 001.mp3..225.mp3 is one audiobook with many episodes, not 225 works. A
 	// set of date-only names is also all digits but is not a sequence: 20210104
@@ -697,6 +701,7 @@ type catalogLooseGrouping struct {
 	splitPrefixes map[string]bool
 	partFold      map[string]string
 	structured    map[string]string
+	episodes      map[string]catalogLooseEpisode
 }
 
 // newCatalogLooseGrouping decides whether a repeated work prefix names one
@@ -711,6 +716,12 @@ func newCatalogLooseGrouping(names []string, mode string) catalogLooseGrouping {
 		splitPrefixes: map[string]bool{},
 		partFold:      catalogPartFold(names),
 		structured:    catalogStructuredRuns(names),
+		episodes:      catalogLooseEpisodeSubset("", names),
+	}
+	if mode == catalogWorkSplitEpisode {
+		if episodes, ok := catalogLooseEpisodeFiles("", names); ok {
+			grouping.episodes = episodes
+		}
 	}
 	if mode == catalogWorkSplitPrefix {
 		byPrefix := map[string][]string{}
@@ -770,6 +781,9 @@ func catalogPrefixFilesStayTogether(prefix string, names []string, folded map[st
 }
 
 func (g catalogLooseGrouping) keyFor(name string) string {
+	if episode, ok := g.episodes[name]; ok {
+		return "episode:" + episode.Key
+	}
 	// Numbered discs, CDs and parts of one release share a card. The marker is
 	// checked before the work prefix because RJ... Disc1 and RJ... Disc2 are
 	// one release, not two works with the same prefix.
@@ -841,6 +855,13 @@ func catalogGroupTitles(grouping catalogLooseGrouping, names []string) map[strin
 	sort.Strings(sorted)
 	titles := map[string]string{}
 	for _, name := range sorted {
+		if episode, ok := grouping.episodes[name]; ok {
+			key := "episode:" + episode.Key
+			if _, exists := titles[key]; !exists {
+				titles[key] = episode.Title
+			}
+			continue
+		}
 		key := grouping.keyFor(name)
 		if key == "" {
 			continue
@@ -857,6 +878,8 @@ type catalogSplitTarget struct {
 	Root       string
 	SourceRoot string
 	Title      string
+	Episode    catalogSeriesEvidence
+	HasEpisode bool
 }
 
 // catalogSplitPlan is the one partition shared by the resumable index, a
@@ -874,6 +897,9 @@ type catalogSplitPlan struct {
 
 func newCatalogSplitPlan(root string, names []string, mode string) catalogSplitPlan {
 	grouping := newCatalogLooseGrouping(names, mode)
+	if episodes := catalogLooseEpisodeSubset(root, names); len(episodes) > 0 {
+		grouping.episodes = episodes
+	}
 	plan := catalogSplitPlan{
 		root:     root,
 		grouping: grouping,
@@ -881,7 +907,7 @@ func newCatalogSplitPlan(root string, names []string, mode string) catalogSplitP
 		direct:   map[string]catalogSplitTarget{},
 		byKey:    map[string]catalogSplitTarget{},
 	}
-	if mode != catalogWorkSplitPrefix && mode != catalogWorkSplitFile {
+	if mode != catalogWorkSplitPrefix && mode != catalogWorkSplitFile && mode != catalogWorkSplitEpisode {
 		return plan
 	}
 	for _, name := range names {
@@ -890,6 +916,11 @@ func newCatalogSplitPlan(root string, names []string, mode string) catalogSplitP
 			continue
 		}
 		target := catalogSplitTarget{Root: root + "::" + key, SourceRoot: root, Title: plan.titles[key]}
+		if episode, ok := plan.grouping.episodes[name]; ok {
+			target.Episode = episode.Evidence
+			target.HasEpisode = true
+			target.Title = episode.Title
+		}
 		plan.direct[name] = target
 		if _, exists := plan.byKey[key]; !exists {
 			plan.byKey[key] = target
@@ -957,6 +988,27 @@ func catalogSplitSnapshot(root string, files []openlist.File, mode string) (map[
 // card, so split cards only ever own direct files.
 func catalogSplitCardFiles(rootPath, sourceRoot string, files []openlist.File) []openlist.File {
 	if sourceRoot == "" || !strings.HasPrefix(rootPath, sourceRoot+"::") {
+		if sourceRoot != "" && !strings.Contains(rootPath, "::") && path.Dir(rootPath) == strings.TrimRight(sourceRoot, "/") {
+			episodeName := path.Base(rootPath)
+			if _, ok := catalogEpisodeEvidence(rootPath); ok {
+				result := []openlist.File{}
+				for _, file := range files {
+					parts := strings.SplitN(file.Path, "/", 2)
+					if len(parts) != 2 {
+						continue
+					}
+					if parts[0] != episodeName {
+						if copyName, isCopy := catalogEpisodeFormatCopy(parts[0]); !isCopy || copyName != episodeName {
+							continue
+						}
+					}
+					result = append(result, file)
+				}
+				if len(result) > 0 {
+					return result
+				}
+			}
+		}
 		return files
 	}
 	names := catalogDirectAudioNames(files)
@@ -2041,7 +2093,7 @@ func (s *Server) catalogSplitPlanForRoot(ctx context.Context, tx *sql.Tx, source
 	if err != nil {
 		return catalogSplitPlan{}, false, err
 	}
-	if mode != catalogWorkSplitPrefix && mode != catalogWorkSplitFile {
+	if mode != catalogWorkSplitPrefix && mode != catalogWorkSplitFile && mode != catalogWorkSplitEpisode {
 		return catalogSplitPlan{}, false, nil
 	}
 	rows, err := tx.QueryContext(ctx, `SELECT o.name FROM source_catalog_observation o
@@ -2119,43 +2171,113 @@ func (s *Server) catalogSplitPlanForRoot(ctx context.Context, tx *sql.Tx, source
 // unpublished rather than being merged into the parent, because the parent
 // already holds the original files.
 const (
-	catalogDuplicateMinimumFiles = 3
+	catalogDuplicateMinimumFiles = 2
 	catalogDuplicateSmallSet     = 20
 )
 
+type catalogDuplicateDecision struct {
+	Duplicate bool
+	Root      string
+	Matched   []catalogAudioFile
+	Unique    []catalogAudioFile
+}
+
 func catalogDuplicateDirectoryTx(ctx context.Context, tx *sql.Tx, sourceID, generation int64, directoryPath string) (bool, error) {
-	parent := path.Dir(directoryPath)
-	if directoryPath == "/" || parent == "." || parent == directoryPath || parent == "/" {
-		return false, nil
-	}
-	child, err := catalogAudioFilesTx(ctx, tx, sourceID, generation, directoryPath, true)
-	if err != nil || len(child) < catalogDuplicateMinimumFiles {
-		return false, err
-	}
-	parentFiles, err := catalogAudioFilesTx(ctx, tx, sourceID, generation, parent, false)
+	decision, err := catalogDuplicateDirectoryDecisionTx(ctx, tx, sourceID, generation, directoryPath)
 	if err != nil {
 		return false, err
 	}
-	if len(parentFiles) < catalogDuplicateMinimumFiles {
-		return false, nil
+	return decision.Duplicate && len(decision.Unique) == 0, nil
+}
+
+// catalogDuplicateDirectoryDecisionTx separates a harmless format copy from
+// one that carries extra recordings. The caller consumes only matched files:
+// a unique bonus stays pending and publishes into the canonical parent card.
+func catalogDuplicateDirectoryDecisionTx(ctx context.Context, tx *sql.Tx, sourceID, generation int64, directoryPath string) (catalogDuplicateDecision, error) {
+	parent := path.Dir(directoryPath)
+	if directoryPath == "/" || parent == "." || parent == directoryPath {
+		return catalogDuplicateDecision{}, nil
 	}
+	child, err := catalogAudioFilesTx(ctx, tx, sourceID, generation, directoryPath, true)
+	if err != nil || len(child) < catalogDuplicateMinimumFiles {
+		return catalogDuplicateDecision{}, err
+	}
+	parentFiles, err := catalogAudioFilesTx(ctx, tx, sourceID, generation, parent, false)
+	if err != nil {
+		return catalogDuplicateDecision{}, err
+	}
+	if len(parentFiles) >= catalogDuplicateMinimumFiles {
+		matched, duplicate := catalogDuplicateMatches(child, parentFiles)
+		if !duplicate {
+			return catalogDuplicateDecision{}, nil
+		}
+		decision := catalogDuplicateDecision{Duplicate: true, Root: parent}
+		for index, file := range child {
+			if matched[index] {
+				decision.Matched = append(decision.Matched, file)
+			} else {
+				decision.Unique = append(decision.Unique, file)
+			}
+		}
+		return decision, nil
+	}
+
+	// A package can split the parent's recordings across nested Work folders.
+	// The immediate container then has no direct audio of its own. Treat a
+	// small exact subset of the nearest audio-bearing ancestor as a copy, but
+	// only when that container really has several child folders.
+	root, ancestorFiles, ok, err := catalogDuplicateAncestorTx(ctx, tx, sourceID, generation, directoryPath, parent)
+	if err != nil || !ok {
+		return catalogDuplicateDecision{}, err
+	}
+	if !catalogAudioIsExactSubset(child, ancestorFiles) {
+		return catalogDuplicateDecision{}, nil
+	}
+	decision := catalogDuplicateDecision{Duplicate: true, Root: root, Matched: append([]catalogAudioFile{}, child...)}
+	return decision, nil
+}
+
+func catalogDuplicateAncestorTx(ctx context.Context, tx *sql.Tx, sourceID, generation int64, directoryPath, parent string) (string, []catalogAudioFile, bool, error) {
+	var folders int
+	err := tx.QueryRowContext(ctx, `SELECT count(*) FROM source_catalog_observation o
+		JOIN source_catalog_directory d ON d.file_source_id=o.file_source_id AND d.path=o.directory_path
+		WHERE o.file_source_id=? AND o.directory_path=? AND o.kind='folder'
+			AND o.revision=d.revision AND d.generation=?`, sourceID, parent, generation).Scan(&folders)
+	if err != nil || folders < 2 {
+		return "", nil, false, err
+	}
+	for ancestor := path.Dir(parent); ancestor != "." && ancestor != ""; ancestor = path.Dir(ancestor) {
+		files, queryErr := catalogAudioFilesTx(ctx, tx, sourceID, generation, ancestor, false)
+		if queryErr != nil {
+			return "", nil, false, queryErr
+		}
+		if len(files) >= catalogDuplicateMinimumFiles {
+			return ancestor, files, true, nil
+		}
+		if ancestor == "/" {
+			break
+		}
+	}
+	return "", nil, false, nil
+}
+
+// catalogDuplicateMatches returns a per-child match mask and the existing
+// copy decision. The mask is what lets the caller preserve a unique track.
+func catalogDuplicateMatches(child, parent []catalogAudioFile) ([]bool, bool) {
 	// A selection of the parent's tracks is a real release, not a copy. Only a
 	// child that repeats most of the parent's audio can be a format or package
 	// copy; twenty shared tracks below a two-hundred-track collection are two
 	// different works.
-	if len(child)*5 < len(parentFiles)*4 {
-		return false, nil
+	if len(child)*5 < len(parent)*4 {
+		return make([]bool, len(child)), false
 	}
-	parentNames := make(map[string][]int64, len(parentFiles))
-	for _, file := range parentFiles {
+	parentNames := make(map[string][]int64, len(parent))
+	for _, file := range parent {
 		key := strings.ToLower(strings.TrimSpace(file.Name))
 		parentNames[key] = append(parentNames[key], file.Size)
 	}
-	childSizes := make([]int64, 0, len(child))
-	parentSizes := make([]int64, 0, len(parentFiles))
 	namedMatches, exactNameMatches := 0, 0
 	for _, file := range child {
-		childSizes = append(childSizes, file.Size)
 		if sizes, ok := parentNames[strings.ToLower(strings.TrimSpace(file.Name))]; ok {
 			if matchingSize(sizes, file.Size) {
 				namedMatches++
@@ -2165,54 +2287,100 @@ func catalogDuplicateDirectoryTx(ctx context.Context, tx *sql.Tx, sourceID, gene
 			}
 		}
 	}
-	for _, file := range parentFiles {
-		parentSizes = append(parentSizes, file.Size)
-	}
-	if catalogAudioFilesHaveHashes(child) && catalogAudioFilesHaveHashes(parentFiles) {
-		hashed := catalogAudioHashMatches(child, parentFiles)
-		if len(child) < catalogDuplicateSmallSet || len(parentFiles) < catalogDuplicateSmallSet {
-			return len(child) == len(parentFiles) && hashed == len(child), nil
-		}
-		return hashed*10 >= len(child)*9, nil
-	}
-	sort.Slice(childSizes, func(i, j int) bool { return childSizes[i] < childSizes[j] })
-	sort.Slice(parentSizes, func(i, j int) bool { return parentSizes[i] < parentSizes[j] })
-	// Match one parent file per child file. Counting every child against any
-	// parent with a similar size lets a few repeated sizes stand in for a whole
-	// copied tree and classifies an unrelated work as a format copy.
-	matched := 0
-	parentIndex := 0
-	for _, size := range childSizes {
-		tolerance := max(int64(1024), size/1000)
-		for parentIndex < len(parentSizes) && parentSizes[parentIndex] < size-tolerance {
-			parentIndex++
-		}
-		if parentIndex < len(parentSizes) && parentSizes[parentIndex] <= size+tolerance {
-			matched++
-			parentIndex++
+	hashes := catalogAudioFilesHaveHashes(child) && catalogAudioFilesHaveHashes(parent)
+	matched := catalogAudioMatchMask(child, parent, hashes)
+	matchedCount := 0
+	for _, ok := range matched {
+		if ok {
+			matchedCount++
 		}
 	}
-	if len(child) < catalogDuplicateSmallSet || len(parentFiles) < catalogDuplicateSmallSet {
-		// A small folder has little statistical evidence. Without hashes, require
-		// the exact name and size pair for every file; 800 bytes of drift is a
-		// different recording, not a copy.
-		return len(child) == len(parentFiles) && exactNameMatches == len(child), nil
+	small := len(child) < catalogDuplicateSmallSet || len(parent) < catalogDuplicateSmallSet
+	if hashes {
+		hashed := catalogAudioHashMatches(child, parent)
+		if small {
+			return matched, len(child) == len(parent) && hashed == len(child)
+		}
+		return matched, hashed*10 >= len(child)*9
 	}
-	// A folder with a handful of shared tracks is a real work with a reused
-	// intro; a package copy repeats nearly all of its audio.
-	if matched*10 < len(child)*9 {
-		return false, nil
+	if small {
+		return matched, len(child) == len(parent) && exactNameMatches == len(child)
 	}
-	// Renamed package copies still match one-to-one by size. When the file names
-	// survive a copy, require most of them to agree as well instead of relying
-	// on size alone.
-	return len(child) == len(parentFiles) || namedMatches*10 >= len(child)*9, nil
+	// A selection of the parent's tracks is a real release, not a copy. Only a
+	// child that repeats most of the parent's audio can be a format copy.
+	if matchedCount*10 < len(child)*9 {
+		return matched, false
+	}
+	return matched, len(child) == len(parent) || namedMatches*10 >= len(child)*9
+}
+
+func catalogAudioMatchMask(child, parent []catalogAudioFile, hashes bool) []bool {
+	used := make([]bool, len(parent))
+	mask := make([]bool, len(child))
+	for index, file := range child {
+		if hashes {
+			hash := strings.TrimSpace(file.Hash)
+			for candidate, parentFile := range parent {
+				if !used[candidate] && strings.TrimSpace(parentFile.Hash) == hash {
+					used[candidate], mask[index] = true, true
+					break
+				}
+			}
+			continue
+		}
+		name := strings.ToLower(strings.TrimSpace(file.Name))
+		for candidate, parentFile := range parent {
+			if !used[candidate] && strings.ToLower(strings.TrimSpace(parentFile.Name)) == name && matchingSize([]int64{parentFile.Size}, file.Size) {
+				used[candidate], mask[index] = true, true
+				break
+			}
+		}
+		if mask[index] {
+			continue
+		}
+		for candidate, parentFile := range parent {
+			if used[candidate] {
+				continue
+			}
+			tolerance := max(int64(1024), file.Size/1000)
+			if parentFile.Size >= file.Size-tolerance && parentFile.Size <= file.Size+tolerance {
+				used[candidate], mask[index] = true, true
+				break
+			}
+		}
+	}
+	return mask
+}
+
+func catalogAudioIsExactSubset(child, parent []catalogAudioFile) bool {
+	if len(child) < catalogDuplicateMinimumFiles || len(child) > len(parent) {
+		return false
+	}
+	if catalogAudioFilesHaveHashes(child) && catalogAudioFilesHaveHashes(parent) {
+		return catalogAudioHashMatches(child, parent) == len(child)
+	}
+	used := make([]bool, len(parent))
+	for _, file := range child {
+		found := false
+		for index, candidate := range parent {
+			if used[index] || candidate.Size != file.Size || !strings.EqualFold(strings.TrimSpace(candidate.Name), strings.TrimSpace(file.Name)) {
+				continue
+			}
+			used[index], found = true, true
+			break
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
 }
 
 type catalogAudioFile struct {
-	Name string
-	Size int64
-	Hash string
+	Name      string
+	Size      int64
+	Hash      string
+	Directory string
 }
 
 func matchingSize(sizes []int64, size int64) bool {
@@ -2280,7 +2448,7 @@ func catalogAudioFilesTx(ctx context.Context, tx *sql.Tx, sourceID, generation i
 	defer func() { _ = rows.Close() }()
 	files := []catalogAudioFile{}
 	for rows.Next() {
-		var file catalogAudioFile
+		file := catalogAudioFile{Directory: directoryPath}
 		if err = rows.Scan(&file.Name, &file.Size, &file.Hash); err != nil {
 			return nil, err
 		}
