@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"strings"
 	"testing"
 )
 
@@ -67,6 +68,21 @@ func TestCatalogRootCoverageIncludesSiblingFormatCopies(t *testing.T) {
 	}
 	if !incomplete {
 		t.Fatal("a pending audio row in a sibling format copy was ignored")
+	}
+}
+
+// The sibling arm must use the catalog_root index. A lifecycle batch can carry
+// hundreds of cards, and a table scan per card would turn one cleanup step into
+// a source-wide read.
+func TestCatalogRangeUncertainRootSetUsesRootIndex(t *testing.T) {
+	db := openMigratedTestDB(t)
+	plan := queryPlan(t, db, catalogRangeUncertainRootSetSQL(2), "/a", "/b", 107, 9)
+	joined := strings.Join(plan, "\n")
+	if !strings.Contains(joined, "source_catalog_directory_root") {
+		t.Fatalf("catalog_root arm does not use the root index:\n%s", joined)
+	}
+	if strings.Contains(joined, "SCAN source_catalog_directory") {
+		t.Fatalf("catalog_root arm scans the directory table:\n%s", joined)
 	}
 }
 

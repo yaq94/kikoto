@@ -148,6 +148,24 @@ func TestCatalogSeriesFiniteRescanRetainsRootSidecars(t *testing.T) {
 	episodes.Store(true)
 	reviewRequest(t, handler, admin, http.MethodPost, "/api/remote-sources/"+sid+"/catalog/scan", "{}", 200)
 
+	second := reviewRequest(t, handler, admin, http.MethodGet, "/api/remote-sources/"+sid+"/works", "", 200)
+	if second["total"] != float64(1) {
+		t.Fatalf("works=%#v, want one series card without a visible metadata parent", second)
+	}
+	var seriesID float64
+	for _, raw := range second["works"].([]any) {
+		if card := raw.(map[string]any); card["seriesId"] != nil {
+			seriesID = card["seriesId"].(float64)
+		}
+	}
+	if seriesID == 0 {
+		t.Fatalf("rescan did not group the episodes: %#v", second)
+	}
+	view := reviewRequest(t, handler, admin, http.MethodGet, "/api/catalog-series/"+strconv.Itoa(int(seriesID)), "", 200)
+	if len(view["episodes"].([]any)) != 2 {
+		t.Fatalf("episodes=%#v, want two", view["episodes"])
+	}
+
 	var liveEntry, sidecars int
 	if err := db.QueryRow(`SELECT count(*) FROM source_catalog_entry
 		WHERE root_path='/Example series' AND relocated_to_id IS NULL`).Scan(&liveEntry); err != nil {
