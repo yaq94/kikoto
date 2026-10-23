@@ -111,8 +111,10 @@ Import. Keep existing preserves existing personal records and same-name lists.
 Overwrite explicitly replaces supplied personal fields and lists. Listening
 totals merge by maximum. Conflicting incoming reviews for one shared identity
 are skipped together even with Overwrite; the details show your current and
-incoming reviews so you can reconcile the file. Contradictory identities and
-unregistered known sources are reported separately, while safe records import.
+incoming reviews so you can reconcile the file. Contradictory identities are
+reported separately, while safe records import. Known but unregistered catalog
+entries, series and episodes are restored at their recorded evaluation level
+with registration permission; without that permission the import is rejected.
 
 Version 2 can restore missing objects from the file's necessary information
 with registration permission. It never downloads media or changes existing

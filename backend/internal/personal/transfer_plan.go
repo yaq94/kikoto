@@ -8,7 +8,7 @@ import (
 )
 
 func buildImportPlan(ctx context.Context, tx *sql.Tx, user int64, b Backup) (importPlan, error) {
-	p := importPlan{preview: ImportPreview{Works: len(b.Works), Playlists: len(b.Playlists), Tags: len(b.Tags), MissingCodes: []string{}}, works: map[string]int64{}, conflicts: map[int64]bool{}, reviewConflicts: map[int64]bool{}, progressConflict: map[int64]bool{}, statusConflict: map[int64]bool{}, media: map[string]int64{}, blocked: map[string]bool{}, identities: map[string]int64{}, reviews: map[int64]TransferReview{}}
+	p := importPlan{preview: ImportPreview{Works: len(b.Works), Playlists: len(b.Playlists), Tags: len(b.Tags), MissingCodes: []string{}}, works: map[string]int64{}, matches: map[string]identityMatch{}, conflicts: map[int64]bool{}, reviewConflicts: map[int64]bool{}, progressConflict: map[int64]bool{}, statusConflict: map[int64]bool{}, media: map[string]int64{}, blocked: map[string]bool{}, identities: map[string]int64{}, reviews: map[int64]TransferReview{}}
 	codes := map[string]bool{}
 	for _, w := range b.Works {
 		if w.Identity == nil {
@@ -19,6 +19,13 @@ func buildImportPlan(ctx context.Context, tx *sql.Tx, user int64, b Backup) (imp
 		if err != nil {
 			return p, err
 		}
+		if m.problem == "" && m.work == 0 && (m.catalog != 0 || m.series != 0) {
+			m.problem, err = transferIdentityKindProblem(ctx, tx, w, m)
+			if err != nil {
+				return p, err
+			}
+		}
+		p.matches[w.key()] = m
 		p.works[w.key()] = m.work
 		if m.problem != "" {
 			p.blocked[w.key()] = true
@@ -44,7 +51,7 @@ func buildImportPlan(ctx context.Context, tx *sql.Tx, user int64, b Backup) (imp
 				}
 			}
 		}
-		if m.work == 0 && w.Identity.Kind == "episode" {
+		if m.work == 0 && m.catalog == 0 && w.Identity.Kind == "episode" {
 			if err := p.preview.addIssue(ImportIssue{Ref: w.key(), Title: w.label(), Reason: "relationships_not_imported"}); err != nil {
 				return p, err
 			}
