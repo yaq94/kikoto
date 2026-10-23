@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"path"
-	"slices"
 	"strings"
 )
 
@@ -45,43 +44,115 @@ func catalogEffectiveRootSQL(alias string) string {
 	return "CASE WHEN " + alias + ".source_root<>'' THEN " + alias + ".source_root ELSE " + alias + ".root_path END"
 }
 
+type catalogSeriesMemberEvidence struct {
+	name, content, layout string
+	generation            int64
+}
+
+func catalogSeriesLiveMembersTx(ctx context.Context, tx *sql.Tx, seriesID int64) ([]catalogSeriesMemberEvidence, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT `+catalogEffectiveRootSQL("e")+`,
+			e.content_fingerprint,e.layout_fingerprint,e.last_seen_generation
+		FROM catalog_series_member m JOIN source_catalog_entry e ON e.id=m.catalog_entry_id
+		WHERE m.series_id=? AND e.relocated_to_id IS NULL ORDER BY 1`, seriesID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	members := []catalogSeriesMemberEvidence{}
+	for rows.Next() {
+		var member catalogSeriesMemberEvidence
+		var root string
+		if err = rows.Scan(&root, &member.content, &member.layout, &member.generation); err != nil {
+			return nil, err
+		}
+		member.name = strings.ToLower(path.Base(root))
+		members = append(members, member)
+	}
+	return members, rows.Err()
+}
+
 // catalogSeriesRenameEvidenceTx reports whether two series describe the same
-// group after its own directory was renamed. Both sides must list the same
-// live episode directory names one for one; a series that gained or lost an
-// episode is a different group and stays for review.
+// group after its own directory was renamed. The old live episode names must
+// still be present in the new series, which allows a rename and a new episode
+// to be published by the same scan. A previous generation, matching source and
+// at least one matching episode fingerprint distinguish that rename from two
+// current, unrelated series that happen to use the same episode names. Every
+// old episode needs one matching fingerprint; a partial match is not enough.
 func catalogSeriesRenameEvidenceTx(ctx context.Context, tx *sql.Tx, oldSeries, newSeries int64) (bool, error) {
 	if oldSeries == newSeries {
 		return true, nil
 	}
-	// A title alone cannot identify a group: two unrelated series can share a
-	// display name. The episode directories must still line up one for one.
-	names := func(seriesID int64) ([]string, error) {
-		rows, err := tx.QueryContext(ctx, `SELECT `+catalogEffectiveRootSQL("e")+`
-			FROM catalog_series_member m JOIN source_catalog_entry e ON e.id=m.catalog_entry_id
-			WHERE m.series_id=? AND e.relocated_to_id IS NULL ORDER BY 1`, seriesID)
-		if err != nil {
-			return nil, err
+	var oldSource, newSource sql.NullInt64
+	if err := tx.QueryRowContext(ctx, `SELECT
+			(SELECT source_id FROM catalog_series WHERE id=?),
+			(SELECT source_id FROM catalog_series WHERE id=?)`, oldSeries, newSeries).Scan(&oldSource, &newSource); err != nil {
+		return false, err
+	}
+	if !oldSource.Valid || !newSource.Valid || oldSource.Int64 != newSource.Int64 {
+		return false, nil
+	}
+	oldMembers, err := catalogSeriesLiveMembersTx(ctx, tx, oldSeries)
+	if err != nil {
+		return false, err
+	}
+	newMembers, err := catalogSeriesLiveMembersTx(ctx, tx, newSeries)
+	if err != nil {
+		return false, err
+	}
+	if len(oldMembers) == 0 {
+		return false, nil
+	}
+	remaining := map[string]int{}
+	for _, member := range oldMembers {
+		remaining[member.name]++
+	}
+	for _, member := range newMembers {
+		if remaining[member.name] > 0 {
+			remaining[member.name]--
 		}
-		defer func() { _ = rows.Close() }()
-		result := []string{}
-		for rows.Next() {
-			var root string
-			if err = rows.Scan(&root); err != nil {
-				return nil, err
+	}
+	for _, count := range remaining {
+		if count != 0 {
+			return false, nil
+		}
+	}
+	if len(newMembers) == 0 {
+		return false, nil
+	}
+	oldGeneration, newGeneration := oldMembers[0].generation, newMembers[0].generation
+	for _, member := range oldMembers[1:] {
+		if member.generation > oldGeneration {
+			oldGeneration = member.generation
+		}
+	}
+	for _, member := range newMembers[1:] {
+		if member.generation < newGeneration {
+			newGeneration = member.generation
+		}
+	}
+	if oldGeneration >= newGeneration {
+		return false, nil
+	}
+	for _, oldMember := range oldMembers {
+		matched := false
+		for _, newMember := range newMembers {
+			if oldMember.name != newMember.name {
+				continue
 			}
-			result = append(result, strings.ToLower(path.Base(root)))
+			if catalogFingerprintUsable(oldMember.content) && oldMember.content == newMember.content {
+				matched = true
+				break
+			}
+			if catalogFingerprintUsable(oldMember.layout) && oldMember.layout == newMember.layout {
+				matched = true
+				break
+			}
 		}
-		return result, rows.Err()
+		if !matched {
+			return false, nil
+		}
 	}
-	oldNames, err := names(oldSeries)
-	if err != nil {
-		return false, err
-	}
-	newNames, err := names(newSeries)
-	if err != nil {
-		return false, err
-	}
-	return len(oldNames) > 0 && slices.Equal(oldNames, newNames), nil
+	return true, nil
 }
 
 // mergeCatalogSeriesMembershipTx moves the membership of a retired alias onto
