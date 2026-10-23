@@ -179,34 +179,50 @@ func TestWorkMatchingWorkerGivesUpAfterThirdFailure(t *testing.T) {
 	now.Store(time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC).Unix())
 	s.catalogNow = func() time.Time { return time.Unix(now.Load(), 0) }
 	options := workMatchingOptions{IntervalMS: 100, CandidateLimit: 100, MinFreeBytes: 0}
-	for attempt := 1; attempt <= 3; attempt++ {
+	var status string
+	for pass := 0; pass < 20; pass++ {
 		if err := s.advanceWorkMatching(context.Background(), options); err != nil {
 			t.Fatal(err)
 		}
-		var status string
-		var retry int64
-		if err := db.QueryRow(`SELECT status,retry_after FROM work_matching_control WHERE id=1`).Scan(&status, &retry); err != nil {
+		if err := db.QueryRow(`SELECT status FROM work_matching_control WHERE id=1`).Scan(&status); err != nil {
 			t.Fatal(err)
 		}
-		switch attempt {
-		case 1:
-			if status != "retrying" || retry != now.Load()+30 {
-				t.Fatalf("first failure status=%s retry=%d", status, retry)
-			}
-			now.Add(31)
-		case 2:
-			if status != "retrying" || retry != now.Load()+60 {
-				t.Fatalf("second failure status=%s retry=%d", status, retry)
-			}
-			now.Add(61)
-		case 3:
-			var raw string
-			if err := db.QueryRow(`SELECT result_json FROM work_matching_result WHERE kind='work' AND entity_id=11`).Scan(&raw); err != nil {
-				t.Fatal(err)
-			}
-			if !strings.Contains(raw, `"status":"failed"`) {
-				t.Fatalf("third failure did not become terminal: %s", raw)
-			}
+		if status == "failed" {
+			break
+		}
+		now.Add(121)
+	}
+	if status != "failed" {
+		t.Fatalf("worker never reached a terminal failed state; last status=%s", status)
+	}
+	var cursorKind string
+	var cursorID int64
+	var attempts int
+	if err := db.QueryRow(`SELECT cursor_kind,cursor_id,attempts FROM work_matching_control WHERE id=1`).Scan(&cursorKind, &cursorID, &attempts); err != nil {
+		t.Fatal(err)
+	}
+	for pass := 0; pass < 2; pass++ {
+		now.Add(121)
+		if err := s.advanceWorkMatching(context.Background(), options); err != nil {
+			t.Fatal(err)
+		}
+		var nextStatus, nextKind string
+		var nextCursor int64
+		var nextAttempts int
+		if err := db.QueryRow(`SELECT status,cursor_kind,cursor_id,attempts FROM work_matching_control WHERE id=1`).Scan(&nextStatus, &nextKind, &nextCursor, &nextAttempts); err != nil {
+			t.Fatal(err)
+		}
+		if nextStatus != "failed" || nextKind != cursorKind || nextCursor != cursorID || nextAttempts != attempts {
+			t.Fatalf("failed state retried on pass %d: status=%s cursor=%s/%d attempts=%d", pass, nextStatus, nextKind, nextCursor, nextAttempts)
+		}
+	}
+	for _, id := range []int64{11, 12} {
+		var raw string
+		if err := db.QueryRow(`SELECT result_json FROM work_matching_result WHERE kind='work' AND entity_id=?`, id).Scan(&raw); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(raw, `"status":"failed"`) {
+			t.Fatalf("third failure for work %d did not become terminal: %s", id, raw)
 		}
 	}
 	var ops int

@@ -155,6 +155,9 @@ func (s *Server) advanceWorkMatching(ctx context.Context, o workMatchingOptions)
 	if revision == scanRevision && status == "complete" {
 		return nil
 	}
+	if revision == scanRevision && status == "failed" {
+		return nil
+	}
 	if revision == scanRevision && status == "partial" {
 		kind = ""
 		cursor = 0
@@ -162,7 +165,23 @@ func (s *Server) advanceWorkMatching(ctx context.Context, o workMatchingOptions)
 	var subject associationSubject
 	err = tx.QueryRowContext(ctx, `SELECT kind,id FROM work_matching_subject WHERE kind>? OR (kind=? AND id>?) ORDER BY kind,id LIMIT 1`, kind, kind, cursor).Scan(&subject.Kind, &subject.ID)
 	if errors.Is(err, sql.ErrNoRows) {
-		_, err = tx.ExecContext(ctx, `UPDATE work_matching_control SET status=CASE WHEN EXISTS(SELECT 1 FROM work_matching_result WHERE json_extract(result_json,'$.status') IN ('paused','failed')) THEN 'partial' ELSE 'complete' END,scan_revision=revision,error_code='',retry_after=?`, s.catalogTime().Add(time.Minute).Unix())
+		var failed, paused int
+		if err = tx.QueryRowContext(ctx, `SELECT
+			COALESCE(MAX(CASE WHEN json_extract(r.result_json,'$.status')='failed' THEN 1 ELSE 0 END),0),
+			COALESCE(MAX(CASE WHEN json_extract(r.result_json,'$.status')='paused' THEN 1 ELSE 0 END),0)
+			FROM work_matching_result r
+			JOIN work_matching_subject sub ON sub.kind=r.kind AND sub.id=r.entity_id
+			WHERE r.revision=?`, revision).Scan(&failed, &paused); err != nil {
+			return err
+		}
+		controlStatus, errorCode := "complete", ""
+		retryAfter := s.catalogTime().Add(time.Minute).Unix()
+		if failed != 0 {
+			controlStatus, errorCode, retryAfter = "failed", "matching_failed", 0
+		} else if paused != 0 {
+			controlStatus = "partial"
+		}
+		_, err = tx.ExecContext(ctx, `UPDATE work_matching_control SET status=?,scan_revision=revision,error_code=?,retry_after=?`, controlStatus, errorCode, retryAfter)
 		if err != nil {
 			return err
 		}
