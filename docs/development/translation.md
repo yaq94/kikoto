@@ -77,6 +77,16 @@ through the shared queue and cache. OpenCC `s2t` converts that text locally befo
 protected names are restored; selecting either script never sends a Traditional
 target to the model. Authored Traditional fields retain precedence.
 
+Remote titles, tags and directory display names have no durable work or
+catalogue-entry identity. Their successful model output is stored in
+`source_field_translation`, keyed by source, work code, field, real relative
+path, original text, target language, model, endpoint, reasoning switch and
+template version. Repeating the same browse therefore reuses the row instead of
+calling the model again. This table is display cache, not searchable corpus: it
+has no FTS table or trigger and is never read by library or source search. The
+source is still revalidated before a cached row is considered, so disabling or
+restricting a source cannot be bypassed through this cache.
+
 Responses contain `text`, `original`, `language`, `status` (`original`, `existing`,
 `translated`, `failed`), optional error `code`, and optional `cacheStatus`.
 `origin` resolves original text without calling the model. Circle and voice actor
@@ -133,25 +143,32 @@ viewer still finds a free worker; inside the window it may use every slot.
 Translated content is durable corpus, not a cache. `content_translation` stores
 one row per `cache_key` with `origin` `native` or `model`; `origin=native` rows
 hold the source text unchanged and never increment model usage. There is no
-`last_used_at`: the hot path never deletes a row.
+`last_used_at`: a model write only enforces the configured budget, while the
+periodic pass owns superseded-row cleanup. `source_field_translation` holds only
+rebuildable model results for source-level display fields and stays outside that
+searchable corpus.
 
-Two administrator budgets bound the model corpus in a maintenance pass that runs
-beside the prefill worker: `maxEntries` limits the number of `origin=model` rows
-(zero means unlimited) and `cacheBytes` roughly bounds their UTF-8 text bytes.
-Only `origin=model` rows are counted and evicted, oldest first, because those
-are rebuildable. Native rows carry authored text and are never eviction
-candidates. A superseded row for the same entity, field and language goes before
-a live one. The pass runs bounded batches so the SQLite writer is never held for
-a whole trim. When `minFreeBytes` is not met, new rows are not written at all:
-the caller still returns the translation it already fetched, reports
-`paused_low_disk`, and the durable copy waits for space.
+Two administrator budgets bound the model cache in a maintenance pass that runs
+beside the prefill worker: `maxEntries` limits the number of model rows across
+`content_translation` and `source_field_translation` (zero means unlimited), and
+`cacheBytes` roughly bounds their UTF-8 text bytes. Only model rows are counted
+and evicted, oldest first, because those are rebuildable. Native rows carry
+authored text and are never eviction candidates; personal records and source
+identities are in other tables and are never touched. A superseded row for the
+same entity or source field goes before a live one. The pass runs bounded batches
+so the SQLite writer is never held for a whole trim. Every successful model-row
+write also invokes the budget part of that same pass, while the periodic pass
+also removes superseded rows. When `minFreeBytes` is not met, new rows are not
+written at all: the caller still returns the translation it already fetched,
+reports `paused_low_disk`, and the durable copy waits for space.
 
 A content change produces a new `cache_key` because the source text is part of
-it. The previous row stays readable until the retention pass removes it as
-superseded; the hot path never deletes rows. `zh-tw` viewers read
-the `zh-Hans` row and convert it with OpenCC `s2t` at display time, so the corpus
-does not store a second full-text copy. A title detected as `zh-Hant` is written
-as a native row and participates in searches for both scripts.
+it. The previous row stays readable until the periodic retention pass removes it
+as superseded, unless a configured row or byte budget evicts it first. `zh-tw`
+viewers read the `zh-Hans` row and convert it with OpenCC `s2t` at display time,
+so the corpus does not store a second full-text copy. A title detected as
+`zh-Hant` is written as a native row and participates in searches for both
+scripts.
 
 Free space is read from the nearest existing parent before the data directory
 exists. Low space pauses new background generation (`paused_low_disk`) while
@@ -163,8 +180,8 @@ status has an empty `last_error` and stays paused. An interactive request keeps
 its model result rather than discarding a paid call, but the corpus row is not
 written while the volume is below the floor. The response reports
 `paused_low_disk`; the prefill cursor keeps the affected entry pending so it can
-be retried. Failed generations are never stored. Stored rows report `hit`,
-freshly generated rows `stored`.
+be retried. Failed and empty generations are never stored. Stored rows report
+`hit`, freshly generated rows `stored`.
 ## Model contract and limits
 
 The default model invocation name is `Index-Translate-35B-A3B`; a configured name
@@ -217,7 +234,7 @@ HTTP and restart tests use production routes, real sessions and migrated SQLite:
 
 ```sh
 cd backend
-go test ./internal/httpapi -run '^Test(ContentTranslation|Translation(AdminConfiguration|Configuration|Trial))' -count=1 -v
+go test ./internal/httpapi -run '^Test(ContentTranslation|SourceFieldTranslation|Translation(AdminConfiguration|Configuration|Trial|Retention))' -count=1 -v
 ```
 
 The opt-in Playwright test starts a disposable real backend process and an

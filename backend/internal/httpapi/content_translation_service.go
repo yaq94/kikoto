@@ -169,13 +169,55 @@ func (s *Server) translateOnLane(ctx context.Context, cfg translation.Config, ke
 	return protected.Restore(output)
 }
 
-// translateThroughModel is the uncached path for a source-level field that has
-// no durable object identity.
-func (s *Server) translateThroughModel(ctx context.Context, sourceID int64, field readableTranslationField, text string, target translationTarget) (string, error) {
+// translateThroughModel handles a source-level field that has no durable object
+// identity. Its successful output is kept in source_field_translation, which is
+// display cache only and never enters the searchable content_translation
+// corpus. The key includes the source work, real directory path, original text,
+// target language, model and template, so unrelated fields cannot share it.
+func (s *Server) translateThroughModel(ctx context.Context, in contentTranslationRequest, field readableTranslationField, text string, target translationTarget) (translatedContent, string, error) {
 	cfg, err := translation.NewStore(s.db).Load(ctx)
 	if err != nil {
-		return "", err
+		return translatedContent{}, "", err
 	}
-	key := contentTranslationCacheKey("source", sourceID, "", "tag", target.modelLanguage, text, "model", cfg.Model, cfg.BaseURL, translation.TemplateVersion, cfg.DisableThinking)
-	return s.translateWithQueue(ctx, cfg, key, field.Names, text, target)
+	if nativeLanguage, ok := nativeContentLanguage(text, target); ok {
+		display, err := displayText(text, nativeLanguage, target, field.Names)
+		if err != nil {
+			return translatedContent{}, "", err
+		}
+		return translatedContent{TranslatedText: display}, "native", nil
+	}
+	key := sourceFieldTranslationCacheKey(in.SourceID, in.Code, in.Field, in.Path, target.modelLanguage, text, cfg.Model, cfg.BaseURL, translation.TemplateVersion, cfg.DisableThinking)
+	if rows, lookupErr := s.lookupSourceFieldTranslations(ctx, []string{key}); lookupErr == nil {
+		if row, ok := rows[key]; ok && row.Model == cfg.Model && row.TemplateVersion == translation.TemplateVersion {
+			display, convertErr := displayText(row.TranslatedText, row.Language, target, field.Names)
+			if convertErr != nil {
+				return translatedContent{}, "", convertErr
+			}
+			return translatedContent{TranslatedText: display, CacheStatus: "hit"}, "translated", nil
+		}
+	}
+
+	// Store the Simplified lane result, never a Traditional derivative. A
+	// Traditional viewer converts that stored text at display time.
+	laneTarget := target
+	laneTarget.traditional = false
+	translated, err := s.translateWithQueue(ctx, cfg, key, field.Names, text, laneTarget)
+	if err != nil {
+		return translatedContent{}, "", err
+	}
+	row := sourceFieldTranslationRow{
+		CacheKey: key, SourceID: in.SourceID, WorkCode: normalizeSourceFieldWorkCode(in.Code),
+		Field: in.Field, Path: in.Path, Language: target.modelLanguage,
+		SourceText: text, TranslatedText: translated, Model: cfg.Model,
+		TemplateVersion: translation.TemplateVersion,
+	}
+	cacheStatus, err := s.saveSourceFieldTranslations(ctx, []sourceFieldTranslationRow{row})
+	if err != nil {
+		return translatedContent{}, "", err
+	}
+	display, err := displayText(translated, target.modelLanguage, target, field.Names)
+	if err != nil {
+		return translatedContent{}, "", err
+	}
+	return translatedContent{TranslatedText: display, CacheStatus: cacheStatus}, "translated", nil
 }
