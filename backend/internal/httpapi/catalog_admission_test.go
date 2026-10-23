@@ -9,7 +9,6 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/yexca/kikoto/backend/internal/catalogadmission"
 	"github.com/yexca/kikoto/backend/internal/config"
 )
 
@@ -83,15 +82,15 @@ func countCatalogEntries(t *testing.T, db *sql.DB) int {
 	return count
 }
 
-func TestCatalogAdmissionPublishingRefusesUnqualifiedCards(t *testing.T) {
+func TestCatalogAdmissionPublishingPublishesEveryCardWithAudio(t *testing.T) {
 	for _, testCase := range []struct {
 		name            string
 		audio, nonAudio int
 		wantEntries     int
 	}{
 		{name: "no audio", audio: 0, nonAudio: 10, wantEntries: 0},
-		{name: "too many files", audio: 1, nonAudio: 5000, wantEntries: 0},
-		{name: "non audio dominant", audio: 4, nonAudio: 2001, wantEntries: 0},
+		{name: "large attachment set", audio: 1, nonAudio: 5000, wantEntries: 1},
+		{name: "audio beside many attachments", audio: 4, nonAudio: 2001, wantEntries: 1},
 		{name: "normal multi track", audio: 3, nonAudio: 1278, wantEntries: 1},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -100,7 +99,7 @@ func TestCatalogAdmissionPublishingRefusesUnqualifiedCards(t *testing.T) {
 			job := seedCatalogAdmissionCard(t, db, sourceID, runID, "/card", testCase.audio, testCase.nonAudio)
 			server := &Server{db: db}
 			var remaining int
-			for attempt := 0; attempt < 100; attempt++ {
+			for attempt := 0; attempt < 200; attempt++ {
 				if _, err := server.publishCatalogBatch(context.Background(), job, sourceID); err != nil {
 					t.Fatal(err)
 				}
@@ -167,8 +166,8 @@ func TestCatalogAdmissionPublishLayerChecksExistingObservation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !blocked || adm.Reason != catalogadmission.ReasonTooManyFiles {
-		t.Fatalf("blocked=%v reason=%q, want too_many_files", blocked, adm.Reason)
+	if blocked || adm.Reason != "" {
+		t.Fatalf("blocked=%v reason=%q, want a playable card", blocked, adm.Reason)
 	}
 }
 
@@ -274,7 +273,7 @@ func catalogEntrySet(works []remoteWorkSummary) map[int64]bool {
 	return set
 }
 
-func TestCatalogAdmissionAPIFiltersUnqualifiedCards(t *testing.T) {
+func TestCatalogAdmissionAPIShowsEveryCardWithAudio(t *testing.T) {
 	db := openMigratedTestDB(t)
 	sourceID := publishAdmissionFixtures(t, db)
 	server := NewServer(db, config.Config{})
@@ -290,8 +289,8 @@ func TestCatalogAdmissionAPIFiltersUnqualifiedCards(t *testing.T) {
 	if err := json.Unmarshal(response.Body.Bytes(), &works); err != nil {
 		t.Fatal(err)
 	}
-	if len(works.Works) != 2 || catalogEntrySet(works.Works)[8301] == false || catalogEntrySet(works.Works)[8304] == false {
-		t.Fatalf("browse cards = %+v, want only 8301 and 8304", works.Works)
+	if len(works.Works) != 4 {
+		t.Fatalf("browse cards = %+v, want all four playable cards", works.Works)
 	}
 
 	request = httptest.NewRequest(http.MethodGet, "/api/remote-sources/83/works?q=card", nil)
@@ -300,29 +299,17 @@ func TestCatalogAdmissionAPIFiltersUnqualifiedCards(t *testing.T) {
 	if err := json.Unmarshal(response.Body.Bytes(), &works); err != nil {
 		t.Fatal(err)
 	}
-	if len(works.Works) != 2 || catalogEntrySet(works.Works)[8301] == false || catalogEntrySet(works.Works)[8304] == false {
-		t.Fatalf("search cards = %+v, want only 8301 and 8304", works.Works)
+	if len(works.Works) != 4 {
+		t.Fatalf("search cards = %+v, want all four playable cards", works.Works)
 	}
 
-	for entryID, reason := range map[string]string{"8302": "too_many_files", "8303": "non_audio_dominant"} {
+	for _, entryID := range []string{"8302", "8303"} {
 		tracks := httptest.NewRequest(http.MethodGet, "/api/source-catalog/"+entryID+"/tracks", nil)
 		tracks.SetPathValue("id", entryID)
 		response = httptest.NewRecorder()
 		server.getSourceCatalogTracks(response, tracks)
-		if response.Code != http.StatusNotFound {
-			t.Fatalf("unqualified tracks status = %d, want 404 body=%s", response.Code, response.Body.String())
-		}
-		var failure struct {
-			Code    string `json:"code"`
-			Details struct {
-				Reason string `json:"reason"`
-			} `json:"details"`
-		}
-		if err := json.Unmarshal(response.Body.Bytes(), &failure); err != nil {
-			t.Fatal(err)
-		}
-		if failure.Code != "not_found" || failure.Details.Reason != reason {
-			t.Fatalf("tracks refusal = %+v, want reason %q", failure, reason)
+		if response.Code != http.StatusOK {
+			t.Fatalf("playable tracks status = %d, body=%s", response.Code, response.Body.String())
 		}
 	}
 }

@@ -3,35 +3,28 @@
 // a card that the publisher refuses from reappearing through another path.
 package catalogadmission
 
-// Thresholds are inclusive bounds: a card may have exactly 5000 files, exactly
-// 2000 non-audio rows and exactly 5 audio rows.
+// Probe bounds keep diagnostic counts small. They do not decide admission: a
+// directory with audio stays playable however many artwork, subtitle or archive
+// files accompany it.
 const (
-	MaxFiles    = 5000
-	MaxNonAudio = 2000
-	MinAudio    = 5
+	ProbeFiles    = 5000
+	ProbeNonAudio = 2000
+	ProbeAudio    = 5
 )
 
 // Reasons explain why a card cannot be published. They are stable strings used
 // in logs and in the prune report.
 const (
-	ReasonNoAudio       = "no_audio"
-	ReasonTooManyFiles  = "too_many_files"
-	ReasonNonAudioHeavy = "non_audio_dominant"
+	ReasonNoAudio = "no_audio"
 )
 
 // Decision returns the blocking reason for a published card, or "" when the
 // card is admissible.
 func Decision(files, audio, nonAudio int) string {
-	switch {
-	case audio == 0:
+	if audio == 0 {
 		return ReasonNoAudio
-	case files > MaxFiles:
-		return ReasonTooManyFiles
-	case nonAudio > MaxNonAudio && audio < MinAudio:
-		return ReasonNonAudioHeavy
-	default:
-		return ""
 	}
+	return ""
 }
 
 // Admissible reports whether a card passes every threshold.

@@ -25,25 +25,26 @@ type catalogRootAdmission struct {
 // with 87k rows costs the same as one with 5001.
 func catalogRootAdmissionTx(ctx context.Context, tx *sql.Tx, sourceID, generation int64, root string) (catalogRootAdmission, error) {
 	var adm catalogRootAdmission
-	err := tx.QueryRowContext(ctx, `SELECT
+	err := tx.QueryRowContext(ctx, fmt.Sprintf(`SELECT
 		(SELECT count(*) FROM (
 			SELECT 1 FROM source_catalog_directory d
 			JOIN source_catalog_observation o ON o.file_source_id=d.file_source_id AND o.directory_path=d.path AND o.revision=d.revision
 			WHERE d.file_source_id=?1 AND d.generation=?2 AND d.catalog_root=?3
-				AND d.work_split<>'duplicate' LIMIT 5001)),
+					AND d.work_split<>'duplicate' LIMIT %d)),
 		(SELECT count(*) FROM (
 			SELECT 1 FROM source_catalog_directory d
 			JOIN source_catalog_observation o ON o.file_source_id=d.file_source_id AND o.directory_path=d.path AND o.revision=d.revision
 			WHERE d.file_source_id=?1 AND d.generation=?2 AND d.catalog_root=?3
-				AND d.work_split<>'duplicate' AND o.kind='audio' LIMIT 5)),
+					AND d.work_split<>'duplicate' AND o.kind='audio' LIMIT %d)),
 		(SELECT count(*) FROM (
 			SELECT 1 FROM source_catalog_directory d
 			JOIN source_catalog_observation o ON o.file_source_id=d.file_source_id AND o.directory_path=d.path AND o.revision=d.revision
 			WHERE d.file_source_id=?1 AND d.generation=?2 AND d.catalog_root=?3
-				AND d.work_split<>'duplicate' AND o.kind<>'audio' LIMIT 2001)),
+					AND d.work_split<>'duplicate' AND o.kind<>'audio' LIMIT %d)),
 		NOT EXISTS(SELECT 1 FROM source_catalog_directory d
 			WHERE d.file_source_id=?1 AND d.generation=?2 AND d.catalog_root=?3
-				AND d.status<>'complete' AND NOT (d.status='empty' AND d.error_code='not_found'))`,
+					AND d.status<>'complete' AND NOT (d.status='empty' AND d.error_code='not_found'))`,
+		catalogadmission.ProbeFiles+1, catalogadmission.ProbeAudio, catalogadmission.ProbeNonAudio+1),
 		sourceID, generation, root).
 		Scan(&adm.Files, &adm.Audio, &adm.NonAudio, &adm.FullyObserved)
 	if err != nil {
@@ -54,15 +55,11 @@ func catalogRootAdmissionTx(ctx context.Context, tx *sql.Tx, sourceID, generatio
 }
 
 // catalogAdmissionBlocks decides whether a count may be used for a refusal.
-// A too-large card is monotonic: more observed rows can only keep it over the
-// limit. A missing-audio or audio-light card is not, so a partially observed
-// subtree waits for its complete listing before it is refused.
+// Missing audio is not monotonic, so a partially observed subtree waits for its
+// complete listing before it is refused.
 func catalogAdmissionBlocks(adm catalogRootAdmission) bool {
 	if adm.Reason == "" {
 		return false
-	}
-	if adm.Reason == catalogadmission.ReasonTooManyFiles {
-		return true
 	}
 	return adm.FullyObserved
 }
@@ -76,31 +73,23 @@ func (s *Server) blockUnadmittedCatalogRootsTx(ctx context.Context, tx *sql.Tx, 
 	// Roots without an audio root are invisible to the publish query, so the
 	// prepass must clear them. Putting them first prevents an alphabetically
 	// early admissible card from occupying every pass and starving the queue.
-	// A partially observed root is considered only when it already exceeds the
-	// file limit; otherwise a later page may still add audio.
+	// A partially observed root waits for its full listing: a later page may
+	// still add the audio that makes it playable.
 	rows, err := tx.QueryContext(ctx, `SELECT d.catalog_root
 		FROM source_catalog_directory d
 		JOIN source_catalog_observation o
 			ON o.file_source_id=d.file_source_id AND o.directory_path=d.path AND o.revision=d.revision
-		WHERE d.file_source_id=? AND d.generation=? AND d.catalog_root<>'' AND o.publish_pending=1
-			AND (
-				NOT EXISTS(SELECT 1 FROM source_catalog_directory d2
+			WHERE d.file_source_id=? AND d.generation=? AND d.catalog_root<>'' AND o.publish_pending=1
+				AND NOT EXISTS(SELECT 1 FROM source_catalog_directory d2
 					WHERE d2.file_source_id=d.file_source_id AND d2.generation=d.generation
 						AND d2.catalog_root=d.catalog_root
-						AND d2.status<>'complete' AND NOT (d2.status='empty' AND d2.error_code='not_found'))
-				OR (SELECT count(*) FROM (
-					SELECT 1 FROM source_catalog_directory d3
-					JOIN source_catalog_observation o3
-						ON o3.file_source_id=d3.file_source_id AND o3.directory_path=d3.path AND o3.revision=d3.revision
-					WHERE d3.file_source_id=d.file_source_id AND d3.generation=d.generation
-						AND d3.catalog_root=d.catalog_root LIMIT 5001)) > 5000
-			)
+							AND d2.status<>'complete' AND NOT (d2.status='empty' AND d2.error_code='not_found'))
 		GROUP BY d.catalog_root
 		ORDER BY CASE WHEN EXISTS(
 			SELECT 1 FROM source_catalog_audio_root r
 			WHERE r.file_source_id=d.file_source_id AND r.generation=d.generation AND r.catalog_root=d.catalog_root
 		) THEN 1 ELSE 0 END ASC, d.catalog_root
-		LIMIT ?`, sourceID, generation, catalogAdmissionRootsPerPass)
+				LIMIT ?`, sourceID, generation, catalogAdmissionRootsPerPass)
 	if err != nil {
 		return 0, err
 	}
@@ -195,12 +184,7 @@ func (s *Server) blockUnadmittedCatalogRootTx(ctx context.Context, tx *sql.Tx, s
 func catalogEntryAdmittedSQL(alias string) string {
 	return fmt.Sprintf(`(
 		EXISTS(SELECT 1 FROM source_catalog_file aqf WHERE aqf.catalog_entry_id=%[1]s.id AND aqf.kind='audio')
-		AND (SELECT count(*) FROM (SELECT 1 FROM source_catalog_file tqf WHERE tqf.catalog_entry_id=%[1]s.id LIMIT 5001)) <= 5000
-		AND NOT (
-			(SELECT count(*) FROM (SELECT 1 FROM source_catalog_file nqf WHERE nqf.catalog_entry_id=%[1]s.id AND nqf.kind<>'audio' LIMIT 2001)) > 2000
-			AND (SELECT count(*) FROM (SELECT 1 FROM source_catalog_file sqf WHERE sqf.catalog_entry_id=%[1]s.id AND sqf.kind='audio' LIMIT 5)) < 5
-		)
-	)`, alias)
+		)`, alias)
 }
 
 // catalogEntryAdmission is the structured answer for one card id. The counts
@@ -220,10 +204,11 @@ func catalogPublishedEntryAdmission(ctx context.Context, q interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
 }, id int64) (catalogEntryAdmission, error) {
 	var adm catalogEntryAdmission
-	err := q.QueryRowContext(ctx, `SELECT
-		(SELECT count(*) FROM (SELECT 1 FROM source_catalog_file f WHERE f.catalog_entry_id=? LIMIT 5001)),
-		(SELECT count(*) FROM (SELECT 1 FROM source_catalog_file f WHERE f.catalog_entry_id=? AND f.kind='audio' LIMIT 5)),
-		(SELECT count(*) FROM (SELECT 1 FROM source_catalog_file f WHERE f.catalog_entry_id=? AND f.kind<>'audio' LIMIT 2001))`,
+	err := q.QueryRowContext(ctx, fmt.Sprintf(`SELECT
+			(SELECT count(*) FROM (SELECT 1 FROM source_catalog_file f WHERE f.catalog_entry_id=? LIMIT %d)),
+			(SELECT count(*) FROM (SELECT 1 FROM source_catalog_file f WHERE f.catalog_entry_id=? AND f.kind='audio' LIMIT %d)),
+			(SELECT count(*) FROM (SELECT 1 FROM source_catalog_file f WHERE f.catalog_entry_id=? AND f.kind<>'audio' LIMIT %d))`,
+		catalogadmission.ProbeFiles+1, catalogadmission.ProbeAudio, catalogadmission.ProbeNonAudio+1),
 		id, id, id).Scan(&adm.Files, &adm.Audio, &adm.NonAudio)
 	if err != nil {
 		return catalogEntryAdmission{}, err

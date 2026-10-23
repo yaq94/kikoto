@@ -10,13 +10,9 @@ func TestCatalogAdmissionDecisionBoundaries(t *testing.T) {
 	}{
 		{name: "normal multi-track", files: 1281, audio: 3, nonAudio: 1278, want: ""},
 		{name: "no audio", files: 10, audio: 0, nonAudio: 10, want: ReasonNoAudio},
-		{name: "exactly five thousand files", files: 5000, audio: 10, nonAudio: 4990, want: ""},
-		{name: "one file over", files: 5001, audio: 10, nonAudio: 4991, want: ReasonTooManyFiles},
-		{name: "exactly two thousand non-audio", files: 2004, audio: 4, nonAudio: 2000, want: ""},
-		{name: "one non-audio over with four audio", files: 2005, audio: 4, nonAudio: 2001, want: ReasonNonAudioHeavy},
-		{name: "five audio rescues non-audio heavy", files: 2005, audio: 5, nonAudio: 2000, want: ""},
-		{name: "exactly five audio", files: 5, audio: 5, nonAudio: 0, want: ""},
-		{name: "four audio", files: 5, audio: 4, nonAudio: 1, want: ""},
+		{name: "large attachment set", files: 5001, audio: 1, nonAudio: 5000, want: ""},
+		{name: "one audio beside many attachments", files: 2005, audio: 1, nonAudio: 2004, want: ""},
+		{name: "four audio beside many attachments", files: 2005, audio: 4, nonAudio: 2001, want: ""},
 		{name: "empty card", files: 0, audio: 0, nonAudio: 0, want: ReasonNoAudio},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
