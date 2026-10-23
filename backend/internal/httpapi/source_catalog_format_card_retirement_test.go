@@ -389,6 +389,38 @@ func TestSourceCatalogReviewedFormatCardMergesNonConflictingStates(t *testing.T)
 	if _, err := f.server.db.Exec(`INSERT INTO user_work_state(user_id,work_id,rating,note) VALUES(?,?,5,'Listener note')`, listenerID, staleWorkID); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := f.server.db.Exec(`INSERT INTO favorite_list(id,user_id,name) VALUES(901,?,'Format list')`, listenerID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.server.db.Exec(`INSERT INTO favorite_list_item(list_id,work_id,note,sort_order) VALUES(901,?,'Format list note',7)`, staleWorkID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.server.db.Exec(`INSERT INTO user_tag(id,user_id,name) VALUES(901,?,'Format tag')`, listenerID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.server.db.Exec(`INSERT INTO user_work_tag(user_id,work_id,user_tag_id) VALUES(?,?,901)`, listenerID, staleWorkID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.server.db.Exec(`INSERT INTO media_item(id,work_id,kind,title) VALUES(901,?,'audio','Format track')`, staleWorkID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.server.db.Exec(`INSERT INTO user_work_playback_cursor(
+			user_id,work_id,media_item_id,position_seconds,duration_seconds,last_played_at,created_at,updated_at)
+		VALUES(?,?,901,30,60,'2026-01-02 00:00:00','2026-01-02 00:00:00','2026-01-02 00:00:00')`, listenerID, staleWorkID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.server.db.Exec(`INSERT INTO user_listening_session(user_id,session_id,work_id,listened_seconds)
+		VALUES(?,'format-session',?,90)`, listenerID, staleWorkID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.server.db.Exec(`INSERT INTO user_listening_import(user_id,work_id,listened_seconds,listen_count,last_played_at)
+		VALUES(?,?,90,1,'2026-01-02 00:00:00')`, listenerID, staleWorkID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.server.db.Exec(`INSERT INTO personal_transfer_progress(user_id,work_id,progress_json)
+		VALUES(?,?,'{}')`, listenerID, staleWorkID); err != nil {
+		t.Fatal(err)
+	}
 
 	f.request(t, http.MethodPost, "/catalog/index", `{"intervalMs":100,"force":true}`, 202)
 	if p := f.drain(t); p["status"] != "complete" {
@@ -408,15 +440,49 @@ func TestSourceCatalogReviewedFormatCardMergesNonConflictingStates(t *testing.T)
 	if !releaseWork.Valid || releaseWork.Int64 == staleWorkID || staleWork.Valid {
 		t.Fatalf("release work=%v stale work=%v, want records merged into the release work", releaseWork, staleWork)
 	}
+	releaseWorkID := releaseWork.Int64
 	assertReview(t, catalogCardByID(t, f, releaseID), float64(4), "Format review")
 	assertReview(t, catalogCardByID(t, f, staleID), float64(4), "Format review")
 	assertReview(t, reviewRequest(t, f.handler, listener, http.MethodGet, "/api/source-catalog/"+strconv.FormatInt(releaseID, 10), "", 200), float64(5), "Listener note")
-	var remaining int
-	if err := f.server.db.QueryRow(`SELECT count(*) FROM user_work_state WHERE work_id=?`, staleWorkID).Scan(&remaining); err != nil {
+	var favoriteNote string
+	var favoriteOrder int
+	if err := f.server.db.QueryRow(`SELECT note,sort_order FROM favorite_list_item WHERE list_id=901 AND work_id=?`, releaseWorkID).
+		Scan(&favoriteNote, &favoriteOrder); err != nil {
 		t.Fatal(err)
 	}
-	if remaining != 0 {
-		t.Fatalf("retired work kept %d personal state rows", remaining)
+	if favoriteNote != "Format list note" || favoriteOrder != 7 {
+		t.Fatalf("favorite = (%q, %d), want preserved note and order", favoriteNote, favoriteOrder)
+	}
+	var cursorPosition float64
+	var cursorMedia int64
+	if err := f.server.db.QueryRow(`SELECT media_item_id,position_seconds FROM user_work_playback_cursor WHERE user_id=? AND work_id=?`, listenerID, releaseWorkID).
+		Scan(&cursorMedia, &cursorPosition); err != nil {
+		t.Fatal(err)
+	}
+	if cursorMedia != 901 || cursorPosition != 30 {
+		t.Fatalf("playback cursor = (%d, %v), want preserved track and position", cursorMedia, cursorPosition)
+	}
+	var sessionWork, importedWork, transferWork int64
+	if err := f.server.db.QueryRow(`SELECT work_id FROM user_listening_session WHERE user_id=? AND session_id='format-session'`, listenerID).Scan(&sessionWork); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.server.db.QueryRow(`SELECT work_id FROM user_listening_import WHERE user_id=?`, listenerID).Scan(&importedWork); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.server.db.QueryRow(`SELECT work_id FROM personal_transfer_progress WHERE user_id=?`, listenerID).Scan(&transferWork); err != nil {
+		t.Fatal(err)
+	}
+	if sessionWork != releaseWorkID || importedWork != releaseWorkID || transferWork != releaseWorkID {
+		t.Fatalf("dependent state works = session:%d import:%d transfer:%d, want %d", sessionWork, importedWork, transferWork, releaseWorkID)
+	}
+	for _, table := range []string{"user_work_state", "favorite_list_item", "user_work_tag", "user_work_playback_cursor", "user_listening_session", "user_listening_import", "personal_transfer_progress"} {
+		var remaining int
+		if err := f.server.db.QueryRow(`SELECT count(*) FROM `+table+` WHERE work_id=?`, staleWorkID).Scan(&remaining); err != nil {
+			t.Fatal(err)
+		}
+		if remaining != 0 {
+			t.Fatalf("retired work kept %d rows in %s", remaining, table)
+		}
 	}
 }
 

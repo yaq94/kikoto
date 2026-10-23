@@ -1224,6 +1224,9 @@ func transferRetiredCatalogWorkTx(ctx context.Context, tx *sql.Tx, staleID, targ
 	if _, err := tx.ExecContext(ctx, "DELETE FROM user_work_state WHERE work_id=?", staleWork.Int64); err != nil {
 		return false, err
 	}
+	if err := moveRetiredCatalogPersonalStateTx(ctx, tx, staleWork.Int64, targetWork.Int64); err != nil {
+		return false, err
+	}
 	if _, err := tx.ExecContext(ctx, "UPDATE source_catalog_entry SET work_id=NULL WHERE id=?", staleID); err != nil {
 		return false, err
 	}
