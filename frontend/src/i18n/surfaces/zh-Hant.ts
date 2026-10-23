@@ -110,6 +110,7 @@ export const surfaceHant = {
     episodeReview: "單集評價：{{title}}",
     series: "音聲系列",
     episodes: "單集",
+    missing: "來源中缺失",
     openEpisode: "開啟單集",
     openSeries: "開啟系列",
     group: "歸入系列",
