@@ -313,6 +313,54 @@ func TestSourceCatalogReviewedFormatCardKeepsConflictingReviews(t *testing.T) {
 	assertReview(t, catalogCardByID(t, f, staleID), float64(5), "Format review")
 }
 
+// A conflict is not a dead end: both cards stay readable, and the record owner
+// can reconcile the old card through the normal review endpoint. The next scan
+// then retires it and keeps the shared work reachable through the old id.
+func TestSourceCatalogReviewedFormatCardConflictIsResolvableByOwner(t *testing.T) {
+	f := newLooseWorkFixture(t, formatCardTree())
+	sourceID := fixtureSourceID(t, f)
+	f.request(t, http.MethodPost, "/catalog/index", `{"intervalMs":100}`, 202)
+	if p := f.drain(t); p["status"] != "complete" {
+		t.Fatalf("first scan = %#v", p)
+	}
+	release := f.cards(t)["Release"]
+	if release == nil {
+		t.Fatalf("cards=%v, want the release card", f.cards(t))
+	}
+	releaseID := int64(release["catalogEntryId"].(float64))
+	reviewRequest(t, f.handler, f.cookie, http.MethodPatch, "/api/source-catalog/"+strconv.FormatInt(releaseID, 10)+"/user-state", `{"rating":4,"note":"Release review"}`, 200)
+	staleID := seedFormatCard(t, f.server.db, sourceID, "/Creator/Release/MP3", "MP3", 0, []string{"01 first.mp3", "02 second.mp3"})
+	reviewRequest(t, f.handler, f.cookie, http.MethodPatch, "/api/source-catalog/"+strconv.FormatInt(staleID, 10)+"/user-state", `{"rating":5,"note":"Format review"}`, 200)
+
+	f.request(t, http.MethodPost, "/catalog/index", `{"intervalMs":100,"force":true}`, 202)
+	if p := f.drain(t); p["status"] != "complete" {
+		t.Fatalf("conflicting rescan = %#v", p)
+	}
+	if cards := f.cards(t); len(cards) != 2 {
+		t.Fatalf("cards=%v, want both a release card and its conflicting format card", cards)
+	}
+	assertReview(t, catalogCardByID(t, f, releaseID), float64(4), "Release review")
+	assertReview(t, catalogCardByID(t, f, staleID), float64(5), "Format review")
+
+	reviewRequest(t, f.handler, f.cookie, http.MethodPatch, "/api/source-catalog/"+strconv.FormatInt(staleID, 10)+"/user-state", `{"rating":4,"note":"Release review"}`, 200)
+	f.request(t, http.MethodPost, "/catalog/index", `{"intervalMs":100,"force":true}`, 202)
+	if p := f.drain(t); p["status"] != "complete" {
+		t.Fatalf("resolution rescan = %#v", p)
+	}
+	if cards := f.cards(t); len(cards) != 1 || cards["Release"] == nil {
+		t.Fatalf("cards=%v, want only the release card after the owner reconciled", cards)
+	}
+	var staleSource sql.NullInt64
+	var relocated sql.NullInt64
+	if err := f.server.db.QueryRow(`SELECT file_source_id,relocated_to_id FROM source_catalog_entry WHERE id=?`, staleID).Scan(&staleSource, &relocated); err != nil {
+		t.Fatal(err)
+	}
+	if staleSource.Valid || !relocated.Valid || relocated.Int64 != releaseID {
+		t.Fatalf("stale card source=%v relocated=%v, want the release card %d", staleSource, relocated, releaseID)
+	}
+	assertReview(t, catalogCardByID(t, f, staleID), float64(4), "Release review")
+}
+
 // Non-conflicting records from every user move to the release work. A value the
 // release already stores wins; empty fields are filled from the retired work.
 func TestSourceCatalogReviewedFormatCardMergesNonConflictingStates(t *testing.T) {
