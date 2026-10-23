@@ -8,9 +8,10 @@ import (
 	"github.com/yexca/kikoto/backend/internal/config"
 )
 
-// A card that a finite scan proved missing leaves the series view until the
-// source publishes it again. Its membership and personal records stay.
-func TestCatalogSeriesOmitsMissingEpisodesUntilRepublished(t *testing.T) {
+// A card that a finite scan proved missing stays visible so its personal
+// records remain reachable. The episode reports its unavailable state rather
+// than pretending that the series lost a member.
+func TestCatalogSeriesKeepsMissingEpisodesAccessible(t *testing.T) {
 	db := openMigratedTestDB(t)
 	s := NewServer(db, config.Config{Mode: config.ModeProduction, RootUsername: "synthetic-user", DataRoot: t.TempDir(), CacheRoot: t.TempDir()})
 	t.Cleanup(func() { _ = s.Shutdown(context.Background()) })
@@ -27,34 +28,49 @@ func TestCatalogSeriesOmitsMissingEpisodesUntilRepublished(t *testing.T) {
 		INSERT INTO catalog_series_member(series_id,catalog_entry_id,position,evidence)
 			VALUES(1,1,1,'manual'),(1,2,2,'manual');`)
 
-	check := func(want ...int64) {
+	type expectedEpisode struct {
+		id     int64
+		status string
+	}
+	check := func(want ...expectedEpisode) {
 		t.Helper()
 		var view catalogSeriesView
 		workReferenceRequest(t, app, cookie, "GET", "/api/catalog-series/1", "", 200, &view)
 		if len(view.Episodes) != len(want) {
 			t.Fatalf("episodes=%d, want %d: %#v", len(view.Episodes), len(want), view.Episodes)
 		}
-		for i, id := range want {
-			if view.Episodes[i].CatalogEntryID != id {
-				t.Fatalf("episode %d=%d, want %d", i, view.Episodes[i].CatalogEntryID, id)
+		for i, episode := range want {
+			if view.Episodes[i].CatalogEntryID != episode.id || view.Episodes[i].Status != episode.status {
+				t.Fatalf("episode %d=%+v, want id=%d status=%q", i, view.Episodes[i], episode.id, episode.status)
 			}
 		}
 	}
 
-	check(1, 2)
+	check(expectedEpisode{1, "available"}, expectedEpisode{2, "available"})
 	metadataReviewExec(t, db, `UPDATE source_catalog_entry SET availability_status='missing' WHERE id=2`)
-	check(1)
+	check(expectedEpisode{1, "available"}, expectedEpisode{2, "missing"})
+
+	var missing map[string]any
+	workReferenceRequest(t, app, cookie, "GET", "/api/source-catalog/2", "", 200, &missing)
+	if missing["status"] != "missing" {
+		t.Fatalf("missing episode detail status=%v", missing["status"])
+	}
+	workReferenceRequest(t, app, cookie, "PATCH", "/api/source-catalog/2/user-state", `{"rating":4,"note":"Still reachable"}`, 200, nil)
+	missing = nil
+	workReferenceRequest(t, app, cookie, "GET", "/api/source-catalog/2", "", 200, &missing)
+	assertReview(t, missing, float64(4), "Still reachable")
+
 	metadataReviewExec(t, db, `UPDATE source_catalog_entry SET availability_status='available' WHERE id=2;
 		UPDATE source_catalog_entry SET availability_status='missing' WHERE id=1`)
-	check(2)
+	check(expectedEpisode{1, "missing"}, expectedEpisode{2, "available"})
 	metadataReviewExec(t, db, `UPDATE source_catalog_entry SET availability_status='missing'`)
-	check()
+	check(expectedEpisode{1, "missing"}, expectedEpisode{2, "missing"})
 	metadataReviewExec(t, db, `UPDATE source_catalog_entry SET availability_status='available'`)
-	check(1, 2)
+	check(expectedEpisode{1, "available"}, expectedEpisode{2, "available"})
 }
 
 // A renamed episode is relocated to its successor; the series keeps listing it
-// and only drops it when the successor itself is proved missing.
+// and reports the successor's availability without hiding the personal records.
 func TestCatalogSeriesFollowsRelocatedEpisodeToItsSuccessor(t *testing.T) {
 	db := openMigratedTestDB(t)
 	s := NewServer(db, config.Config{Mode: config.ModeProduction, RootUsername: "synthetic-user", DataRoot: t.TempDir(), CacheRoot: t.TempDir()})
@@ -82,7 +98,7 @@ func TestCatalogSeriesFollowsRelocatedEpisodeToItsSuccessor(t *testing.T) {
 	metadataReviewExec(t, db, `UPDATE source_catalog_entry SET availability_status='missing' WHERE id=3`)
 	view = catalogSeriesView{}
 	workReferenceRequest(t, app, cookie, "GET", "/api/catalog-series/1", "", 200, &view)
-	if len(view.Episodes) != 1 || view.Episodes[0].CatalogEntryID != 1 {
-		t.Fatalf("missing successor stayed visible: %#v", view.Episodes)
+	if len(view.Episodes) != 2 || view.Episodes[1].CatalogEntryID != 3 || view.Episodes[1].Status != "missing" {
+		t.Fatalf("missing successor was not retained with its status: %#v", view.Episodes)
 	}
 }

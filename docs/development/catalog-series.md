@@ -38,7 +38,8 @@ work below a reviewed grouping folder still receives its own card. Reading or
 grouping does not register works, download media, or change personal records.
 A complete refresh marks episode cards that the listing no longer contains as
 `missing`, keeping their id, work link and personal records; the series view
-stops listing them until they are published again.
+keeps listing them with `status: "missing"` so their personal records remain
+reachable, and reports them as available again when the source republishes them.
 
 ## Shared grouping
 

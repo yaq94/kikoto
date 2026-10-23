@@ -2,18 +2,18 @@
 
 Implementation: verified-local
 
-分支 `codex/kikoto-next-t09` 基于并已合入 integration
-`dc790b790f8757b3e60cec6dec4c2d8ada8a96c0`。本记录随本票提交保存。
+当前实现基于集成分支 `codex/kikoto-catalog-remediation`。本记录随本票提交保存。
 本票复用 070 和 `app_setting`，没有新迁移或依赖。
 
 ## 行为与验收对应
 
 - AC-22：首次扫描到达树尾后启用每日调度。只有未确认空范围的 partial 会安排次日
-  重观察，并恢复同一 generation，不创建独立全站任务；失败/受限范围按同一调度重试，
-  低空间暂停等待运维。有限扫描和未启动来源不启用。关闭期间错过时间仅补一次。
+  重观察，并恢复同一 generation，不创建独立全站任务；失败/受限范围按同一调度重试。
+  低空间或磁盘余量未知时暂停并在一小时后重试同一 generation，不把暂停冒充完成。
+  有限扫描和未启动来源不启用。关闭期间错过时间仅补一次。
 - AC-21：每日和手动共用一个入队事务，复用 queued/running，恢复 cancelled/paused/
   failed/partial 的相同 generation。入队和下一次时间原子提交；停止后队列仍在 SQLite。
-- AC-25：定时任务沿用已存选项及原扫描执行器；默认 1 并发、1 请求/秒，低空间暂停。
+- AC-25：定时任务沿用已存选项及原扫描执行器；默认 3 并发、间隔 220ms，低空间暂停。
   暂停跨真实 HTTP 应用与数据库关闭重开后，手动/到期重试均复用原 run，已存卡片和评价可读。
 - 真实 `StartJobRunner` 调度和 worker、真实 Routes/会话、迁移 SQLite、本地 OpenList
   边界服务共同运行；控制时钟和磁盘余量，不模拟队列、鉴权或业务状态。观察新增条目可搜索，
@@ -47,8 +47,18 @@ Go 1.26.9，`GOTOOLCHAIN=local`；Node 24.19.0。Go 定向命令均在 `backend/
 09 未修改前端交互，沿用已有索引管理入口；无需新增 F，未采集截图。
 07 的真实媒体 LIVE、08 的真实全来源覆盖及发布前置继续保留；本票未部署或访问真实站点。
 
-## 审计后修复（2026-10-21）
+## 审计后修复（2026-10-23）
 
-- 低空间暂停原会被已存每日时间覆盖，24 小时后自动重试。现在 `pause_reason='low_disk_space'` 时忽略 setting 与完成时间，等待运维；`TestSourceCatalogDailyDoesNotRetryALowDiskPause` 先写入过期 setting 再断言不派发。
-- 到达树尾、仅剩未确认空的 run 会安排次日同代重观察；测试与证据名称已改为 `TestSourceCatalogDailyReobservesAFinishedUnconfirmedEmptyGeneration`，不再写成“部分覆盖不启用每日”。
-- 复验：`go test ./internal/httpapi -run 'TestSourceCatalogDaily' -count=1` 通过；全后端 32 包通过。
+- 扫描与增量同步互斥：手动全量在增量 sync 运行时返回 409
+  `catalog_sync_running`；增量 sync 在全量 queued/running 时拒绝入队，避免重叠全站任务。
+  `TestManualFullIndexRefusesWhileIncrementalSyncRuns`、
+  `TestIncrementalSyncRefusesWhileFullGenerationRuns` 覆盖双方。
+- 低空间和磁盘余量未知统一为暂停后一小时重试同一 generation；全量与增量同步使用
+  同一规则，不再永久等待运维。`TestSourceCatalogDailyRetriesALowDiskPauseAfterOneHour`
+  和 `TestCatalogSyncPausesOnLowDiskAndDoesNotSpendRequests` 覆盖到期重试与不消耗请求。
+- 到达树尾、仅剩未确认空的 run 会安排次日同代重观察；
+  `TestSourceCatalogDailyReobservesAFinishedUnconfirmedEmptyGeneration` 覆盖。
+- 交付提交：`802dfda0`（`fix(catalog): serialize scans and retry low-disk pauses`）。
+  定向复验：`go test ./internal/httpapi -run
+  'TestSourceCatalogDaily|TestCatalogSync|TestManualFullIndex|TestIncrementalSyncRefuses'
+  -count=1` 退出 0。

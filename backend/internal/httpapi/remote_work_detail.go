@@ -89,6 +89,7 @@ type remoteTrackDetail struct {
 }
 
 func (s *Server) getRemoteSourceWork(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "private, no-store")
 	id, err := parseInt64PathValue(r, "id")
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid source id"})
