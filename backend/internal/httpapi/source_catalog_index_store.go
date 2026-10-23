@@ -336,9 +336,7 @@ func catalogCodedChildWorkTx(ctx context.Context, tx *sql.Tx, sourceID int64, di
 		JOIN source_catalog_directory pd
 			ON pd.file_source_id=o.file_source_id AND pd.path=o.directory_path
 		WHERE o.file_source_id=? AND o.directory_path=? AND o.revision=pd.revision
-			AND o.kind='folder'
-			AND (UPPER(o.name) LIKE 'RJ%' OR UPPER(o.name) LIKE 'BJ%'
-				OR UPPER(o.name) LIKE 'VJ%' OR UPPER(o.name) LIKE 'CC%')`,
+				AND o.kind='folder'`,
 		sourceID, directory)
 	if err != nil {
 		return 0, err
