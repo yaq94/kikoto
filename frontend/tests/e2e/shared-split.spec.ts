@@ -98,6 +98,7 @@ test("owners allocate changed reviews and reopen a pending split through the rea
     "Editor changed",
   );
   await expect(split).not.toContainText("Listener changed");
+  await expect(split).not.toContainText("Listener original");
   await split.getByRole("button", { name: "Start shared split", exact: true }).click();
   await expect(split.getByRole("status")).toHaveText("Waiting for record allocations");
   await expect(split.getByRole("button", { name: "Confirm my allocation", exact: true })).toBeDisabled();

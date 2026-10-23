@@ -176,7 +176,7 @@ export const groups = [
     name: "mobile-shell",
     fixture: null,
     specs: ["work-detail", "favorites-state", "player"],
-    grep: "mobile footer Library and Favorites|returning through the mobile footer keeps the Sales sort|single touch on the full player cover|double-tapping the cover opens the work|shows a directory skeleton while media loads",
+    grep: "mobile footer Library and Favorites|returning through the mobile footer keeps the Sales sort|single touch on the full player cover|double-tapping the cover opens the work|shows a directory skeleton while media loads|reserves a structured directory skeleton until media is ready",
     project: "mobile-chromium",
   },
   {

@@ -56,7 +56,7 @@ func TestSharedSplitOwnerAllocationsSurviveApplicationRestart(t *testing.T) {
 			workReferenceRequest(t, app, b, "PATCH", "/api/source-catalog/1/user-state", `{"note":"B after"}`, 200, nil)
 			workReferenceRequest(t, app, c, "PATCH", "/api/source-catalog/1/user-state", `{"rating":5,"note":"C new"}`, 200, nil)
 			workReferenceRequest(t, app, editor, "POST", linkURL+"/split-preview", "{}", 201, &split)
-			if strings.Contains(mustJSON(split), "A before") || strings.Contains(mustJSON(split), "C new") {
+			if strings.Contains(mustJSON(split), "A before") || strings.Contains(mustJSON(split), "B before") || strings.Contains(mustJSON(split), "C new") {
 				t.Fatal("editor split preview leaked private records")
 			}
 			url = "/api/shared-splits/" + strconv.Itoa(int(split["id"].(float64)))
@@ -69,6 +69,9 @@ func TestSharedSplitOwnerAllocationsSurviveApplicationRestart(t *testing.T) {
 			workReferenceRequest(t, app, a, "GET", url, "", 200, &split)
 			if split["myRecordChange"] != "modified" || split["myBeforeLeft"].(map[string]any)["note"] != "A before" || split["myCurrentReview"].(map[string]any)["note"] != "A after" {
 				t.Fatal("split preview does not distinguish before/current")
+			}
+			if preview := mustJSON(split); strings.Contains(preview, "B before") || strings.Contains(preview, "B after") || strings.Contains(preview, "C new") {
+				t.Fatalf("owner %q lost their own record while seeing another user's record", "synthetic-a")
 			}
 			workReferenceRequest(t, app, a, "POST", url+"/decision", mustJSON(map[string]any{"version": split["version"], "allocation": "left"}), 200, &split)
 		case 1:
