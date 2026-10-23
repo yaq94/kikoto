@@ -68,6 +68,17 @@ func (s *Server) updateSourceCatalogUserState(w http.ResponseWriter, r *http.Req
 		return
 	}
 	id = entry.ID
+	if entry.SourceID != 0 {
+		admission, admissionErr := catalogPublishedEntryAdmission(r.Context(), tx, entry.ID)
+		if admissionErr != nil {
+			writeError(w, admissionErr)
+			return
+		}
+		if admission.Files > 0 && admission.Audio == 0 {
+			writeCatalogEntryNotAvailable(w, admission)
+			return
+		}
+	}
 	var resolvedID int64
 	if entry.PrimaryCode != "" {
 		resolvedID, err = resolveCatalogReviewWorkID(r.Context(), tx, entry.PrimaryCode)
