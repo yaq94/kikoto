@@ -2080,11 +2080,11 @@ func catalogDuplicateDirectoryTx(ctx context.Context, tx *sql.Tx, sourceID, gene
 	if directoryPath == "/" || parent == "." || parent == directoryPath || parent == "/" {
 		return false, nil
 	}
-	child, err := catalogAudioFilesTx(ctx, tx, sourceID, generation, directoryPath)
+	child, err := catalogAudioFilesTx(ctx, tx, sourceID, generation, directoryPath, true)
 	if err != nil || len(child) < catalogDuplicateMinimumFiles {
 		return false, err
 	}
-	parentFiles, err := catalogAudioFilesTx(ctx, tx, sourceID, generation, parent)
+	parentFiles, err := catalogAudioFilesTx(ctx, tx, sourceID, generation, parent, false)
 	if err != nil {
 		return false, err
 	}
@@ -2211,14 +2211,20 @@ func catalogAudioHashMatches(child, parent []catalogAudioFile) int {
 	return matched
 }
 
-func catalogAudioFilesTx(ctx context.Context, tx *sql.Tx, sourceID, generation int64, directoryPath string) ([]catalogAudioFile, error) {
-	// Only a directory this generation completed can describe the current copy.
-	// A failed or stale parent keeps its old listing, which must not decide how
-	// a newly observed child is admitted.
+func catalogAudioFilesTx(ctx context.Context, tx *sql.Tx, sourceID, generation int64, directoryPath string, allowPending bool) ([]catalogAudioFile, error) {
+	// Only a directory whose pages this generation finished can describe the
+	// current copy. `listing_complete` means every page was read but child
+	// directories have not been expanded yet; its direct audio is already
+	// stable. A failed, pending or stale directory keeps its old listing, which
+	// must not decide how a newly observed child is admitted.
+	statuses := "('complete','listing_complete')"
+	if allowPending {
+		statuses = "('complete','listing_complete','pending')"
+	}
 	rows, err := tx.QueryContext(ctx, `SELECT o.name,o.size_bytes,COALESCE(o.content_hash,'') FROM source_catalog_observation o
 		JOIN source_catalog_directory d ON d.file_source_id=o.file_source_id AND d.path=o.directory_path
 		WHERE o.file_source_id=? AND o.directory_path=? AND o.kind='audio' AND o.revision=d.revision
-			AND d.generation=? AND d.status='complete'`,
+			AND d.generation=? AND d.status IN `+statuses,
 		sourceID, directoryPath, generation)
 	if err != nil {
 		return nil, err

@@ -418,6 +418,30 @@ func completeCatalogDirectoryTx(ctx context.Context, tx *sql.Tx, sourceID, gener
 	}
 	finish := func() error {
 		if d.Root == d.Path {
+			// A package copy that repeats its parent's audio is one physical
+			// version, not a second work. It must not publish a card of its
+			// own; otherwise the parent listing and its copy both appear in
+			// search and personal records can be split across two identities.
+			// Only an unclaimed directory is eligible, so an intentionally
+			// reviewed work or series member keeps its identity.
+			var pinned int
+			if err := tx.QueryRowContext(ctx, catalogSplitPinnedSQL, sourceID, d.Path).Scan(&pinned); err != nil {
+				return err
+			}
+			if pinned == 0 {
+				duplicate, duplicateErr := catalogDuplicateDirectoryTx(ctx, tx, sourceID, generation, d.Path)
+				if duplicateErr != nil {
+					return duplicateErr
+				}
+				if duplicate {
+					d.Root = ""
+					_, err := tx.ExecContext(ctx, `UPDATE source_catalog_observation
+						SET publish_pending=0
+						WHERE file_source_id=? AND directory_path=? AND revision=?`,
+						sourceID, d.Path, d.Revision)
+					return err
+				}
+			}
 			return decideCatalogWorkSplitTx(ctx, tx, sourceID, generation, d.Path, d.Revision)
 		}
 		return nil

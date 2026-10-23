@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"net/http"
 	"testing"
 )
 
@@ -204,6 +205,35 @@ func TestCatalogDuplicateDirectoryRejectsRepeatedSizesWithoutCounterparts(t *tes
 	parent[0], parent[1] = 20_000_000, 20_000_000
 	if duplicateDirectoryResult(t, parent, child) {
 		t.Fatal("repeated sizes without one-to-one counterparts must not be a format copy")
+	}
+}
+
+// The duplicate decision must apply to publication, not only to the split
+// mode. A small package copy next to its parent otherwise keeps one extra card
+// even though every file has the same name and size.
+func TestSourceCatalogSmallPackageCopyDoesNotPublishCard(t *testing.T) {
+	parent := []map[string]any{}
+	copyDirectory := []map[string]any{}
+	for index := 1; index <= 19; index++ {
+		name := fmt.Sprintf("Work %02d.mp3", index)
+		parent = append(parent, looseAudio(name))
+		copyDirectory = append(copyDirectory, looseAudio(name))
+	}
+	f := newLooseWorkFixture(t, map[string][]map[string]any{
+		"/":                     {looseDir("Creator")},
+		"/Creator":              append(parent, looseDir("Creator copy")),
+		"/Creator/Creator copy": copyDirectory,
+	})
+	f.request(t, http.MethodPost, "/catalog/index", `{"intervalMs":100}`, http.StatusAccepted)
+	if progress := f.drain(t); progress["status"] != "complete" {
+		t.Fatalf("scan = %#v", progress)
+	}
+	cards := f.cards(t)
+	if len(cards) != 1 || cards["Creator"] == nil {
+		t.Fatalf("cards=%v, want only the parent card", cards)
+	}
+	if got := countCatalogAudio(f.tracks(t, cards["Creator"])); got != 19 {
+		t.Fatalf("parent tracks=%d, want 19", got)
 	}
 }
 
