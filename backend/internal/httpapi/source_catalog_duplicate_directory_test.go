@@ -10,6 +10,7 @@ import (
 type catalogAudioTestFile struct {
 	name string
 	size int64
+	hash string
 }
 
 func seedCatalogAudioDirectory(t *testing.T, db *sql.DB, sourceID int64, directory string, sizes []int64) {
@@ -28,8 +29,8 @@ func seedCatalogAudioDirectoryFiles(t *testing.T, db *sql.DB, sourceID int64, di
 		t.Fatal(err)
 	}
 	for _, file := range files {
-		if _, err := db.Exec(`INSERT INTO source_catalog_observation(file_source_id,directory_path,name,revision,kind,size_bytes)
-				VALUES(?,?,?,1,'audio',?)`, sourceID, directory, file.name, file.size); err != nil {
+		if _, err := db.Exec(`INSERT INTO source_catalog_observation(file_source_id,directory_path,name,revision,kind,size_bytes,content_hash)
+				VALUES(?,?,?,1,'audio',?,?)`, sourceID, directory, file.name, file.size, file.hash); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -118,6 +119,76 @@ func TestCatalogDuplicateDirectoryKeepsSmallEqualSizeDifferentNames(t *testing.T
 	}
 	if duplicateDirectoryFilesResult(t, parent, child) {
 		t.Fatal("two small works with different names must not be merged even when their sizes match")
+	}
+}
+
+func TestCatalogDuplicateDirectorySmallMatchesExactNamesAndSizes(t *testing.T) {
+	files := make([]catalogAudioTestFile, 3)
+	for index := range files {
+		files[index] = catalogAudioTestFile{
+			name: fmt.Sprintf("Track %02d.mp3", index+1),
+			size: 10_000_000 + int64(index)*4_096,
+		}
+	}
+	if !duplicateDirectoryFilesResult(t, files, files) {
+		t.Fatal("three files with exact names and sizes must be recognized as a copy")
+	}
+}
+
+func TestCatalogDuplicateDirectorySmallRequiresExactSizeWithoutHash(t *testing.T) {
+	parent := make([]catalogAudioTestFile, 3)
+	child := make([]catalogAudioTestFile, 3)
+	for index := range parent {
+		parent[index] = catalogAudioTestFile{
+			name: fmt.Sprintf("Track %02d.mp3", index+1),
+			size: 10_000_000 + int64(index)*4_096,
+		}
+		child[index] = parent[index]
+	}
+	child[1].size += 800
+	if duplicateDirectoryFilesResult(t, parent, child) {
+		t.Fatal("a small folder with different content sizes must not be merged by tolerance")
+	}
+}
+
+func TestCatalogDuplicateDirectorySmallUsesContentHashWhenAvailable(t *testing.T) {
+	parent := make([]catalogAudioTestFile, 3)
+	child := make([]catalogAudioTestFile, 3)
+	for index := range parent {
+		hash := fmt.Sprintf("sha256:%064d", index+1)
+		parent[index] = catalogAudioTestFile{
+			name: fmt.Sprintf("Track %02d.mp3", index+1),
+			size: 10_000_000 + int64(index)*4_096,
+			hash: hash,
+		}
+		child[index] = catalogAudioTestFile{
+			name: fmt.Sprintf("Renamed %02d.mp3", index+1),
+			size: 20_000_000 + int64(index)*4_096,
+			hash: hash,
+		}
+	}
+	if !duplicateDirectoryFilesResult(t, parent, child) {
+		t.Fatal("matching provider content hashes must identify a format copy regardless of names and sizes")
+	}
+}
+
+func TestCatalogDuplicateDirectoryDifferentHashesOverrideMatchingSizes(t *testing.T) {
+	parent := make([]catalogAudioTestFile, 3)
+	child := make([]catalogAudioTestFile, 3)
+	for index := range parent {
+		parent[index] = catalogAudioTestFile{
+			name: fmt.Sprintf("Track %02d.mp3", index+1),
+			size: 10_000_000 + int64(index)*4_096,
+			hash: fmt.Sprintf("sha256:parent-%d", index+1),
+		}
+		child[index] = catalogAudioTestFile{
+			name: fmt.Sprintf("Track %02d.mp3", index+1),
+			size: parent[index].size,
+			hash: fmt.Sprintf("sha256:child-%d", index+1),
+		}
+	}
+	if duplicateDirectoryFilesResult(t, parent, child) {
+		t.Fatal("different provider hashes must not be merged by matching names and sizes")
 	}
 }
 

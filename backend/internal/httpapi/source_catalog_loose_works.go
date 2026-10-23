@@ -2065,11 +2065,11 @@ func (s *Server) catalogSplitPlanForRoot(ctx context.Context, tx *sql.Tx, source
 // copies. Publishing it would create a second card for every work inside it,
 // while the parent already carries the same recordings.
 //
-// The check needs an almost entirely size-identical subset, so a real disc, a
-// differently mastered edition or a partial bonus folder keeps its own card.
-// Small folders require a complete one-to-one match; a shared track title or a
-// similar size is not enough. Duplicates stay unpublished rather than being
-// merged into the parent, because the parent already holds the original files.
+// Provider content hashes identify the same bytes even when a package renamed
+// its files. Without a complete hash set, small folders require exact names and
+// sizes; a tolerance is used only for larger package copies. Duplicates stay
+// unpublished rather than being merged into the parent, because the parent
+// already holds the original files.
 const (
 	catalogDuplicateMinimumFiles = 3
 	catalogDuplicateSmallSet     = 20
@@ -2105,15 +2105,27 @@ func catalogDuplicateDirectoryTx(ctx context.Context, tx *sql.Tx, sourceID, gene
 	}
 	childSizes := make([]int64, 0, len(child))
 	parentSizes := make([]int64, 0, len(parentFiles))
-	namedMatches := 0
+	namedMatches, exactNameMatches := 0, 0
 	for _, file := range child {
 		childSizes = append(childSizes, file.Size)
-		if sizes, ok := parentNames[strings.ToLower(strings.TrimSpace(file.Name))]; ok && matchingSize(sizes, file.Size) {
-			namedMatches++
+		if sizes, ok := parentNames[strings.ToLower(strings.TrimSpace(file.Name))]; ok {
+			if matchingSize(sizes, file.Size) {
+				namedMatches++
+			}
+			if containsExactSize(sizes, file.Size) {
+				exactNameMatches++
+			}
 		}
 	}
 	for _, file := range parentFiles {
 		parentSizes = append(parentSizes, file.Size)
+	}
+	if catalogAudioFilesHaveHashes(child) && catalogAudioFilesHaveHashes(parentFiles) {
+		hashed := catalogAudioHashMatches(child, parentFiles)
+		if len(child) < catalogDuplicateSmallSet || len(parentFiles) < catalogDuplicateSmallSet {
+			return len(child) == len(parentFiles) && hashed == len(child), nil
+		}
+		return hashed*10 >= len(child)*9, nil
 	}
 	sort.Slice(childSizes, func(i, j int) bool { return childSizes[i] < childSizes[j] })
 	sort.Slice(parentSizes, func(i, j int) bool { return parentSizes[i] < parentSizes[j] })
@@ -2133,11 +2145,10 @@ func catalogDuplicateDirectoryTx(ctx context.Context, tx *sql.Tx, sourceID, gene
 		}
 	}
 	if len(child) < catalogDuplicateSmallSet || len(parentFiles) < catalogDuplicateSmallSet {
-		// A small folder has little statistical evidence. Require the complete
-		// file set and matching names, not just a majority of similar sizes, so
-		// two ordinary short works cannot collapse because their first few
-		// tracks happen to have the same length.
-		return len(child) == len(parentFiles) && matched == len(child) && namedMatches*10 >= len(child)*9, nil
+		// A small folder has little statistical evidence. Without hashes, require
+		// the exact name and size pair for every file; 800 bytes of drift is a
+		// different recording, not a copy.
+		return len(child) == len(parentFiles) && exactNameMatches == len(child), nil
 	}
 	// A folder with a handful of shared tracks is a real work with a reused
 	// intro; a package copy repeats nearly all of its audio.
@@ -2153,6 +2164,7 @@ func catalogDuplicateDirectoryTx(ctx context.Context, tx *sql.Tx, sourceID, gene
 type catalogAudioFile struct {
 	Name string
 	Size int64
+	Hash string
 }
 
 func matchingSize(sizes []int64, size int64) bool {
@@ -2165,11 +2177,45 @@ func matchingSize(sizes []int64, size int64) bool {
 	return false
 }
 
+func containsExactSize(sizes []int64, size int64) bool {
+	for _, candidate := range sizes {
+		if candidate == size {
+			return true
+		}
+	}
+	return false
+}
+
+func catalogAudioFilesHaveHashes(files []catalogAudioFile) bool {
+	for _, file := range files {
+		if strings.TrimSpace(file.Hash) == "" {
+			return false
+		}
+	}
+	return len(files) > 0
+}
+
+func catalogAudioHashMatches(child, parent []catalogAudioFile) int {
+	available := make(map[string]int, len(parent))
+	for _, file := range parent {
+		available[strings.TrimSpace(file.Hash)]++
+	}
+	matched := 0
+	for _, file := range child {
+		hash := strings.TrimSpace(file.Hash)
+		if available[hash] > 0 {
+			available[hash]--
+			matched++
+		}
+	}
+	return matched
+}
+
 func catalogAudioFilesTx(ctx context.Context, tx *sql.Tx, sourceID, generation int64, directoryPath string) ([]catalogAudioFile, error) {
 	// Only a directory this generation completed can describe the current copy.
 	// A failed or stale parent keeps its old listing, which must not decide how
 	// a newly observed child is admitted.
-	rows, err := tx.QueryContext(ctx, `SELECT o.name,o.size_bytes FROM source_catalog_observation o
+	rows, err := tx.QueryContext(ctx, `SELECT o.name,o.size_bytes,COALESCE(o.content_hash,'') FROM source_catalog_observation o
 		JOIN source_catalog_directory d ON d.file_source_id=o.file_source_id AND d.path=o.directory_path
 		WHERE o.file_source_id=? AND o.directory_path=? AND o.kind='audio' AND o.revision=d.revision
 			AND d.generation=? AND d.status='complete'`,
@@ -2181,7 +2227,7 @@ func catalogAudioFilesTx(ctx context.Context, tx *sql.Tx, sourceID, generation i
 	files := []catalogAudioFile{}
 	for rows.Next() {
 		var file catalogAudioFile
-		if err = rows.Scan(&file.Name, &file.Size); err != nil {
+		if err = rows.Scan(&file.Name, &file.Size, &file.Hash); err != nil {
 			return nil, err
 		}
 		files = append(files, file)
