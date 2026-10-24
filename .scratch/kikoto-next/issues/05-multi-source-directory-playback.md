@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** resolved
+**Status:** ready-for-agent
 
 **Implementation:** resolved；本地实现与 H/F 已验收；生产部署验收见 17（含真实媒体 Range 复验）。
 

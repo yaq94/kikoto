@@ -1,10 +1,24 @@
 # Kikoto 下一阶段执行记录
 
 **Status:** ready-for-agent
-**Implementation:** in-progress；01–16 resolved，17 待生产部署验收，18、19 待最终 Full CI 终态。
+**Implementation:** in-progress；01–19 的历史证据按对应产物保留。20–24 为当前整改任务，最终候选、真实覆盖与部署证据未闭环。
 **当前部署:** `2bae5db9`，镜像 `kikoto:next-2bae5db9`，schema 83，Full CI run
 `39496305624` 全绿；分项验收见[21 最终验收记录](evidence/21-final-acceptance.md)。当前分支 HEAD 尚未部署，本轮部署由主代理执行，结果待回填 17 证据。
-剩余门禁：run 53 全量索引终态与 `work_matching_control` 终态。
+当前整改审查基线为 `301e6c63288cb2fc389bc6f328561f7af23bd2e8`；其后的未提交修改不属于该基线的证据。20–24 及另一会话交付的系列暂存、有界事务修复全部纳入最终发布依赖。历史 run 53 为 partial，不能当作完整覆盖。
+
+## 当前整改依赖与责任
+
+| 工单 | 责任 | Implementation | 完成所需证据 |
+| --- | --- | --- | --- |
+| [20 持续目录增量与统一准入](issues/20-catalog-sync-and-admission.md) | partial 变化发现、固定调度、D-16 | pending | H/R、失败重试、恢复、三层一致准入 |
+| [21 有效译文覆盖与按语言搜索](issues/21-translation-corpus-and-search.md) | 有效语料、覆盖、严格搜索、短查询 | pending | H/R/F、当前有效集合、真实规模基准 |
+| [22 个人备份父级归属](issues/22-personal-transfer-parent-identity.md) | 空库单集与父系列恢复 | pending | H/R、重复导入、冲突和隔离 |
+| [23 保留与仓库规范](issues/23-retention-and-repository-contracts.md) | 清理保护、模型文档、证据脱敏 | pending | 合成 dry-run、保留回归、文档与敏感检查 |
+| [24 同候选集成与发布证据](issues/24-release-candidate-evidence.md) | 全部修复、双轴审查、部署验收 | pending | 同一 SHA 的 Full CI、迁移恢复、LIVE、生产终态 |
+
+17 依赖 20–24；24 同时依赖 17–23。以上新票不覆盖旧 evidence 文件，原 01–19 的需求与主责继续有效。任何 `resolved` 都必须满足 `execution.md` 的当前产物定义。
+
+## 2026-10-24 之前的执行记录
 **阶段:** 01–16 resolved（本地实现与按票要求的 H/F 或 H/R 已验收，生产部署验收见 17）；17 待生产部署验收；18、19 待最终 Full CI 终态。以下为历史记录：2026-10-20 完成双轴审查后的目录身份、删除确认、sidecar、翻译、关联与导入修复批次（见 [20 证据](evidence/20-post-review-fixes.md)），待推送、CI 与部署验收。双轴审查完成且发现已闭环；部署提交 `7ed73fa06b38686caf4422f5a9cbd090ba53b7a3` 的 Full CI 全绿（run 39049272400）；2026-10-17T16:44:24Z 已部署到现有服务，schema 68→76，备份与回滚演练通过；生产已创建规格指定 OpenList 来源并完成首次索引启动（429 后退避恢复续跑），浏览/搜索/媒体 Range 回读通过。首次全量索引 runId 41 收于 `partial`（14,458/14,491 complete、6 failed、27 未确认空），暴露父卡不释放子作品、失败运行无法重新观察、创作者目录折叠三类准入缺陷；修复后 schema 77 已部署，runId 42 以新 generation 重扫中。证据见 [17 部署证据](evidence/17-deployment.md)。
 **依据:** [正式规格](spec.md) · [工单总览](ticket-proposal.md) · [领域词汇表](../../GLOSSARY.md) · [作品身份与个人记录 ADR](../../docs/decisions/ADR-0004-work-identity-and-personal-state.md)
 
