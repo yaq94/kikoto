@@ -137,11 +137,11 @@ func (s *Server) saveContentTranslations(ctx context.Context, rows []contentTran
 	if cfgErr == nil && s.translationDiskPause(cfg) != "" {
 		return contentTranslationPausedLowDisk, nil
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, release, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
 	if err != nil {
 		return "", fmt.Errorf("save content translations: %w", err)
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer release()
 	stmt, err := tx.PrepareContext(ctx, `
 		INSERT INTO content_translation(
 		  cache_key, entity_kind, entity_id, entity_key, field, language,

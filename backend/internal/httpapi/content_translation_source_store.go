@@ -127,11 +127,11 @@ func (s *Server) saveSourceFieldTranslations(ctx context.Context, rows []sourceF
 			return contentTranslationPausedLowDisk, nil
 		}
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, release, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
 	if err != nil {
 		return "", fmt.Errorf("save source field translations: %w", err)
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer release()
 	stmt, err := tx.PrepareContext(ctx, `
 		INSERT INTO source_field_translation(
 		  cache_key, source_id, work_code, field, path, language,

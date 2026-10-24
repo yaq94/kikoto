@@ -240,11 +240,11 @@ func (s *Server) deleteOldestTranslationRows(ctx context.Context, limit int64) (
 	if limit <= 0 {
 		return 0, nil
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, release, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
 	if err != nil {
 		return 0, err
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer release()
 	rows, err := tx.QueryContext(ctx, `
 		SELECT kind,id FROM (
 			SELECT 'content' AS kind,id,updated_at
