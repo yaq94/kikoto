@@ -23,37 +23,46 @@
 
 ## 调度数据模型
 
-新增 `source_catalog_schedule`（迁移编号在实现时按实际连续链分配；本分支当前止于 095，系列迁移由并行实施会话负责）：
+新增 `source_catalog_schedule`（计划编号 098，位于 097 之后；若集成时编号变化，以连续链为准）：
 
 ```sql
 CREATE TABLE source_catalog_schedule (
   file_source_id INTEGER PRIMARY KEY REFERENCES file_source(id) ON DELETE CASCADE,
   daily_due_at INTEGER NOT NULL,
   weekly_due_at INTEGER NOT NULL,
+  deferred_until INTEGER NOT NULL DEFAULT 0,
   manual_pending INTEGER NOT NULL DEFAULT 0 CHECK(manual_pending IN (0,1)),
   resume_full_pending INTEGER NOT NULL DEFAULT 0 CHECK(resume_full_pending IN (0,1)),
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX source_catalog_schedule_due
-  ON source_catalog_schedule(daily_due_at, weekly_due_at);
+  ON source_catalog_schedule(deferred_until, daily_due_at, weekly_due_at);
 ```
 
 旧的 `source_catalog_daily:`、`source_catalog_daily_run:`、`source_catalog_full:` setting 只用于迁移读取，迁移后不再参与判定。禁止在 due SQL 中混用 `setting` 与 `run_setting`。
 
-新建或重新启用 openlist source 时，在同一事务插入 schedule 行：`daily_due_at=下一次本地 03:00`、`weekly_due_at=下一次本地周日 03:00`、两个 pending 位为 0。删除 source 由外键级联清理。
+迁移初始化只处理 `file_source.enabled=1 AND source_type='openlist'` 的来源，每个来源恰好一行：
+
+- `daily_due_at`：旧 `source_catalog_daily:<id>` 若是合法且未过期的时刻则沿用；否则取迁移时刻之后的下一个 Asia/Shanghai 03:00。
+- `weekly_due_at`：旧 `source_catalog_full:<id>` 若是合法且未过期的时刻则沿用；否则取迁移时刻之后的下一个本地周日 03:00。
+- `source_catalog_daily_run:<id>` 只作历史读取顺序参考，不和上述两个键合并成同一个 due；非法、过期或互相矛盾的旧值记录到迁移报告，不猜测。
+- `deferred_until=0`，两个 pending 位为 0。删除 source 由外键级联清理。
+
+新建或重新启用 openlist source 时，在同一事务插入或重置 schedule 行：`daily_due_at=下一次本地 03:00`、`weekly_due_at=下一次本地周日 03:00`、`deferred_until=0`、两个 pending 位为 0。禁用 source 不删除计划，但调度器跳过；重新启用时若 due 已过期，按下一次边界重算。
 
 ## 派发算法
 
-1. 在 `BEGIN IMMEDIATE` 事务中读取 schedule、当前 generation、当前 workflow run、当前 sync 和 source 状态。若 `effective_due > now`、`manual_pending=0`、`resume_full_pending=0`，直接返回。
-2. `effective_due = min(daily_due_at, weekly_due_at)`；当 `weekly_due_at <= daily_due_at` 且到期时选择 weekly（全量对账），否则选择 daily（目录优先增量）。两者同时到期只创建一个任务。
-3. 若已有 queued/running full 或 running sync：不创建第二个任务；`manual_pending`、到期标记或 `resume_full_pending` 只保留待处理状态，不推进 due。
-4. 没有运行任务时才创建并推进 due：
+1. 在 `BEGIN IMMEDIATE` 事务中读取 schedule、当前 generation、当前 workflow run、当前 sync 和 source 状态。source 不满足 `enabled=1 AND source_type='openlist'` 时直接返回。若 `now < deferred_until`，直接返回；若 `deferred_until` 已过，清零后继续。
+2. 没有运行任务且 `resume_full_pending=1` 时优先创建 weekly full；成功后推进 `weekly_due_at` 并清零该位，避免 full 完成后再次排队。
+3. 否则计算 `effective_due = min(daily_due_at, weekly_due_at)`。`effective_due > now`、`manual_pending=0`、`resume_full_pending=0` 时直接返回；当 `weekly_due_at <= daily_due_at` 且到期时选择 weekly（全量对账），否则选择 daily（目录优先增量）。两者同时到期只创建一个任务。
+4. 若已有 queued/running full 或 running sync：不创建第二个任务；`manual_pending`、到期标记或 `resume_full_pending` 只保留待处理状态，不推进 due。运行中的 sync 遇到 weekly 到期时设置 `resume_full_pending=1`，不得在 sync 内创建 full。
+5. 没有运行任务时才创建并推进 due；创建失败或事务回滚时不得推进 due：
    - daily：`daily_due_at = next 03:00`；weekly 不变。
    - weekly：`weekly_due_at = next Sunday 03:00`；`daily_due_at = next 03:00`，避免周日重复。
    - manual：消费 `manual_pending`，按当前 generation 状态选择普通增量或维护同步，不改日／周计划。
-5. 最后 generation 为 partial/failed/cancelled 时启动维护同步：complete 目录做目录优先探测；failed/restricted/pending 范围重试；不先排 full generation，不并发 resume。只有没有任何可复用 generation 时才请求 full。weekly 同时到期时把 `resume_full_pending=1`，等维护同步结束后再跑 full。
-6. weekly 全量必须与 sync 串行；sync 运行期间只记录 `resume_full_pending`，结束后由调度器创建 full；full 完成后清理该标记。
-7. 只有父目录本次 listing 完整且成功时，才可把未出现的子项判为缺失；pending、listing_complete、failed、restricted、未确认 empty 一律不判删除。
+6. 最后 generation 为 partial/failed/cancelled 时启动维护同步：complete 目录做目录优先探测；failed/restricted/pending 范围重试；不先排 full generation，不并发 resume。只有没有任何可复用 generation 时才请求 full。weekly 同时到期时把 `resume_full_pending=1`，等维护同步结束后再跑 full。
+7. 低空间、维护 hold 或磁盘未知时只设置 `deferred_until=now+1h`，保留 `daily_due_at`、`weekly_due_at`、两个 pending 位和当前检查点；恢复后只追赶一次，不因 2 秒调度轮询重复触发。不能只推 daily 而留下已过期的 weekly，否则 weekly 会绕过延后。
+8. 只有父目录本次 listing 完整且成功时，才可把未出现的子项判为缺失；pending、listing_complete、failed、restricted、未确认 empty 一律不判删除。
 
 ## force 增量
 
@@ -67,6 +76,7 @@ CREATE INDEX source_catalog_schedule_due
 - `catalogadmission.Decision` 是唯一规则源；`catalogEntryAdmittedSQL`、发布事务和单卡 API 的计数必须由同一组常量生成，不得硬编码 5001/2001/5。
 - 修正 `admission.go` 顶部“Probe bounds 不决定准入”的旧注释。
 - 旧测试中“大附属文件卡允许发布”的断言改为拒绝；正常多轨、音频附带字幕／压缩包仍允许。
+- 计数必须与卡片详情读取同一份当前发布文件集合；若旧 generation 行仍可能残留，必须过滤当前 generation，不能把历史文件算进该卡。系列成员的计数只算该成员 entry，不能把同系列其他成员的文件相加。
 - 浏览 API 先测 42,624 张卡的 p95；若三条相关子查询不达标，增加 `source_catalog_entry_admission` 统计表并在发布／文件变更事务维护，不能用陈旧计数过滤。
 
 ## 验收清单
@@ -74,6 +84,7 @@ CREATE INDEX source_catalog_schedule_due
 - [ ] partial 时 complete 分支新增文件被发现；failed/restricted/pending 范围重试；unknown 不判缺失；重复发布不产生重复卡片。
 - [ ] 进程关闭重启后同一 generation 续跑；手动刷新在运行中只排队一次，结束后执行一次。
 - [ ] 每日／周日 03:00 边界、两者同时到期、等于时间、跨日、重启追赶、低空间恢复均有 H/R 证据。
+- [ ] 低空间或维护 hold 只设置一次 `deferred_until`，到期后只追赶一次；`resume_full_pending` 在 sync 结束后优先执行，full 完成后不会重复排队。
 - [ ] force sync 不再触发 `errCatalogSyncRunning`；同一来源不产生 full 与 sync 重叠写。
 - [ ] D-16 的 0/1/4/5 audio、2000/2001 nonAudio、5000/5001 files 在入队／发布／API 三层一致；系列成员逐条判定。
 - [ ] 42k 卡浏览与 5,001 文件卡拒绝路径的 p95 证据；不得以全表扫描换取正确性。

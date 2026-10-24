@@ -585,23 +585,32 @@ template version and reasoning switch. `entity_kind` is `entry`, `series` or
 `origin=native` row stores authored source text unchanged and uses no model
 call; a model row stores only successful, nonempty output.
 `translation_prefill_state` is the singleton prefill cursor with `idle`,
-`running`, `paused` or `complete` status and the last error. The planned
-migration 099 adds a `config_key` covering the output-shaping configuration; a
-row with another key is stale and is not current coverage, while rows from
-before 099 are treated as legacy candidates until re-prefilled. Current title
-rows for `work`, `source_catalog_entry` and `catalog_series` are required for
-language-specific search and are never eviction candidates for the `cacheBytes`
-or `maxEntries` budgets.
+`running`, `paused` or `complete` status, the current `config_key` and the last
+error. Migration 099 adds a `config_key` covering only output-shaping
+configuration: model, base URL, template version and reasoning switch. A row
+with another key is stale and is not current coverage; rows from before 099 are
+legacy candidates until re-prefilled. Current `title` and `description` rows for
+`work` and `source_catalog_entry`, plus `title` rows for `catalog_series`, are
+required for language-specific search and are never eviction candidates for the
+`cacheBytes` or `maxEntries` budgets. `tag` and `directory` rows remain
+display-only.
 
 `content_translation_search` is an FTS5 trigram index over
 `content_translation.translated_text`, maintained by insert, update and delete
 triggers. A display-language text search reads only rows for the requested
-language and current configuration; an `origin` search reads the original
-source index. Release codes and other structured identifiers remain searchable
-regardless of display language. Three-character and longer text queries use the
-trigram index. One- and two-character queries page over the complete effective
-set with the `(language, entity_kind, id)` index and `instr`; they must not stop
-at a fixed newest-row window.
+storage language and current configuration; an `origin` search reads the
+original source index and never reads `content_translation`. Release codes and
+other structured identifiers remain searchable regardless of display language.
+Three-character and longer text queries use the trigram index. One- and
+two-character queries page over the complete effective set with the
+`(language, entity_kind, field, id, translated_text)` covering index and
+`instr`; they must not stop at a fixed newest-row window. If p95 exceeds 100 ms
+at the target corpus size, a short-term n-gram index or equivalent indexed
+structure is required.
+
+`zh-cn`, `en-us`, `ja-jp` and `ko-kr` map to `zh-Hans`, `en-US`, `ja-JP` and
+`ko-KR`. `zh-tw` reads `zh-Hans` with OpenCC `s2t` and also searches native
+`zh-Hant` rows.
 
 `source_field_translation` is a rebuildable display cache for source-level
 fields such as a remote title, tag or directory name. Its cache key covers the

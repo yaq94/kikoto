@@ -143,15 +143,17 @@ viewer still finds a free worker; inside the window it may use every slot.
 `content_translation` is durable search corpus, not an LRU cache. It stores one
 row per `cache_key` with `origin` `native` or `model`; `origin=native` rows hold
 the source text unchanged and never increment model usage. There is no
-`last_used_at`. Current `field='title'` rows for `work`, `source_catalog_entry`
-and `catalog_series` are required for language-specific search and are never
-eviction candidates. The planned migration 099 adds a `config_key` covering the
-model, base URL, template version and reasoning switch; a row with another
-config key is stale and is not part of current coverage, while pre-099 rows
-remain legacy candidates until re-prefilled. Non-title
-`content_translation` model rows and all `source_field_translation` rows are
-rebuildable display cache; they may be evicted within the configured budgets.
-`source_field_translation` has no FTS table and is never read by content search.
+`last_used_at`. Current `field='title'` and `field='description'` rows for
+`work` and `source_catalog_entry`, plus `field='title'` rows for
+`catalog_series`, are required for language-specific search and are never
+eviction candidates. `tag` and `directory` rows remain display-only. The
+planned migration 099 adds a `config_key` covering the model, base URL,
+template version and reasoning switch; a row with another config key is stale
+and is not part of current coverage, while pre-099 rows remain legacy
+candidates until re-prefilled. Only `tag`/`directory` model rows and all
+`source_field_translation` rows are rebuildable display cache; they may be
+evicted within the configured budgets. `source_field_translation` has no FTS
+table and is never read by content search.
 
 Two administrator budgets bound the rebuildable display cache in a maintenance
 pass that runs beside the prefill worker: `maxEntries` limits the number of
@@ -168,27 +170,29 @@ translations. When `minFreeBytes` is not met, new rows are not written at all:
 the caller still returns the translation it already fetched, reports
 `paused_low_disk`, and the durable copy waits for space.
 
-This retention and complete short-query behavior is the accepted issue 21 target
-contract. The branch has not implemented the planned 099 configuration key or
-the issue 21 retention/search changes: current code can evict model rows,
-including title rows, and one- and two-character searches still scan only the
-newest 50,000 rows per language. Issue 21 owns those changes and this page does
-not present them as completed results.
-
 A content change produces a new `cache_key` because the source text is part of
 it. The previous row is stale and the periodic retention pass removes it as
 superseded; it is never counted as current coverage. `zh-tw` viewers read the
 `zh-Hans` row and convert it with OpenCC `s2t` at display time, so the corpus
-does not store a second full-text copy. A title detected as `zh-Hant` is written
-as a native row and participates in searches for both scripts. The background
-prefill enumerates entries, series and local works, and writes native rows for
-titles already in the target language before queueing model calls.
+does not store a second full-text copy. A title or description detected as
+`zh-Hant` is written as a native row and participates in searches for both
+scripts. The background prefill enumerates title and description for entries
+and local works, and title for series; it writes native rows for text already
+in the target language before queueing model calls. `zh-tw` is a display
+projection and is not a separate prefill queue.
 
-Display-language search applies only to text clauses. A release code or another
-structured identifier remains searchable regardless of display language.
-`origin` searches the original source index and never reads
+Display-language search applies only to text clauses and covers `title` and
+`description`; `tag` and `directory` translations are not search inputs.
+`zh-cn`, `en-us`, `ja-jp` and `ko-kr` map to `zh-Hans`, `en-US`, `ja-JP` and
+`ko-KR`; `zh-tw` reads `zh-Hans` with OpenCC `s2t` and native `zh-Hant`. A
+release code or another structured identifier remains searchable regardless of
+display language. `origin` searches the original source index and never reads
 `content_translation`; target-language text searches never merge original-title
-FTS hits as a fallback.
+FTS hits as a fallback. One- and two-character queries use the complete
+effective set with a covering `(language, entity_kind, field, id,
+translated_text)` index; if p95 exceeds 100 ms at the target corpus size, add a
+short-term n-gram index or equivalent indexed structure instead of accepting an
+unbounded scan.
 
 Free space is read from the nearest existing parent before the data directory
 exists. Low space pauses new background generation (`paused_low_disk`) while

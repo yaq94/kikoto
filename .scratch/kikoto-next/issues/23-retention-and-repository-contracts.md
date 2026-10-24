@@ -5,7 +5,7 @@
 **Blocked by:** [10：来源生命周期与记录保留](10-source-lifecycle-retention.md)；[21：有效译文语料、覆盖状态与严格语言搜索](21-translation-corpus-and-search.md)。ADR-0006 已接受，是本票的规则依据，不是可 `resolved` 的工单依赖。
 
 **Status:** ready-for-agent
-**Implementation:** in-progress；本分支已提交清理保护回归和译文/回滚文档收口；证据链接、迁移边界与最终验收仍在收口，生产清理由 24 验收。
+**Implementation:** pending；现有 `catalogprune` 已有 source-only alias 保护，但公开证据、数据模型、回滚说明和 095/096/097 迁移链仍未收口。
 
 **依据:** [正式规格](../spec.md)、[AGENTS.md](../../../AGENTS.md)、[ADR-0006](../../../docs/decisions/ADR-0006-catalog-remediation-and-translation-consistency.md)、[ADR-0007](../../../docs/decisions/ADR-0007-source-field-translation-cache.md)。
 
@@ -21,19 +21,16 @@
 4. 重新生成合成 dry-run；报告只含合成 fixture、计数和原因，不含生产 entryId／sourceId／path。
 5. 旧 643/642 dry-run 只作历史，不可 apply；报告需带批次指纹和 stale 检查。
 
-## 译文与清理边界
+## 迁移 095/096/097–100
 
-- `content_translation` 保存可搜索译文语料，`content_translation_search` 是维护其文本的 FTS5 trigram 索引，`translation_prefill_state` 保存预翻译游标和状态；`source_field_translation` 只是来源标题、标签和目录名的可重建显示缓存，不建 FTS，也不参与内容搜索。
-- `maxEntries` 与 `cacheBytes` 是模型行的软预算。`cacheBytes` 通过 `dbstat` 计量表和 FTS 影子表页面，低于 1 MiB 时回退为 UTF-8 文本字节；写入先提交，再按批次裁剪，因此突发写入可以暂时超过目标。
-- 本分支当前实现仍允许预算淘汰 `content_translation` 模型行（包括标题行），且 1–2 字搜索只扫描每语言最新 50,000 行。这两项是 21 的整改范围；在 21 落地前，23 的文档和证据不得宣称标题译文永不被淘汰或短查询已覆盖完整有效集合。
-
-## 迁移与仓库边界
-
-- 本分支已跟踪最高迁移为 `095_source_field_translation_cache.sql`，并包含 `compat/095_dev.sql`；本分支没有 096 或 `catalog_episode_staging*` 文件。
-- 095 冻结：记录 `25f96c22` 首次加入（无外键）和 `5defaa1c` 修改（`ON DELETE CASCADE`）的事实与两个 SHA-256；当前文件不再改写。已执行旧 095 的数据库仍受 checksum 门禁约束，是否存在这类数据库必须核实。
-- 系列暂存及其迁移的唯一主责是并行系列实施会话。该会话负责实现、迁移、测试和提交 SHA；本分支不复制其未提交工作区内容，也不为尚未合并的编号预留迁移。
-- 本票只验证本分支实际存在的迁移链。若并行会话提交的系列迁移之后合并，再按当时的实际编号同步迁移头、compat、回滚矩阵和测试常量；合并前不写占位迁移。
-- 24 只接收已提交并记录 SHA 的系列暂存版本，不接收未提交文件或其他 worktree 的文件。
+- 095 冻结：记录 `25f96c22` 首次加入（无外键）和 `5defaa1c` 修改（`ON DELETE CASCADE`）的事实与两个 SHA-256；当前文件不再改写。
+- 096 已被系列暂存占用：主工作区当前存在 `096_catalog_episode_pending.sql` 和 `compat/096_dev.sql`（即使尚未提交）；不得把其他变更塞进 096。
+- 097 作为 095 的条件修复迁移：
+  - 若确认没有数据库执行过旧 095，记录证据并保留 097 为空操作/规范化说明；新装基线以冻结 095 为准。
+  - 若存在旧 095，097 在 096 提交后重建 `source_field_translation`：新表带外键、复制合法 `source_id` 行、丢弃孤儿缓存、重建索引、`PRAGMA foreign_key_check` 0 行。
+  - 旧 095 的 checksum 与当前 095 不同，`migration.go` 会在到达 097 前拒绝启动。097 本身不能修复这个门禁，必须在迁移运行器之前提供一次性 preflight：只对精确匹配旧 095 表结构指纹的数据库，在事务中把该 ledger 行的 checksum 规范化为当前 095 checksum；不匹配、部分匹配或存在额外对象时拒绝启动。
+  - 禁止增加通用的“忽略 checksum”开关。preflight 必须记录旧 checksum、新 checksum、旧 schema 指纹、执行时间、数据库备份路径和结果；同时提供离线等价命令，供无法启动的实例使用。097 只负责结构重建，不负责绕过门禁。
+- 097 之后连续分配：098 目录调度、099 译文语料契约、100 work 父级；任何编号变化必须同步迁移头、`compat/096_dev.sql` 和测试常量。
 - 不得修改已发布迁移来“修复”旧环境。
 
 ## 文档与证据
@@ -41,16 +38,18 @@
 - `docs/architecture/data-model.md` 的 Translation Corpus 必须与 21 的最终实现一致：当前 config、有效实体、严格语言、短查询、软预算、title 行不可淘汰；删除历史叙述。
 - `docs/development/translation.md` 由 21 提供最终文本；23 只做交叉引用和仓库格式检查。
 - `docs/development/release-rollback.md`：有 healthcheck 的 Compose 显示 `healthy`，生产无 healthcheck 只要求 `running`，以 `/health` 200 为门禁。
-- `docs/development/migrations.md` 只同步本分支实际存在的连续迁移链和 compat 基线。
+- `docs/development/migrations.md` 同步 095/096/097–100 的连续链和 compat 基线。
 - 测试编号改用 `testfixture.WorkCodeAt`；超过 400 条使用 `HighCardinalityWorkCodeAt`。
 - 公开证据去除 `/srv/...`、数据库路径、真实作品编号、生产 entryId/sourceId 和原始日志。
 - 新增 tracked-evidence 扫描（脚本或测试），不以 `make sensitive-check` 的 diff 结果代替；允许列表只用于合成占位符。
+- 验证 `.scratch` 内相对链接；当前 `evidence/17-deployment.md` 与 `evidence/21-final-acceptance.md` 的 `release-rollback.md` 链接需要修正。
 
 ## 验收清单
 
 - [ ] source-only alias、work-backed alias、stale apply、个人评价保留均有 H 回归。
 - [ ] 合成 dry-run 不含生产路径、记录标识或作品编号。
-- [ ] 095 历史、当前迁移头和旧库升级测试有明确证据；不修改已发布迁移，不把未合并系列迁移计入本分支。
+- [ ] 095 历史、096 占用、097 条件修复和旧库升级测试有明确证据；不修改已发布迁移。
+- [ ] 旧 095 的 checksum 兼容在迁移运行器之前完成；有旧库、无旧库、指纹不匹配三条路径均有测试，且不存在通用 checksum 绕过。
 - [ ] 数据模型、翻译文档、回滚说明、迁移文档、测试夹具和历史叙述修正。
 - [ ] tracked-evidence 扫描、文档链接、locale 和相关行为回归通过。
 
@@ -58,4 +57,4 @@
 
 ## Comments
 
-本票不拥有 `docs/development/translation.md` 或译文保留代码；21 先冻结该合同。系列暂存和其迁移由并行系列实施会话唯一负责；本分支只验证已跟踪至 095 的实际链。
+本票不拥有 `docs/development/translation.md` 或译文保留代码；21 先冻结该合同。任何人不得把已由 `6b4a02ec` 提交的 096 用于迁移修复。
