@@ -235,7 +235,7 @@ H 包没有产品代码、迁移或部署改动。回滚只需删除 `scripts/ca
 
 ## 7. C1–C9 最终外部探针
 
-时间：2026-10-24。工作树：`E:/项目/服务器/.kikoto-work/worktrees/catalog-probe`；
+时间：2026-10-24。工作树：`/path/to/kikoto/catalog-probe`；
 分支 `codex/kikoto-catalog-probe`；HEAD `8b44f2b3`。探针文件
 `backend/internal/httpapi/audit_probe_test.go` 未跟踪，未提交。
 

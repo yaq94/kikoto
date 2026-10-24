@@ -28,7 +28,7 @@ completed revision of a directory listing. `single` keeps the directory as one
 card, `prefix` and `file` split its direct audio by release prefix or base
 title, `episode` creates independent episode cards, and `duplicate` marks a
 container that repeats its parent's audio. The decision is recomputed for each
-completed revision rather than frozen at the first observation. A new
+completed revision. A new
 generation retires split cards it did not republish:
 their file rows are deleted and `file_source_id` and `relocated_to_id` are
 cleared, while the entry id stays resolvable for personal records. A card with
@@ -521,6 +521,50 @@ manual values replace them. Changing the order, or a source's enabled state or
 capability, requeues the affected works the same way, and pending remote issues
 of a source the fallback does not use are cleared.
 
+## Content Translation
+
+Translation separates a searchable content corpus from a rebuildable
+source-field display cache.
+
+`content_translation` stores one row per `cache_key`. The key covers the durable
+entity, field, language, source text, origin, model, endpoint, reasoning switch
+and template version. `entity_kind` is `entry`, `series` or `work`; `field` is
+`title`, `description`, `tag` or `directory`. An `origin=native` row copies
+authored text and uses no model call. A model row stores only a successful,
+nonempty translation. `content_translation_search` is an external-content FTS5
+trigram index over `translated_text`, maintained by the table's insert, delete
+and text-update triggers. `translation_prefill_state` is the singleton prefill
+cursor with `idle`, `running`, `paused` or `complete` status and the last error.
+
+`source_field_translation` stores model output for remote titles, tags and
+directory display names that have no durable work, catalog-entry or series
+identity. Its cache key covers the source, normalized work code, field, real
+relative path, source text, target language, model, endpoint, reasoning switch
+and template version. The source foreign key cascades on deletion. The table has
+no FTS index or trigger and is never read by library or source search; source
+availability and the exact public field are revalidated before a row is used.
+
+Display-language library search reads `work` rows of `content_translation` with
+`field=title`. `origin` searches the original `work_search` index. A target
+language does not fall back to original text or another language. `zh-tw`
+normalizes the query to Simplified with `t2s` and also checks native `zh-Hant`
+rows, so no separate Traditional derivative is stored. Queries of three or more
+characters use the trigram index. One- and two-character queries scan a bounded
+window of the newest 50,000 rows for each target language, so that fallback does
+not cover older rows.
+
+`maxEntries` and `cacheBytes` form a soft maintenance budget over model rows in
+both tables. `cacheBytes` measures the SQLite pages attributed to these tables,
+their indexes and FTS shadow tables through `dbstat`; below 1 MiB it falls back
+to UTF-8 text bytes. A translation is committed before the bounded trim, so the
+budget is not a hard database-file quota and a burst can exceed it until a later
+pass. Periodic passes remove superseded rows before oldest live model rows.
+Every model row, including a current searchable `content_translation` row, can
+be selected for eviction; a trim can therefore reduce target-language search
+coverage until the text is translated again. Native rows, personal records and
+source identities are never eviction candidates. `minFreeBytes` pauses new
+persisted generation while stored rows remain readable.
+
 ## Voice Catalog Discovery
 
 Important tables:
@@ -770,6 +814,13 @@ a tied client order. The backup's historical playback date remains presentation
 data, so an older offline report cannot undo the import; a strictly later
 checkpoint, including a backward seek, still replaces it.
 
+`personal_transfer_ref` stores an opaque reference to a work, episode, series or
+source catalog entry for personal-data transfer. A work-backed catalog reference
+becomes a non-primary work alias when its card retires. A source-only reference
+has no surviving work for the reference, so its catalog card remains until the
+reference has an explicit reviewed target. Catalog prune reports that card as
+`transfer_alias` and refuses a plan that would remove it.
+
 Lyrics preferences relate an audio media item to a lyrics media item; runtime
 location selection remains a file-source concern. A personal preference
 overrides the shared `media_lyrics_assignment` for that user only.
@@ -985,4 +1036,6 @@ answer from the index instead of reading the table row.
 - [Core boundaries](core-boundaries.md)
 - [Source presence](source-presence.md)
 - [Workflows](workflows.md)
+- [Translation service](../development/translation.md)
+- [Catalog prune](../development/catalog-prune.md)
 - [Migrations](../development/migrations.md)

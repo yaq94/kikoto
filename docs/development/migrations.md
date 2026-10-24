@@ -300,7 +300,7 @@ steps are in [Unreleased](../history/unreleased.md).
 | `092_content_translation_store.sql` | `content_translation`, its FTS5 trigram index, and `translation_prefill_state` | Stored translations and the prefill cursor survive restart; a failed generation writes no row |
 | `093_source_catalog_partition_index.sql` | `source_catalog_directory_partition` on `(file_source_id, generation, partition_path)` | The progress endpoint groups and counts partitions from the index instead of building a temporary b-tree |
 | `094_source_catalog_file_root.sql` | `source_catalog_file.source_root` | A folded format copy keeps the directory its files live in; an empty value keeps the card-wide base |
-| `095_source_field_translation_cache.sql` | `source_field_translation` for remote titles, tags and directory display names | Model output is rebuildable display cache outside search; every write participates in the translation byte budget |
+| `095_source_field_translation_cache.sql` | `source_field_translation` for remote titles, tags and directory display names | Model output is rebuildable display cache outside search; every write participates in the soft translation budget |
 
 The Release To Schema Map above lists every numbered file. `069` rebuilds `work`
 and `logical_work` to relax code uniqueness and creates the catalog entry and
@@ -342,7 +342,7 @@ unique index that keeps one running sync per source. `089` adds a unique index
 over non-empty trimmed work codes and aborts with an actionable message when an
 existing database still contains duplicates. `090` records per-phase catalog
 timings. `091` keeps damaged source names in a separate fix-list table. `092`
-stores the durable translation corpus, its FTS5 index and the prefill cursor.
+stores the translation corpus, its FTS5 index and the prefill cursor.
 `093` adds one covering index; `094` adds one text column with an empty default;
 `095` adds an independent display-cache table and two indexes. None changes an
 existing catalog or personal row, and an older binary that never reads them

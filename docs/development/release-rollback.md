@@ -63,7 +63,8 @@ directory table. `094` adds one text column,
 `source_catalog_file.source_root`, with an empty default so an existing row
 keeps the card-wide base. `095` adds `source_field_translation`, a rebuildable
 display cache for remote titles, tags and directory names; it has no FTS index
-and is bounded by the same translation cache budget as `content_translation`.
+and participates in the same soft translation budget as the model rows of
+`content_translation`.
 
 No migration deletes or rewrites card or personal rows. A `068`–`094`
 snapshot restored into the current image upgrades along the numbered chain; a
@@ -118,10 +119,12 @@ restore commands it is the directory under `rollbacks/`.
 `docker compose down` removes the container and keeps the bind mounts; do not
 add `-v`. The `mv` keeps the `079` database for inspection. Remove the WAL and
 SHM files before copying, because they belong to the database being replaced.
-The bundled `deploy/compose` files have a health check, so a deployment that
-uses one can wait with `up -d --wait`. The production stack in this repository
-does not define that check; poll `/health` as shown under
-[Verify The Restored Instance](#verify-the-restored-instance).
+The bundled development and Demo Compose files define a container health check,
+so those deployments can wait with `up -d --wait`. A host-networked production
+deployment defines no Docker health check and has no `healthy` container state.
+After `docker compose up -d`, poll `GET /health` as shown under
+[Verify The Restored Instance](#verify-the-restored-instance). Treat HTTP 200
+from that endpoint, not the container state, as the readiness gate.
 
 ## Restore A Schema 95 Snapshot
 
@@ -170,7 +173,9 @@ last command reports `no such table` instead of a count. The health response is
 
 Then confirm:
 
-1. `docker compose ps` reports the expected image and `healthy`.
+1. `docker compose ps` reports the expected image and a running container. The
+   production stack has no Docker health status; readiness is the successful
+   HTTP probe below.
 2. `GET /health` returns HTTP 200 with the restored version.
 3. An authenticated `/api/works` read returns the works that existed before the
    upgrade, and a source and catalog entry remain readable.
