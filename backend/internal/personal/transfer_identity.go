@@ -29,6 +29,35 @@ func exportIdentity(ctx context.Context, tx *sql.Tx, work int64) (*BackupIdentit
 	if len(i.References) > 100 {
 		return nil, ErrLimit
 	}
+	if i.Kind == "episode" {
+		rows, err := tx.QueryContext(ctx, `SELECT series_ref.ref,series.title,member.position,member.evidence,entry_ref.ref
+			FROM source_catalog_entry entry
+			JOIN catalog_series_member member ON member.catalog_entry_id=entry.id
+			JOIN catalog_series series ON series.id=member.series_id
+			JOIN personal_transfer_ref series_ref ON series_ref.series_id=series.id
+			JOIN personal_transfer_ref entry_ref ON entry_ref.catalog_entry_id=entry.id
+			WHERE entry.work_id=? ORDER BY series.id,entry.id LIMIT 2`, work)
+		if err != nil {
+			return nil, err
+		}
+		defer func() { _ = rows.Close() }()
+		for rows.Next() {
+			candidate := &BackupParent{}
+			if err = rows.Scan(&candidate.Ref, &candidate.Title, &candidate.Position, &candidate.Evidence, &candidate.EntryRef); err != nil {
+				return nil, err
+			}
+			if i.Parent == nil {
+				i.Parent = candidate
+				continue
+			}
+			if i.Parent.Ref != candidate.Ref || i.Parent.Title != candidate.Title {
+				return nil, ErrConflict
+			}
+		}
+		if err = rows.Err(); err != nil {
+			return nil, err
+		}
+	}
 	return i, err
 }
 
@@ -51,6 +80,9 @@ func sharedIdentity(ctx context.Context, tx *sql.Tx, work int64) (int64, error) 
 func resolveTransferIdentity(ctx context.Context, tx *sql.Tx, i *BackupIdentity, code string) (identityMatch, error) {
 	m := identityMatch{}
 	refs := append([]string{i.Ref}, i.References...)
+	if i.Parent != nil && i.Parent.EntryRef != "" {
+		refs = append(refs, i.Parent.EntryRef)
+	}
 	for _, ref := range refs {
 		var work, catalog, series sql.NullInt64
 		err := tx.QueryRowContext(ctx, `SELECT COALESCE(r.work_id,c.work_id,s.work_id),r.catalog_entry_id,r.series_id
