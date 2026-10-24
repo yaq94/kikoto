@@ -8,7 +8,7 @@
 **发布依赖:** 07 全部验收（含真实媒体 LIVE）和本票完整清单仍须通过；本地开发不关闭外部缺口，也不删减真实索引覆盖要求。
 
 **Status:** ready-for-agent
-**Implementation:** resolved；本地实现与 H/F 已验收；生产部署验收见 17（含真实全量 generation 终态）。
+**Implementation:** verified-local；本地实现与 H/F 已验收；run 53 仍为 partial，真实全量覆盖、093/095/096 迁移链与 G1–G3 由 24 复验。
 **Evidence:** [08 本地索引证据](../evidence/08-source-index.md)
 
 production 的 runId 41 终态为 `partial`（14,458/14,491 complete、6 failed、

@@ -8,6 +8,7 @@ ADRs record durable design decisions.
 - [ADR-0004: Work identity and personal state for numberless audio](ADR-0004-work-identity-and-personal-state.md)
 - [ADR-0005: Shared identity preserves playback editions](ADR-0005-shared-identity-preserves-playback-editions.md)
 - [ADR-0006: Catalog remediation and translation consistency](ADR-0006-catalog-remediation-and-translation-consistency.md)
+- [ADR-0007: Source field translation cache](ADR-0007-source-field-translation-cache.md)
 
 ## When To Add An ADR
 

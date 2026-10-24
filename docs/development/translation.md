@@ -140,42 +140,48 @@ The interactive lane holds 256 waiting items and the background lane follows
 Asia/Shanghai the background lane is limited to two simultaneous calls, so a
 viewer still finds a free worker; inside the window it may use every slot.
 
-Translated content is durable corpus, not a cache. `content_translation` stores
-one row per `cache_key` with `origin` `native` or `model`; `origin=native` rows
-hold the source text unchanged and never increment model usage. There is no
-`last_used_at`: a model write only enforces the configured budget, while the
-periodic pass owns superseded-row cleanup. `source_field_translation` holds only
-rebuildable model results for source-level display fields and stays outside that
-searchable corpus.
+`content_translation` is durable search corpus, not an LRU cache. It stores one
+row per `cache_key` with `origin` `native` or `model`; `origin=native` rows hold
+the source text unchanged and never increment model usage. There is no
+`last_used_at`. Current `field='title'` rows for `work`, `source_catalog_entry`
+and `catalog_series` are required for language-specific search and are never
+eviction candidates. The planned migration 099 adds a `config_key` covering the
+model, base URL, template version and reasoning switch; a row with another
+config key is stale and is not part of current coverage, while pre-099 rows
+remain legacy candidates until re-prefilled. Non-title
+`content_translation` model rows and all `source_field_translation` rows are
+rebuildable display cache; they may be evicted within the configured budgets.
+`source_field_translation` has no FTS table and is never read by content search.
 
-Two administrator budgets bound the model cache in a maintenance pass that runs
-beside the prefill worker: `maxEntries` limits the number of model rows across
-`content_translation` and `source_field_translation` (zero means unlimited), and
-`cacheBytes` bounds their measured SQLite page footprint through `dbstat`,
-including the cache indexes and the FTS shadow tables. Budgets below 1 MiB fall
-back to UTF-8 text bytes because one SQLite page is already larger than the
-configured value. Only model rows are counted and evicted, oldest first, because
-those are rebuildable. Native rows carry
+Two administrator budgets bound the rebuildable display cache in a maintenance
+pass that runs beside the prefill worker: `maxEntries` limits the number of
+evictable model rows (zero means unlimited), and `cacheBytes` bounds their
+measured SQLite page footprint through `dbstat`, including indexes and FTS
+shadow tables. Budgets below 1 MiB fall back to UTF-8 text bytes because one
+SQLite page is already larger than the configured value. Native rows carry
 authored text and are never eviction candidates; personal records and source
-identities are in other tables and are never touched. A superseded row for the
-same entity or source field goes before a live one. The pass runs bounded batches
-so the SQLite writer is never held for a whole trim. Every successful model-row
-write also invokes the budget part of that same pass, while the periodic pass
-also removes superseded rows. The write path trims at most one batch and skips
-the `dbstat` measurement until logical cache text reaches one third of
-`cacheBytes`; a large cache therefore stays bounded without walking every
-database page on each completion. The periodic pass always measures pages and
-may run the full batch allowance. When `minFreeBytes` is not met, new rows are
-not written at all: the caller still returns the translation it already
-fetched, reports `paused_low_disk`, and the durable copy waits for space.
+identities are in other tables and are never touched. Superseded rows are
+removed before live rows. The pass runs bounded batches so the SQLite writer is
+never held for a whole trim. If the budget is exceeded only by persistent title
+rows, the status reports `over_budget`; it does not delete search-critical
+translations. When `minFreeBytes` is not met, new rows are not written at all:
+the caller still returns the translation it already fetched, reports
+`paused_low_disk`, and the durable copy waits for space.
 
 A content change produces a new `cache_key` because the source text is part of
-it. The previous row stays readable until the periodic retention pass removes it
-as superseded, unless a configured row or byte budget evicts it first. `zh-tw`
-viewers read the `zh-Hans` row and convert it with OpenCC `s2t` at display time,
-so the corpus does not store a second full-text copy. A title detected as
-`zh-Hant` is written as a native row and participates in searches for both
-scripts.
+it. The previous row is stale and the periodic retention pass removes it as
+superseded; it is never counted as current coverage. `zh-tw` viewers read the
+`zh-Hans` row and convert it with OpenCC `s2t` at display time, so the corpus
+does not store a second full-text copy. A title detected as `zh-Hant` is written
+as a native row and participates in searches for both scripts. The background
+prefill enumerates entries, series and local works, and writes native rows for
+titles already in the target language before queueing model calls.
+
+Display-language search applies only to text clauses. A release code or another
+structured identifier remains searchable regardless of display language.
+`origin` searches the original source index and never reads
+`content_translation`; target-language text searches never merge original-title
+FTS hits as a fallback.
 
 Free space is read from the nearest existing parent before the data directory
 exists. Low space pauses new background generation (`paused_low_disk`) while
