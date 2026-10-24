@@ -15,7 +15,9 @@ const (
 // Reasons explain why a card cannot be published. They are stable strings used
 // in logs and in the prune report.
 const (
-	ReasonNoAudio = "no_audio"
+	ReasonNoAudio         = "no_audio"
+	ReasonTooManyFiles    = "too_many_files"
+	ReasonTooManyNonAudio = "too_many_non_audio"
 )
 
 // Decision returns the blocking reason for a published card, or "" when the
@@ -23,6 +25,12 @@ const (
 func Decision(files, audio, nonAudio int) string {
 	if audio == 0 {
 		return ReasonNoAudio
+	}
+	if files > ProbeFiles {
+		return ReasonTooManyFiles
+	}
+	if nonAudio > ProbeNonAudio && audio < ProbeAudio {
+		return ReasonTooManyNonAudio
 	}
 	return ""
 }

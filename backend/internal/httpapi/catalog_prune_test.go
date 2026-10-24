@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"testing"
 
+	"github.com/yexca/kikoto/backend/internal/catalogadmission"
 	"github.com/yexca/kikoto/backend/internal/catalogprune"
 )
 
@@ -88,26 +89,26 @@ func TestCatalogPruneDryRunAndApply(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if report.Totals.Entries != 1 || report.Totals.Files != 0 || report.Totals.TransferRefs != 1 {
-		t.Fatalf("report totals = %+v, want the work-backed empty card with one ref", report.Totals)
+	if report.Totals.Entries != 2 || report.Totals.Files != 6001 || report.Totals.TransferRefs != 2 {
+		t.Fatalf("report totals = %+v, want the oversized and work-backed empty cards with their refs", report.Totals)
 	}
 	// Cards with audio are playable regardless of attachment count. The
 	// source-only empty card is an unresolved transfer alias, while the series
 	// member and relocation target are protected by their own references.
-	if report.Candidates.Entries != 4 || report.Candidates.Files != 12 || report.Candidates.TransferRefs != 4 {
-		t.Fatalf("candidate totals = %+v, want 4 cards/12 files/4 refs", report.Candidates)
+	if report.Candidates.Entries != 5 || report.Candidates.Files != 6013 || report.Candidates.TransferRefs != 5 {
+		t.Fatalf("candidate totals = %+v, want 5 cards/6013 files/5 refs", report.Candidates)
 	}
-	if report.Totals.Observations != 1 || report.Totals.Directories != 1 || report.Totals.AudioRoots != 0 {
-		t.Fatalf("path totals = %+v, want 1 obs/1 dir/0 audio roots", report.Totals)
+	if report.Totals.Observations != 4 || report.Totals.Directories != 2 || report.Totals.AudioRoots != 1 {
+		t.Fatalf("path totals = %+v, want 4 obs/2 dirs/1 audio root", report.Totals)
 	}
-	if report.Totals.KeptRows != 0 {
-		t.Fatalf("kept rows = %d, want 0 for the empty card", report.Totals.KeptRows)
+	if report.Totals.KeptRows != 4 {
+		t.Fatalf("kept rows = %d, want four rows under the whitelisted child", report.Totals.KeptRows)
 	}
 	reasons := map[int64]string{}
 	for _, entry := range report.Entries {
 		reasons[entry.EntryID] = entry.Reason
 	}
-	if len(reasons) != 1 || reasons[8] != "empty_audio_card" {
+	if len(reasons) != 2 || reasons[1] != catalogadmission.ReasonTooManyFiles || reasons[8] != "empty_audio_card" {
 		t.Fatalf("reasons = %+v", reasons)
 	}
 	skipped := map[int64]string{}
@@ -122,8 +123,8 @@ func TestCatalogPruneDryRunAndApply(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(result.Batches) != 1 {
-		t.Fatalf("batches = %d, want 1", len(result.Batches))
+	if len(result.Batches) != 2 {
+		t.Fatalf("batches = %d, want 2", len(result.Batches))
 	}
 	if result.Totals.Entries != report.Totals.Entries ||
 		result.Totals.Files != report.Totals.Files ||
@@ -139,8 +140,8 @@ func TestCatalogPruneDryRunAndApply(t *testing.T) {
 		Scan(&scanDirectories, &scanObserved, &scanPending); err != nil {
 		t.Fatal(err)
 	}
-	if scanDirectories != 5 || scanObserved != 8 || scanPending != 5 {
-		t.Fatalf("scan counters = dirs %d obs %d pending %d, want 5/8/5", scanDirectories, scanObserved, scanPending)
+	if scanDirectories != 4 || scanObserved != 5 || scanPending != 2 {
+		t.Fatalf("scan counters = dirs %d obs %d pending %d, want 4/5/2", scanDirectories, scanObserved, scanPending)
 	}
 
 	var deleted, kept, files, refs int
@@ -239,8 +240,8 @@ func TestCatalogPruneDryRunAndApply(t *testing.T) {
 	if err != nil {
 		t.Fatalf("idempotent apply: %v", err)
 	}
-	if len(second.Batches) != 0 || second.AlreadyApplied != 1 {
-		t.Fatalf("second apply = %+v, want 1 already applied and no batches", second)
+	if len(second.Batches) != 0 || second.AlreadyApplied != 2 {
+		t.Fatalf("second apply = %+v, want 2 already applied and no batches", second)
 	}
 }
 

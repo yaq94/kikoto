@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/yexca/kikoto/backend/internal/catalogadmission"
 	"github.com/yexca/kikoto/backend/internal/config"
 )
 
@@ -89,8 +90,10 @@ func TestCatalogAdmissionPublishingPublishesEveryCardWithAudio(t *testing.T) {
 		wantEntries     int
 	}{
 		{name: "no audio", audio: 0, nonAudio: 10, wantEntries: 0},
-		{name: "large attachment set", audio: 1, nonAudio: 5000, wantEntries: 1},
-		{name: "audio beside many attachments", audio: 4, nonAudio: 2001, wantEntries: 1},
+		{name: "large attachment set", audio: 1, nonAudio: 5000, wantEntries: 0},
+		{name: "audio beside many attachments", audio: 4, nonAudio: 2001, wantEntries: 0},
+		{name: "five thousand files", audio: 5, nonAudio: 4995, wantEntries: 1},
+		{name: "five audio and two thousand non-audio", audio: 5, nonAudio: 2000, wantEntries: 1},
 		{name: "normal multi track", audio: 3, nonAudio: 1278, wantEntries: 1},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -166,8 +169,8 @@ func TestCatalogAdmissionPublishLayerChecksExistingObservation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if blocked || adm.Reason != "" {
-		t.Fatalf("blocked=%v reason=%q, want a playable card", blocked, adm.Reason)
+	if !blocked || adm.Reason != catalogadmission.ReasonTooManyFiles {
+		t.Fatalf("blocked=%v reason=%q, want the publish layer to refuse oversized files", blocked, adm.Reason)
 	}
 }
 
@@ -289,8 +292,8 @@ func TestCatalogAdmissionAPIShowsEveryCardWithAudio(t *testing.T) {
 	if err := json.Unmarshal(response.Body.Bytes(), &works); err != nil {
 		t.Fatal(err)
 	}
-	if len(works.Works) != 4 {
-		t.Fatalf("browse cards = %+v, want all four playable cards", works.Works)
+	if len(works.Works) != 2 {
+		t.Fatalf("browse cards = %+v, want the two admissible cards", works.Works)
 	}
 
 	request = httptest.NewRequest(http.MethodGet, "/api/remote-sources/83/works?q=card", nil)
@@ -299,8 +302,8 @@ func TestCatalogAdmissionAPIShowsEveryCardWithAudio(t *testing.T) {
 	if err := json.Unmarshal(response.Body.Bytes(), &works); err != nil {
 		t.Fatal(err)
 	}
-	if len(works.Works) != 4 {
-		t.Fatalf("search cards = %+v, want all four playable cards", works.Works)
+	if len(works.Works) != 2 {
+		t.Fatalf("search cards = %+v, want the two admissible cards", works.Works)
 	}
 
 	for _, entryID := range []string{"8302", "8303"} {
@@ -308,8 +311,15 @@ func TestCatalogAdmissionAPIShowsEveryCardWithAudio(t *testing.T) {
 		tracks.SetPathValue("id", entryID)
 		response = httptest.NewRecorder()
 		server.getSourceCatalogTracks(response, tracks)
-		if response.Code != http.StatusOK {
-			t.Fatalf("playable tracks status = %d, body=%s", response.Code, response.Body.String())
+		if response.Code != http.StatusNotFound {
+			t.Fatalf("refused tracks status = %d, body=%s", response.Code, response.Body.String())
 		}
+	}
+	tracks := httptest.NewRequest(http.MethodGet, "/api/source-catalog/8304/tracks", nil)
+	tracks.SetPathValue("id", "8304")
+	response = httptest.NewRecorder()
+	server.getSourceCatalogTracks(response, tracks)
+	if response.Code != http.StatusOK {
+		t.Fatalf("admissible tracks status = %d, body=%s", response.Code, response.Body.String())
 	}
 }

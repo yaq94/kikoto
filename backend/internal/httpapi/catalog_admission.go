@@ -178,12 +178,17 @@ func (s *Server) blockUnadmittedCatalogRootTx(ctx context.Context, tx *sql.Tx, s
 	return true, nil
 }
 
-// catalogEntryAdmittedSQL filters a published card by its file rows. Each
-// count stops at the first row that can decide its threshold, and the
-// (catalog_entry_id,title) index serves the correlated probes.
+// catalogEntryAdmittedSQL filters a published card by the same thresholds as
+// the publisher and single-card API. Each count stops at the first row that
+// can decide its threshold, and the catalog entry index serves the probes.
 func catalogEntryAdmittedSQL(alias string) string {
 	return fmt.Sprintf(`(
 		EXISTS(SELECT 1 FROM source_catalog_file aqf WHERE aqf.catalog_entry_id=%[1]s.id AND aqf.kind='audio')
+            AND (SELECT count(*) FROM (SELECT 1 FROM source_catalog_file af WHERE af.catalog_entry_id=%[1]s.id LIMIT 5001)) <= 5000
+            AND NOT (
+                (SELECT count(*) FROM (SELECT 1 FROM source_catalog_file anf WHERE anf.catalog_entry_id=%[1]s.id AND anf.kind<>'audio' LIMIT 2001)) > 2000
+                AND (SELECT count(*) FROM (SELECT 1 FROM source_catalog_file aaf WHERE aaf.catalog_entry_id=%[1]s.id AND aaf.kind='audio' LIMIT 5)) < 5
+            )
 		)`, alias)
 }
 
