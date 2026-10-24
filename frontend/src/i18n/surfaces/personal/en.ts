@@ -431,6 +431,10 @@ export const personalEnglish = {
         identity_conflict: "Identity evidence disagrees. This object is skipped.",
         unregistered_source: "The known source is not registered. Register it before importing this record.",
         source_reference_retained: "This source reference is retained for transfer; no source connection is created.",
+        parent_missing:
+          "This episode has no parent-series membership in the library or backup. It is skipped instead of being restored as a standalone work.",
+        parent_conflict:
+          "The backup's parent series contradicts the existing shared membership. The episode is skipped and the existing membership is unchanged.",
         relationships_not_imported:
           "The episode is restored independently. Series membership and shared associations require the shared editing workflow.",
         playlist_preserved: "A list contains an unresolved reference. The list is kept unchanged.",

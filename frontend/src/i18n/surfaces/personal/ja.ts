@@ -430,6 +430,10 @@ export const personalJapanese = {
         identity_conflict: "識別情報が矛盾するため、この項目をスキップします。",
         unregistered_source: "既知のソースが未登録です。登録してから取り込んでください。",
         source_reference_retained: "転送用のソース参照を保持します。ソース接続は作成しません。",
+        parent_missing:
+          "ライブラリにもバックアップにも、この各話の親シリーズ所属がありません。単独の作品として復元せず、スキップします。",
+        parent_conflict:
+          "バックアップの親シリーズが既存の共有所属と矛盾します。各話をスキップし、既存の所属は変更しません。",
         relationships_not_imported:
           "各話を独立した項目として復元します。シリーズ所属と共有関連は資料編集で確認してください。",
         playlist_preserved: "リストに未解決の参照があるため、リスト全体を保持します。",

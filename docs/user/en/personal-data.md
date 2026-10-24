@@ -118,11 +118,15 @@ with registration permission; without that permission the import is rejected.
 
 Version 2 can restore missing objects from the file's necessary information
 with registration permission. It never downloads media or changes existing
-shared relationships. Episodes remain independently evaluable; series membership
-and shared associations must be confirmed through the shared editing workflow.
-Unknown source references remain portable without creating source connections.
-Repeated imports reuse references. Version 1 and Kikoeru formats match existing
-product codes and unambiguous aliases; missing codes are listed and skipped.
+shared relationships. When an exported episode carries its parent series, an
+empty library recreates that explicit membership without inferring it from a
+title. A missing or contradictory parent is reported instead of registering the
+episode alone; an existing different membership is never replaced. Episodes
+remain independently evaluable, while other shared associations must be
+confirmed through the shared editing workflow. Unknown source references remain
+portable without creating source connections. Repeated imports reuse references.
+Version 1 and Kikoeru formats match existing product codes and unambiguous
+aliases; missing codes are listed and skipped.
 
 Resume targets require an exact work/edition and an unambiguous track title
 with track/disc numbers. Missing or ambiguous tracks preserve existing playback
