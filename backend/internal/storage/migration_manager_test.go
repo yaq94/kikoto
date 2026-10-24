@@ -16,7 +16,7 @@ import (
 
 var numberedMigrationFilePattern = regexp.MustCompile(`^[0-9]{3}_[a-z0-9][a-z0-9_]*\.sql$`)
 
-const latestNumberedMigrationVersion = 95
+const latestNumberedMigrationVersion = 96
 
 // latestReleasedBaseline is the newest file in migrations/baseline/, which
 // production uses for a fresh database.
@@ -307,12 +307,16 @@ func TestMigrateAdoptsLegacyMigrationLedger(t *testing.T) {
 
 func TestMigrateBaselineMatchesCompleteIncrementalChain(t *testing.T) {
 	migrationDir := filepath.Join("..", "..", "migrations")
+	if got := latestNumberedMigrationFilename(t, migrationDir); got != "096_catalog_episode_pending.sql" {
+		t.Fatalf("latest migration = %q, want the catalog episode pending migration", got)
+	}
 	incrementalDir := copyNumberedMigrations(t, migrationDir)
 
 	incremental := openMigrationManagerDB(t)
 	if err := Migrate(incremental, incrementalDir); err != nil {
 		t.Fatalf("incremental Migrate() error = %v", err)
 	}
+	assertCatalogEpisodePendingSchema(t, incremental)
 	// Production selects the newest released baseline; development selects
 	// the newest baseline across baseline/ and compat/, which also proves the
 	// packaged compat/ files form a valid development catalog.
@@ -328,6 +332,7 @@ func TestMigrateBaselineMatchesCompleteIncrementalChain(t *testing.T) {
 			if err := MigrateFSWithOptions(baseline, os.DirFS(migrationDir), "test", MigrateOptions{Development: mode.development}); err != nil {
 				t.Fatalf("baseline Migrate() error = %v", err)
 			}
+			assertCatalogEpisodePendingSchema(t, baseline)
 			if got, want := schemaSnapshot(t, baseline), schemaSnapshot(t, incremental); !equalStringMaps(got, want) {
 				t.Fatalf("baseline schema differs from complete incremental chain\n%s", diffStringMaps(got, want))
 			}
@@ -335,6 +340,43 @@ func TestMigrateBaselineMatchesCompleteIncrementalChain(t *testing.T) {
 				t.Fatalf("baseline seed data differs from complete incremental chain\n%s", diffStringMaps(got, want))
 			}
 		})
+	}
+}
+
+func assertCatalogEpisodePendingSchema(t *testing.T, db *sql.DB) {
+	t.Helper()
+	var tableSQL string
+	if err := db.QueryRow(`SELECT COALESCE(sql,'') FROM sqlite_schema
+		WHERE type='table' AND name='source_catalog_episode_pending'`).Scan(&tableSQL); err != nil {
+		t.Fatalf("read source_catalog_episode_pending schema: %v", err)
+	}
+	for _, column := range []string{"source_id", "parent_root", "catalog_entry_root", "catalog_entry_id"} {
+		if !strings.Contains(tableSQL, column) {
+			t.Fatalf("source_catalog_episode_pending schema is missing %q: %s", column, tableSQL)
+		}
+	}
+	var indexes, foreignKeys int
+	if err := db.QueryRow(`SELECT count(*) FROM sqlite_schema
+		WHERE type='index' AND tbl_name='source_catalog_episode_pending'
+			AND name LIKE 'source_catalog_episode_pending_%'`).Scan(&indexes); err != nil {
+		t.Fatal(err)
+	}
+	if indexes != 3 {
+		t.Fatalf("source_catalog_episode_pending indexes=%d, want 3", indexes)
+	}
+	if err := db.QueryRow(`SELECT count(*) FROM pragma_foreign_key_list('source_catalog_episode_pending')`).Scan(&foreignKeys); err != nil {
+		t.Fatal(err)
+	}
+	if foreignKeys != 2 {
+		t.Fatalf("source_catalog_episode_pending foreign keys=%d, want 2", foreignKeys)
+	}
+	var publicationSQL string
+	if err := db.QueryRow(`SELECT COALESCE(sql,'') FROM sqlite_schema
+		WHERE type='table' AND name='source_catalog_episode_publication'`).Scan(&publicationSQL); err != nil {
+		t.Fatalf("read source_catalog_episode_publication schema: %v", err)
+	}
+	if !strings.Contains(publicationSQL, "state") || !strings.Contains(publicationSQL, "published") {
+		t.Fatalf("source_catalog_episode_publication schema lacks its state guard: %s", publicationSQL)
 	}
 }
 

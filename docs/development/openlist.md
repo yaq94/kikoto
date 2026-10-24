@@ -156,22 +156,31 @@ Finite episode splits use `source_catalog_episode_pending` to keep new episode
 entries out of source search and public cards until the complete snapshot is
 ready. A staged entry has no public source and has `excluded` availability;
 its mapping records the source, parent root and episode root. Pending entries
-are reused after a restart. Once all staged writes commit, one bounded
-transaction publishes the episodes, consumes their mappings, and handles the
-metadata parent and stale cards. Each staging transaction writes at most 100
-entry/file rows in total, including a single episode's file list. This is not a
-100-root limit and is separate from the full-index publication batches of 50
-observation rows. A parent that already owns a work, series membership, or
-incoming alias remains on the ordinary complete-snapshot path; its pending
-rows are reclaimed and its catalog id is returned. A failed activation removes
-only safe pending rows, while a failed compensation preserves them for the
-next scan and joins the cleanup error to the original error.
+are reused after a restart. The shared entry-read predicate excludes them from
+direct detail reads, search and user-state registration without hiding retained
+missing records, which also have no public source. Once all staged writes
+commit, activation gives public source identity to at most 100 entries per
+transaction while their pending mappings keep the set hidden. A final
+transaction switches one parent publication-state row to `published`, so
+readers never observe only the first activation batch. Pending mappings,
+parent metadata files, and stale-card status changes are then cleared or
+written in bounded follow-up transactions. Staging, activation, parent
+metadata, and stale-card maintenance each write at most 100 entry/file rows in
+total, including a single episode's file list; mapping cleanup removes at most
+100 pending mappings per transaction. This is not a 100-root limit and is
+separate from the full-index publication batches of 50 observation rows. A
+parent that already owns a work, series membership, or incoming alias remains
+on the ordinary complete-snapshot path; its pending rows are reclaimed and its
+catalog id is returned. A failed activation removes only safe pending rows,
+while a failed compensation preserves them for the next scan and joins the
+cleanup error to the original error.
 
 Numbered directories own their descendants. A directory with audio, or with
 only recognized format subdirectories, owns its track/format tree; other
 directories remain traversal containers. Evidenced episodes own their descendants;
 existing published containers retain their identity and require explicit review
-to split. Series membership is attached in the same publication transaction. No title matching merges catalog identities.
+to split. Episode series membership is attached in the staging transaction. No
+title matching merges catalog identities.
 A searchable card needs observed audio and must stay within the admission
 bounds: at most 5,000 files in total, and when non-audio files exceed 2,000 at
 least five audio files must remain. The indexer, publication path and browse API

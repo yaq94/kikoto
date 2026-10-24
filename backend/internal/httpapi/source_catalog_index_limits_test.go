@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -113,10 +114,13 @@ func TestSourceCatalogIndexCancelStopsConcurrentRequestsAndResumes(t *testing.T)
 }
 
 func newCatalogIndexFixture(t *testing.T, upstream http.Handler) catalogIndexFixture {
+	return newCatalogIndexFixtureWithDB(t, upstream, openMigratedTestDB(t))
+}
+
+func newCatalogIndexFixtureWithDB(t *testing.T, upstream http.Handler, db *sql.DB) catalogIndexFixture {
 	t.Helper()
 	remote := httptest.NewServer(upstream)
 	t.Cleanup(remote.Close)
-	db := openMigratedTestDB(t)
 	s := NewServer(db, config.Config{Mode: config.ModeProduction, RootUsername: "synthetic-user", DataRoot: t.TempDir(), CacheRoot: t.TempDir()})
 	t.Cleanup(func() { _ = s.Shutdown(context.Background()) })
 	createTestAdministrator(t, s, "synthetic-user", "synthetic-password")

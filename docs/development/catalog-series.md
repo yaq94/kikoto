@@ -50,11 +50,46 @@ Format variants without an episode marker, such as `MP3` beside `FLAC`, remain
 formats of the enclosing release.
 
 A finite scan partitions a new root only when every playable file belongs to
-an evidenced direct child. Full indexing attaches membership in the same
-transaction as catalog publication. Published containers keep their existing
-identity when later observations reveal episode children; a later numberless
-work below a reviewed grouping folder still receives its own card. Reading or
-grouping does not register works, download media, or change personal records.
+an evidenced direct child. It stages new episode entries before publishing any
+of them. A newly staged entry has no public `file_source_id`, has `excluded`
+availability, and is identified by a `source_catalog_episode_pending` row. Its
+files and series membership can be refreshed in bounded transactions without
+appearing in public cards or source scans. Stage transactions write at most
+100 entry/file rows in total, counting an entry upsert and every file upsert;
+the bound is not a count of episode roots. Existing active episodes keep their
+catalog ids and can be refreshed in place.
+
+After staging completes, activation gives public source identity to at most 100
+stored entries per transaction. Every batch rechecks the parent's work, series
+and incoming-alias state. The pending mapping stays in place during these
+batches, so direct catalog reads, source search and user-state writes continue
+to exclude the entries. `source_catalog_episode_publication` holds one row per
+source and parent. A final transaction rechecks the parent and flips that row
+to `published`, so 101 or more episodes become visible without rewriting every
+entry again. Pending mappings are then cleared in bounded batches. Parent
+metadata files and stale-card status changes run in bounded follow-up
+transactions after the visibility switch. The shared
+pending-aware entry predicate distinguishes this state from a retained missing
+record, which may also have no public source. The pending mapping lets a new
+process reuse the same entry after interruption; a failed activation or
+visibility transition is compensated without publishing a partial split.
+Compensation
+removes pending-only series membership before deleting an unowned pending
+entry because that membership uses `ON DELETE RESTRICT`; file rows cascade
+with the entry. A failed compensation leaves the pending state recoverable
+and is returned together with the publication error. A parent with a work,
+series membership, or incoming alias stays an ordinary published root with
+its complete file snapshot and no staged residue. Neither pending cleanup nor
+activation deletes a work or personal record. Staging, activation, parent
+metadata, and stale-card maintenance each write at most 100 entry/file rows per
+transaction; mapping cleanup removes at most 100 pending mappings per
+transaction.
+
+Full indexing attaches membership in the same transaction as catalog
+publication. Published containers keep their existing identity when later
+observations reveal episode children; a later numberless work below a reviewed
+grouping folder still receives its own card. Reading or grouping does not
+register works, download media, or change personal records.
 A complete refresh marks episode cards that the listing no longer contains as
 `missing`, keeping their id, work link and personal records; the series view
 keeps listing them with `status: "missing"` so their personal records remain

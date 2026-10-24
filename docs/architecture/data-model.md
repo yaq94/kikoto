@@ -44,6 +44,24 @@ keeps ordered catalog entries without changing their work or edition references.
 private reviews are never copied into preview payloads. See
 [Catalog series](../development/catalog-series.md).
 
+Schema 096 adds `source_catalog_episode_pending` for finite-scan episode
+publication. Its `source_id`, `parent_root`, and `catalog_entry_root` identify
+the source snapshot; `catalog_entry_id` references the staged entry with
+`ON DELETE CASCADE`, and the source also cascades. A unique
+`(source_id,parent_root,catalog_entry_root)` index selects one staged entry for
+each episode. Staging starts with `file_source_id IS NULL` and
+`availability_status='excluded'`. Activation may assign the source id in
+bounded batches, but the pending mapping remains the visibility gate until the
+final transaction. `source_catalog_episode_publication` stores one
+`pending`/`published` row for each source and parent; flipping that row publishes
+the complete split without rewriting every entry. Direct reads, source search
+and user-state writes exclude partially activated episode cards. Pending
+mappings, parent metadata files and stale-card status changes are applied in
+bounded follow-up transactions. Membership may reference a staged entry, but
+series readers require a published entry. [Catalog
+series](../development/catalog-series.md) describes the transaction and
+recovery boundary.
+
 ## Work Metadata
 
 Important tables:

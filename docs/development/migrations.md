@@ -70,6 +70,18 @@ its application version is recorded as `legacy`.
    in production and in development mode, the selected baseline and the
    complete numbered chain produce the same schema and seed rows.
 
+Schema 096 is `096_catalog_episode_pending.sql`. It creates the pending
+source/parent/episode-root mapping used by finite episode scans and indexes
+lookups by parent, entry and episode root. It also creates
+`source_catalog_episode_publication`, whose single parent row switches a
+complete staged split between `pending` and `published`. Both source and entry
+references cascade; `catalog_series_member` retains its restrictive entry
+reference, so episode compensation removes pending-only membership explicitly
+before deleting an entry. Run `go generate ./migrations` to produce
+`compat/096_dev.sql`; the numbered migration does not alter 095 or reconstruct
+an existing database from a baseline. See [Catalog series](catalog-series.md)
+for the staging, activation and recovery semantics.
+
 ## Fresh Installs And Upgrades
 
 The single-row `schema_state` table records the current schema version, the
