@@ -109,15 +109,21 @@ func countRetireRows(t *testing.T, db *sql.DB, query string, args ...any) int {
 
 // A blocked prefix must not stall the pass. The first stale cards are partial
 // coverage and cannot retire, so the local cursor must walk past them and
-// reach the covered cards in later pages. The same layout is retired once by
-// the old one-shot function to compare the final state.
-func TestCatalogRetireStepPagesByIDAndMatchesOneShot(t *testing.T) {
+// reach the covered cards in later pages. An identical layout on another source
+// is the control: retirement cannot leak across source boundaries.
+func TestCatalogRetireStepPagesByIDAndKeepsOtherSources(t *testing.T) {
 	s, db := newRetireTestServer(t)
 	const generation = int64(1)
 	const partial, covered = 110, 110
 	seedRetireLayout(t, db, 1, generation, partial, covered)
 	seedRetireLayout(t, db, 2, generation, partial, covered)
 	job := workflowJobRecord{ID: 1, RunID: generation, WorkerType: sourceCatalogIndexWorkerType, LockedBy: "retire-test"}
+	otherSourceBefore := countRetireRows(t, db, `SELECT count(*) FROM source_catalog_entry WHERE file_source_id=2`)
+	otherFilesBefore := countRetireRows(t, db, `SELECT count(*) FROM source_catalog_file f
+		JOIN source_catalog_entry e ON e.id=f.catalog_entry_id WHERE e.file_source_id=2`)
+	otherStateBefore := retireRowsDigest(t, db, `SELECT e.id,e.file_source_id,COALESCE(e.relocated_to_id,0),f.relative_path,f.size_bytes
+		FROM source_catalog_entry e JOIN source_catalog_file f ON f.catalog_entry_id=e.id
+		WHERE e.file_source_id=2 ORDER BY e.id,f.relative_path`)
 
 	var cursor int64
 	total, pages := 0, 0
@@ -148,34 +154,54 @@ func TestCatalogRetireStepPagesByIDAndMatchesOneShot(t *testing.T) {
 		t.Fatalf("pages=%d, want the pass to cross the blocked prefix", pages)
 	}
 
-	tx, err := db.Begin()
+	if got := countRetireRows(t, db, `SELECT count(*) FROM source_catalog_entry WHERE file_source_id=1 AND relocated_to_id IS NULL`); got != partial+2*covered {
+		t.Fatalf("source 1 live cards=%d, want %d", got, partial+2*covered)
+	}
+	if got := countRetireRows(t, db, `SELECT count(*) FROM source_catalog_entry WHERE file_source_id=1 AND last_seen_generation<>1 AND root_path LIKE '/Example/C%'`); got != 0 {
+		t.Fatalf("source 1 covered stale cards left=%d, want 0", got)
+	}
+	if got := countRetireRows(t, db, `SELECT count(*) FROM source_catalog_entry WHERE file_source_id=1 AND last_seen_generation<>1 AND root_path LIKE '/Example/P%'`); got != partial {
+		t.Fatalf("source 1 partial stale cards=%d, want %d", got, partial)
+	}
+	if got := countRetireRows(t, db, `SELECT count(*) FROM source_catalog_entry a
+		JOIN source_catalog_entry t ON t.id=a.relocated_to_id
+		WHERE t.file_source_id=1 AND a.root_path LIKE '/Example/C%'`); got != covered {
+		t.Fatalf("source 1 relocated aliases=%d, want %d", got, covered)
+	}
+	if got := countRetireRows(t, db, `SELECT count(*) FROM source_catalog_entry WHERE file_source_id=2`); got != otherSourceBefore {
+		t.Fatalf("source 2 cards=%d, want unchanged %d", got, otherSourceBefore)
+	}
+	if got := countRetireRows(t, db, `SELECT count(*) FROM source_catalog_file f
+		JOIN source_catalog_entry e ON e.id=f.catalog_entry_id WHERE e.file_source_id=2`); got != otherFilesBefore {
+		t.Fatalf("source 2 files=%d, want unchanged %d", got, otherFilesBefore)
+	}
+	if after := retireRowsDigest(t, db, `SELECT e.id,e.file_source_id,COALESCE(e.relocated_to_id,0),f.relative_path,f.size_bytes
+		FROM source_catalog_entry e JOIN source_catalog_file f ON f.catalog_entry_id=e.id
+		WHERE e.file_source_id=2 ORDER BY e.id,f.relative_path`); after != otherStateBefore {
+		t.Fatal("source 2 identity or file rows changed while retiring source 1")
+	}
+}
+
+func retireRowsDigest(t *testing.T, db *sql.DB, query string) string {
+	t.Helper()
+	rows, err := db.Query(query)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = retireCoveredContainerCardsTx(context.Background(), tx, 2, generation); err != nil {
-		_ = tx.Rollback()
+	defer func() { _ = rows.Close() }()
+	var result strings.Builder
+	for rows.Next() {
+		var id, source, relocated, size int64
+		var path string
+		if err = rows.Scan(&id, &source, &relocated, &path, &size); err != nil {
+			t.Fatal(err)
+		}
+		fmt.Fprintf(&result, "%d/%d/%d/%s/%d\n", id, source, relocated, path, size)
+	}
+	if err = rows.Err(); err != nil {
 		t.Fatal(err)
 	}
-	if err = tx.Commit(); err != nil {
-		t.Fatal(err)
-	}
-
-	for _, sourceID := range []int64{1, 2} {
-		if got := countRetireRows(t, db, `SELECT count(*) FROM source_catalog_entry WHERE file_source_id=? AND relocated_to_id IS NULL`, sourceID); got != partial+2*covered {
-			t.Fatalf("source %d live cards=%d, want %d", sourceID, got, partial+2*covered)
-		}
-		if got := countRetireRows(t, db, `SELECT count(*) FROM source_catalog_entry WHERE file_source_id=? AND last_seen_generation<>1 AND root_path LIKE '/Example/C%'`, sourceID); got != 0 {
-			t.Fatalf("source %d covered stale cards left=%d, want 0", sourceID, got)
-		}
-		if got := countRetireRows(t, db, `SELECT count(*) FROM source_catalog_entry WHERE file_source_id=? AND last_seen_generation<>1 AND root_path LIKE '/Example/P%'`, sourceID); got != partial {
-			t.Fatalf("source %d partial stale cards=%d, want %d", sourceID, got, partial)
-		}
-		if got := countRetireRows(t, db, `SELECT count(*) FROM source_catalog_entry a
-			JOIN source_catalog_entry t ON t.id=a.relocated_to_id
-			WHERE t.file_source_id=? AND a.root_path LIKE '/Example/C%'`, sourceID); got != covered {
-			t.Fatalf("source %d relocated aliases=%d, want %d", sourceID, got, covered)
-		}
-	}
+	return result.String()
 }
 
 // retireCatalogCardsBatch commits at most 100 retirements per call. The first
