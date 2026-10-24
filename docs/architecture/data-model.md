@@ -601,6 +601,39 @@ person's display name through a confirmed alias held by exactly one person, so
 metadata sync keeps a merge instead of recreating the merged-away person. A
 merged name never replaces the target's display name.
 
+## Translation Corpus
+
+`content_translation` is the durable, searchable translated-content corpus. A
+row is keyed by the unique `cache_key`, which separates entity kind and id,
+field, language, source text, origin (`native` or `model`), model, base URL,
+template version and reasoning switch. The planned migration 099 adds a
+`config_key` covering the output-shaping configuration; a row with another key
+is stale and is not current coverage, while rows from before 099 are treated as
+legacy candidates until re-prefilled. Native rows store the source text
+unchanged; model rows store successful generated text. Current title rows for `work`,
+`source_catalog_entry` and `catalog_series` are required for language-specific
+search and are never eviction candidates for the `cacheBytes` or `maxEntries`
+budgets.
+
+`content_translation_search` is an FTS5 trigram index over
+`content_translation.translated_text`, maintained by insert, update and delete
+triggers. A display-language text search reads only rows for the requested
+language and current configuration; an `origin` search reads the original
+source index. Release codes and other structured identifiers remain searchable
+regardless of display language. Three-character and longer text queries use the
+trigram index. One- and two-character queries page over the complete effective
+set with the `(language, entity_kind, id)` index and `instr`; they must not stop
+at a fixed newest-row window.
+
+`source_field_translation` is a rebuildable display cache for source-level
+fields such as a remote title, tag or directory name. It has no FTS table and is
+never read by content search. Non-title `content_translation` model rows and
+all `source_field_translation` rows may be evicted within the configured
+budgets. Superseded and retired rows are removed by a low-frequency cleanup;
+they do not count as current coverage. See
+[ADR-0006](../decisions/ADR-0006-catalog-remediation-and-translation-consistency.md)
+and [ADR-0007](../decisions/ADR-0007-source-field-translation-cache.md).
+
 ## File Availability
 
 Important tables:
@@ -1011,10 +1044,9 @@ completed and the publisher has written its card and file rows.
 The publisher drives each batch from the current generation's complete
 directories and requires an audio root through `EXISTS`; the directory primary
 key orders the scan and the partial index over pending rows seeks the
-observations. An earlier materialized-roots join scanned the whole root set per
-batch. The worker drains at most eight batches of 50 rows per invocation and
-then returns the job to the queue, which bounds write-lock spans while the scan
-continues.
+observations. The worker drains at most eight batches of 50 rows per invocation
+and then returns the job to the queue, which bounds write-lock spans while the
+scan continues.
 
 `source_catalog_scan.publish_cleanup_cursor` (migration
 [`077_source_catalog_publish_cleanup.sql`](../../backend/migrations/077_source_catalog_publish_cleanup.sql))
