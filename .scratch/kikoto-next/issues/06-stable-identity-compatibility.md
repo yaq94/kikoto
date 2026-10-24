@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** resolved
+**Status:** ready-for-agent
 **Implementation:** resolved；本地实现与 H/R 已验收；生产部署验收见 17。
 
 **依据:** [正式规格](../spec.md) · [工单总览](../ticket-proposal.md)

@@ -4,7 +4,7 @@
 
 **Blocked by:** [12：系列与单集独立个人评价](12-series-episode-personal-reviews.md)。
 
-**Status:** resolved
+**Status:** ready-for-agent
 
 **Implementation:** resolved；本地实现与 H/F 已验收；生产部署验收见 17。
 

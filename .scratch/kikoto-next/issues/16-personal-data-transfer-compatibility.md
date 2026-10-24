@@ -4,7 +4,7 @@
 
 **Blocked by:** [12：系列与单集独立个人评价](12-series-episode-personal-reviews.md)。
 
-**Status:** resolved
+**Status:** ready-for-agent
 **Implementation:** resolved；本地实现与 H/F 已验收；生产部署验收见 17。
 
 **依据:** [正式规格](../spec.md) · [工单总览](../ticket-proposal.md)
@@ -34,4 +34,4 @@ H 使用真实 HTTP、会话和迁移 SQLite；R 真实关闭并重启同一应�
 
 ## Comments
 
-已实现 v2 稳定引用与必要信息登记，保留 v1/Kikoeru 兼容、本人字段冲突及精确版本/来源归属。六个 H/R 场景、真实前后端 F、既有传输回归与迁移/静态/构建检查见[本票证据](../evidence/16-personal-transfer.md)。个人备份不重建全库系列成员或共享关联；不确定引用逐条报告，安全记录继续导入。完整部署验收由 17 负责。
+已实现 v2 稳定引用与必要信息登记，保留 v1/Kikoeru 兼容、本人字段冲突及精确版本/来源归属。六个 H/R 场景、真实前后端 F、既有传输回归与迁移/静态/构建检查见[本票证据](../evidence/16-personal-transfer.md)。个人备份不根据标题重建全库系列成员或覆盖共享关联；必要父级稳定身份的恢复由 22 补齐，不确定引用逐条报告，安全记录继续导入。完整部署验收由 24 负责。

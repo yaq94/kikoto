@@ -4,7 +4,7 @@
 
 **Blocked by:** [11：无码系列卡片与独立单集归组](11-series-and-episode-grouping.md)。
 
-**Status:** resolved
+**Status:** ready-for-agent
 **Implementation:** resolved；本地实现与 H/F 已验收；生产部署验收见 17。
 **证据:** [系列及单集 H/R/F 验收](../evidence/12-series-reviews.md)。本地清单通过，11/07 的发布依赖保留。
 
