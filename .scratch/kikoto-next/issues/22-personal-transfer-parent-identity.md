@@ -15,7 +15,7 @@
 
 ## 数据模型
 
-计划使用迁移 100（在 096、097、098、099 之后；按实际连续链调整）：
+迁移编号在系列迁移合并后按实际连续链分配：
 
 ```sql
 ALTER TABLE work ADD COLUMN parent_work_id INTEGER REFERENCES work(id) ON DELETE RESTRICT;
@@ -72,4 +72,4 @@ CREATE INDEX idx_work_parent_work ON work(parent_work_id);
 
 ## Comments
 
-`relationships_not_imported` 不能成为已确认父级静默丢失的完成状态。当前 `registerTransferWork` 对未知 episode 只创建独立 work；必须先完成父级数据模型和备份字段，再改导入路径。迁移编号在 096 落地后按连续链分配，不能抢占或跳号。
+`relationships_not_imported` 不能成为已确认父级静默丢失的完成状态。当前 `registerTransferWork` 对未知 episode 只创建独立 work；必须先完成父级数据模型和备份字段，再改导入路径。迁移编号在系列迁移合并后按连续链分配，不能抢占或跳号。

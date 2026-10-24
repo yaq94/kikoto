@@ -521,50 +521,6 @@ manual values replace them. Changing the order, or a source's enabled state or
 capability, requeues the affected works the same way, and pending remote issues
 of a source the fallback does not use are cleared.
 
-## Content Translation
-
-Translation separates a searchable content corpus from a rebuildable
-source-field display cache.
-
-`content_translation` stores one row per `cache_key`. The key covers the durable
-entity, field, language, source text, origin, model, endpoint, reasoning switch
-and template version. `entity_kind` is `entry`, `series` or `work`; `field` is
-`title`, `description`, `tag` or `directory`. An `origin=native` row copies
-authored text and uses no model call. A model row stores only a successful,
-nonempty translation. `content_translation_search` is an external-content FTS5
-trigram index over `translated_text`, maintained by the table's insert, delete
-and text-update triggers. `translation_prefill_state` is the singleton prefill
-cursor with `idle`, `running`, `paused` or `complete` status and the last error.
-
-`source_field_translation` stores model output for remote titles, tags and
-directory display names that have no durable work, catalog-entry or series
-identity. Its cache key covers the source, normalized work code, field, real
-relative path, source text, target language, model, endpoint, reasoning switch
-and template version. The source foreign key cascades on deletion. The table has
-no FTS index or trigger and is never read by library or source search; source
-availability and the exact public field are revalidated before a row is used.
-
-Display-language library search reads `work` rows of `content_translation` with
-`field=title`. `origin` searches the original `work_search` index. A target
-language does not fall back to original text or another language. `zh-tw`
-normalizes the query to Simplified with `t2s` and also checks native `zh-Hant`
-rows, so no separate Traditional derivative is stored. Queries of three or more
-characters use the trigram index. One- and two-character queries scan a bounded
-window of the newest 50,000 rows for each target language, so that fallback does
-not cover older rows.
-
-`maxEntries` and `cacheBytes` form a soft maintenance budget over model rows in
-both tables. `cacheBytes` measures the SQLite pages attributed to these tables,
-their indexes and FTS shadow tables through `dbstat`; below 1 MiB it falls back
-to UTF-8 text bytes. A translation is committed before the bounded trim, so the
-budget is not a hard database-file quota and a burst can exceed it until a later
-pass. Periodic passes remove superseded rows before oldest live model rows.
-Every model row, including a current searchable `content_translation` row, can
-be selected for eviction; a trim can therefore reduce target-language search
-coverage until the text is translated again. Native rows, personal records and
-source identities are never eviction candidates. `minFreeBytes` pauses new
-persisted generation while stored rows remain readable.
-
 ## Voice Catalog Discovery
 
 Important tables:
@@ -606,14 +562,18 @@ merged name never replaces the target's display name.
 `content_translation` is the durable, searchable translated-content corpus. A
 row is keyed by the unique `cache_key`, which separates entity kind and id,
 field, language, source text, origin (`native` or `model`), model, base URL,
-template version and reasoning switch. The planned migration 099 adds a
-`config_key` covering the output-shaping configuration; a row with another key
-is stale and is not current coverage, while rows from before 099 are treated as
-legacy candidates until re-prefilled. Native rows store the source text
-unchanged; model rows store successful generated text. Current title rows for `work`,
-`source_catalog_entry` and `catalog_series` are required for language-specific
-search and are never eviction candidates for the `cacheBytes` or `maxEntries`
-budgets.
+template version and reasoning switch. `entity_kind` is `entry`, `series` or
+`work`; `field` is `title`, `description`, `tag` or `directory`. An
+`origin=native` row stores authored source text unchanged and uses no model
+call; a model row stores only successful, nonempty output.
+`translation_prefill_state` is the singleton prefill cursor with `idle`,
+`running`, `paused` or `complete` status and the last error. The planned
+migration 099 adds a `config_key` covering the output-shaping configuration; a
+row with another key is stale and is not current coverage, while rows from
+before 099 are treated as legacy candidates until re-prefilled. Current title
+rows for `work`, `source_catalog_entry` and `catalog_series` are required for
+language-specific search and are never eviction candidates for the `cacheBytes`
+or `maxEntries` budgets.
 
 `content_translation_search` is an FTS5 trigram index over
 `content_translation.translated_text`, maintained by insert, update and delete
@@ -626,13 +586,31 @@ set with the `(language, entity_kind, id)` index and `instr`; they must not stop
 at a fixed newest-row window.
 
 `source_field_translation` is a rebuildable display cache for source-level
-fields such as a remote title, tag or directory name. It has no FTS table and is
-never read by content search. Non-title `content_translation` model rows and
-all `source_field_translation` rows may be evicted within the configured
-budgets. Superseded and retired rows are removed by a low-frequency cleanup;
-they do not count as current coverage. See
+fields such as a remote title, tag or directory name. Its cache key covers the
+source, normalized work code, field, real relative path, source text, target
+language, model, endpoint, reasoning switch and template version. The source
+foreign key cascades on deletion. The table has no FTS table or trigger and is
+never read by content search. Source availability and the exact public field are
+revalidated before a row is used.
+
+`maxEntries` and `cacheBytes` form one soft budget over evictable model rows and
+their indexes. `cacheBytes` measures SQLite pages through `dbstat`, including
+FTS shadow tables; values below 1 MiB fall back to UTF-8 text bytes. A write
+commits before the bounded trim, so a burst can remain above the target until a
+later pass. Superseded and retired rows are removed by a low-frequency cleanup
+and do not count as current coverage. If persistent title rows alone exceed the
+budget, the status reports `over_budget`; searchable title rows are not deleted.
+Native rows, personal records and source identities are never eviction
+candidates. See
 [ADR-0006](../decisions/ADR-0006-catalog-remediation-and-translation-consistency.md)
 and [ADR-0007](../decisions/ADR-0007-source-field-translation-cache.md).
+
+The retention and complete short-query behavior above is the accepted issue 21
+target contract. This branch has not implemented the planned 099 configuration
+key or the issue 21 retention/search changes: current code can evict model rows,
+including title rows, and one- and two-character searches still scan only the
+newest 50,000 rows per language. Issue 21 owns those changes; until they land,
+this page does not describe them as completed results.
 
 ## File Availability
 

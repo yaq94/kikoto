@@ -168,6 +168,13 @@ translations. When `minFreeBytes` is not met, new rows are not written at all:
 the caller still returns the translation it already fetched, reports
 `paused_low_disk`, and the durable copy waits for space.
 
+This retention and complete short-query behavior is the accepted issue 21 target
+contract. The branch has not implemented the planned 099 configuration key or
+the issue 21 retention/search changes: current code can evict model rows,
+including title rows, and one- and two-character searches still scan only the
+newest 50,000 rows per language. Issue 21 owns those changes and this page does
+not present them as completed results.
+
 A content change produces a new `cache_key` because the source text is part of
 it. The previous row is stale and the periodic retention pass removes it as
 superseded; it is never counted as current coverage. `zh-tw` viewers read the

@@ -23,7 +23,7 @@
 
 ## 调度数据模型
 
-新增 `source_catalog_schedule`（计划编号 098，位于 096 与 097 之后；若集成时编号变化，以连续链为准）：
+新增 `source_catalog_schedule`（迁移编号在实现时按实际连续链分配；本分支当前止于 095，系列迁移由并行实施会话负责）：
 
 ```sql
 CREATE TABLE source_catalog_schedule (

@@ -15,7 +15,7 @@
 
 ## 数据模型与迁移
 
-在 096 提交后使用计划编号 099（若 097 用于 095 修复，则按连续链调整）：
+系列迁移合并后，按实际连续链分配迁移编号：
 
 - `content_translation` 增加 `config_key TEXT NOT NULL DEFAULT ''`；索引 `(language, entity_kind, field, config_key, entity_id)`。
 - `translation_prefill_state` 增加 `config_key TEXT NOT NULL DEFAULT ''`、`cursor_kind TEXT NOT NULL DEFAULT 'entry'`、`cursor_id INTEGER NOT NULL DEFAULT 0`；保留 `status`、`last_error`、`updated_at`。
