@@ -28,7 +28,8 @@
 - 097 作为 095 的条件修复迁移：
   - 若确认没有数据库执行过旧 095，记录证据并保留 097 为空操作/规范化说明；新装基线以冻结 095 为准。
   - 若存在旧 095，097 在 096 提交后重建 `source_field_translation`：新表带外键、复制合法 `source_id` 行、丢弃孤儿缓存、重建索引、`PRAGMA foreign_key_check` 0 行。
-  - 旧 095 的 checksum 与当前 095 不同，`migration.go` 会在到达 097 前拒绝启动。必须同时提供已知旧 checksum 的兼容门禁或一次性升级路径；不能只写“097 修复”而忽略 checksum。
+  - 旧 095 的 checksum 与当前 095 不同，`migration.go` 会在到达 097 前拒绝启动。097 本身不能修复这个门禁，必须在迁移运行器之前提供一次性 preflight：只对精确匹配旧 095 表结构指纹的数据库，在事务中把该 ledger 行的 checksum 规范化为当前 095 checksum；不匹配、部分匹配或存在额外对象时拒绝启动。
+  - 禁止增加通用的“忽略 checksum”开关。preflight 必须记录旧 checksum、新 checksum、旧 schema 指纹、执行时间、数据库备份路径和结果；同时提供离线等价命令，供无法启动的实例使用。097 只负责结构重建，不负责绕过门禁。
 - 097 之后连续分配：098 目录调度、099 译文语料契约、100 work 父级；任何编号变化必须同步迁移头、`compat/096_dev.sql` 和测试常量。
 - 不得修改已发布迁移来“修复”旧环境。
 
@@ -41,12 +42,14 @@
 - 测试编号改用 `testfixture.WorkCodeAt`；超过 400 条使用 `HighCardinalityWorkCodeAt`。
 - 公开证据去除 `/srv/...`、数据库路径、真实作品编号、生产 entryId/sourceId 和原始日志。
 - 新增 tracked-evidence 扫描（脚本或测试），不以 `make sensitive-check` 的 diff 结果代替；允许列表只用于合成占位符。
+- 验证 `.scratch` 内相对链接；当前 `evidence/17-deployment.md` 与 `evidence/21-final-acceptance.md` 的 `release-rollback.md` 链接需要修正。
 
 ## 验收清单
 
 - [ ] source-only alias、work-backed alias、stale apply、个人评价保留均有 H 回归。
 - [ ] 合成 dry-run 不含生产路径、记录标识或作品编号。
 - [ ] 095 历史、096 占用、097 条件修复和旧库升级测试有明确证据；不修改已发布迁移。
+- [ ] 旧 095 的 checksum 兼容在迁移运行器之前完成；有旧库、无旧库、指纹不匹配三条路径均有测试，且不存在通用 checksum 绕过。
 - [ ] 数据模型、翻译文档、回滚说明、迁移文档、测试夹具和历史叙述修正。
 - [ ] tracked-evidence 扫描、文档链接、locale 和相关行为回归通过。
 

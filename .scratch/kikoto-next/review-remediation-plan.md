@@ -89,31 +89,34 @@ CREATE TABLE source_catalog_schedule (
   file_source_id INTEGER PRIMARY KEY REFERENCES file_source(id) ON DELETE CASCADE,
   daily_due_at INTEGER NOT NULL,
   weekly_due_at INTEGER NOT NULL,
+  deferred_until INTEGER NOT NULL DEFAULT 0,
   manual_pending INTEGER NOT NULL DEFAULT 0 CHECK(manual_pending IN (0,1)),
   resume_full_pending INTEGER NOT NULL DEFAULT 0 CHECK(resume_full_pending IN (0,1)),
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX source_catalog_schedule_due
-  ON source_catalog_schedule(daily_due_at, weekly_due_at);
+  ON source_catalog_schedule(deferred_until, daily_due_at, weekly_due_at);
 ```
 
 - `daily_due_at`：下一次本地 03:00；`weekly_due_at`：下一次本地周日 03:00；时区 `Asia/Shanghai`。
+- `deferred_until`：低空间、维护 hold 或磁盘未知时的统一延后截止时刻；只推进该字段，不破坏原 due 与 pending 状态。
 - `manual_pending=1`：用户在任务运行期间请求刷新；任务结束后只消费一次。
-- 迁移时为每个启用的 openlist source 初始化两个 due；旧 setting 只读迁移，不再参与新判定。
-- 新建或重新启用 openlist source 时在同一事务插入 schedule 行；`daily_due_at` 为下一次本地 03:00，`weekly_due_at` 为下一次本地周日 03:00。
+- 迁移只处理 `enabled=1 AND source_type='openlist'` 的来源：合法的未过期旧日／周 due 可沿用，否则分别取迁移后的下一个本地 03:00 和下一个本地周日 03:00；`source_catalog_daily_run:` 仅作历史读取参考，非法、过期或矛盾值进入迁移报告。
+- 新建或重新启用 openlist source 时在同一事务插入或重置 schedule 行；`daily_due_at` 为下一次本地 03:00，`weekly_due_at` 为下一次本地周日 03:00，`deferred_until=0`，两个 pending 位为 0。禁用来源保留行但跳过调度。
 
 ### 5.2 派发状态机
 
-1. 在 `BEGIN IMMEDIATE` 事务中读取 `source_catalog_schedule`、`source_catalog_scan`、当前 `workflow_run`、`source_catalog_sync_run` 和 source 状态；没有 due 且两个 pending 位都为 0 时直接返回。
-2. `effective_due = min(daily_due_at, weekly_due_at)`；若 `weekly_due_at <= daily_due_at` 且已到期，选择 `weekly`（全量对账），否则选择 `daily`（目录优先增量）。两者同时到期时只创建一个任务。
-3. 已有 `queued/running` 的 full 或 `running` 的 sync：不创建第二个任务；若 `manual_pending=1` 或 `effective_due` 已过，只保留待处理标记，不推进 due。
-4. 没有运行任务时才创建任务，并在同一事务推进 due：
+1. 在 `BEGIN IMMEDIATE` 事务中读取 `source_catalog_schedule`、`source_catalog_scan`、当前 `workflow_run`、`source_catalog_sync_run` 和 source 状态；source 不满足 `enabled=1 AND source_type='openlist'` 时直接返回。`now < deferred_until` 时直接返回，延后到期后清零；没有 due 且两个 pending 位都为 0 时直接返回。
+2. 没有运行任务且 `resume_full_pending=1` 时优先创建 weekly full；成功后推进 `weekly_due_at` 并清零该位。这样 full 不会在完成后再次被同一标记触发。
+3. 否则计算 `effective_due = min(daily_due_at, weekly_due_at)`；若 `weekly_due_at <= daily_due_at` 且已到期，选择 `weekly`（全量对账），否则选择 `daily`（目录优先增量）。两者同时到期时只创建一个任务。
+4. 已有 `queued/running` 的 full 或 `running` 的 sync：不创建第二个任务；若 `manual_pending=1` 或 `effective_due` 已过，只保留待处理标记，不推进 due。sync 运行中 weekly 到期时设置 `resume_full_pending=1`，不得在 sync 内创建 full。
+5. 没有运行任务时才创建任务，并在同一事务推进 due；创建失败或事务回滚时不得推进 due：
    - daily：`daily_due_at = next 03:00`；`weekly_due_at` 不动。
    - weekly：`weekly_due_at = next Sunday 03:00`；`daily_due_at = next 03:00`，避免周日重复。
    - manual：消费 `manual_pending`；按当前 generation 状态选择增量或维护同步，不改变日／周计划。
-5. 最后 generation 为 `partial/failed/cancelled` 时，启动“维护同步”：对 complete 目录做目录优先探测，对 failed/restricted/pending 目录重试未完成范围；不先排 full generation，不并发 resume。只有没有任何可复用 generation 时才请求 full resume；weekly 同时到期时把 `resume_full_pending=1`，等维护同步结束后再跑 full。
-6. `weekly` 全量任务必须与 sync 串行；sync 运行期间只记录 `weekly` 待处理，不能直接插入 full。
-7. 低空间、维护 hold 或磁盘未知时把相应 due 推后一小时，保留检查点；重启只追赶一次，不循环补跑。
+6. 最后 generation 为 `partial/failed/cancelled` 时，启动“维护同步”：对 complete 目录做目录优先探测，对 failed/restricted/pending 目录重试未完成范围；不先排 full generation，不并发 resume。只有没有任何可复用 generation 时才请求 full resume；weekly 同时到期时把 `resume_full_pending=1`，等维护同步结束后再跑 full。
+7. `weekly` 全量任务必须与 sync 串行；sync 运行期间只记录 `weekly` 待处理，不能直接插入 full。
+8. 低空间、维护 hold 或磁盘未知时只设置 `deferred_until=now+1h`，保留原 due、pending 和检查点；恢复后只追赶一次，不循环补跑。不能只推 daily 而留下已过期的 weekly，否则 weekly 会绕过延后。
 
 ### 5.3 force 增量
 
@@ -145,28 +148,37 @@ CREATE INDEX source_catalog_schedule_due
 
 在 096 已提交后使用计划编号 099（097 是 095 修复，098 是目录调度；若集成时编号变化，按连续链调整）：
 
-- `content_translation` 增加 `config_key TEXT NOT NULL DEFAULT ''`；索引 `(language, entity_kind, field, config_key, entity_id)`。
-- `translation_prefill_state` 增加 `config_key TEXT NOT NULL DEFAULT ''`、`cursor_kind TEXT NOT NULL DEFAULT 'entry'`、`cursor_id INTEGER NOT NULL DEFAULT 0`、`last_error TEXT` 仍保留。`id=1` 单行状态足够，因为一个配置只有一个 prefill 队列。
-- 新增 `translation_prefill_failure(entity_kind, entity_id, language, config_key, attempts, next_retry_at, last_error, PRIMARY KEY(...))`；失败计数持久化，重启不丢。
+- `content_translation` 增加 `config_key TEXT NOT NULL DEFAULT ''`；索引 `(language, entity_kind, field, config_key, entity_id)`，并增加短查询覆盖索引 `(language, entity_kind, field, id, translated_text)`。
+- `translation_prefill_state` 增加 `config_key TEXT NOT NULL DEFAULT ''`、`cursor_kind TEXT NOT NULL DEFAULT 'entry'`、`cursor_field TEXT NOT NULL DEFAULT 'title'`、`cursor_id INTEGER NOT NULL DEFAULT 0`、`last_error TEXT` 仍保留。`id=1` 单行状态足够，因为一个配置只有一个 prefill 队列。
+- 新增 `translation_prefill_failure(entity_kind, entity_id, field, language, config_key, source_hash, attempts, next_retry_at, last_error, PRIMARY KEY(...))`；失败计数持久化，重启不丢，原文变化后旧失败行不能阻断新文本。
 - `config_key` 只覆盖会影响模型输出的配置：model、base URL、template version、disableThinking；不包含 API key、并发、超时或预算。
 - 旧 model 行没有 `config_key` 时视为 stale；迁移不猜测旧 endpoint／reasoning。若 `model` 和 `template_version` 与当前一致，可只在迁移报告中列为兼容候选，不直接参与严格搜索。
 
 ### 6.2 有效实体投影
 
-有效标题实体按以下口径生成，entry、series、work 使用同一套查询视图或共享 SQL：
+有效搜索实体按以下口径生成，entry、series、work 使用同一套查询视图或共享 SQL：
 
-- entry：`relocated_to_id IS NULL`、标题非空、source enabled 且 `source_type='openlist'`，并通过 D-16 准入。
-- series：标题非空、至少两个成员，且至少一个成员可准入；series 的 work 不作为普通 work 重复加入。
-- work：标题非空的本地作品；排除作为 `catalog_series.work_id` 的系列 work，避免与 series 重复。
+- entry：`relocated_to_id IS NULL`、标题或简介非空、source enabled 且 `source_type='openlist'`，并通过 D-16 准入；搜索字段为 `title`、`description`。
+- series：标题非空、至少两个成员，且至少一个成员可准入；series 的 work 不作为普通 work 重复加入；搜索字段为 `title`。
+- work：标题或简介非空的本地作品；排除作为 `catalog_series.work_id` 的系列 work，避免与 series 重复；搜索字段为 `title`、`description`。
 
-prefill 必须逐类枚举 entry、series、work，不能只枚举 entry。原生目标语言内容先写 `origin='native'`；已有 `work_title_language` 或来源已提供的目标语言标题，优先作为 native 行，不重复调用模型。`zh-tw` 从 `zh-Hans` 派生，原生 `zh-Hant` 计入。
+prefill 必须按 `entity_kind × field` 枚举：entry 的 title／description、series 的 title、work 的 title／description。原生目标语言内容先写 `origin='native'`；已有 `work_title_language`、来源已提供的目标语言标题或目标语言简介，优先作为 native 行，不重复调用模型。`zh-tw` 从 `zh-Hans` 派生，原生 `zh-Hant` 计入；`tag`、`directory` 按需翻译，不进入搜索语料与预填覆盖。
+
+| 显示语言 | 存储／生成语言 | 搜索集合 |
+| --- | --- | --- |
+| `zh-cn` | `zh-Hans` model 或 native | `zh-Hans` |
+| `zh-tw` | `zh-Hans` 经 OpenCC `s2t`；原生 `zh-Hant` 单独保存 | `zh-Hans` 与原生 `zh-Hant` |
+| `en-us` | `en-US` model 或 native | `en-US` |
+| `ja-jp` | `ja-JP` model 或 native | `ja-JP` |
+| `ko-kr` | `ko-KR` model 或 native | `ko-KR` |
+| `origin` | 原文，不生成译文 | 原文索引 |
 
 ### 6.3 覆盖状态
 
-- 覆盖按 `entity_kind × language` 统计 total、covered、missing、stale、failed、native、model。
-- 当前行条件：`origin='native'` 或 `config_key=当前 config_key`；source_text 必须等于当前实体标题；实体必须仍有效。
-- `complete` 只在所有有效实体、所有目标语言均无 missing、stale、failed、retry 时成立；游标到结尾、历史行数量、连续失败跳过都不能写 complete。
-- 新条目、标题变化、模型／base URL／模板／reasoning 变化，必须重置对应实体的覆盖状态和 prefill 游标；series 标题变化也重置。
+- 覆盖按 `entity_kind × field × language` 统计 total、covered、missing、stale、failed、native、model。
+- 当前行条件：`origin='native'` 或 `config_key=当前 config_key`；source_text 必须等于当前实体的当前字段文本；实体必须仍有效。
+- `complete` 只在所有有效实体、所有可搜索字段、所有目标语言均无 missing、stale、failed、retry 时成立；游标到结尾、历史行数量、连续失败跳过都不能写 complete。
+- 新条目、标题／简介变化、模型／base URL／模板／reasoning 变化，必须重置对应实体的覆盖状态和 prefill 游标；series 标题变化也重置。
 - 失败条目进入持久 retry；连续失败达到上限后状态为 `failed`，不是 skipped，也不计入 covered；继续处理其他实体，整体保持 incomplete。
 
 ### 6.4 搜索
@@ -174,28 +186,28 @@ prefill 必须逐类枚举 entry、series、work，不能只枚举 entry。原�
 | 查询类型 | 规则 |
 | --- | --- |
 | `origin` | 只查原文标题／原文 FTS 和文件名；不读 `content_translation` |
-| 目标语言文本 | 只查目标语言 native 或当前 `config_key` 的 model 标题；不并入原文 FTS，不回退原文 |
+| 目标语言文本 | 只查目标语言 native 或当前 `config_key` 的 model 标题与简介；不并入原文 FTS，不回退原文 |
 | 编号、精确代码 | 语言无关；始终查 `primary_code`／`work` 代码，不因显示语言被过滤 |
 | 3 字以上 | FTS5 trigram，join 有效实体、当前行和 D-16 准入 |
-| 1–2 字 | 在完整有效集合上按 `(language, entity_kind, id)` keyset 分页 `instr`；只限制返回条数，不限制扫描行数 |
+| 1–2 字 | 在完整有效集合上按 `(language, entity_kind, field, id)` keyset 分页 `instr`；只限制返回条数，不限制扫描行数；p95 超过 100 ms 时必须增加短词 n-gram 索引或等价索引 |
 | `zh-tw` | 查询先 t2s；同时查 `zh-Hans` 与原生 `zh-Hant`；原生繁体行按原查询命中 |
 
-本地 `library/query.go` 与远程 `openlist_catalog.go` 必须调用同一套 `DisplaySearchTargets` 和 `config_key` 条件。删除或改写 `TestContentTranslationSearchRemoteIncludesOriginalText` 等固化错误行为的测试；新增代码搜索在目标语言下仍可命中的测试。
+本地 `library/query.go` 与远程 `openlist_catalog.go` 必须调用同一套 `DisplaySearchTargets` 和 `config_key` 条件。文本搜索至少覆盖标题和简介；标签、目录名仍可显示翻译，但不能被当作可搜索文本。删除或改写 `TestContentTranslationSearchRemoteIncludesOriginalText` 等固化错误行为的测试；新增“目标语言下按编号仍可搜索”“原文标题不命中”和“简介可命中”的测试。
 
 ### 6.5 保留与预算
 
-- `content_translation` 的当前 `field='title'` 行是持久搜索语料，不得因 `cacheBytes`／`maxEntries` 删除；native 行永不淘汰。
-- 只有非 title 的 model 行、全部 `source_field_translation`、superseded/retired 行是可重建缓存。
+- `content_translation` 的当前 `field='title'` 与 `field='description'` 行是持久搜索语料，不得因 `cacheBytes`／`maxEntries` 删除；native 行永不淘汰。
+- 只有 `tag`／`directory` 的 model 行、全部 `source_field_translation`、superseded/retired 行是可重建缓存。
 - `cacheBytes` 只统计可淘汰行及其索引／FTS 页；持久标题行超出预算时报告 `over_budget`，不牺牲搜索正确性。
 - superseded/retired 清理按当前 `config_key` 和 source_text 判定，不能仅按 id 最大者判断；低频、分批执行。
 - `source_field_translation` 仍是纯显示缓存，不建 FTS，不参与搜索。
 
 ### 6.6 验证与性能
 
-- H/R/F：两用户显示／界面语言独立、四类内容、动态加载、迟到响应、重启、退役、标题变化、配置变化、失败跳过和预算超限。
+- H/R/F：两用户显示／界面语言独立、四类内容、动态加载、迟到响应、重启、退役、标题／简介变化、配置变化、失败跳过和预算超限。
 - H：目标语言严格搜索、origin 搜索、代码搜索、native 内容、短查询完整集合、本地／远程一致。
 - R：prefill 中途关闭重启后续跑；失败 retry 持久；配置变化后旧 complete 失效。
-- 性能：modernc SQLite、45.6 万行；精确命中 p95 <5 ms；3 字以上 p95 <100 ms；1–2 字 p95 <100 ms 或记录优化依据；WAL 峰值和数据库大小留证。
+- 性能：modernc SQLite、45.6 万行；精确命中 p95 <5 ms；3 字以上 p95 <100 ms；1–2 字 p95 <100 ms；WAL 峰值和数据库大小留证。
 
 ## 7. Task 4：工单 22，空库单集父级归属
 
@@ -205,6 +217,8 @@ prefill 必须逐类枚举 entry、series、work，不能只枚举 entry。原�
 
 - 采用迁移 100 的 `work.parent_work_id INTEGER REFERENCES work(id) ON DELETE RESTRICT` 和索引；`kind` 由 `personal_transfer_ref.object_kind`／catalog series 成员关系推断，不新增 `work.kind` 列。只允许 `kind=episode` 的 work 设置父级，父级必须是 `kind=series` 的 work。
 - 应用层拒绝自引用、父级不是 series、父级为 episode、循环、以及一个 episode 有多个不同父级。一个 work 只能有一个明确父系列；来源发现出现多个不同父系列时保留 null 并报告 `parent_conflict`，不猜测。
+- 未知父级不只创建普通 work：同时创建 `catalog_series`（`source_id NULL`、`source_key NULL`、`work_id` 指向父 work），使系列入口可识别；已有 `catalog_series` 只补 `work_id`。父级不创建 `catalog_series_member`，空库没有 `source_catalog_entry`；可见成员关系由 `work.parent_work_id` 读取。
+- 新建 `catalog_series` 的触发器会生成随机 `s:` ref。备份父 ref 空闲时改为备份 ref；已指向同一 series 时复用；指向其他对象时报告 `parent_conflict` 并回滚。`personal_transfer_series` 唯一索引禁止一个 series 保留两个 ref。
 - 迁移回填只在 `catalog_series.work_id` 与成员 `source_catalog_entry.work_id` 都非空且不同、且该 entry 只属于一个 series 时写入；多父级、缺失或矛盾记录只进入报告。
 - `work.primary_code` 与 `logical_work.canonical_code` 在 069 后允许空值，非空值才有部分唯一索引；系列 work 可以继续使用空代码，但必须测试同一备份包含多个系列 work 时不触发唯一约束。若实现新增内部代码，它只能作为内部标识，不能进入编号解析或用户可见的发行编号。
 
@@ -229,19 +243,20 @@ prefill 必须逐类枚举 entry、series、work，不能只枚举 entry。原�
 - `BackupIdentity.Parent *BackupIdentity` 只允许 `kind=series`；父级不再嵌套 Parent；父级评分、备注、进度不进入该字段。
 - 导出 episode 时，即使父系列没有本人评价，也必须导出父级的稳定 `s:` ref 和最小标题；父级 references 只保存为父级别名，不写入 episode 的 `References`。
 - 父级的 references 必须都能解析为同一个 series；指向 episode、其他 work 或未知对象的引用报告 `parent_conflict`，不能保存到 episode。
-- v2 旧格式继续可读；缺少父级时按原行为导入并报告 `relationships_not_imported`，不能标记为“父级已恢复”。
+- v3 的 episode 必须有合法 `Parent`；缺失或非法父级报告 `parent_conflict`／`parent_required`，blocked，不创建独立 episode。v2 没有父级字段时按原行为导入并报告 `relationships_not_imported`，不能标记为“父级已恢复”。
 
 ### 7.3 导入顺序与失败边界
 
-1. 预览阶段先解析父 ref：已有父 work 直接复用；已知 catalog series 无 work 时登记 series work；完全未知时只按备份显式身份创建 series work。父级不创建 `catalog_series_member`，因为空库没有 `source_catalog_entry`。
+1. 预览阶段先解析父 ref：已有父 work 直接复用；已知 catalog series 无 work 时登记 series work 并绑定 `catalog_series.work_id`；完全未知时按备份显式身份创建 series work 和 `catalog_series`（`source_id NULL`）。父级不创建 `catalog_series_member`，因为空库没有 `source_catalog_entry`；系列与单集的可见关系以 `work.parent_work_id` 为准。
 2. 父级解析成功后创建／复用 episode work，并在同一事务写入 `parent_work_id`。父级 refs 保存到父 work 的 `personal_transfer_ref`；episode 只保存自己的 refs。
 3. 父级缺失、冲突、多父级或循环时报告 `parent_conflict`／`parent_cycle`，该条目 blocked，不创建 episode work，不静默降级；其他条目可继续。
-4. 幂等：同一备份重复导入不重复创建父／子 work；中途失败整批事务回滚；不下载媒体，不读取他人记录。
-5. 非空库已有不同父级时，报告冲突并保留原关系；不覆盖共享关系或他人记录。
+4. 父系列同时作为顶层 `BackupWork` 出现时只创建一次，并把父系列自己的评分／备注／进度应用到同一对象；`Parent` 只提供最小身份，不能覆盖父系列已有个人状态。
+5. 幂等：同一备份重复导入不重复创建父／子 work，多个 episode 共享同一父 ref 时只创建一个父级；中途失败整批事务回滚；不下载媒体，不读取他人记录。
+6. 非空库已有不同父级时，报告冲突并保留原关系；不覆盖共享关系或他人记录。循环检测使用递归父链并设置最大深度，检测到环时整条父级写入回滚。
 
 ### 7.4 验证
 
-- H/R：空库只有单集评价、父系列无评价，导出再导入后父级归属保留；重复导入不重复；同一备份包含两个系列 work 时不触发空代码唯一约束。
+- H/R：空库只有单集评价、父系列无评价，导出再导入后父级归属保留；父系列有独立评价时只创建一个父对象并保留个人状态；重复导入不重复；同一备份包含两个系列 work 时不触发空代码唯一约束。
 - H：父级缺失、多个不同父级、循环、父 ref 指向错误对象、非空库已有不同父级均可审阅且不写入错误关系。
 - v2 旧格式、无媒体下载、用户隔离、迁移前后结构一致。
 - 迁移：新装与旧库升级后 `work.parent_work_id` 和索引一致；已发布迁移不回写。
@@ -264,12 +279,13 @@ prefill 必须逐类枚举 entry、series、work，不能只枚举 entry。原�
 - 确认是否有数据库执行过旧 095：
   - 没有：记录证据，取消无意义的后继迁移；新装基线以冻结 095 为准。
   - 有：必须等 096 提交后使用 097 重建 `source_field_translation`：新表带外键、复制合法 source_id 行、丢弃孤儿缓存、重建索引、`PRAGMA foreign_key_check` 0 行。
-- 旧 095 的 checksum 与当前 095 不同，`migration.go` 会在到达 097 前拒绝启动。若存在旧库，必须同时提供已知旧 checksum 的兼容门禁或一次性升级路径；不能在文档里只写“097 修复”而忽略 checksum 门禁。
+- 旧 095 的 checksum 与当前 095 不同，`migration.go` 会在到达 097 前拒绝启动。097 本身无法解决这个门禁，必须在迁移运行器之前提供一次性 preflight：只对精确匹配旧 095 表结构指纹的数据库，在事务中把该 ledger 行的 checksum 规范化为当前 095 checksum；不匹配、部分匹配或存在额外对象时拒绝启动。
+- 禁止通用“忽略 checksum”开关。preflight 记录旧／新 checksum、schema 指纹、时间、备份路径和结果，并提供离线等价命令；097 只做结构重建。
 - 096 未提交前不得写 097；迁移头、`compat/096_dev.sql`、测试常量必须连续一致。
 
 ### 8.3 文档与证据
 
-- `docs/architecture/data-model.md` 的 Translation Corpus 必须与 21 的最终实现一致：当前 config、有效实体、严格语言、短查询、软预算、title 行不可淘汰；删除历史叙述。
+- `docs/architecture/data-model.md` 的 Translation Corpus 必须与 21 的最终实现一致：当前 config、有效实体、严格语言、短查询、软预算、title／description 行不可淘汰；删除历史叙述。
 - `docs/development/translation.md` 由 21 提供最终文本；23 只做交叉引用和仓库格式检查。
 - `docs/development/release-rollback.md`：有 healthcheck 的 Compose 显示 `healthy`，生产无 healthcheck 只要求 `running`，以 `/health` 200 为门禁。
 - 测试编号改用 `testfixture.WorkCodeAt`；超过 400 条使用 `HighCardinalityWorkCodeAt`。

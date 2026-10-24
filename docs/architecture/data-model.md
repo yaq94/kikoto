@@ -566,10 +566,11 @@ template version and reasoning switch. The planned migration 099 adds a
 `config_key` covering the output-shaping configuration; a row with another key
 is stale and is not current coverage, while rows from before 099 are treated as
 legacy candidates until re-prefilled. Native rows store the source text
-unchanged; model rows store successful generated text. Current title rows for `work`,
-`source_catalog_entry` and `catalog_series` are required for language-specific
-search and are never eviction candidates for the `cacheBytes` or `maxEntries`
-budgets.
+unchanged; model rows store successful generated text. Current title and
+description rows for `work` and `source_catalog_entry`, plus title rows for
+`catalog_series`, are required for language-specific search and are never
+eviction candidates for the `cacheBytes` or `maxEntries` budgets. `tag` and
+`directory` translations remain display-only.
 
 `content_translation_search` is an FTS5 trigram index over
 `content_translation.translated_text`, maintained by insert, update and delete
@@ -578,8 +579,18 @@ language and current configuration; an `origin` search reads the original
 source index. Release codes and other structured identifiers remain searchable
 regardless of display language. Three-character and longer text queries use the
 trigram index. One- and two-character queries page over the complete effective
-set with the `(language, entity_kind, id)` index and `instr`; they must not stop
-at a fixed newest-row window.
+set with the `(language, entity_kind, field, id, translated_text)` index and
+`instr`; they must not stop at a fixed newest-row window. If the measured p95
+exceeds 100 ms at the target corpus size, a short-term n-gram index or an
+equivalent indexed structure is required rather than accepting an unbounded
+scan.
+
+Display-language text search covers `title` and `description`; `tag` and
+`directory` translations are not search inputs. `zh-cn`, `en-us`, `ja-jp` and
+`ko-kr` map to `zh-Hans`, `en-US`, `ja-JP` and `ko-KR` respectively. `zh-tw`
+reads `zh-Hans` and applies OpenCC `s2t`, while native `zh-Hant` rows remain
+separate and are also searchable. `origin` searches the original source index
+and never reads `content_translation`.
 
 `source_field_translation` is a rebuildable display cache for source-level
 fields such as a remote title, tag or directory name. It has no FTS table and is
