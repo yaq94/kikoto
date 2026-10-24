@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"database/sql"
+	"strings"
 	"testing"
 
 	"github.com/yexca/kikoto/backend/internal/catalogadmission"
@@ -356,6 +357,21 @@ func TestCatalogPrunePreservesSourceOnlyTransferAlias(t *testing.T) {
 	}
 	if skipped[11] != "transfer_alias" {
 		t.Fatalf("skipped = %+v, want transfer_alias", skipped)
+	}
+	t.Logf("synthetic dry-run: candidates=%d planned=%d skipped=%d transferRefs=%d",
+		report.Candidates.Entries, report.Totals.Entries, len(report.Skipped), report.Candidates.TransferRefs)
+	// A report produced under the former alias policy can still list this card.
+	// Apply must reject it instead of deleting the only row that resolves the
+	// opaque transfer reference.
+	historical := report
+	historical.Entries = []catalogprune.Entry{{
+		EntryID: 11, SourceID: 90, Root: "/source-only", EffectiveRoot: "/source-only",
+		Title: "Source-only alias", Reason: "empty_audio_card",
+		Observations: 1, Directories: 1, TransferRefs: 1,
+	}}
+	historical.Totals = catalogprune.Totals{Entries: 1, TransferRefs: 1}
+	if _, err = catalogprune.Apply(context.Background(), db, historical, catalogprune.Options{}); err == nil || !strings.Contains(err.Error(), "catalog changed") {
+		t.Fatalf("historical plan error = %v, want a changed-report refusal", err)
 	}
 	result, err := catalogprune.Apply(context.Background(), db, report, catalogprune.Options{})
 	if err != nil {

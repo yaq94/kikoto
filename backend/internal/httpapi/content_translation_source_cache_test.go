@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/yexca/kikoto/backend/internal/testfixture"
 	"github.com/yexca/kikoto/backend/internal/translation"
 )
 
@@ -291,7 +292,7 @@ func TestTranslationCacheBudgetIsEnforcedByWrites(t *testing.T) {
 	for index := range 120 {
 		rows = append(rows, sourceFieldTranslationRow{
 			CacheKey: fmt.Sprintf("source-write-%03d", index), SourceID: 1,
-			WorkCode: fmt.Sprintf("RJ%08d", index), Field: "title", Language: "zh-Hans",
+			WorkCode: testfixture.WorkCodeAt(index), Field: "title", Language: "zh-Hans",
 			SourceText: strings.Repeat("a", 40), TranslatedText: strings.Repeat("b", 40),
 			Model: "m", TemplateVersion: translation.TemplateVersion,
 		})
