@@ -36,7 +36,7 @@ root set once; it does not change published identities or staging rows.
 
 ## 发布尾部性能
 
-The live copy `/srv/kikoto/live/instance/config/kikoto.db`
+The live copy `/path/to/kikoto/live/instance/config/kikoto.db`
 (34,234,368 bytes, 3,917 directories, 47,670 observations) reproduced the
 pathological tail: with only five unpublished observations left, the
 pre-queue query took **36.1–36.9 s** and its plan applied `LIMIT` only after a

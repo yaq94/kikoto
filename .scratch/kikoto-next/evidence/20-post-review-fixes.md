@@ -54,7 +54,7 @@
 
 ## 目录索引写锁与吞吐（2026-10-20 19:xx）
 
-依据 `/srv/kikoto/index-write-contention.md`（本机施工单，不入库）。
+依据 `/path/to/kikoto/index-write-contention.md`（本机施工单，不入库）。
 基线 run 50：并发 2、间隔 300ms、99 目录/分钟、146 分钟；期间 116 次 `SQLITE_BUSY`、202 次 `context deadline exceeded`，与目录作业起止强相关。
 
 改动：
@@ -79,7 +79,7 @@
 
 本批无迁移，schema 仍为 82。
 
-补充测量（2026-10-20 20:xx，`/srv/kikoto/bench/probe-publish.db`，14,459 个当前代目录 / 14,459 条 audio_root / 266,296 条旧代 pending）：
+补充测量（2026-10-20 20:xx，`/path/to/kikoto/bench/probe-publish.db`，14,459 个当前代目录 / 14,459 条 audio_root / 266,296 条旧代 pending）：
 
 | 发布查询形态 | LIMIT 100 |
 | --- | --- |
