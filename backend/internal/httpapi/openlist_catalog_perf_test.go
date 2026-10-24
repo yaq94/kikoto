@@ -352,13 +352,13 @@ func TestOpenListCatalogLanguageSearchPlan(t *testing.T) {
 		ids = append(ids, id)
 		insertCatalogPlanEntry(t, db, id, fmt.Sprintf("Original %d", index), "")
 		insertCatalogPlanAudio(t, db, id, "track.mp3", fmt.Sprintf("Track %d", index))
-		insertTranslatedContent(t, db, "entry", id, "title", "zh-Hans", fmt.Sprintf("作品%d", index), "model")
+		insertTranslatedContent(t, db, "entry", id, "title", "zh-Hans", fmt.Sprintf("Original %d", index), fmt.Sprintf("作品%d", index), "model")
 	}
 	if _, err := db.Exec(`ANALYZE`); err != nil {
 		t.Fatal(err)
 	}
 	prefix, from, args := openListCatalogCardsQueryForEntries(7, ids)
-	rank, rankArgs := openListTranslationExactRankSQL([]library.DisplaySearchTarget{{Language: "zh-Hans", Query: "作品1"}}, "language_cards")
+	rank, rankArgs := openListTranslationExactRankSQL([]library.DisplaySearchTarget{{Language: "zh-Hans", Query: "作品1"}}, "language_cards", "", "")
 	pageSQL := prefix + `language_cards AS MATERIALIZED (SELECT * ` + from + `)
 	SELECT id,series_id,primary_code,title,work_id,updated_at,availability_status,has_audio,(SELECT COUNT(*) FROM language_cards) AS total
 	FROM language_cards ORDER BY ` + rank + ` DESC, updated_at DESC,series_id DESC,id DESC LIMIT ? OFFSET ?`
@@ -380,6 +380,33 @@ func TestOpenListCatalogLanguageSearchPlan(t *testing.T) {
 	rows = 1
 	if total != 6 || rows != 1 {
 		t.Fatalf("language page total=%d rows=%d, want 6/1", total, rows)
+	}
+}
+
+// The 1-2 character translated fallback walks bounded id ranges on the
+// language index. It must not scan the translation table in one statement.
+func TestOpenListCatalogShortTranslationSearchPlan(t *testing.T) {
+	db := openMigratedTestDB(t)
+	seedCatalogPlanSource(t, db)
+	for index := 1; index <= 6; index++ {
+		id := int64(index)
+		title := fmt.Sprintf("Original %d", index)
+		insertCatalogPlanEntry(t, db, id, title, "")
+		insertCatalogPlanAudio(t, db, id, "track.mp3", fmt.Sprintf("Track %d", index))
+		insertTranslatedContent(t, db, "entry", id, "title", "zh-Hans", title, fmt.Sprintf("作品%d", index), "model")
+	}
+	targets, ok := library.DisplaySearchTargets("zh-cn", "夜")
+	if !ok {
+		t.Fatal("zh-cn is not a display language")
+	}
+	prefix, from, args := openListCatalogCardsQueryLocalized(7, "夜", targets, "m", "v1")
+	plan := explainCatalogPlan(t, db, prefix+`SELECT count(*) `+from, args...)
+	t.Logf("short translated search plan:\n%s", plan)
+	if strings.Contains(plan, "SCAN content_translation\n") {
+		t.Fatalf("short translated search scans the whole table: %s", plan)
+	}
+	if !strings.Contains(plan, "idx_content_translation_language_id") {
+		t.Fatalf("short translated search does not use the language id index: %s", plan)
 	}
 }
 

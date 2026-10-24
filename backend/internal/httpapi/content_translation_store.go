@@ -35,13 +35,9 @@ type contentTranslationRow struct {
 }
 
 const (
-	contentTranslationLookupChunk = 500
-	// contentTranslationShortScanLimit bounds the 1-2 character fallback. A
-	// trigram index cannot answer those queries, so instr() only walks the
-	// newest rows of the requested language instead of the whole table.
-	contentTranslationShortScanLimit = 50000
-	contentTranslationStored         = "stored"
-	contentTranslationPausedLowDisk  = "paused_low_disk"
+	contentTranslationLookupChunk   = 500
+	contentTranslationStored        = "stored"
+	contentTranslationPausedLowDisk = "paused_low_disk"
 )
 
 var errTranslationCachePaused = errors.New("translation cache paused: low disk space")
@@ -178,7 +174,7 @@ func (s *Server) saveContentTranslations(ctx context.Context, rows []contentTran
 			}
 		}
 		if hasModel {
-			s.pruneTranslationCacheAfterWrite(ctx, cfg)
+			s.pruneTranslationCacheAfterWrite(ctx, cfg, len(rows))
 		}
 	}
 	return contentTranslationStored, nil
@@ -186,7 +182,7 @@ func (s *Server) saveContentTranslations(ctx context.Context, rows []contentTran
 
 // translatedEntityIDs returns entities whose translated text contains the
 // query. Three or more characters go through the trigram index; shorter
-// queries fall back to instr() over a bounded window of recent rows.
+// queries walk bounded index ranges over the complete language corpus.
 func (s *Server) translatedEntityIDs(ctx context.Context, language, entityKind, query string, limit int) ([]int64, error) {
 	query = strings.TrimSpace(query)
 	if query == "" || limit <= 0 {
@@ -211,17 +207,7 @@ func (s *Server) translatedEntityIDs(ctx context.Context, language, entityKind, 
 			-- early. The caller sorts cards; sorting here would read every match.
 			LIMIT ?`, phrase, language, entityKind, limit)
 	} else {
-		rows, err = s.db.QueryContext(ctx, `
-			SELECT entity_id FROM (
-			  SELECT id, entity_id, translated_text
-			  FROM content_translation
-			  WHERE language = ? AND entity_kind = ?
-			  ORDER BY id DESC
-			  LIMIT ?
-			)
-			WHERE instr(translated_text, ?) > 0
-			ORDER BY id DESC
-			LIMIT ?`, language, entityKind, contentTranslationShortScanLimit, query, limit)
+		return s.scanShortTranslationEntityIDs(ctx, language, entityKind, query, limit)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("search translated content: %w", err)
@@ -239,6 +225,61 @@ func (s *Server) translatedEntityIDs(ctx context.Context, language, entityKind, 
 		return nil, fmt.Errorf("search translated content: %w", err)
 	}
 	return ids, nil
+}
+
+// scanShortTranslationEntityIDs walks the language's id index in bounded
+// segments. Each statement reads at most contentTranslationShortSegment rows;
+// the loop continues until the complete corpus has been inspected or the
+// caller's result limit is reached. Old and new rows are therefore equally
+// visible, without a fixed newest-window truncation.
+func (s *Server) scanShortTranslationEntityIDs(ctx context.Context, language, entityKind, query string, limit int) ([]int64, error) {
+	ids := make([]int64, 0, limit)
+	seen := make(map[int64]struct{}, limit)
+	after := int64(0)
+	for {
+		var batchMax sql.NullInt64
+		if err := s.db.QueryRowContext(ctx, `
+			SELECT MAX(id) FROM (
+				SELECT id FROM content_translation
+				WHERE language=? AND entity_kind=? AND id>?
+				ORDER BY id LIMIT ?
+			)`, language, entityKind, after, contentTranslationShortSegment).Scan(&batchMax); err != nil {
+			return nil, fmt.Errorf("scan translated content boundary: %w", err)
+		}
+		if !batchMax.Valid {
+			return ids, nil
+		}
+		rows, err := s.db.QueryContext(ctx, `
+			SELECT entity_id FROM content_translation
+			WHERE language=? AND entity_kind=? AND id>? AND id<=?
+			  AND instr(lower(translated_text),lower(?))>0
+			ORDER BY id`, language, entityKind, after, batchMax.Int64, query)
+		if err != nil {
+			return nil, fmt.Errorf("search translated content: %w", err)
+		}
+		for rows.Next() {
+			var id int64
+			if err := rows.Scan(&id); err != nil {
+				rows.Close()
+				return nil, fmt.Errorf("search translated content: %w", err)
+			}
+			if _, ok := seen[id]; ok {
+				continue
+			}
+			seen[id] = struct{}{}
+			ids = append(ids, id)
+			if len(ids) >= limit {
+				rows.Close()
+				return ids, nil
+			}
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("search translated content: %w", err)
+		}
+		rows.Close()
+		after = batchMax.Int64
+	}
 }
 
 // countContentTranslations reports how many rows exist for a language; the

@@ -53,6 +53,17 @@ type translationPrefillView struct {
 	RatePerMinute float64                      `json:"ratePerMinute"`
 }
 
+// translationCorpusCoverage is the effective coverage definition shared by the
+// operator view and the prefill completion decision. A row counts only while
+// its entity is a live, available OpenList catalog entry, its source text is
+// the current title, and a model row carries the configured model/template.
+type translationCorpusCoverage struct {
+	Total               int64
+	ByLanguage          map[string]int64
+	MissingEntries      int64
+	FirstMissingEntryID int64
+}
+
 // translationPrefillState reads only the durable cursor/status row. The worker
 // uses this projection so a 15-second tick never scans the whole corpus.
 func (s *Server) translationPrefillState(ctx context.Context) (translationPrefillView, error) {
@@ -78,32 +89,102 @@ func (s *Server) translationPrefillStatus(ctx context.Context) (translationPrefi
 	}
 	view.NightWindow = translation.IsNightWindow(time.Now())
 	view.RatePerMinute = s.translationPrefillRate()
-	if err = s.db.QueryRowContext(ctx, `SELECT count(*) FROM source_catalog_entry
-		WHERE relocated_to_id IS NULL AND availability_status='available' AND trim(title)<>''`).Scan(&view.Total); err != nil {
-		return view, err
-	}
-	rows, err := s.db.QueryContext(ctx, `SELECT language, count(*) FROM content_translation
-		WHERE entity_kind='entry' AND field='title' GROUP BY language`)
+	cfg, err := translation.NewStore(s.db).Load(ctx)
 	if err != nil {
 		return view, err
 	}
-	defer rows.Close()
-	byLanguage := map[string]int64{}
+	coverage, err := s.translationCorpusCoverage(ctx, cfg)
+	if err != nil {
+		return view, err
+	}
+	view.Total = coverage.Total
+	for _, language := range append(prefillLanguages, translation.SourceHant) {
+		rows := coverage.ByLanguage[language]
+		view.Languages = append(view.Languages, translationPrefillLanguage{Language: language, Rows: rows, Missing: max64(view.Total-rows, 0)})
+	}
+	// A stored complete status is not permission to claim complete coverage:
+	// a model change, a skipped entry or a changed title leaves gaps.
+	if view.Status == "complete" && coverage.MissingEntries > 0 {
+		view.Status = "running"
+		if view.LastError == "" {
+			view.LastError = fmt.Sprintf("coverage incomplete: %d entries missing", coverage.MissingEntries)
+		}
+	}
+	return view, nil
+}
+
+// translationCorpusCoverage joins each stored row to the current catalog entry
+// and the configured generation identity. Retired entries, historical source
+// text and rows from another model/template are not coverage.
+func (s *Server) translationCorpusCoverage(ctx context.Context, cfg translation.Config) (translationCorpusCoverage, error) {
+	coverage := translationCorpusCoverage{ByLanguage: map[string]int64{}}
+	if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM source_catalog_entry e
+		JOIN file_source source ON source.id=e.file_source_id
+		WHERE e.relocated_to_id IS NULL AND e.availability_status='available' AND trim(e.title)<>''
+		  AND source.enabled=1 AND source.source_type=?`, sourceTypeOpenList).Scan(&coverage.Total); err != nil {
+		return coverage, err
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT ct.language,count(DISTINCT ct.entity_id)
+		FROM content_translation ct
+		JOIN source_catalog_entry e ON e.id=ct.entity_id
+		JOIN file_source source ON source.id=e.file_source_id
+		WHERE ct.entity_kind='entry' AND ct.field='title'
+		  AND e.relocated_to_id IS NULL AND e.availability_status='available' AND trim(e.title)<>''
+		  AND source.enabled=1 AND source.source_type=?
+		  AND ct.source_text=e.title
+		  AND (ct.origin='native' OR (ct.origin='model' AND ct.model=? AND ct.template_version=?))
+		GROUP BY ct.language`, sourceTypeOpenList, cfg.Model, translation.TemplateVersion)
+	if err != nil {
+		return coverage, err
+	}
 	for rows.Next() {
 		var language string
 		var count int64
 		if err = rows.Scan(&language, &count); err != nil {
-			return view, err
+			rows.Close()
+			return coverage, err
 		}
-		byLanguage[language] = count
+		coverage.ByLanguage[language] = count
 	}
 	if err = rows.Err(); err != nil {
-		return view, err
+		rows.Close()
+		return coverage, err
 	}
-	for _, language := range append(prefillLanguages, translation.SourceHant) {
-		view.Languages = append(view.Languages, translationPrefillLanguage{Language: language, Rows: byLanguage[language], Missing: max64(view.Total-byLanguage[language], 0)})
+	rows.Close()
+	// Traditional display derives from Simplified when no native Traditional
+	// row exists, so both corpora cover a Traditional reader.
+	var hant int64
+	if err = s.db.QueryRowContext(ctx, `SELECT count(DISTINCT ct.entity_id)
+		FROM content_translation ct
+		JOIN source_catalog_entry e ON e.id=ct.entity_id
+		JOIN file_source source ON source.id=e.file_source_id
+		WHERE ct.entity_kind='entry' AND ct.field='title'
+		  AND e.relocated_to_id IS NULL AND e.availability_status='available' AND trim(e.title)<>''
+		  AND source.enabled=1 AND source.source_type=?
+		  AND ct.source_text=e.title
+		  AND ct.language IN (?,?)
+		  AND (ct.origin='native' OR (ct.origin='model' AND ct.model=? AND ct.template_version=?))`,
+		sourceTypeOpenList, translation.SourceHant, translation.SourceHans, cfg.Model, translation.TemplateVersion).Scan(&hant); err != nil {
+		return coverage, err
 	}
-	return view, nil
+	coverage.ByLanguage[translation.SourceHant] = hant
+
+	// A prefill entry needs all four model languages. Native text covers one of
+	// them; the other three must exist as current model rows.
+	if err = s.db.QueryRowContext(ctx, `SELECT count(*),COALESCE(MIN(e.id),0)
+		FROM source_catalog_entry e
+		JOIN file_source source ON source.id=e.file_source_id
+		WHERE e.relocated_to_id IS NULL AND e.availability_status='available' AND trim(e.title)<>''
+		  AND source.enabled=1 AND source.source_type=?
+		  AND (SELECT count(DISTINCT ct.language) FROM content_translation ct
+			WHERE ct.entity_kind='entry' AND ct.entity_id=e.id AND ct.field='title'
+			  AND ct.source_text=e.title
+			  AND ct.language IN ('en','zh-Hans','ja','ko')
+			  AND (ct.origin='native' OR (ct.origin='model' AND ct.model=? AND ct.template_version=?))) < 4`,
+		sourceTypeOpenList, cfg.Model, translation.TemplateVersion).Scan(&coverage.MissingEntries, &coverage.FirstMissingEntryID); err != nil {
+		return coverage, err
+	}
+	return coverage, nil
 }
 
 func max64(a, b int64) int64 {
@@ -218,7 +299,23 @@ func (s *Server) runTranslationPrefillBatch(ctx context.Context) (bool, error) {
 		return false, err
 	}
 	if state.Status == "complete" {
-		return false, nil
+		// A complete cursor is only a stored observation. Verify the effective
+		// corpus so a model change, changed title or skipped entry resumes work
+		// instead of leaving the pass permanently complete.
+		coverage, err := s.translationCorpusCoverage(ctx, cfg)
+		if err != nil {
+			return false, err
+		}
+		if coverage.MissingEntries == 0 {
+			return false, nil
+		}
+		if _, err = s.db.ExecContext(ctx, `UPDATE translation_prefill_state
+			SET cursor_entry_id=?,status='running',last_error=?,updated_at=CURRENT_TIMESTAMP WHERE id=1`,
+			max64(coverage.FirstMissingEntryID-1, 0), fmt.Sprintf("coverage incomplete: %d entries missing", coverage.MissingEntries)); err != nil {
+			return false, err
+		}
+		state.Status = "running"
+		state.Cursor = max64(coverage.FirstMissingEntryID-1, 0)
 	}
 	if state.Status == "paused" {
 		// A manual pause waits for the operator. A low-disk pause is a
@@ -241,8 +338,24 @@ func (s *Server) runTranslationPrefillBatch(ctx context.Context) (bool, error) {
 		return false, err
 	}
 	if len(entries) == 0 {
-		_, err = s.db.ExecContext(ctx, `UPDATE translation_prefill_state SET status='complete', last_error='', updated_at=CURRENT_TIMESTAMP WHERE id=1`)
-		return false, err
+		coverage, err := s.translationCorpusCoverage(ctx, cfg)
+		if err != nil {
+			return false, err
+		}
+		if coverage.MissingEntries == 0 {
+			_, err = s.db.ExecContext(ctx, `UPDATE translation_prefill_state SET status='complete', last_error='', updated_at=CURRENT_TIMESTAMP WHERE id=1`)
+			return false, err
+		}
+		// The scan reached its end but the effective corpus still has gaps.
+		// Return the cursor to the first missing entry so a later tick retries
+		// it; never present a skipped or drifted corpus as complete.
+		cursor := max64(coverage.FirstMissingEntryID-1, 0)
+		if _, err = s.db.ExecContext(ctx, `UPDATE translation_prefill_state
+			SET cursor_entry_id=?,status='running',last_error=?,updated_at=CURRENT_TIMESTAMP WHERE id=1`,
+			cursor, fmt.Sprintf("coverage incomplete: %d entries missing", coverage.MissingEntries)); err != nil {
+			return false, err
+		}
+		return true, nil
 	}
 	lastID := entries[len(entries)-1].id
 	// A skipped entry can fall back into the window when a lower failure pulls

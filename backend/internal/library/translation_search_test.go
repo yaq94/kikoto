@@ -91,7 +91,7 @@ func TestContentTranslationSearchTraditionalBuildsTwoTargets(t *testing.T) {
 		t.Fatalf("second target = %#v, want zh-Hant/戀愛", targets[1])
 	}
 	where, args := SearchWhereForUserInLanguage("戀愛", 0, "zh-tw")
-	if strings.Count(where, "work.id IN") != 2 || len(args) != 4 {
+	if strings.Count(where, "work.id IN") != 2 || len(args) != 6 {
 		t.Fatalf("zh-tw predicate = %s args=%v; want two branches", where, args)
 	}
 	if origin, _ := SearchWhereForUserInLanguage("戀愛", 0, "origin"); strings.Contains(origin, "content_translation") {

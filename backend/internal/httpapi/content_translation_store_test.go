@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"database/sql"
 	"encoding/hex"
 	"fmt"
 	"path/filepath"
@@ -354,10 +355,10 @@ func joinIDs(ids []int64) string {
 	return strings.Join(parts, ",")
 }
 
-// The 1-2 character fallback cannot use the trigram index, so it must only
-// inspect a bounded window of the newest rows. A marker older than that window
-// is unreachable even though it is present in the table.
-func TestContentTranslationShortQueryStaysBounded(t *testing.T) {
+// The 1-2 character fallback cannot use the trigram index. Segmented index
+// ranges keep each statement bounded while still reaching rows beyond any
+// fixed newest-window cap.
+func TestContentTranslationShortQueryCoversFullCorpus(t *testing.T) {
 	s := openContentTranslationTestServer(t)
 	ctx := context.Background()
 	tx, err := s.db.Begin()
@@ -373,12 +374,12 @@ func TestContentTranslationShortQueryStaysBounded(t *testing.T) {
 	if _, err := stmt.Exec("oldest", 1, "远古标记", "远古标记"); err != nil {
 		t.Fatal(err)
 	}
-	for i := 2; i <= contentTranslationShortScanLimit; i++ {
+	for i := 2; i <= 50000; i++ {
 		if _, err := stmt.Exec(fmt.Sprintf("filler-%d", i), i, "", ""); err != nil {
 			t.Fatal(err)
 		}
 	}
-	newest := contentTranslationShortScanLimit + 1
+	newest := int64(50001)
 	if _, err := stmt.Exec("newest", newest, "近古标记", "近古标记"); err != nil {
 		t.Fatal(err)
 	}
@@ -392,116 +393,170 @@ func TestContentTranslationShortQueryStaysBounded(t *testing.T) {
 	if err := s.db.QueryRow(`SELECT COUNT(*) FROM content_translation`).Scan(&total); err != nil {
 		t.Fatal(err)
 	}
-	if total != contentTranslationShortScanLimit+1 {
+	if total != 50001 {
 		t.Fatalf("seeded %d rows", total)
 	}
 	if ids, err := s.translatedEntityIDs(ctx, "zh-Hans", "entry", "远古", 10); err != nil {
 		t.Fatal(err)
-	} else if len(ids) != 0 {
-		t.Fatalf("short query reached past its window: %v", ids)
+	} else if len(ids) != 1 || ids[0] != 1 {
+		t.Fatalf("short query missed the oldest row: %v", ids)
 	}
 	if ids, err := s.translatedEntityIDs(ctx, "zh-Hans", "entry", "近古", 10); err != nil {
 		t.Fatal(err)
 	} else if len(ids) != 1 || ids[0] != int64(newest) {
-		t.Fatalf("short query inside the window = %v", ids)
+		t.Fatalf("short query missed the newest row: %v", ids)
 	}
 }
 
-// The corpus limits count and remove only model rows, oldest first, and a
-// superseded row goes before a live one.
-func TestContentTranslationRetentionHonoursModelRowBudget(t *testing.T) {
+func seedCurrentTranslationEntry(t *testing.T, db *sql.DB, id int64, title string) {
+	t.Helper()
+	if _, err := db.Exec(`INSERT OR IGNORE INTO file_source(id,code,display_name,source_type,enabled)
+		VALUES(1,'retention-fixture','Retention Source','openlist',1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO source_catalog_entry(id,file_source_id,root_path,title,availability_status)
+		VALUES(?,1,?,?,'available')`, id, fmt.Sprintf("/retention/%d", id), title); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// The soft budgets never remove rows that still answer current search: a live
+// catalog entry with the current source text and the configured model/template.
+func TestContentTranslationRetentionKeepsCurrentCorpusOverBudget(t *testing.T) {
 	server := openContentTranslationTestServer(t)
 	ctx := context.Background()
 	rows := []contentTranslationRow{
 		{CacheKey: "native-1", EntityKind: "entry", EntityID: 1, Field: "title", Language: "ja", SourceText: "native", TranslatedText: "native", Origin: "native"},
 	}
 	for i := int64(1); i <= 5; i++ {
-		rows = append(rows, contentTranslationRow{CacheKey: fmt.Sprintf("model-%d", i), EntityKind: "entry", EntityID: i, Field: "title", Language: "en", SourceText: "source", TranslatedText: "text", Origin: "model"})
+		title := fmt.Sprintf("当前标题%d", i)
+		seedCurrentTranslationEntry(t, server.db, i, title)
+		rows = append(rows, contentTranslationRow{CacheKey: fmt.Sprintf("model-%d", i), EntityKind: "entry", EntityID: i, Field: "title", Language: "zh-Hans", SourceText: title, TranslatedText: "译文", Origin: "model", Model: "m", TemplateVersion: translation.TemplateVersion})
 	}
 	if _, err := server.saveContentTranslations(ctx, rows); err != nil {
 		t.Fatal(err)
 	}
-	if err := server.pruneContentTranslations(ctx, translation.Config{Limits: translation.Limits{MaxEntries: 3, CacheBytes: 1 << 30}}); err != nil {
+	if err := server.pruneContentTranslations(ctx, translation.Config{Limits: translation.Limits{MaxEntries: 3, CacheBytes: 1 << 30}, Model: "m"}); err != nil {
 		t.Fatal(err)
 	}
 	var model, native int
 	if err := server.db.QueryRow(`SELECT (SELECT count(*) FROM content_translation WHERE origin='model'),(SELECT count(*) FROM content_translation WHERE origin='native')`).Scan(&model, &native); err != nil {
 		t.Fatal(err)
 	}
-	if model != 3 || native != 1 {
-		t.Fatalf("after trim model=%d native=%d, want 3/1 (budget applies to model rows)", model, native)
+	if model != 5 || native != 1 {
+		t.Fatalf("after trim model=%d native=%d, want 5/1 (current rows are corpus)", model, native)
 	}
 
-	// A newer row for the same entity, field and language supersedes the old
-	// one even when the budget itself is not exceeded.
+	// A historical row for the same entity is neither current nor protected.
 	if _, err := server.saveContentTranslations(ctx, []contentTranslationRow{
-		{CacheKey: "model-new", EntityKind: "entry", EntityID: 5, Field: "title", Language: "en", SourceText: "source", TranslatedText: "new", Origin: "model"},
+		{CacheKey: "model-old", EntityKind: "entry", EntityID: 5, Field: "title", Language: "en", SourceText: "旧标题", TranslatedText: "旧译文", Origin: "model", Model: "old", TemplateVersion: "old"},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := server.pruneContentTranslations(ctx, translation.Config{Limits: translation.Limits{MaxEntries: 100, CacheBytes: 1 << 30}}); err != nil {
+	if err := server.pruneContentTranslations(ctx, translation.Config{Limits: translation.Limits{MaxEntries: 100, CacheBytes: 1 << 30}, Model: "m"}); err != nil {
 		t.Fatal(err)
 	}
 	var old int
-	if err := server.db.QueryRow(`SELECT count(*) FROM content_translation WHERE cache_key='model-5'`).Scan(&old); err != nil || old != 0 {
-		t.Fatalf("superseded row still present: %d %v", old, err)
+	if err := server.db.QueryRow(`SELECT count(*) FROM content_translation WHERE cache_key='model-old'`).Scan(&old); err != nil || old != 0 {
+		t.Fatalf("historical row still present: %d %v", old, err)
 	}
 }
 
-func TestContentTranslationRetentionHonoursUTF8ByteBudget(t *testing.T) {
+func TestContentTranslationRetentionKeepsCurrentCorpusUnderByteBudget(t *testing.T) {
 	server := openContentTranslationTestServer(t)
 	ctx := context.Background()
 	rows := []contentTranslationRow{
 		{CacheKey: "native-big", EntityKind: "entry", EntityID: 1, Field: "title", Language: "ja", SourceText: "作者原文", TranslatedText: "作者原文", Origin: "native"},
 	}
 	for i := int64(1); i <= 3; i++ {
+		title := fmt.Sprintf("当前原文%d", i)
+		seedCurrentTranslationEntry(t, server.db, i, title)
 		rows = append(rows, contentTranslationRow{
 			CacheKey: fmt.Sprintf("model-%d", i), EntityKind: "entry", EntityID: i,
-			Field: "title", Language: "zh-Hans", SourceText: "深海少女", TranslatedText: "深海少女的告白", Origin: "model",
+			Field: "title", Language: "zh-Hans", SourceText: title, TranslatedText: "深海少女的告白", Origin: "model",
+			Model: "m", TemplateVersion: translation.TemplateVersion,
 		})
 	}
 	if _, err := server.saveContentTranslations(ctx, rows); err != nil {
 		t.Fatal(err)
 	}
-	if err := server.pruneContentTranslations(ctx, translation.Config{Limits: translation.Limits{CacheBytes: 48}}); err != nil {
+	if err := server.pruneContentTranslations(ctx, translation.Config{Limits: translation.Limits{CacheBytes: 48}, Model: "m"}); err != nil {
 		t.Fatal(err)
 	}
-	var model, native, bytes int64
+	var model, native int64
 	if err := server.db.QueryRow(`SELECT
 		(SELECT count(*) FROM content_translation WHERE origin='model'),
-		(SELECT count(*) FROM content_translation WHERE origin='native'),
-		(SELECT COALESCE(sum(length(CAST(source_text AS BLOB))+length(CAST(translated_text AS BLOB))),0)
-			FROM content_translation WHERE origin='model')`).Scan(&model, &native, &bytes); err != nil {
+			(SELECT count(*) FROM content_translation WHERE origin='native')`).Scan(&model, &native); err != nil {
 		t.Fatal(err)
 	}
-	if model != 1 || native != 1 || bytes > 48 {
-		t.Fatalf("after byte trim model=%d native=%d bytes=%d, want 1/1 and <=48", model, native, bytes)
+	if model != 3 || native != 1 {
+		t.Fatalf("after byte trim model=%d native=%d, want 3/1 (current rows survive)", model, native)
 	}
 }
 
-// A large prefill burst may exceed one delete batch. The pass continues until
-// the model-row budget is reached or its own bound is exhausted.
-func TestContentTranslationRetentionDrainsSeveralBatches(t *testing.T) {
+// Work and series title rows are current only while their source text equals
+// the entity's current title. A stale title is historical and evictable.
+func TestContentTranslationRetentionChecksCurrentWorkAndSeriesText(t *testing.T) {
 	server := openContentTranslationTestServer(t)
 	ctx := context.Background()
-	rows := make([]contentTranslationRow, 0, 1200)
-	for i := int64(1); i <= 1200; i++ {
-		rows = append(rows, contentTranslationRow{
-			CacheKey: fmt.Sprintf("model-%d", i), EntityKind: "entry", EntityID: i,
-			Field: "title", Language: "en", SourceText: "source", TranslatedText: "text", Origin: "model",
-		})
+	if _, err := server.db.Exec(`
+		INSERT INTO work(id,primary_code,title) VALUES(1,'RJ00000001','Current Work Title');
+		INSERT INTO catalog_series(id,title) VALUES(1,'Current Series Title');`); err != nil {
+		t.Fatal(err)
+	}
+	rows := []contentTranslationRow{
+		{CacheKey: "work-old", EntityKind: "work", EntityID: 1, Field: "title", Language: "zh-Hans", SourceText: "Old Work Title", TranslatedText: "旧作品译文", Origin: "model", Model: "m", TemplateVersion: translation.TemplateVersion},
+		{CacheKey: "work-current", EntityKind: "work", EntityID: 1, Field: "title", Language: "zh-Hans", SourceText: "Current Work Title", TranslatedText: "当前作品译文", Origin: "model", Model: "m", TemplateVersion: translation.TemplateVersion},
+		{CacheKey: "series-old", EntityKind: "series", EntityID: 1, Field: "title", Language: "zh-Hans", SourceText: "Old Series Title", TranslatedText: "旧系列译文", Origin: "model", Model: "m", TemplateVersion: translation.TemplateVersion},
+		{CacheKey: "series-current", EntityKind: "series", EntityID: 1, Field: "title", Language: "zh-Hans", SourceText: "Current Series Title", TranslatedText: "当前系列译文", Origin: "model", Model: "m", TemplateVersion: translation.TemplateVersion},
 	}
 	if _, err := server.saveContentTranslations(ctx, rows); err != nil {
 		t.Fatal(err)
 	}
-	if err := server.pruneContentTranslations(ctx, translation.Config{Limits: translation.Limits{MaxEntries: 100}}); err != nil {
+	if err := server.pruneContentTranslations(ctx, translation.Config{Limits: translation.Limits{CacheBytes: 1 << 30}, Model: "m"}); err != nil {
+		t.Fatal(err)
+	}
+	var workCurrent, seriesCurrent, old int
+	if err := server.db.QueryRow(`SELECT
+		(SELECT count(*) FROM content_translation WHERE cache_key='work-current'),
+		(SELECT count(*) FROM content_translation WHERE cache_key='series-current'),
+		(SELECT count(*) FROM content_translation WHERE cache_key IN ('work-old','series-old'))`).Scan(&workCurrent, &seriesCurrent, &old); err != nil {
+		t.Fatal(err)
+	}
+	if workCurrent != 1 || seriesCurrent != 1 || old != 0 {
+		t.Fatalf("current work/series = %d/%d old = %d, want 1/1/0", workCurrent, seriesCurrent, old)
+	}
+}
+
+// A large rebuildable source-cache backlog may exceed one delete batch. The
+// pass continues until the evictable-row budget is reached or its own bound is
+// exhausted.
+func TestContentTranslationRetentionDrainsSeveralBatchesOfSourceCache(t *testing.T) {
+	server := openContentTranslationTestServer(t)
+	ctx := context.Background()
+	if _, err := server.db.Exec(`INSERT INTO file_source(id,code,display_name,source_type)
+		VALUES(1,'retention-source','Retention Source','openlist')`); err != nil {
+		t.Fatal(err)
+	}
+	rows := make([]sourceFieldTranslationRow, 0, 1200)
+	for i := int64(1); i <= 1200; i++ {
+		rows = append(rows, sourceFieldTranslationRow{
+			CacheKey: fmt.Sprintf("source-%d", i), SourceID: 1, WorkCode: fmt.Sprintf("RJ%08d", i),
+			Field: "title", Language: "en", SourceText: "source", TranslatedText: "text",
+			Model: "old", TemplateVersion: "old",
+		})
+	}
+	if _, err := server.saveSourceFieldTranslations(ctx, rows); err != nil {
+		t.Fatal(err)
+	}
+	if err := server.pruneContentTranslations(ctx, translation.Config{Limits: translation.Limits{MaxEntries: 100}, Model: "m"}); err != nil {
 		t.Fatal(err)
 	}
 	var model int
-	if err := server.db.QueryRow(`SELECT count(*) FROM content_translation WHERE origin='model'`).Scan(&model); err != nil {
+	if err := server.db.QueryRow(`SELECT count(*) FROM source_field_translation`).Scan(&model); err != nil {
 		t.Fatal(err)
 	}
 	if model != 100 {
-		t.Fatalf("model rows after burst trim = %d, want 100", model)
+		t.Fatalf("source rows after burst trim = %d, want 100", model)
 	}
 }

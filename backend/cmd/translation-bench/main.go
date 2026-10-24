@@ -43,6 +43,7 @@ type sizeReport struct {
 	Exact         queryResult `json:"exact"`
 	FTS           queryResult `json:"fts"`
 	Short         queryResult `json:"short"`
+	ShortPlan     []string    `json:"shortPlan"`
 }
 
 func main() {
@@ -145,6 +146,7 @@ func measure(rows, runs int) (sizeReport, error) {
 	report.Short = timeQuery(runs, func() (int, error) {
 		return countShort(db, firstRunes(sampleTitle, 2))
 	})
+	report.ShortPlan = explainPlan(db, shortSearchSQL, "zh-Hans", "entry", firstRunes(sampleTitle, 2))
 	if _, err = db.Exec("VACUUM"); err != nil {
 		return report, err
 	}
@@ -224,15 +226,42 @@ func countFTS(db *sql.DB, term string) (int, error) {
 	return count, err
 }
 
+const shortSearchSQL = `SELECT count(*) FROM (
+	WITH RECURSIVE segments(start_id,max_id) AS (
+		SELECT 0,COALESCE(MAX(id),0) FROM content_translation
+		WHERE language=? AND entity_kind=?
+		UNION ALL
+		SELECT start_id+4096,max_id FROM segments WHERE start_id+4096<=max_id
+	)
+	SELECT ct.entity_id FROM segments seg
+	CROSS JOIN content_translation ct
+	  ON ct.id>seg.start_id AND ct.id<=seg.start_id+4096 AND ct.id<=seg.max_id
+	WHERE ct.language=? AND ct.entity_kind=? AND ct.field='title'
+	  AND instr(lower(ct.translated_text),lower(?))>0
+)`
+
 func countShort(db *sql.DB, term string) (int, error) {
 	var count int
-	err := db.QueryRow(`SELECT count(*) FROM (
-		SELECT entity_id FROM (
-			SELECT id, entity_id, translated_text FROM content_translation
-			WHERE language=? AND entity_kind=? ORDER BY id DESC LIMIT 50000
-		) WHERE instr(translated_text, ?)>0 LIMIT 5000
-	)`, "zh-Hans", "entry", term).Scan(&count)
+	err := db.QueryRow(shortSearchSQL, "zh-Hans", "entry", "zh-Hans", "entry", term).Scan(&count)
 	return count, err
+}
+
+func explainPlan(db *sql.DB, query string, args ...any) []string {
+	rows, err := db.Query("EXPLAIN QUERY PLAN "+query, args...)
+	if err != nil {
+		return nil
+	}
+	defer func() { _ = rows.Close() }()
+	plan := []string{}
+	for rows.Next() {
+		var id, parent, unused int
+		var detail string
+		if err := rows.Scan(&id, &parent, &unused, &detail); err != nil {
+			return plan
+		}
+		plan = append(plan, detail)
+	}
+	return plan
 }
 
 func timeQuery(runs int, fn func() (int, error)) queryResult {

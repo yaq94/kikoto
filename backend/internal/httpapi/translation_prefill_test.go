@@ -178,11 +178,13 @@ func TestTranslationPrefillSkipsEntryAfterThreeConsecutiveFailures(t *testing.T)
 	seedPrefillCard(t, s, 1, "Example title")
 	configurePrefillModel(t, host, admin, model.URL)
 
+	var cursor int64
+	var status, lastError string
 	for attempt := 1; attempt <= 3; attempt++ {
 		if _, err := s.runTranslationPrefillBatch(context.Background()); err != nil {
 			t.Fatalf("attempt %d: %v", attempt, err)
 		}
-		cursor, status, lastError := readPrefillState(t, s)
+		cursor, status, lastError = readPrefillState(t, s)
 		if status != "running" {
 			t.Fatalf("attempt %d status = %q, want running", attempt, status)
 		}
@@ -204,6 +206,101 @@ func TestTranslationPrefillSkipsEntryAfterThreeConsecutiveFailures(t *testing.T)
 	}
 	if calls.Load() != 9 {
 		t.Fatalf("model calls = %d, want three languages on each of three batches", calls.Load())
+	}
+
+	// Reaching the end of the scan must not turn skipped entries into a
+	// complete corpus. The cursor returns to the first missing entry.
+	if _, err := s.runTranslationPrefillBatch(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	cursor, status, lastError = readPrefillState(t, s)
+	if status == "complete" || cursor != 0 || !strings.Contains(lastError, "coverage incomplete") {
+		t.Fatalf("after scan end = cursor %d status %q last_error %q, want 0/running/incomplete", cursor, status, lastError)
+	}
+}
+
+func prefillLanguageRows(t *testing.T, view map[string]any) map[string]map[string]any {
+	t.Helper()
+	raw, ok := view["languages"].([]any)
+	if !ok {
+		t.Fatalf("prefill languages = %#v", view["languages"])
+	}
+	rows := map[string]map[string]any{}
+	for _, item := range raw {
+		language := item.(map[string]any)
+		rows[language["language"].(string)] = language
+	}
+	return rows
+}
+
+// Coverage is an effective-corpus statistic: only a live available catalog
+// entry, its current title, and the configured model/template count.
+func TestTranslationPrefillCoverageExcludesRetiredAndHistoricalRows(t *testing.T) {
+	s, host, admin, _ := translationHTTPFixture(t)
+	seedPrefillCard(t, s, 1, "当前标题")
+	if _, err := s.db.Exec(`INSERT INTO source_catalog_entry(id,file_source_id,root_path,title,availability_status)
+		VALUES(2,1,'/retired','退役标题','missing'),
+		      (3,1,'/excluded','排除标题','excluded'),
+		      (4,1,'/pending','待确认标题','unconfirmed_empty')`); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := translation.NewStore(s.db).Load(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, language := range []string{"en", "zh-Hans", "ja", "ko"} {
+		insertTranslatedContent(t, s.db, "entry", 1, "title", language, "当前标题", "Current title", "model")
+	}
+	// Historical source text for a live entry.
+	insertTranslatedContent(t, s.db, "entry", 1, "title", "zh-Hans", "旧标题", "旧译文", "model")
+	// Retired entry still has a row.
+	insertTranslatedContent(t, s.db, "entry", 2, "title", "zh-Hans", "退役标题", "退役译文", "model")
+	insertTranslatedContent(t, s.db, "entry", 3, "title", "zh-Hans", "排除标题", "排除译文", "model")
+	insertTranslatedContent(t, s.db, "entry", 4, "title", "zh-Hans", "待确认标题", "待确认译文", "model")
+	// Ensure the rows carry the current model identity.
+	if _, err := s.db.Exec(`UPDATE content_translation SET model=?, template_version=?`,
+		cfg.Model, translation.TemplateVersion); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`UPDATE translation_prefill_state SET status='complete' WHERE id=1`); err != nil {
+		t.Fatal(err)
+	}
+	view := translationRequest(t, host, admin, "GET", "/api/settings/translation/prefill", "", 200)
+	if view["total"] != float64(1) || view["status"] != "complete" {
+		t.Fatalf("coverage view = total %v status %v, want 1/complete", view["total"], view["status"])
+	}
+	languages := prefillLanguageRows(t, view)
+	for _, language := range []string{"en", "zh-Hans", "ja", "ko", "zh-Hant"} {
+		item := languages[language]
+		if item == nil || item["rows"] != float64(1) || item["missing"] != float64(0) {
+			t.Fatalf("%s coverage = %#v, want one row and no missing", language, item)
+		}
+	}
+}
+
+// Changing the model makes every old row historical. Coverage must drop and
+// the status must not stay complete until the new model fills the corpus.
+func TestTranslationPrefillCoverageDropsOnModelChange(t *testing.T) {
+	s, host, admin, _ := translationHTTPFixture(t)
+	seedPrefillCard(t, s, 1, "当前标题")
+	for _, language := range []string{"en", "zh-Hans", "ja", "ko"} {
+		insertTranslatedContent(t, s.db, "entry", 1, "title", language, "当前标题", "Old translation", "model")
+	}
+	if _, err := s.db.Exec(`UPDATE content_translation SET model='old-model', template_version=?`, translation.TemplateVersion); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`UPDATE translation_prefill_state SET status='complete' WHERE id=1`); err != nil {
+		t.Fatal(err)
+	}
+	translationRequest(t, host, admin, "PATCH", "/api/settings/translation", `{"model":"new-model"}`, 200)
+
+	view := translationRequest(t, host, admin, "GET", "/api/settings/translation/prefill", "", 200)
+	if view["status"] == "complete" {
+		t.Fatalf("model change left complete coverage: %#v", view)
+	}
+	languages := prefillLanguageRows(t, view)
+	if item := languages["zh-Hans"]; item == nil || item["rows"] != float64(0) || item["missing"] != float64(1) {
+		t.Fatalf("zh-Hans after model change = %#v, want 0 rows and one missing", item)
 	}
 }
 

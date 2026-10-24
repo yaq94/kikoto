@@ -107,6 +107,7 @@ type Server struct {
 	translationCacheOnce           sync.Once
 	translationCache               *translation.Cache
 	translationPrefillMu           sync.Mutex
+	translationRetentionWrites     atomic.Int64
 	translationPrefillWrites       []time.Time
 	translationPrefillFailures     map[int64]int
 	catalogDiskSpace               func(string) (diskSpaceSnapshot, error)

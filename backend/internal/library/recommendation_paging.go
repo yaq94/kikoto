@@ -18,7 +18,8 @@ type recommendationMembership struct {
 func recommendationMembershipFor(snapshot RecommendationSessionSnapshot, options ListOptions) recommendationMembership {
 	where, args := listOptionsWhere(options)
 	exact, exactArgs := searchExactRankSQL(options.Query)
-	if translatedRank, translatedArgs := translatedExactRankSQL(options.Language, options.Query); translatedRank != "" {
+	if translatedRank, translatedArgs := translatedExactRankSQL(options.Language, options.Query,
+		TranslationIdentity{Model: options.TranslationModel, Template: options.TranslationTemplate}); translatedRank != "" {
 		exact, exactArgs = translatedRank, translatedArgs
 	}
 	if exact == "" {
