@@ -1,8 +1,8 @@
-# ADR-0005: Source Field Translation Cache
+# ADR-0007: Source Field Translation Cache
 
 ## Status
 
-Accepted.
+Accepted. The retention clause is amended by ADR-0006.
 
 ## Context
 
@@ -25,10 +25,12 @@ and content search never reads it. Only non-empty model output is stored.
 Source availability and the exact public field are revalidated before a cached
 row is considered.
 
-Rows are rebuildable. The existing `maxEntries` and `cacheBytes` maintenance
-pass counts and evicts both `content_translation` model rows and
-`source_field_translation` rows, oldest first. Native authored rows, personal
-records and source identities are never eviction candidates.
+Rows are rebuildable display cache. The existing `maxEntries` and `cacheBytes`
+maintenance pass counts and evicts `source_field_translation` rows and
+non-title `content_translation` model rows. Searchable title rows in
+`content_translation` are durable corpus and are never eviction candidates;
+see ADR-0006. Native authored rows, personal records and source identities are
+never eviction candidates.
 
 ## Consequences
 
@@ -37,6 +39,7 @@ records and source identities are never eviction candidates.
 - The published `content_translation` schema and its entity constraint remain
   unchanged; migration `095` adds the independent cache table.
 - Cache budget accounting covers two tables but keeps one bounded eviction
-  policy and one maintenance path.
+  policy and one maintenance path; ADR-0006 separates persistent search titles
+  from rebuildable display cache.
 - Traditional Chinese continues to reuse the Simplified row and convert at
   display time; no separate Traditional copy is stored.

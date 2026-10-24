@@ -170,7 +170,7 @@ last command reports `no such table` instead of a count. The health response is
 
 Then confirm:
 
-1. `docker compose ps` reports the expected image and `healthy`.
+1. `docker compose ps` reports the expected image; a stack with a Compose healthcheck also reports `healthy`, while the production stack without one only needs `running`.
 2. `GET /health` returns HTTP 200 with the restored version.
 3. An authenticated `/api/works` read returns the works that existed before the
    upgrade, and a source and catalog entry remain readable.

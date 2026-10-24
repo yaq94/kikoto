@@ -1,26 +1,80 @@
-# 21：有效译文覆盖与按语言完整搜索
+# 21：有效译文语料、覆盖状态与严格语言搜索
 
-**What to build:** 持久译文只对当前有效语料提供正确性；覆盖进度、失败恢复、目标语言搜索与短查询均使用一致定义。
+**What to build:** 持久译文只对当前有效语料提供正确性；覆盖进度、失败恢复、目标语言搜索与短查询均使用一致定义。严格目标语言搜索不得混入原文；`origin` 才查询原文。编号和精确代码查询不受显示语言过滤。
 
-**Blocked by:** [02：浏览内容翻译与缓存](02-content-translation-cache.md)；[03：简繁转换](03-traditional-chinese-conversion.md)。
+**Blocked by:** [03：简繁转换与受保护名称保持](03-traditional-chinese-conversion.md)（02 为传递前置）。
 
 **Status:** ready-for-agent
-**Implementation:** pending
+**Implementation:** in-progress；已有 `25f96c22`、`5defaa1c` 等译文缓存提交和主会话 `6dee3087` 有界写入修复，但严格搜索、有效覆盖和预算保留尚未闭环。
 
-**依据:** [正式规格](../spec.md)、[整改计划](../review-remediation-plan.md)、[ADR-0005](../../../docs/decisions/ADR-0006-catalog-remediation-and-translation-consistency.md)。
+**依据:** [正式规格](../spec.md)、[整改计划](../review-remediation-plan.md)、[ADR-0006](../../../docs/decisions/ADR-0006-catalog-remediation-and-translation-consistency.md)、翻译工作包 D-27/D-29/D-30。
 
-## 验收范围
+## 验收归属
 
-**主责:** AC-03、AC-06、AC-08；**共同:** AC-25、AC-26、AC-28。
+本票负责 AC-06 的当前配置／缓存键子项、AC-03 的显示语言搜索子项、AC-08 的来源范围译文搜索子项。AC-03/06 的原始主责仍是 02；AC-08 的原始主责仍是 07/08。21 不替代 02 的两用户偏好、四类内容、交互队列、超时与淘汰验收。
 
-- [ ] 软预算不删除当前有效搜索所需译文；原生行、当前译文、superseded 行与可重建缓存的保留语义明确。
-- [ ] 覆盖统计排除退役和历史行，核对当前原文、模型及模板；连续失败、淘汰和配置变化不能显示为完整覆盖。
-- [ ] 目标语言搜索不混入原文；`origin` 保留原行为，简繁搜索保持归一化规则。
-- [ ] 1–2 字查询覆盖完整有效集合并有明确工作量上限，不能仅扫描每语言最新 50,000 行。
-- [ ] H/R/F 验证远程与本地、重启及动态内容；在生产驱动下取得真实规模迁移和 p95 证据。
+## 数据模型与迁移
 
-**测试入口:** H、R、少量 F、必要 U；真实模型与规模证据由 24 汇总。
+系列迁移合并后，按实际连续链分配迁移编号：
+
+- `content_translation` 增加 `config_key TEXT NOT NULL DEFAULT ''`；索引 `(language, entity_kind, field, config_key, entity_id)`。
+- `translation_prefill_state` 增加 `config_key TEXT NOT NULL DEFAULT ''`、`cursor_kind TEXT NOT NULL DEFAULT 'entry'`、`cursor_id INTEGER NOT NULL DEFAULT 0`；保留 `status`、`last_error`、`updated_at`。
+- 新增 `translation_prefill_failure(entity_kind, entity_id, language, config_key, attempts, next_retry_at, last_error, PRIMARY KEY(...))`，失败计数持久化。
+- `config_key` 只覆盖影响模型输出的配置：model、base URL、template version、disableThinking；不包含 API key、并发、超时或预算。
+- 旧 model 行没有 `config_key` 时视为 stale；迁移不猜测旧 endpoint／reasoning，若 `model` 与 `template_version` 与当前一致，只列为兼容候选，不直接进入严格搜索。
+
+## 有效实体与覆盖
+
+有效标题实体：
+
+- entry：`relocated_to_id IS NULL`、标题非空、source enabled 且 `source_type='openlist'`，并通过 D-16 准入。
+- series：标题非空、至少两个成员、至少一个成员可准入；series 的 work 不作为普通 work 重复加入。
+- work：标题非空的本地作品；排除作为 `catalog_series.work_id` 的系列 work，避免重复。
+
+prefill 必须逐类枚举 entry、series、work。原生目标语言内容写 `origin='native'`；已有 `work_title_language` 或来源提供的目标语言标题优先写 native 行，不重复调用模型。`zh-tw` 从 `zh-Hans` 派生，原生 `zh-Hant` 计入。
+
+覆盖按 `entity_kind × language` 统计 total、covered、missing、stale、failed、native、model。当前行必须满足：`origin='native'` 或 `config_key=当前 config_key`；`source_text` 等于当前实体标题；实体仍有效。
+
+`complete` 只在所有有效实体、所有目标语言均无 missing、stale、failed、retry 时成立。游标到结尾、历史行数量、连续失败跳过都不能写 complete。新条目、标题变化、模型／base URL／模板／reasoning 变化必须重置对应实体状态和 prefill 游标；series 标题变化也重置。
+
+失败条目进入持久 retry；达到重试上限后状态为 `failed`，不是 skipped，也不计入 covered；继续处理其他实体，整体保持 incomplete。状态接口返回当前 config key、total/covered/missing/stale/failed、预算字节、`over_budget`、最近错误和更新时间。
+
+## 行类别与保留规则
+
+| 行类别 | 例子 | 预算淘汰 | 搜索 |
+| --- | --- | --- | --- |
+| 持久搜索语料 | `content_translation` 的 `field='title'`（entry/series/work） | 不得因 `cacheBytes`／`maxEntries` 删除 | 目标语言搜索读取 |
+| 原生行 | `origin='native'` | 永不淘汰 | 同语言目标可搜 |
+| 可重建显示缓存 | 非 title 的 `content_translation`、全部 `source_field_translation` | 可按预算淘汰 | 不参与内容搜索 |
+| superseded | 同一实体／字段／语言、当前 `config_key` 或 source_text 不匹配的旧行 | 低频清理 | 不计数、不返回 |
+| retired | 实体已退役或不存在 | 低频清理 | 不计数、不返回 |
+
+`cacheBytes` 是软预算告警；超预算时报告 `over_budget`，不得删除当前有效标题译文。`source_field_translation` 仍是纯显示缓存，不建 FTS，不参与搜索。superseded/retired 清理按当前 config 和 source_text 判定，不能仅按 id 最大者判断。
+
+## 搜索
+
+| 查询类型 | 规则 |
+| --- | --- |
+| `origin` | 只查原文标题／原文 FTS 和文件名；不读 `content_translation` |
+| 目标语言文本 | 只查目标语言 native 或当前 `config_key` 的 model 标题；不得并入原文 FTS，不得回退原文 |
+| 编号、精确代码 | 语言无关；始终查 `primary_code`／`work` 代码，不因显示语言被过滤 |
+| 3 字以上 | FTS5 trigram，join 有效实体、当前行和 D-16 准入 |
+| 1–2 字 | 在完整有效集合上按 `(language, entity_kind, id)` keyset 分页 `instr`；只限制返回条数，不限制扫描行数 |
+| `zh-tw` | 查询先 t2s；同时查 `zh-Hans` 与原生 `zh-Hant`；原生繁体行按原查询命中 |
+
+本地 `library/query.go` 与远程 `openlist_catalog.go` 必须调用同一套 `DisplaySearchTargets` 和 `config_key` 条件。删除或改写 `TestContentTranslationSearchRemoteIncludesOriginalText` 等固化错误行为的测试；新增“目标语言下按编号仍可搜索”和“目标语言下原文标题不命中”的对偶测试。
+
+## 验收清单
+
+- [ ] 软预算不删除当前 title 译文；可重建缓存、superseded、retired 的边界有 H 测试。
+- [ ] 覆盖统计关联当前有效实体、当前 config_key、当前 source_text；连续失败、跳过、退役和配置变化不能显示 complete。
+- [ ] 目标语言搜索严格只返回目标语言译文或原生同语言内容；`origin` 才出现原文；编号查询不受语言过滤。
+- [ ] 1–2 字查询覆盖完整有效集合，明确结果数上限和 p95，不再只扫描每语言最新 50,000 行。
+- [ ] 本地与远程搜索、简繁归一化、动态内容、重启和失败恢复 H/R/F 覆盖。
+- [ ] modernc SQLite、45.6 万行：精确命中 p95 <5 ms；3 字以上 p95 <100 ms；1–2 字 p95 <100 ms 或记录优化依据；WAL 峰值和数据库大小留证。
+
+**测试入口:** H、R、少量 F、必要 U；真实模型与规模证据由 24 汇总。测试编号使用 `testfixture.WorkCodeAt`，超过 400 条使用 `HighCardinalityWorkCodeAt`。
 
 ## Comments
 
-有界事务修复由并行实施会话交付后整合，本票不能以写锁修复替代覆盖与搜索正确性。
+主会话已提交 `6dee3087` 的有界写入修复；21 在其 SHA 之后整合，不直接修改对方未提交的 `content_translation_*`、`openlist_catalog.go`。`docs/development/translation.md` 必须从“durable corpus”与“model cache oldest-first”自相矛盾的表述改为上表规则。ADR-0006 明确 `Amends ADR-0007`。

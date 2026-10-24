@@ -1,8 +1,9 @@
-# Catalog prune dry-run
+# Historical catalog prune dry-run (former alias policy)
 
-> Historical snapshot under the former alias policy. Current reports skip every
-> source-only card that still owns a `personal_transfer_ref`; do not use these
-> deletion counts as a current apply plan.
+> Historical snapshot from the former alias-deletion policy. It predates the
+> source-only `personal_transfer_ref` protection and is not a current apply plan.
+> Current reports skip every source-only card that still owns a
+> `personal_transfer_ref`; do not use these deletion counts for apply.
 
 - Generated: 2026-10-21T11:59:46Z
 - Note: a dry run on a stopped copy of the deployment database found 643 candidate cards / 114,648 files / 643 transfer refs. The historical plan proposed removing 642 / 114,412 / 642 because one path was inside the `/source/example/audio` whitelist.

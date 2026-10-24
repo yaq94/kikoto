@@ -28,7 +28,7 @@
 ## 回滚路径
 
 兼容矩阵与命令模板见
-[发布回退](../../docs/development/release-rollback.md)。当前部署的关键前提：
+[发布回退](../../../docs/development/release-rollback.md)。当前部署的关键前提：
 
 - 回滚镜像 `kikoto:next-aa17d43c` 保留，包含 schema `083` 的打包迁移目录。
 - 部署前快照 `pre-2bae5db9-20261020T211725Z` 中的数据库为 schema `083`，

@@ -2,13 +2,14 @@ package httpapi
 
 import (
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/yexca/kikoto/backend/internal/testfixture"
 )
 
 // This opt-in test sends only the two neutral, authored samples below through
@@ -59,7 +60,7 @@ func TestContentTranslationTraditionalLiveConfiguredService(t *testing.T) {
 	for i, sample := range samples {
 		original := sample.text
 		id := i + 1
-		metadataReviewExec(t, s.db, `INSERT INTO work(id,primary_code,title) VALUES(?,?,?)`, id, fmt.Sprintf("RJ0000000%d", i), original)
+		metadataReviewExec(t, s.db, `INSERT INTO work(id,primary_code,title) VALUES(?,?,?)`, id, testfixture.WorkCode(testfixture.PrefixRJ, i), original)
 		metadataReviewExec(t, s.db, `INSERT INTO work_party(work_id,party_id) VALUES(?,1)`, id)
 		metadataReviewExec(t, s.db, `INSERT INTO work_credit(work_id,person_id,role) VALUES(?,1,'voice_actor')`, id)
 		start := time.Now()
