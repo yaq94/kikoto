@@ -79,23 +79,31 @@ Scan options are saved with the source's checkpoint and reused by an empty
 start request. An active run keeps its options until it is stopped and resumed.
 
 A full scan that reached the end of the tree enables daily updates for that
-source. The next due time is persisted in `app_setting` and is checked by the
-existing workflow coordinator on startup and while the application runs. A
-stopped application catches up with one update when it starts; elapsed days do
-not queue multiple crawls. A run that still has unconfirmed empty ranges also
-schedules the next re-observation, but the daily trigger resumes the same
-generation instead of creating an independent full crawl, so new content below
-a transient empty answer is eventually discovered. Failed and restricted ranges
-retry on the same schedule; a low-disk pause waits for the operator. Finite
-scans and disabled sources do not enable the schedule.
+source. The next daily boundary is 03:00 Asia/Shanghai and the next full
+reconciliation boundary is Sunday 03:00 Asia/Shanghai. Both are persisted as
+Unix seconds in `app_setting` (`source_catalog_daily:<source id>` and
+`source_catalog_full:<source id>`) and exposed as `nextUpdateAt` and
+`nextFullAt` in the index progress response. The existing workflow coordinator
+checks them on startup and while the application runs. A stopped application
+catches up with at most one due dispatch; elapsed days do not replay every
+missed boundary.
 
-Daily dispatch uses the same transaction as manual dispatch: queued/running
-scans are joined, and cancelled, failed, paused or partial scans resume their
-existing generation. The due time advances with dispatch, so repeated coordinator
-checks do not continually retry a paused source. A complete success schedules
-the next update for 24 hours later. Daily work uses the saved limits, existing
-source request policy and low-space pause, and only complete coverage reports
-success. Manual starts still require `sources:write`.
+A partial scan also schedules the daily boundary. The daily pass is a
+directory-first sync over the same generation: it probes completed branches for
+new or changed files, lists pending directories from their stored rows, retries
+failed, restricted and unconfirmed-empty ranges, and records an independent
+`source_catalog_sync_run`. A cancelled or failed generation resumes its full
+checkpoint. The Sunday boundary starts a new full generation after any queued
+or running work has settled, so a full reconciliation never overlaps an
+incremental sync. A low-disk pause moves the next daily attempt one hour out and
+keeps the checkpoint.
+
+Daily dispatch advances the persisted boundary in the same transaction as the
+enqueue or resume. A dispatch therefore does not mean the scan completed: only
+a `succeeded` generation with resolved directory ranges reports complete
+coverage, and partial or failed work leaves the unresolved ranges visible.
+Daily work uses the saved limits, existing source request policy and low-space
+pause. Manual starts still require `sources:write`.
 
 Every incremental update re-lists the source root in addition to probing child
 directories. Root-level files are not visible through the directory probe, so

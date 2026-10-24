@@ -603,17 +603,21 @@ func (s *Server) expandCatalogDirectory(ctx context.Context, job workflowJobReco
 	if err != nil {
 		return false, err
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT name FROM source_catalog_observation WHERE file_source_id=? AND directory_path=? AND revision=? AND kind='folder' AND name>? ORDER BY name LIMIT ?`, sourceID, p, revision, cursor, catalogExpandRows)
+	rows, err := tx.QueryContext(ctx, `SELECT name,modified_at FROM source_catalog_observation WHERE file_source_id=? AND directory_path=? AND revision=? AND kind='folder' AND name>? ORDER BY name LIMIT ?`, sourceID, p, revision, cursor, catalogExpandRows)
 	if err != nil {
 		return false, err
 	}
-	names := []string{}
+	type folderObservation struct {
+		name     string
+		modified string
+	}
+	folders := []folderObservation{}
 	for rows.Next() {
-		var name string
-		if err = rows.Scan(&name); err != nil {
+		var folder folderObservation
+		if err = rows.Scan(&folder.name, &folder.modified); err != nil {
 			break
 		}
-		names = append(names, name)
+		folders = append(folders, folder)
 	}
 	if err == nil {
 		err = rows.Err()
@@ -622,20 +626,20 @@ func (s *Server) expandCatalogDirectory(ctx context.Context, job workflowJobReco
 	if err != nil {
 		return false, err
 	}
-	for _, name := range names {
-		child := path.Join(p, name)
+	for _, folder := range folders {
+		child := path.Join(p, folder.name)
 		traversable, excludeErr := catalogPathTraversableTx(ctx, tx.Tx, sourceID, child)
 		if excludeErr != nil {
 			return false, excludeErr
 		}
 		if !traversable {
-			cursor = name
+			cursor = folder.name
 			continue
 		}
 		// A name that arrived as U+FFFD or invalid UTF-8 cannot be requested:
 		// the source answers "object not found" for it. Record the name and
 		// skip the child; a guessed sibling is not a repair.
-		added, addErr := s.expandCatalogChildTx(ctx, tx.Tx, sourceID, job.RunID, p, partition, root, name)
+		added, addErr := s.expandCatalogChildTx(ctx, tx.Tx, sourceID, job.RunID, p, partition, root, folder.name)
 		if addErr != nil {
 			return false, addErr
 		}
@@ -644,10 +648,17 @@ func (s *Server) expandCatalogDirectory(ctx context.Context, job workflowJobReco
 				return false, addErr
 			}
 		}
-		cursor = name
+		// The parent listing observed this folder's mtime. Recording it here
+		// makes the first daily directory-first sync compare against a real
+		// value instead of spending a baseline run to adopt every mtime.
+		if _, addErr = tx.ExecContext(ctx, `UPDATE source_catalog_directory SET observed_version=?
+			WHERE file_source_id=? AND generation=? AND path=?`, folder.modified, sourceID, job.RunID, child); addErr != nil {
+			return false, addErr
+		}
+		cursor = folder.name
 	}
 	status := "listing_complete"
-	if len(names) < catalogExpandRows {
+	if len(folders) < catalogExpandRows {
 		status = "complete"
 	}
 	_, err = tx.ExecContext(ctx, `UPDATE source_catalog_directory SET children_cursor=?,status=?,completed_at=CASE WHEN ?='complete' THEN CURRENT_TIMESTAMP ELSE NULL END WHERE file_source_id=? AND path=?`, cursor, status, status, sourceID, p)
@@ -1369,7 +1380,11 @@ func (s *Server) sourceCatalogProgress(ctx context.Context, sourceID int64, page
 		}
 		p.Details = append(p.Details, x)
 	}
-	return p, rows.Err()
+	if err = rows.Err(); err != nil {
+		return p, err
+	}
+	p.NextUpdateAt, p.NextFullAt, err = s.catalogScheduleDueTimes(ctx, sourceID)
+	return p, err
 }
 
 // sourceCatalogProgressExact is the original aggregate. It is the
@@ -1448,7 +1463,11 @@ func (s *Server) sourceCatalogProgressExact(ctx context.Context, sourceID int64,
 		}
 		p.Details = append(p.Details, x)
 	}
-	return p, rows.Err()
+	if err = rows.Err(); err != nil {
+		return p, err
+	}
+	p.NextUpdateAt, p.NextFullAt, err = s.catalogScheduleDueTimes(ctx, sourceID)
+	return p, err
 }
 
 // sourceCatalogSidecarFailures counts the cards the worker can no longer pick

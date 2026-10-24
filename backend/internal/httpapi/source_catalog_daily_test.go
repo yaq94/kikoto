@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -127,7 +128,8 @@ func TestSourceCatalogDailyStartsOnlyAfterCompleteAndSurvivesRestart(t *testing.
 	if len(list["works"].([]any)) != 1 {
 		t.Fatal("daily discovery is not searchable")
 	}
-	now.Add(int64(23 * time.Hour / time.Second))
+	// Still before the next local 03:00 boundary.
+	now.Add(int64(18 * time.Hour / time.Second))
 	time.Sleep(2200 * time.Millisecond)
 	p = f.request(t, http.MethodGet, "/catalog/index", "", 200)
 	sync, _ := p["lastSync"].(map[string]any)
@@ -152,7 +154,7 @@ func TestSourceCatalogDailyStartsOnlyAfterCompleteAndSurvivesRestart(t *testing.
 		t.Fatalf("scheduled scan ignored disk limit: %#v", p)
 	}
 	closeApp()
-	now.Add(int64(24 * time.Hour / time.Second))
+	now.Add(int64(6 * time.Hour / time.Second))
 	f, closeApp = boot(false)
 	f.server.Go(f.server.StartJobRunner)
 	waitCatalogDaily(t, f, func(p map[string]any) bool { return p["status"] == "paused" && p["runId"] == third })
@@ -312,13 +314,15 @@ func TestSourceCatalogDailyReobservesAFinishedUnconfirmedEmptyGeneration(t *test
 	}
 	now.Add(int64(48 * time.Hour / time.Second))
 	f.server.Go(f.server.StartJobRunner)
-	// The resumed run passes through queued/running before it settles back to
-	// partial. Poll for the settled state instead of sampling one instant, so a
-	// loaded runner cannot turn a correct resume into a failure.
+	// The daily pass is a directory-first sync over the same generation. Poll
+	// for the settled sync instead of sampling one instant, so a loaded runner
+	// cannot turn a correct re-observation into a failure.
 	deadline := time.Now().Add(15 * time.Second)
+	var syncState map[string]any
 	for {
 		p = f.request(t, http.MethodGet, "/catalog/index", "", 200)
-		if p["runId"] == first && p["status"] == "partial" && p["requests"] != float64(1) {
+		syncState, _ = p["lastSync"].(map[string]any)
+		if p["runId"] == first && p["status"] == "partial" && syncState != nil && syncState["status"] != "running" {
 			break
 		}
 		if time.Now().After(deadline) {
@@ -330,10 +334,10 @@ func TestSourceCatalogDailyReobservesAFinishedUnconfirmedEmptyGeneration(t *test
 		t.Fatal("daily timer replaced the first generation")
 	}
 	// The run reached the end of the tree. Its only gap is an unconfirmed empty
-	// root, so the next day must observe the source again in the same
+	// root, so the next day must observe it again through a sync in the same
 	// generation; otherwise new content could never be discovered.
-	if p["requests"] == float64(1) {
-		t.Fatal("daily update did not re-observe a finished partial generation")
+	if syncState == nil || syncState["status"] != "partial" || syncState["dirsProbed"] == float64(0) {
+		t.Fatalf("daily update did not re-observe a finished partial generation: %#v", p["lastSync"])
 	}
 }
 
@@ -388,13 +392,18 @@ func TestSourceCatalogDailyRetriesALowDiskPauseAfterOneHour(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := f.server.db.Exec(`UPDATE source_catalog_scan
-		SET pause_reason='low_disk_space',updated_at=datetime(?, 'unixepoch')
+			SET pause_reason='low_disk_space',pending=1,updated_at=datetime(?, 'unixepoch')
 		WHERE file_source_id=1`, now.Load()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.server.db.Exec(`UPDATE source_catalog_directory SET status='pending',error_code=''
+			WHERE file_source_id=1 AND path='/'`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := f.server.db.Exec(`DELETE FROM app_setting WHERE key=?`, catalogDailySettingPrefix+"1"); err != nil {
 		t.Fatal(err)
 	}
+	f.server.catalogDiskSpace = func(string) (diskSpaceSnapshot, error) { return diskSpaceSnapshot{Available: 0}, nil }
 	// Before the backoff ends the paused generation is left alone.
 	if err := f.server.dispatchDueCatalogUpdates(context.Background()); err != nil {
 		t.Fatal(err)
@@ -406,21 +415,36 @@ func TestSourceCatalogDailyRetriesALowDiskPauseAfterOneHour(t *testing.T) {
 	if current != int64(runID.(float64)) {
 		t.Fatal("low-disk pause replaced its resumable generation")
 	}
+	var syncRuns int
+	if err := f.server.db.QueryRow(`SELECT count(*) FROM source_catalog_sync_run WHERE file_source_id=1`).Scan(&syncRuns); err != nil {
+		t.Fatal(err)
+	}
+	if syncRuns != 0 {
+		t.Fatal("low-disk backoff was ignored")
+	}
 	now.Add(int64(time.Hour/time.Second) + 1)
 	if err := f.server.dispatchDueCatalogUpdates(context.Background()); err != nil {
 		t.Fatal(err)
 	}
+	p := waitCatalogSyncSettled(t, f)
 	if err := f.server.db.QueryRow(`SELECT workflow_run_id FROM source_catalog_scan WHERE file_source_id=1`).Scan(&current); err != nil {
 		t.Fatal(err)
 	}
 	if current != int64(runID.(float64)) {
 		t.Fatal("low-disk retry did not resume the same generation")
 	}
-	var jobStatus string
-	if err := f.server.db.QueryRow(`SELECT status FROM workflow_job WHERE workflow_run_id=? AND worker_type=?`, runID, sourceCatalogIndexWorkerType).Scan(&jobStatus); err != nil {
+	sync := p["lastSync"].(map[string]any)
+	if sync["status"] != "partial" || !strings.Contains(sync["note"].(string), "low_disk_space") {
+		t.Fatalf("low-disk retry sync = %#v", sync)
+	}
+	if sync["requests"] != float64(0) {
+		t.Fatalf("low-disk retry spent %v requests", sync["requests"])
+	}
+	var due int64
+	if err := f.server.db.QueryRow(`SELECT CAST(value_json AS INTEGER) FROM app_setting WHERE key=?`, catalogDailySettingPrefix+"1").Scan(&due); err != nil {
 		t.Fatal(err)
 	}
-	if jobStatus != "queued" {
-		t.Fatalf("low-disk retry job status = %q, want queued", jobStatus)
+	if remaining := due - now.Load(); remaining < 50*60 || remaining > 70*60 {
+		t.Fatalf("low-disk retry due in %d seconds, want about an hour", remaining)
 	}
 }

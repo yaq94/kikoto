@@ -146,6 +146,12 @@ type catalogIndexProgress struct {
 	// LastSync is the most recent incremental run for this source. It is absent
 	// until the first sync has been queued.
 	LastSync *catalogSyncRunSummary `json:"lastSync,omitempty"`
+
+	// NextUpdateAt and NextFullAt are the persisted wall-clock boundaries in
+	// Asia/Shanghai. An absent value means the source has not established that
+	// boundary yet.
+	NextUpdateAt string `json:"nextUpdateAt,omitempty"`
+	NextFullAt   string `json:"nextFullAt,omitempty"`
 }
 
 // catalogSyncRunSummaryFor reads the latest sync attempt. It deliberately has
