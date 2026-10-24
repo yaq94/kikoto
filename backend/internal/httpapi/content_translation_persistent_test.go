@@ -8,6 +8,8 @@ import (
 	"net/http/httptest"
 	"sync/atomic"
 	"testing"
+
+	"github.com/yexca/kikoto/backend/internal/testfixture"
 )
 
 // A title already written in the target language becomes a native row. The
@@ -79,7 +81,7 @@ func TestContentTranslationBatchAcceptsTwoHundredItems(t *testing.T) {
 	const title = "例"
 	items := make([]wireItem, 0, contentTranslationBatchLimit)
 	for i := 0; i < contentTranslationBatchLimit; i++ {
-		if _, err := tx.Exec(`INSERT INTO work(id,primary_code,title) VALUES(?,?,?)`, i+1, fmt.Sprintf("RJ%08d", i), title); err != nil {
+		if _, err := tx.Exec(`INSERT INTO work(id,primary_code,title) VALUES(?,?,?)`, i+1, testfixture.WorkCodeAt(i), title); err != nil {
 			t.Fatal(err)
 		}
 		items = append(items, wireItem{Key: fmt.Sprint(i), WorkID: int64(i + 1), Field: "title", Text: title})
@@ -201,7 +203,7 @@ func TestContentTranslationBatchFitsProductionTitles(t *testing.T) {
 	const title = "深海少女的告白与秘密的森林之中"
 	items := make([]wireItem, 0, contentTranslationBatchLimit)
 	for i := 0; i < contentTranslationBatchLimit; i++ {
-		if _, err := tx.Exec(`INSERT INTO work(id,primary_code,title) VALUES(?,?,?)`, i+1, fmt.Sprintf("RJ%08d", i), title); err != nil {
+		if _, err := tx.Exec(`INSERT INTO work(id,primary_code,title) VALUES(?,?,?)`, i+1, testfixture.WorkCodeAt(i), title); err != nil {
 			t.Fatal(err)
 		}
 		items = append(items, wireItem{Key: fmt.Sprint(i), WorkID: int64(i + 1), Field: "title", Text: title})

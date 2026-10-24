@@ -38,6 +38,10 @@ func (f *looseWorkFixture) failPath(path string) {
 // looseWorkUpstream serves the listing tree and records every real media path
 // requested through /api/fs/get. The tree is mutable so a test can rescan it.
 func newLooseWorkFixture(t *testing.T, tree map[string][]map[string]any) *looseWorkFixture {
+	return newLooseWorkFixtureWithDB(t, tree, nil)
+}
+
+func newLooseWorkFixtureWithDB(t *testing.T, tree map[string][]map[string]any, db *sql.DB) *looseWorkFixture {
 	t.Helper()
 	f := &looseWorkFixture{}
 	f.updates = func(next map[string][]map[string]any) {
@@ -45,7 +49,7 @@ func newLooseWorkFixture(t *testing.T, tree map[string][]map[string]any) *looseW
 		defer f.mu.Unlock()
 		tree = next
 	}
-	fixture := newCatalogIndexFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	upstream := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/fs/get":
 			var input struct {
@@ -80,7 +84,13 @@ func newLooseWorkFixture(t *testing.T, tree map[string][]map[string]any) *looseW
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"code": 200, "data": map[string]any{"content": items, "total": len(items)}})
 		}
-	}))
+	})
+	var fixture catalogIndexFixture
+	if db == nil {
+		fixture = newCatalogIndexFixture(t, upstream)
+	} else {
+		fixture = newCatalogIndexFixtureWithDB(t, upstream, db)
+	}
 	f.catalogIndexFixture = fixture
 	return f
 }

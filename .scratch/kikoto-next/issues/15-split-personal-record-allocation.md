@@ -4,7 +4,7 @@
 
 **Blocked by:** [13：共享关联、归组预览与本人冲突确认](13-shared-link-conflict-review.md)。
 
-**Status:** resolved
+**Status:** ready-for-agent
 
 **Implementation:** resolved；本地实现与 H/F 已验收；生产部署验收见 17。
 

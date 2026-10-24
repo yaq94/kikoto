@@ -28,7 +28,7 @@ completed revision of a directory listing. `single` keeps the directory as one
 card, `prefix` and `file` split its direct audio by release prefix or base
 title, `episode` creates independent episode cards, and `duplicate` marks a
 container that repeats its parent's audio. The decision is recomputed for each
-completed revision rather than frozen at the first observation. A new
+completed revision. A new
 generation retires split cards it did not republish:
 their file rows are deleted and `file_source_id` and `relocated_to_id` are
 cleared, while the entry id stays resolvable for personal records. A card with
@@ -43,6 +43,24 @@ keeps ordered catalog entries without changing their work or edition references.
 `catalog_series_preview` stores actor-owned, expiring confirmation snapshots;
 private reviews are never copied into preview payloads. See
 [Catalog series](../development/catalog-series.md).
+
+Schema 096 adds `source_catalog_episode_pending` for finite-scan episode
+publication. Its `source_id`, `parent_root`, and `catalog_entry_root` identify
+the source snapshot; `catalog_entry_id` references the staged entry with
+`ON DELETE CASCADE`, and the source also cascades. A unique
+`(source_id,parent_root,catalog_entry_root)` index selects one staged entry for
+each episode. Staging starts with `file_source_id IS NULL` and
+`availability_status='excluded'`. Activation may assign the source id in
+bounded batches, but the pending mapping remains the visibility gate until the
+final transaction. `source_catalog_episode_publication` stores one
+`pending`/`published` row for each source and parent; flipping that row publishes
+the complete split without rewriting every entry. Direct reads, source search
+and user-state writes exclude partially activated episode cards. Pending
+mappings, parent metadata files and stale-card status changes are applied in
+bounded follow-up transactions. Membership may reference a staged entry, but
+series readers require a published entry. [Catalog
+series](../development/catalog-series.md) describes the transaction and
+recovery boundary.
 
 ## Work Metadata
 
@@ -557,6 +575,70 @@ person's display name through a confirmed alias held by exactly one person, so
 metadata sync keeps a merge instead of recreating the merged-away person. A
 merged name never replaces the target's display name.
 
+## Translation Corpus
+
+`content_translation` is the durable, searchable translated-content corpus. A
+row is keyed by the unique `cache_key`, which separates entity kind and id,
+field, language, source text, origin (`native` or `model`), model, base URL,
+template version and reasoning switch. `entity_kind` is `entry`, `series` or
+`work`; `field` is `title`, `description`, `tag` or `directory`. An
+`origin=native` row stores authored source text unchanged and uses no model
+call; a model row stores only successful, nonempty output.
+`translation_prefill_state` is the singleton prefill cursor with `idle`,
+`running`, `paused` or `complete` status, the current `config_key` and the last
+error. Migration 099 adds a `config_key` covering only output-shaping
+configuration: model, base URL, template version and reasoning switch. A row
+with another key is stale and is not current coverage; rows from before 099 are
+legacy candidates until re-prefilled. Current `title` and `description` rows for
+`work` and `source_catalog_entry`, plus `title` rows for `catalog_series`, are
+required for language-specific search and are never eviction candidates for the
+`cacheBytes` or `maxEntries` budgets. `tag` and `directory` rows remain
+display-only.
+
+`content_translation_search` is an FTS5 trigram index over
+`content_translation.translated_text`, maintained by insert, update and delete
+triggers. A display-language text search reads only rows for the requested
+storage language and current configuration; an `origin` search reads the
+original source index and never reads `content_translation`. Release codes and
+other structured identifiers remain searchable regardless of display language.
+Three-character and longer text queries use the trigram index. One- and
+two-character queries page over the complete effective set with the
+`(language, entity_kind, field, id, translated_text)` covering index and
+`instr`; they must not stop at a fixed newest-row window. If p95 exceeds 100 ms
+at the target corpus size, a short-term n-gram index or equivalent indexed
+structure is required.
+
+`zh-cn`, `en-us`, `ja-jp` and `ko-kr` map to `zh-Hans`, `en-US`, `ja-JP` and
+`ko-KR`. `zh-tw` reads `zh-Hans` with OpenCC `s2t` and also searches native
+`zh-Hant` rows.
+
+`source_field_translation` is a rebuildable display cache for source-level
+fields such as a remote title, tag or directory name. Its cache key covers the
+source, normalized work code, field, real relative path, source text, target
+language, model, endpoint, reasoning switch and template version. The source
+foreign key cascades on deletion. The table has no FTS table or trigger and is
+never read by content search. Source availability and the exact public field are
+revalidated before a row is used.
+
+`maxEntries` and `cacheBytes` form one soft budget over evictable model rows and
+their indexes. `cacheBytes` measures SQLite pages through `dbstat`, including
+FTS shadow tables; values below 1 MiB fall back to UTF-8 text bytes. A write
+commits before the bounded trim, so a burst can remain above the target until a
+later pass. Superseded and retired rows are removed by a low-frequency cleanup
+and do not count as current coverage. If persistent title rows alone exceed the
+budget, the status reports `over_budget`; searchable title rows are not deleted.
+Native rows, personal records and source identities are never eviction
+candidates. See
+[ADR-0006](../decisions/ADR-0006-catalog-remediation-and-translation-consistency.md)
+and [ADR-0007](../decisions/ADR-0007-source-field-translation-cache.md).
+
+The retention and complete short-query behavior above is the accepted issue 21
+target contract. This branch has not implemented the planned 099 configuration
+key or the issue 21 retention/search changes: current code can evict model rows,
+including title rows, and one- and two-character searches still scan only the
+newest 50,000 rows per language. Issue 21 owns those changes; until they land,
+this page does not describe them as completed results.
+
 ## File Availability
 
 Important tables:
@@ -770,6 +852,13 @@ a tied client order. The backup's historical playback date remains presentation
 data, so an older offline report cannot undo the import; a strictly later
 checkpoint, including a backward seek, still replaces it.
 
+`personal_transfer_ref` stores an opaque reference to a work, episode, series or
+source catalog entry for personal-data transfer. A work-backed catalog reference
+becomes a non-primary work alias when its card retires. A source-only reference
+has no surviving work for the reference, so its catalog card remains until the
+reference has an explicit reviewed target. Catalog prune reports that card as
+`transfer_alias` and refuses a plan that would remove it.
+
 Lyrics preferences relate an audio media item to a lyrics media item; runtime
 location selection remains a file-source concern. A personal preference
 overrides the shared `media_lyrics_assignment` for that user only.
@@ -960,10 +1049,9 @@ completed and the publisher has written its card and file rows.
 The publisher drives each batch from the current generation's complete
 directories and requires an audio root through `EXISTS`; the directory primary
 key orders the scan and the partial index over pending rows seeks the
-observations. An earlier materialized-roots join scanned the whole root set per
-batch. The worker drains at most eight batches of 50 rows per invocation and
-then returns the job to the queue, which bounds write-lock spans while the scan
-continues.
+observations. The worker drains at most eight batches of 50 rows per invocation
+and then returns the job to the queue, which bounds write-lock spans while the
+scan continues.
 
 `source_catalog_scan.publish_cleanup_cursor` (migration
 [`077_source_catalog_publish_cleanup.sql`](../../backend/migrations/077_source_catalog_publish_cleanup.sql))
@@ -985,4 +1073,6 @@ answer from the index instead of reading the table row.
 - [Core boundaries](core-boundaries.md)
 - [Source presence](source-presence.md)
 - [Workflows](workflows.md)
+- [Translation service](../development/translation.md)
+- [Catalog prune](../development/catalog-prune.md)
 - [Migrations](../development/migrations.md)

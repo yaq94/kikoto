@@ -373,10 +373,10 @@ func (s *Server) catalogIndexDiskPause(options catalogIndexOptions) string {
 // first daily update. A paused low-disk run is not finished coverage and must
 // not start the schedule; an upstream failure does not either. A generation
 // that reached the end of the tree with only unconfirmed empty or unreadable
-// directories does schedule, otherwise new content added later would never be
-// observed because a partial run is only ever resumed.
+// directories does schedule: its next daily pass is the directory-first sync
+// that retries those ranges and probes the successful branches.
 func catalogScanSchedulesDaily(status, reason string, progress catalogIndexProgress) bool {
-	if reason != "" || progress.Pending > 0 || progress.Completed == 0 {
+	if reason != "" || progress.Pending > 0 {
 		return false
 	}
 	return status == "succeeded" || status == "partial"
@@ -409,7 +409,7 @@ func (s *Server) settleCatalogBatchAt(ctx context.Context, job workflowJobRecord
 	if catalogScanSchedulesDaily(status, reason, progress) {
 		// Completion owns the next daily tick only. The weekly full marker is
 		// written when a new full generation is enqueued, so resuming this
-		// generation later cannot restart the seven-day clock.
+		// generation later cannot move the next Sunday boundary.
 		if err = setCatalogDailyNextUpdateTx(ctx, tx.Tx, sourceID, s.catalogTime()); err != nil {
 			return err
 		}

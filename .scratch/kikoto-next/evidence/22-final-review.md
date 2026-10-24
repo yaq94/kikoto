@@ -2,7 +2,7 @@
 
 ## 审查范围与基线
 
-- 仓库 `/srv/kikoto/source`，分支 `codex/kikoto-next-integration`，HEAD `1920a8d0a60b15d4febbe037ea308d9c81dc19ab`。该 HEAD 相对部署提交 `2bae5db98acceff6b45fdb4d168908c7b0da9177` 只多两个 docs 提交（`0f70702f`、`1920a8d0`，仅改 `.scratch/kikoto-next` 证据与执行记录），应用代码等价。
+- 仓库 `/path/to/kikoto/source`，分支 `codex/kikoto-next-integration`，HEAD `1920a8d0a60b15d4febbe037ea308d9c81dc19ab`。该 HEAD 相对部署提交 `2bae5db98acceff6b45fdb4d168908c7b0da9177` 只多两个 docs 提交（`0f70702f`、`1920a8d0`，仅改 `.scratch/kikoto-next` 证据与执行记录），应用代码等价。
 - 工作区不干净：共 8 个已跟踪文件被改，其中 7 个是后端代码/测试（`source_catalog_index.go`、`source_catalog_index_store.go`、`source_catalog_index_worker.go`、`source_catalog_loose_works.go`、`source_catalog_split_identity_test.go`、`work_matching_scope_test.go`、`storage/migration_manager_test.go`），另 1 个是证据 `20-post-review-fixes.md`；`backend/migrations/084_source_catalog_orphan_cursor.sql` 未跟踪。084 未提交、未进镜像；当前部署仍是 `kikoto:next-2bae5db9`、schema 83。
 - 合同：`spec.md` 的 AC-01..AC-28 与 Testing Decisions。证据按 01–21、`index-calibration.md`、`issues/*.md` 核对；生产 run 53 数字采用审查输入（14,463/14,494 完成、4 failed、27 unconfirmed empty、42,624 张可播放卡、42,610 未登记），不重复验证。
 - 本次为只读审查，只新增本文件；未改源码、测试、工单或 Git 状态。

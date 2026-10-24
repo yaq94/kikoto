@@ -8,7 +8,7 @@ import (
 )
 
 func buildImportPlan(ctx context.Context, tx *sql.Tx, user int64, b Backup) (importPlan, error) {
-	p := importPlan{preview: ImportPreview{Works: len(b.Works), Playlists: len(b.Playlists), Tags: len(b.Tags), MissingCodes: []string{}}, works: map[string]int64{}, matches: map[string]identityMatch{}, reviewConflicts: map[int64]bool{}, progressConflict: map[int64]bool{}, statusConflict: map[int64]bool{}, media: map[string]int64{}, blocked: map[string]bool{}, identities: map[string]int64{}, reviews: map[int64]TransferReview{}}
+	p := importPlan{preview: ImportPreview{Works: len(b.Works), Playlists: len(b.Playlists), Tags: len(b.Tags), MissingCodes: []string{}}, works: map[string]int64{}, matches: map[string]identityMatch{}, reviewConflicts: map[int64]bool{}, progressConflict: map[int64]bool{}, statusConflict: map[int64]bool{}, media: map[string]int64{}, blocked: map[string]bool{}, identities: map[string]int64{}, reviews: map[int64]TransferReview{}, parents: map[string]identityMatch{}}
 	codes := map[string]bool{}
 	for _, w := range b.Works {
 		if w.Identity == nil {
@@ -25,6 +25,44 @@ func buildImportPlan(ctx context.Context, tx *sql.Tx, user int64, b Backup) (imp
 				return p, err
 			}
 		}
+		if m.problem == "" && w.Identity.Kind == "episode" {
+			if w.Identity.Parent == nil {
+				seriesIDs, err := episodeSeriesIDs(ctx, tx, m)
+				if err != nil {
+					return p, err
+				}
+				if len(seriesIDs) == 0 {
+					m.problem = "parent_missing"
+				}
+			} else {
+				parentMatch, err := resolveTransferParent(ctx, tx, w.Identity.Parent)
+				if err != nil {
+					return p, err
+				}
+				p.parents[w.key()] = parentMatch
+				if parentMatch.problem != "" {
+					m.problem = parentMatch.problem
+				} else {
+					seriesIDs, err := episodeSeriesIDs(ctx, tx, m)
+					if err != nil {
+						return p, err
+					}
+					m.problem = transferParentConflict(parentMatch, seriesIDs)
+					if m.problem == "" && len(seriesIDs) == 0 {
+						conflict, err := transferParentPositionConflict(ctx, tx, m, w.Identity.Parent, parentMatch)
+						if err != nil {
+							return p, err
+						}
+						if conflict {
+							m.problem = "parent_conflict"
+						}
+					}
+					if m.problem == "" && parentMatch.work == 0 {
+						p.requiresRegistration = true
+					}
+				}
+			}
+		}
 		p.matches[w.key()] = m
 		p.works[w.key()] = m.work
 		if m.problem != "" {
@@ -36,9 +74,18 @@ func buildImportPlan(ctx context.Context, tx *sql.Tx, user int64, b Backup) (imp
 		}
 		if m.work == 0 {
 			p.preview.NewWorks++
+			p.requiresRegistration = true
+		}
+		parentRef, parentEntryRef := "", ""
+		if w.Identity.Parent != nil {
+			parentRef = w.Identity.Parent.Ref
+			parentEntryRef = episodeEntryRef(w.Identity, w.Identity.Parent)
 		}
 		for _, ref := range append([]string{w.Identity.Ref}, w.Identity.References...) {
 			if ref[:2] == "w:" {
+				continue
+			}
+			if ref == parentRef || ref == parentEntryRef {
 				continue
 			}
 			var found bool
@@ -49,11 +96,6 @@ func buildImportPlan(ctx context.Context, tx *sql.Tx, user int64, b Backup) (imp
 				if err := p.preview.addIssue(ImportIssue{Ref: ref, Title: w.label(), Reason: "source_reference_retained"}); err != nil {
 					return p, err
 				}
-			}
-		}
-		if m.work == 0 && m.catalog == 0 && w.Identity.Kind == "episode" {
-			if err := p.preview.addIssue(ImportIssue{Ref: w.key(), Title: w.label(), Reason: "relationships_not_imported"}); err != nil {
-				return p, err
 			}
 		}
 	}

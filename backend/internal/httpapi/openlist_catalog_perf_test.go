@@ -11,6 +11,7 @@ import (
 
 	"github.com/yexca/kikoto/backend/internal/config"
 	"github.com/yexca/kikoto/backend/internal/library"
+	"github.com/yexca/kikoto/backend/internal/testfixture"
 )
 
 func explainCatalogPlan(t *testing.T, db *sql.DB, query string, args ...any) string {
@@ -68,7 +69,7 @@ func TestOpenListCatalogBrowseSinglePassPlan(t *testing.T) {
 	seedCatalogPlanSource(t, db)
 	for index := 1; index <= 6; index++ {
 		id := int64(index)
-		insertCatalogPlanEntry(t, db, id, fmt.Sprintf("Work %d", index), fmt.Sprintf("RJ%08d", index))
+		insertCatalogPlanEntry(t, db, id, fmt.Sprintf("Work %d", index), testfixture.WorkCode(testfixture.PrefixRJ, index))
 		insertCatalogPlanAudio(t, db, id, "track.mp3", fmt.Sprintf("Track %d", index))
 	}
 	if _, err := db.Exec(`UPDATE source_catalog_entry SET updated_at=? WHERE id=?`, "2026-01-01 00:00:00", 1); err != nil {

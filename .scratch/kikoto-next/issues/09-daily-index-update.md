@@ -4,7 +4,7 @@
 
 **Blocked by:** [08：完整来源索引与恢复进度](08-recoverable-full-source-index.md)。
 
-**Status:** resolved
+**Status:** ready-for-agent
 
 **Implementation:** resolved；本地实现与 H/R 已验收；生产部署验收见 17。
 

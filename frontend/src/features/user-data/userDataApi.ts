@@ -39,6 +39,8 @@ export type UserDataImportIssue = {
     | "identity_conflict"
     | "unregistered_source"
     | "source_reference_retained"
+    | "parent_missing"
+    | "parent_conflict"
     | "relationships_not_imported"
     | "playlist_preserved";
   incoming?: { rating: number | null; note: string };

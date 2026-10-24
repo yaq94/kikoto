@@ -415,6 +415,8 @@ export const personalHant = {
         identity_conflict: "身分引用存在矛盾，本物件已略過。",
         unregistered_source: "已知來源尚未登記，請先登記後匯入此記錄。",
         source_reference_retained: "已保留此來源引用供後續傳輸，未建立來源連線。",
+        parent_missing: "資料庫和備份中都沒有此單集的父系列歸屬。本集已略過，不會作為獨立作品還原。",
+        parent_conflict: "備份中的父系列與現有共用歸屬矛盾。本集已略過，現有歸屬保持不變。",
         relationships_not_imported: "單集已作為獨立物件還原。系列成員與共用關聯須透過資料編輯流程確認。",
         playlist_preserved: "清單包含無法歸屬的引用，保留整份清單。",
       },

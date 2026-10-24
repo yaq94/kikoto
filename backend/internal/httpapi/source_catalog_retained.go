@@ -4,17 +4,37 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 )
 
 type catalogEntryQueryer interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
 }
 
+// catalogEntryPendingSQL is the shared visibility gate for staged episodes.
+// Retained missing records have no file_source_id but no pending row, so they
+// stay readable. The parent publication row keeps a ready entry hidden until
+// all activation batches finish and one row flips the complete split public.
+func catalogEntryPendingSQL(alias string) string {
+	return fmt.Sprintf(`NOT EXISTS(
+		SELECT 1 FROM source_catalog_episode_pending pending
+		WHERE pending.catalog_entry_id=%[1]s.id
+			AND NOT EXISTS(
+				SELECT 1 FROM source_catalog_episode_publication publication
+				WHERE publication.source_id=pending.source_id
+					AND publication.parent_root=pending.parent_root
+					AND publication.state='published'
+			)
+	)`, alias)
+}
+
 func resolveCatalogEntry(ctx context.Context, q catalogEntryQueryer, id int64) (catalogEntry, error) {
 	for range 8 {
 		var e catalogEntry
 		var target sql.NullInt64
-		err := q.QueryRowContext(ctx, `SELECT id,COALESCE(file_source_id,0),primary_code,title,root_path,source_root,work_id,availability_status,relocated_to_id FROM source_catalog_entry WHERE id=?`, id).Scan(&e.ID, &e.SourceID, &e.PrimaryCode, &e.Title, &e.RootPath, &e.SourceRoot, &e.WorkID, &e.Status, &target)
+		err := q.QueryRowContext(ctx, `SELECT id,COALESCE(file_source_id,0),primary_code,title,root_path,source_root,work_id,availability_status,relocated_to_id
+			FROM source_catalog_entry WHERE id=? AND `+catalogEntryPendingSQL("source_catalog_entry"), id).
+			Scan(&e.ID, &e.SourceID, &e.PrimaryCode, &e.Title, &e.RootPath, &e.SourceRoot, &e.WorkID, &e.Status, &target)
 		if err != nil {
 			return e, err
 		}
@@ -34,6 +54,9 @@ func (s *Server) loadRetainedSourceCatalogEntry(ctx context.Context, id int64) (
 	}
 	entry, err := resolveCatalogEntry(ctx, s.db, id)
 	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return entry, remoteSourceForUse{}, errRemoteWorkNotFound
+		}
 		return entry, remoteSourceForUse{}, err
 	}
 	var source remoteSourceForUse

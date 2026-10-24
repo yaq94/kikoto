@@ -184,12 +184,13 @@ func (s *Server) blockUnadmittedCatalogRootTx(ctx context.Context, tx *sql.Tx, s
 func catalogEntryAdmittedSQL(alias string) string {
 	return fmt.Sprintf(`(
 		EXISTS(SELECT 1 FROM source_catalog_file aqf WHERE aqf.catalog_entry_id=%[1]s.id AND aqf.kind='audio')
+			AND %[2]s
             AND (SELECT count(*) FROM (SELECT 1 FROM source_catalog_file af WHERE af.catalog_entry_id=%[1]s.id LIMIT 5001)) <= 5000
             AND NOT (
                 (SELECT count(*) FROM (SELECT 1 FROM source_catalog_file anf WHERE anf.catalog_entry_id=%[1]s.id AND anf.kind<>'audio' LIMIT 2001)) > 2000
                 AND (SELECT count(*) FROM (SELECT 1 FROM source_catalog_file aaf WHERE aaf.catalog_entry_id=%[1]s.id AND aaf.kind='audio' LIMIT 5)) < 5
             )
-		)`, alias)
+		)`, alias, catalogEntryPendingSQL(alias))
 }
 
 // catalogEntryAdmission is the structured answer for one card id. The counts

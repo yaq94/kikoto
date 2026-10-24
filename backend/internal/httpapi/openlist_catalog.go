@@ -287,16 +287,7 @@ func catalogDirectAudioNames(files []openlist.File) []string {
 }
 
 func persistOpenListSnapshotTx(ctx context.Context, tx *sql.Tx, sourceID int64, root, sourceRoot, title string, files []openlist.File) (int64, error) {
-	// The same parser the resumable index uses: a code may sit in brackets, be
-	// prefixed directly to a title, or be the whole folder name.
-	code := catalogEntryCode(root)
-	if title == "" {
-		title = path.Base(root)
-	}
-	var id int64
-	err := tx.QueryRowContext(ctx, `INSERT INTO source_catalog_entry(file_source_id,root_path,source_root,primary_code,title)
-				VALUES(?,?,?,?,?) ON CONFLICT(file_source_id,root_path) DO UPDATE SET source_root=excluded.source_root,primary_code=excluded.primary_code,title=excluded.title,availability_status='available',status_checked_at=CURRENT_TIMESTAMP,content_fingerprint='',layout_fingerprint='',updated_at=CURRENT_TIMESTAMP
-		RETURNING id`, sourceID, root, sourceRoot, code, title).Scan(&id)
+	id, err := persistOpenListEntryTx(ctx, tx, sourceID, root, sourceRoot, title)
 	if err != nil {
 		return 0, err
 	}
@@ -306,7 +297,7 @@ func persistOpenListSnapshotTx(ctx context.Context, tx *sql.Tx, sourceID int64, 
 		return 0, err
 	}
 	for _, file := range files {
-		if _, err = tx.ExecContext(ctx, `INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes) VALUES(?,?,?,?,?)`, id, file.Path, file.Title, file.Kind, file.Size); err != nil {
+		if err = persistOpenListFileTx(ctx, tx, id, file); err != nil {
 			return 0, err
 		}
 	}
@@ -324,6 +315,31 @@ func persistOpenListSnapshotTx(ctx context.Context, tx *sql.Tx, sourceID int64, 
 		return 0, err
 	}
 	return id, nil
+}
+
+func persistOpenListEntryTx(ctx context.Context, tx *sql.Tx, sourceID any, root, sourceRoot, title string) (int64, error) {
+	// The same parser the resumable index uses: a code may sit in brackets, be
+	// prefixed directly to a title, or be the whole folder name.
+	code := catalogEntryCode(root)
+	if title == "" {
+		title = path.Base(root)
+	}
+	var id int64
+	err := tx.QueryRowContext(ctx, `INSERT INTO source_catalog_entry(file_source_id,root_path,source_root,primary_code,title)
+				VALUES(?,?,?,?,?) ON CONFLICT(file_source_id,root_path) DO UPDATE SET source_root=excluded.source_root,primary_code=excluded.primary_code,title=excluded.title,availability_status='available',status_checked_at=CURRENT_TIMESTAMP,content_fingerprint='',layout_fingerprint='',updated_at=CURRENT_TIMESTAMP
+		RETURNING id`, sourceID, root, sourceRoot, code, title).Scan(&id)
+	if err != nil {
+		return 0, err
+	}
+	return id, nil
+}
+
+func persistOpenListFileTx(ctx context.Context, tx *sql.Tx, entryID int64, file openlist.File) error {
+	_, err := tx.ExecContext(ctx, `INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes)
+		VALUES(?,?,?,?,?) ON CONFLICT(catalog_entry_id,relative_path) DO UPDATE SET
+		title=excluded.title,kind=excluded.kind,size_bytes=excluded.size_bytes`,
+		entryID, file.Path, file.Title, file.Kind, file.Size)
+	return err
 }
 
 // loadSourceCatalogEntry is the shared original-text and source-read boundary.

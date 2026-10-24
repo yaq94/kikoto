@@ -14,10 +14,13 @@ const (
 	catalogFullSettingPrefix  = "source_catalog_full:"
 )
 
+// The setting holds the next wall-clock boundary as Unix seconds. The fallback
+// is only for rows created before the setting existed: it makes the update due
+// immediately once, and dispatch writes the next local 03:00. It deliberately
+// does not derive a new boundary by adding a rolling interval to finished_at.
 const catalogDailyDueSQL = `COALESCE(CAST(setting.value_json AS INTEGER),CASE
 	WHEN scan.pause_reason IN ('low_disk_space','disk_space_unknown') THEN unixepoch(scan.updated_at)+3600
-	WHEN scan.pause_reason='' AND run.status IN ('succeeded','partial') THEN unixepoch(run.finished_at)+86400
-	WHEN run.status IN ('failed','cancelled') THEN unixepoch(run.finished_at)+86400
+	WHEN run.status IN ('succeeded','partial','failed','cancelled') THEN unixepoch(run.finished_at)
 END)`
 
 func (s *Server) catalogTime() time.Time {
@@ -27,12 +30,12 @@ func (s *Server) catalogTime() time.Time {
 	return time.Now().UTC()
 }
 
-// setCatalogDailyNextUpdateTx advances only the daily tick. It is used for
-// every dispatch and for scan settlement: neither a resume nor an incremental
-// sync starts a new full generation, so neither may restart the weekly clock.
+// setCatalogDailyNextUpdateTx records the next local 03:00. It is used for every
+// dispatch and for scan settlement: neither a resume nor an incremental sync
+// starts a new full generation, so neither may restart the weekly clock.
 func setCatalogDailyNextUpdateTx(ctx context.Context, tx *sql.Tx, sourceID int64, now time.Time) error {
 	_, err := tx.ExecContext(ctx, `INSERT INTO app_setting(key,value_json) VALUES(?,?)
-		ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json`, catalogDailySettingPrefix+strconv.FormatInt(sourceID, 10), now.Add(24*time.Hour).Unix())
+			ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json`, catalogDailySettingPrefix+strconv.FormatInt(sourceID, 10), nextCatalogDailyDue(now).Unix())
 	return err
 }
 
@@ -53,13 +56,40 @@ func setCatalogDailyDueAt(ctx context.Context, exec appSettingExecer, sourceID i
 	return err
 }
 
-// markCatalogFullGenerationTx records when a new full generation was actually
-// enqueued. The marker uses catalogTime, not CURRENT_TIMESTAMP, so a test or an
-// operator clock and the weekly interval agree.
-func markCatalogFullGenerationTx(ctx context.Context, tx *sql.Tx, sourceID int64, now time.Time) error {
-	_, err := tx.ExecContext(ctx, `INSERT INTO app_setting(key,value_json) VALUES(?,?)
-		ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json`, catalogFullSettingPrefix+strconv.FormatInt(sourceID, 10), now.Unix())
+// catalogScheduleDueTimes returns the persisted boundaries formatted in the
+// schedule's own time zone, so an operator can verify the wall clock instead of
+// inferring it from an epoch value.
+func (s *Server) catalogScheduleDueTimes(ctx context.Context, sourceID int64) (string, string, error) {
+	var daily, full sql.NullInt64
+	err := s.db.QueryRowContext(ctx, `SELECT
+			(SELECT CAST(value_json AS INTEGER) FROM app_setting WHERE key=?),
+			(SELECT CAST(value_json AS INTEGER) FROM app_setting WHERE key=?)`,
+		catalogDailySettingPrefix+strconv.FormatInt(sourceID, 10),
+		catalogFullSettingPrefix+strconv.FormatInt(sourceID, 10)).Scan(&daily, &full)
+	if err != nil {
+		return "", "", err
+	}
+	format := func(value sql.NullInt64) string {
+		if !value.Valid {
+			return ""
+		}
+		return time.Unix(value.Int64, 0).In(catalogScheduleLocation).Format(time.RFC3339)
+	}
+	return format(daily), format(full), nil
+}
+
+func setCatalogFullDueAt(ctx context.Context, exec appSettingExecer, sourceID int64, due time.Time) error {
+	_, err := exec.ExecContext(ctx, `INSERT INTO app_setting(key,value_json) VALUES(?,?)
+			ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json`, catalogFullSettingPrefix+strconv.FormatInt(sourceID, 10), due.UTC().Unix())
 	return err
+}
+
+// markCatalogFullGenerationTx records the next Sunday 03:00 when a new full
+// generation is actually enqueued. The marker uses catalogTime, not
+// CURRENT_TIMESTAMP, so a test or an operator clock and the weekly boundary
+// agree.
+func markCatalogFullGenerationTx(ctx context.Context, tx *sql.Tx, sourceID int64, now time.Time) error {
+	return setCatalogFullDueAt(ctx, tx, sourceID, nextCatalogWeeklyDue(now))
 }
 
 // The completed scan owns the first due date. Every later dispatch advances it
@@ -103,13 +133,12 @@ func (s *Server) dispatchDueCatalogUpdates(ctx context.Context) error {
 	return result
 }
 
-// dispatchCatalogUpdate only replaces a completed generation with an
-// incremental sync. A cancelled, failed, partial or unconfirmed-empty
-// generation is unfinished coverage: it keeps its own checkpoints, failed and
-// restricted ranges must be re-observed, and a directory-first sync cannot
-// fill a range the full crawl never reached. A generation older than a week, a
-// generation with no completed directory, or an explicit operator force starts
-// a new full generation.
+// dispatchCatalogUpdate separates the trigger from scan completion. A completed
+// generation and every partial generation receive a directory-first sync, so
+// pending and failed ranges are retried without freezing changes in the
+// branches that succeeded. A cancelled or failed run resumes its full
+// checkpoint. The weekly due marker starts a new full generation instead of an
+// incremental sync.
 func (s *Server) dispatchCatalogUpdate(ctx context.Context, sourceID int64, now time.Time) error {
 	tx, release, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
 	if err != nil {
@@ -117,17 +146,17 @@ func (s *Server) dispatchCatalogUpdate(ctx context.Context, sourceID int64, now 
 	}
 	defer release()
 	var saved string
-	var due, lastFull sql.NullInt64
-	var generation int64
+	var due, fullDue sql.NullInt64
+	var generation, directories int64
 	var status string
 	err = tx.QueryRowContext(ctx, `SELECT scan.options_json,`+catalogDailyDueSQL+`,
-			scan.workflow_run_id,run.status,
+				scan.workflow_run_id,run.status,scan.directories,
 			CAST(full_setting.value_json AS INTEGER)
 		FROM source_catalog_scan scan JOIN workflow_run run ON run.id=scan.workflow_run_id
 		JOIN file_source source ON source.id=scan.file_source_id
 		LEFT JOIN app_setting setting ON setting.key=? || scan.file_source_id
 		LEFT JOIN app_setting full_setting ON full_setting.key=? || scan.file_source_id
-		WHERE scan.file_source_id=? AND source.enabled=1 AND source.source_type=?`, catalogDailySettingPrefix, catalogFullSettingPrefix, sourceID, sourceTypeOpenList).Scan(&saved, &due, &generation, &status, &lastFull)
+			WHERE scan.file_source_id=? AND source.enabled=1 AND source.source_type=?`, catalogDailySettingPrefix, catalogFullSettingPrefix, sourceID, sourceTypeOpenList).Scan(&saved, &due, &generation, &status, &directories, &fullDue)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}
@@ -140,6 +169,13 @@ func (s *Server) dispatchCatalogUpdate(ctx context.Context, sourceID int64, now 
 	if status == "queued" || status == "running" {
 		return nil
 	}
+	var syncRunning int
+	if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM source_catalog_sync_run WHERE file_source_id=? AND status='running')`, sourceID).Scan(&syncRunning); err != nil {
+		return err
+	}
+	if syncRunning != 0 {
+		return nil
+	}
 	options := defaultCatalogIndexOptions()
 	if err = json.Unmarshal([]byte(saved), &options); err != nil {
 		return err
@@ -147,47 +183,79 @@ func (s *Server) dispatchCatalogUpdate(ctx context.Context, sourceID int64, now 
 	if err = options.validate(); err != nil {
 		return err
 	}
-	var directories int64
-	if err = tx.QueryRowContext(ctx, "SELECT count(*) FROM source_catalog_directory WHERE file_source_id=? AND generation=?", sourceID, generation).Scan(&directories); err != nil {
-		return err
-	}
-	// A cancelled run may point at a generation with no directory rows because
-	// it never started. That is a run to resume, not a reason to replace its
-	// id. A succeeded generation with no rows, or an expired weekly marker,
-	// does need a fresh full generation.
-	expired := lastFull.Valid && now.Sub(time.Unix(lastFull.Int64, 0).UTC()) >= catalogSyncFullInterval
-	forceFull := expired || (status == "succeeded" && (!lastFull.Valid || directories == 0))
-	// The daily update is an incremental probe only for a generation that
-	// finished the whole tree. Everything else is unfinished: a partial run
-	// with failed or restricted ranges, a cancelled run, or a run whose only
-	// gap is an unconfirmed empty directory. Those resume/restart their own
-	// generation; the unconfirmed empty root is re-observed by that resume.
-	incremental := !forceFull && status == "succeeded"
-	if !incremental {
-		if _, err = s.enqueueSourceCatalogIndexTx(ctx, tx.Tx, sourceID, options, "interval", forceFull); err != nil {
+
+	// An upgraded database can have a full generation without the wall-clock
+	// marker. Establish the next Sunday boundary once instead of inventing a
+	// rolling seven-day interval from finished_at.
+	if !fullDue.Valid {
+		nextFull := nextCatalogWeeklyDue(now)
+		if err = setCatalogFullDueAt(ctx, tx.Tx, sourceID, nextFull); err != nil {
 			return err
+		}
+		fullDue = sql.NullInt64{Int64: nextFull.Unix(), Valid: true}
+	}
+	if fullDue.Valid && fullDue.Int64 <= now.Unix() {
+		queued, queueErr := s.enqueueSourceCatalogIndexTx(ctx, tx.Tx, sourceID, options, "interval", true)
+		if queueErr != nil {
+			if errors.Is(queueErr, errCatalogSyncRunning) {
+				return nil
+			}
+			return queueErr
+		}
+		// Joining queued/running work does not complete the trigger. The
+		// settlement path owns the next due date.
+		if queued.Existing {
+			return nil
 		}
 		if err = setCatalogDailyNextUpdateTx(ctx, tx.Tx, sourceID, now); err != nil {
 			return err
 		}
 		return tx.Commit()
 	}
-	syncID, err := enqueueCatalogSyncTx(ctx, tx.Tx, sourceID, false)
-	if err != nil {
-		return err
-	}
-	if err = setCatalogDailyNextUpdateTx(ctx, tx.Tx, sourceID, now); err != nil {
-		return err
-	}
-	if err = tx.Commit(); err != nil {
-		return err
-	}
-	if syncID != 0 {
+
+	// A completed generation and every partial generation are probed directory
+	// first. For a partial run, seeding marks its pending, failed, restricted
+	// and unconfirmed-empty directories for listing while the same sync probes
+	// the completed branches, so neither side waits for the other.
+	if directories > 0 && (status == "succeeded" || status == "partial") {
+		syncID, queueErr := enqueueCatalogSyncTx(ctx, tx.Tx, sourceID, false)
+		if queueErr != nil {
+			if errors.Is(queueErr, errCatalogIndexRunning) {
+				return nil
+			}
+			return queueErr
+		}
+		if syncID == 0 {
+			// Another sync won the lease. Leave the due marker untouched so
+			// the next coordinator tick can observe its settlement.
+			return nil
+		}
+		if err = setCatalogDailyNextUpdateTx(ctx, tx.Tx, sourceID, now); err != nil {
+			return err
+		}
+		if err = tx.Commit(); err != nil {
+			return err
+		}
 		if !s.Go(func(background context.Context) {
 			_ = s.executeCatalogIncrementalSync(background, syncID, sourceID)
 		}) {
 			_ = s.finishCatalogSyncRun(context.WithoutCancel(ctx), syncID, "cancelled", catalogSyncRunState{ID: syncID, SourceID: sourceID, Status: "cancelled"})
 		}
+		return nil
 	}
-	return nil
+
+	// A cancelled or failed run resumes its saved full checkpoint. A generation
+	// with no directory rows cannot be resumed and starts a fresh full
+	// generation instead.
+	_, queueErr := s.enqueueSourceCatalogIndexTx(ctx, tx.Tx, sourceID, options, "interval", directories == 0)
+	if queueErr != nil {
+		if errors.Is(queueErr, errCatalogSyncRunning) {
+			return nil
+		}
+		return queueErr
+	}
+	if err = setCatalogDailyNextUpdateTx(ctx, tx.Tx, sourceID, now); err != nil {
+		return err
+	}
+	return tx.Commit()
 }

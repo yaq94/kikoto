@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"io"
+	"strconv"
 	"strings"
 	"time"
 
@@ -40,10 +41,22 @@ type BackupWork struct {
 // Ref names an exact retained object. References are opaque portable aliases,
 // never source addresses, translated titles or permission to change relations.
 type BackupIdentity struct {
-	Ref        string   `json:"ref"`
-	Kind       string   `json:"kind"`
-	Title      string   `json:"title"`
-	References []string `json:"references,omitempty"`
+	Ref        string        `json:"ref"`
+	Kind       string        `json:"kind"`
+	Title      string        `json:"title"`
+	References []string      `json:"references,omitempty"`
+	Parent     *BackupParent `json:"parent,omitempty"`
+}
+
+// BackupParent is the episode's explicit catalog membership. The series
+// reference is the stable identity; the entry reference names the exact member
+// without carrying a source path or title-based matching rule.
+type BackupParent struct {
+	Ref      string `json:"ref"`
+	Title    string `json:"title"`
+	EntryRef string `json:"entryRef,omitempty"`
+	Position int    `json:"position,omitempty"`
+	Evidence string `json:"evidence,omitempty"`
 }
 
 func (w BackupWork) key() string {
@@ -199,6 +212,9 @@ func validateBackup(b *Backup) error {
 	seen := map[string]bool{}
 	references := map[string]bool{}
 	numbered := map[string]bool{}
+	parentTitles := map[string]string{}
+	parentEntries := map[string]string{}
+	parentPositions := map[string]bool{}
 	items := 0
 	assignments := 0
 	for i := range b.Works {
@@ -217,6 +233,26 @@ func validateBackup(b *Backup) error {
 					return ErrInvalid
 				}
 				references[ref] = true
+			}
+			if w.Identity.Parent != nil {
+				parent := w.Identity.Parent
+				if title, ok := parentTitles[parent.Ref]; ok && title != parent.Title {
+					return ErrInvalid
+				}
+				parentTitles[parent.Ref] = parent.Title
+				if parent.EntryRef != "" {
+					if _, ok := parentEntries[parent.EntryRef]; ok {
+						return ErrInvalid
+					}
+					parentEntries[parent.EntryRef] = parent.Ref
+				}
+				if parent.Position > 0 {
+					key := parent.Ref + ":" + strconv.Itoa(parent.Position)
+					if parentPositions[key] {
+						return ErrInvalid
+					}
+					parentPositions[key] = true
+				}
 			}
 		} else if w.Identity != nil {
 			return ErrInvalid
@@ -346,6 +382,27 @@ func validBackupIdentity(i *BackupIdentity) bool {
 			return false
 		}
 		seen[ref] = true
+	}
+	if i.Parent != nil {
+		if i.Kind != "episode" || !validBackupParent(i.Parent) || seen[i.Parent.Ref] {
+			return false
+		}
+	}
+	return true
+}
+
+func validBackupParent(parent *BackupParent) bool {
+	if parent == nil || !validTransferRef(parent.Ref) || !strings.HasPrefix(parent.Ref, "s:") || strings.TrimSpace(parent.Title) == "" {
+		return false
+	}
+	if parent.EntryRef != "" && (!validTransferRef(parent.EntryRef) || !strings.HasPrefix(parent.EntryRef, "c:")) {
+		return false
+	}
+	if parent.Position < 0 || parent.Position > maxTransferSeriesMembers {
+		return false
+	}
+	if parent.Evidence != "" && parent.Evidence != "directory" && parent.Evidence != "manual" {
+		return false
 	}
 	return true
 }

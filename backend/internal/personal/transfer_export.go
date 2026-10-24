@@ -81,6 +81,11 @@ func (s Store) Export(ctx context.Context, user int64) ([]byte, error) {
 		if err = reserveText(identity.References...); err != nil {
 			return nil, err
 		}
+		if identity.Parent != nil {
+			if err = reserveText(identity.Parent.Ref, identity.Parent.Title, identity.Parent.EntryRef, identity.Parent.Evidence); err != nil {
+				return nil, err
+			}
+		}
 		b.Works[index].Identity = identity
 		var raw string
 		err = tx.QueryRowContext(ctx, `SELECT progress_json FROM personal_transfer_progress WHERE user_id=? AND work_id=?`, user, id).Scan(&raw)

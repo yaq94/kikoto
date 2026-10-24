@@ -2,7 +2,7 @@
 
 ## 1. 范围与不变量
 
-- 工作树：`/srv/kikoto/work`，分支 `codex/rem-h`，基线提交 `17c4e5d4`。
+- 工作树：`/path/to/kikoto/work`，分支 `codex/rem-h`，基线提交 `17c4e5d4`。
 - 只读产品代码；本提交只新增 `scripts/catalog-bench/` 与本文件。没有改 backend/frontend、迁移、部署或 Git 远端。
 - 生产实例：`kikoto:next-d55130fe`，schema `84`；数据库 `source_catalog_scan` 的来源 3 / generation 53。
 - 基准副本不修改源库：源库以 `mode=ro` 打开（基准读取连接另加 `query_only(1)`；`VACUUM INTO` 连接只用 `mode=ro`，因为 `query_only` 会拒绝 VACUUM），`VACUUM INTO` 写入 `/tmp`；写路径基准在副本上 `BEGIN IMMEDIATE ... ROLLBACK`，副本也不落改动。
@@ -18,8 +18,8 @@
 | 工作树提交 | `17c4e5d4` |
 | 生产镜像 | `kikoto:next-d55130fe` |
 | schema | 84（`schema_state.current_version=84`，`schema_migration` 最高 84） |
-| 源库 | `/srv/kikoto/config/kikoto.db`，387,837,952 B |
-| 副本 | `/srv/kikoto/bench/kikoto-before.db` → `/srv/kikoto/bench/kikoto-before-17c4e5d4.db`，366,694,400 B |
+| 源库 | `/path/to/kikoto/config/kikoto.db`，387,837,952 B |
+| 副本 | `/path/to/kikoto/bench/kikoto-before.db` → `/path/to/kikoto/bench/kikoto-before-17c4e5d4.db`，366,694,400 B |
 | 副本 sha256 | `2be092c0cd05cb1a5a2897f70d66f3032812cd0519d9b522cead9a15f79f8e01` |
 | `VACUUM INTO` 耗时 | 6.76 s（服务器本地） |
 | 下载耗时 | 100.6 s（SFTP，366,694,400 B） |
@@ -44,7 +44,7 @@
 命令：
 
 ```sh
-/srv/kikoto/bench/catalog-bench --db /srv/kikoto/bench/kikoto-before.db --write-db /srv/kikoto/bench/kikoto-write.db \
+/path/to/kikoto/bench/catalog-bench --db /path/to/kikoto/bench/kikoto-before.db --write-db /path/to/kikoto/bench/kikoto-write.db \
   --runs 5 --write-runs 3 --only progress_exact,purge_empty_pending,root_incomplete,publish_1000_rows,publish_1000_rows_fixture \
   --json-out /tmp/before-server-warm.json
 ```
@@ -93,7 +93,7 @@ C 结果复现了审计参考，说明副本和 SQL 口径正确。C 交叉核�
 
 ### 2.5 3 小时 slow / SQLITE_BUSY
 
-命令：`docker logs --since 3h kikoto > /srv/kikoto/logs/kikoto-3h.txt 2>&1`，在 2026-10-21 10:05Z 左右采集。
+命令：`docker logs --since 3h kikoto > /path/to/kikoto/logs/kikoto-3h.txt 2>&1`，在 2026-10-21 10:05Z 左右采集。
 
 | 指标 | 值 |
 | --- | ---: |
@@ -107,26 +107,26 @@ C 结果复现了审计参考，说明副本和 SQL 口径正确。C 交叉核�
 
 ## 3. 脚本与复现
 
-脚本：`/srv/kikoto/work/scripts/catalog-bench/main.go`
-说明：`/srv/kikoto/work/scripts/catalog-bench/README.md`
+脚本：`/path/to/kikoto/work/scripts/catalog-bench/main.go`
+说明：`/path/to/kikoto/work/scripts/catalog-bench/README.md`
 
 构建（模块在 `backend/`，命名文件构建可解析 `modernc.org/sqlite`）：
 
 ```sh
-cd /srv/kikoto/work/backend
-go build -o /srv/kikoto/bench/catalog-bench.exe ../scripts/catalog-bench/main.go
+cd /path/to/kikoto/work/backend
+go build -o /path/to/kikoto/bench/catalog-bench.exe ../scripts/catalog-bench/main.go
 ```
 
 服务器 Linux 交叉编译：
 
 ```sh
-GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o /srv/kikoto/bench/catalog-bench-linux ../scripts/catalog-bench/main.go
+GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o /path/to/kikoto/bench/catalog-bench-linux ../scripts/catalog-bench/main.go
 ```
 
 跑 before：
 
 ```sh
-cd /srv/kikoto/bench
+cd /path/to/kikoto/bench
 cp kikoto-before-17c4e5d4.db kikoto-write.db
 ./catalog-bench.exe --db kikoto-before-17c4e5d4.db --write-db kikoto-write.db \
   --logs docker-logs-3h.txt --runs 5 --write-runs 3 --label before \
@@ -235,7 +235,7 @@ H 包没有产品代码、迁移或部署改动。回滚只需删除 `scripts/ca
 
 ## 7. C1–C9 最终外部探针
 
-时间：2026-10-24。工作树：`E:/项目/服务器/.kikoto-work/worktrees/catalog-probe`；
+时间：2026-10-24。工作树：`/path/to/kikoto/catalog-probe`；
 分支 `codex/kikoto-catalog-probe`；HEAD `8b44f2b3`。探针文件
 `backend/internal/httpapi/audit_probe_test.go` 未跟踪，未提交。
 

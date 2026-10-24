@@ -233,12 +233,12 @@ series');
 			},
 		},
 	}
-	ids, err := server.persistCatalogEpisodeRootBatch(context.Background(), 7, []string{root}, split)
+	pinned, err := server.stageCatalogEpisodeBatch(context.Background(), 7, "/Series", planCatalogEpisodeStages([]string{root}, split), split)
 	if !errors.Is(err, errCatalogSeriesTooLarge) {
 		t.Fatalf("persist error=%v, want errCatalogSeriesTooLarge", err)
 	}
-	if len(ids) != 0 {
-		t.Fatalf("persisted ids=%v after the limit error", ids)
+	if pinned {
+		t.Fatal("unregistered parent unexpectedly pinned the staged episode")
 	}
 
 	var entries, members, series int

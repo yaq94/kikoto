@@ -4,7 +4,7 @@
 
 **Blocked by:** [01：管理员翻译配置与 Index 试译](01-translation-admin-config.md)
 
-**Status:** resolved
+**Status:** ready-for-agent
 
 **Implementation:** resolved；本地实现与 H/F 已验收；生产部署验收见 17。
 

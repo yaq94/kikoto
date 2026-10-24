@@ -24,7 +24,7 @@
 - `PRAGMA quick_check=ok`；`PRAGMA foreign_key_check` 返回 0 行。
 - 部署前快照包含数据库、WAL/SHM、环境文件、Compose 文件与回滚脚本；回滚镜像
   `kikoto:next-2d78344a` 与 schema 82 快照保留。回滚路径与兼容矩阵见
-  [发布回退](../development/release-rollback.md)。
+  [发布回退](../../../docs/development/release-rollback.md)。
 
 ## 内容翻译
 
@@ -112,7 +112,7 @@
 都返回 `object not found`，说明源站保存的名字已不可寻址，无法恢复原始字节。
 
 其中 2 个目录与已有可播放卡片重复（同一作品另有可访问副本）；另外 2 个
-（RJ305379、RJ308692）只有这一份，且目录内只有压缩包与一个 MP4，音频在无法
+另外 2 个作品各只有这一份副本，且目录内只有压缩包与一个 MP4，音频在无法
 寻址的子目录里。扫描把它们记为 `failed` / `upstream_unavailable`，不计入完整
 覆盖，也不伪造卡片。这是源站数据缺陷；若上游修复目录名，下一次扫描会自动收录。
 

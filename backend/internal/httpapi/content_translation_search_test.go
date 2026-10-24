@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/yexca/kikoto/backend/internal/config"
+	"github.com/yexca/kikoto/backend/internal/testfixture"
 	"github.com/yexca/kikoto/backend/internal/translation"
 )
 
@@ -233,7 +234,7 @@ func TestContentTranslationSearchLibraryLanguageFilter(t *testing.T) {
 	db := openMigratedTestDB(t)
 	workIDs := []int64{}
 	for index, title := range []string{"Original Alpha", "Original 中文 Beta", "Original Gamma"} {
-		result, err := db.Exec("INSERT INTO work (primary_code, title) VALUES (?, ?)", fmt.Sprintf("RJ000000%02d", index+1), title)
+		result, err := db.Exec("INSERT INTO work (primary_code, title) VALUES (?, ?)", testfixture.WorkCode(testfixture.PrefixRJ, index), title)
 		if err != nil {
 			t.Fatal(err)
 		}

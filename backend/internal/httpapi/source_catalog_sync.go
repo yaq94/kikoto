@@ -24,7 +24,6 @@ import (
 const (
 	sourceCatalogSyncWorkerType = "source_catalog_sync"
 	catalogSyncBatch            = 32
-	catalogSyncFullInterval     = 7 * 24 * time.Hour
 	catalogSyncMaxListBatches   = 512
 	catalogSyncMaxLifecycle     = 4096
 	catalogSyncMaxNote          = 600
@@ -406,6 +405,21 @@ func (s *Server) executeCatalogIncrementalSync(ctx context.Context, runID, sourc
 	if failed {
 		state.Status = "partial"
 	}
+	// A trigger is not complete while any range of the generation remains
+	// unresolved. The full scan may be partial because an earlier attempt
+	// failed; this sync can retry those ranges, but it must not report success
+	// until all of them reached a completed or confirmed-not-found state.
+	var unresolved int
+	if err = s.db.QueryRowContext(ctx, `SELECT count(*) FROM source_catalog_directory
+		WHERE file_source_id=? AND generation=? AND (
+			status IN ('pending','listing_complete','failed','restricted')
+			OR (status='empty' AND error_code<>'not_found'))`, sourceID, generation).Scan(&unresolved); err != nil {
+		return err
+	}
+	if unresolved > 0 {
+		state.Status = "partial"
+		state.Note = appendCatalogSyncNote(state.Note, fmt.Sprintf("%d directory ranges remain unresolved", unresolved))
+	}
 	if state.Status == "" || state.Status == "running" {
 		state.Status = "succeeded"
 	}
@@ -417,12 +431,12 @@ func (s *Server) executeCatalogIncrementalSync(ctx context.Context, runID, sourc
 // re-checked after a short delay rather than after the full daily interval.
 func (s *Server) pauseCatalogSync(ctx context.Context, options catalogIndexOptions) (string, time.Time) {
 	if held, until, err := s.catalogMaintenanceActive(ctx); err != nil {
-		return "maintenance_state_unknown", time.Now().Add(time.Hour)
+		return "maintenance_state_unknown", s.catalogTime().Add(time.Hour)
 	} else if held {
 		return "maintenance", until
 	}
 	if reason := s.catalogIndexDiskPause(options); reason != "" {
-		return reason, time.Now().Add(time.Hour)
+		return reason, s.catalogTime().Add(time.Hour)
 	}
 	return "", time.Time{}
 }
@@ -557,6 +571,15 @@ func (s *Server) applyCatalogSyncProbes(ctx context.Context, sourceID, generatio
 
 func (s *Server) applyCatalogSyncProbeTx(ctx context.Context, tx *sql.Tx, sourceID, generation, runID int64, result catalogSyncProbeResult) (int, error) {
 	parent := result.Dir
+	// The probe slice was read before earlier probes in this same batch updated
+	// child rows. Read the current state inside the transaction so a directory
+	// whose parent observed a new mtime is not reset to unchanged before it is
+	// listed.
+	var currentSyncState string
+	if err := tx.QueryRowContext(ctx, `SELECT sync_state FROM source_catalog_directory
+		WHERE file_source_id=? AND generation=? AND path=?`, sourceID, generation, parent.Path).Scan(&currentSyncState); err != nil {
+		return 0, err
+	}
 	byName := map[string]openlist.Object{}
 	for _, child := range result.Children {
 		if _, exists := byName[child.Name]; exists {
@@ -646,43 +669,12 @@ func (s *Server) applyCatalogSyncProbeTx(ctx context.Context, tx *sql.Tx, source
 		}
 	}
 
-	// A folder that disappeared from dirs is a confirmed deletion. Mark the
-	// directory row and its descendants as gone now, so the next lifecycle pass
-	// can retire its cards even when the parent listing is deferred.
-	rows, err = tx.QueryContext(ctx, `SELECT name FROM source_catalog_observation
-		WHERE file_source_id=? AND directory_path=? AND revision=? AND kind='folder'`, sourceID, parent.Path, parent.Revision)
-	if err != nil {
-		return 0, err
-	}
-	missing := []string{}
-	for rows.Next() {
-		var name string
-		if err = rows.Scan(&name); err != nil {
-			break
-		}
-		if _, ok := byName[name]; !ok {
-			missing = append(missing, name)
-		}
-	}
-	if err == nil {
-		err = rows.Err()
-	}
-	_ = rows.Close()
-	if err != nil {
-		return 0, err
-	}
-	for _, name := range missing {
-		childPath := path.Join(parent.Path, name)
-		if _, err = tx.ExecContext(ctx, `UPDATE source_catalog_directory SET sync_state='excluded',status='empty',error_code='not_found',completed_at=CURRENT_TIMESTAMP
-			WHERE file_source_id=? AND generation=? AND (path=? OR (path>=? AND path<?))`, sourceID, generation, childPath, childPath+"/", childPath+"0"); err != nil {
-			return 0, err
-		}
-		if _, err = tx.ExecContext(ctx, `DELETE FROM source_catalog_observation WHERE file_source_id=? AND directory_path=? AND name=?`, sourceID, parent.Path, name); err != nil {
-			return 0, err
-		}
-	}
+	// A dirs response only proves the direct child folders it contains when the
+	// same directory's file listing is complete. Deletions are retired by a
+	// successful listing diff in applyCatalogSyncListing; doing it here would
+	// let an unresolved listing erase a child that dirs happened to omit.
 	state := "unchanged"
-	if parent.SyncState == "changed" || len(missing) > 0 {
+	if parent.SyncState == "changed" || currentSyncState == "changed" {
 		state = "changed"
 	}
 	_, err = tx.ExecContext(ctx, `UPDATE source_catalog_directory SET sync_state=?,last_verified_run=?,last_verified_at=CURRENT_TIMESTAMP WHERE file_source_id=? AND path=?`, state, runID, sourceID, parent.Path)
@@ -857,6 +849,19 @@ func (s *Server) applyCatalogSyncListing(ctx context.Context, sourceID, generati
 		if row.Kind == "folder" {
 			if _, err = tx.ExecContext(ctx, `UPDATE source_catalog_directory SET sync_state='excluded',status='empty',error_code='not_found',completed_at=CURRENT_TIMESTAMP
 				WHERE file_source_id=? AND generation=? AND (path=? OR (path>=? AND path<?))`, sourceID, generation, childPath, childPath+"/", childPath+"0"); err != nil {
+				return 0, 0, err
+			}
+			// A complete parent listing confirmed that the child folder is
+			// gone. Remove the files and internals of that subtree now; the
+			// lifecycle pass then marks a card with no remaining audio missing.
+			if _, err = tx.ExecContext(ctx, `DELETE FROM source_catalog_file WHERE catalog_entry_id IN (
+					SELECT id FROM source_catalog_entry WHERE file_source_id=? AND (`+catalogExclusionBaseRootSQL+`=? OR substr(`+catalogExclusionBaseRootSQL+`,1,length(?)+1)=? || '/'))`,
+				sourceID, childPath, childPath, childPath); err != nil {
+				return 0, 0, err
+			}
+			if _, err = tx.ExecContext(ctx, `DELETE FROM source_catalog_observation
+					WHERE file_source_id=? AND (directory_path=? OR (directory_path>=? AND directory_path<?))`,
+				sourceID, childPath, childPath+"/", childPath+"0"); err != nil {
 				return 0, 0, err
 			}
 		} else if root != "" {

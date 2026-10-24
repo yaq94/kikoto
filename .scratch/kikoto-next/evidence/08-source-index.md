@@ -36,7 +36,7 @@ root set once; it does not change published identities or staging rows.
 
 ## 发布尾部性能
 
-The live copy `/srv/kikoto/live/instance/config/kikoto.db`
+The live copy `/path/to/kikoto/live/instance/config/kikoto.db`
 (34,234,368 bytes, 3,917 directories, 47,670 observations) reproduced the
 pathological tail: with only five unpublished observations left, the
 pre-queue query took **36.1–36.9 s** and its plan applied `LIMIT` only after a
@@ -159,9 +159,9 @@ complete、27 未确认空、6 failed、0 pending；14,890 次请求、3,897 个
 隔离实例的 4 条失败不是同一份数据，不能混写。
 
 该轮同时暴露准入缺陷：父卡不释放编码子作品、失败运行无法重新观察已完成目录、
-创作者目录把多部独立作品折叠成一张卡。修复见
-[17 部署证据的准入缺陷一节](17-deployment.md#索引准入缺陷与修复2026-10-18)，
-包含真实 HTTP + 迁移 SQLite 的行为测试、`force` 新 generation 与逐条清理。
+创作者目录把多部独立作品折叠成一张卡。修复由真实 HTTP + 迁移 SQLite 的行为测试、
+`force` 新 generation 与逐条清理验证；部署与迁移见
+[17 部署证据](17-deployment.md#部署与迁移)。
 修复后的生产 runId 42 正在运行，其终态与覆盖数字以收尾后的记录为准；在
 该轮结束前，本票维持 `verified-local`，不把 run 41 的 `partial` 当作完整覆盖。
 

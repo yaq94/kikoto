@@ -5,7 +5,7 @@
 **Blocked by:** 无新增功能依赖。必须在 [17：发布与部署验收](17-integrated-acceptance-release-plan.md) 之前集成；原 01–17 工单保持原有功能范围。
 
 **Status:** ready-for-agent
-**Implementation:** verified-local；本地实现与 H/R 已验收；最终 Full CI 终态待取得；生产部署验收见 17。
+**Implementation:** verified-local；本地实现与 H/R 已验收；最终候选的 Full CI 及生产部署验收由 24 汇总，不能用旧 SHA 的 run 关闭。
 **交付分支:** `codex/kikoto-ci-migration`
 
 **依据:** 已确认的四项 CI 修复要求（原继续任务用户指令 `01a13ef8-4654-7460-9b10-9a1e19b87361`）及当前部署完整授权；[正式规格](../spec.md) 的共同可靠性与验收要求。
