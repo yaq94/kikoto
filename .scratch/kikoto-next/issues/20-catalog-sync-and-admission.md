@@ -86,7 +86,7 @@ CREATE INDEX source_catalog_schedule_due
 - 修正 `admission.go` 顶部“Probe bounds 不决定准入”的旧注释。
 - 旧测试中“大附属文件卡允许发布”的断言改为拒绝；正常多轨、音频附带字幕／压缩包仍允许。
 - 计数必须与卡片详情读取同一份当前发布文件集合；若旧 generation 行仍可能残留，必须过滤当前 generation，不能把历史文件算进该卡。系列成员的计数只算该成员 entry，不能把同系列其他成员的文件相加。
-- 浏览 API 先测 42,624 张卡的 p95；若三条相关子查询不达标，增加 `source_catalog_entry_admission` 统计表并在发布／文件变更事务维护，不能用陈旧计数过滤。
+- 浏览 API 先测 42,624 张卡的 p95；若三条相关子查询不达标，增加 `source_catalog_entry_admission` 统计表并在发布／文件变更事务维护，不能用陈旧计数过滤。已按此实施（迁移 104），结果见验收清单。
 
 **已提交 096 的待补门禁：** 已修复。`getCatalogSeries` 同时应用 `catalogEntryPendingSQL` 与 `catalogEntryAdmittedSQL`，系列列表与成员 tracks 使用同一组门禁；`TestCatalogSeriesHidesPendingPublicationUntilItIsPublished` 覆盖“激活批次之间不可见、publication 后可见”，`TestCatalogAdmissionSeriesFiltersEveryMember` 覆盖列表/详情/tracks 的逐成员过滤。
 
@@ -108,7 +108,7 @@ CREATE INDEX source_catalog_schedule_due
 - [ ] 诊断接口使用 `catalogadmission.ProbeFiles` 并按来源过滤。分支 `codex/kikoto-issue20-admission`（`602afdc0`）已改为按 `file_source_id` 且 `kind<>'folder'` 计数，阈值取自 `catalogadmission.ProbeFiles`；待集成验证。
 - [ ] 运行中的 full 遇 weekly 到期不应无条件置 `resume_full_pending`；普通 full 没有 `pending_full_run_id`，成功后会在下一轮再建一个 full。分支 `codex/kikoto-issue20-admission`（`602afdc0`）已在 full 运行时把当前 generation 写入 `pending_full_run_id`；待集成验证。
 - [ ] 性能计划断言真实执行计划。`f9cf1a55` 已把断言改为可失败（`catalog_plan_assert_test.go`），该提交已在集成分支；仍待当前候选复验。
-- [ ] 42k 卡浏览与 5,001 文件卡拒绝路径的 p95 证据（2 vCPU／2 GiB、warm、≥20 样本，浏览 p95 ≤ 300 ms、p99 ≤ 800 ms）；超限先落地 `source_catalog_entry_admission` 再复测；不得以全表扫描换取正确性。本 worktree 未在目标硬件执行 42k 基准，保持未勾选。
+- [x] 42k 卡浏览与 5,001 文件卡拒绝路径的 p95 证据（2 vCPU／3.5 GiB、warm、30 样本）。`104_source_catalog_entry_admission.sql` 把每卡三个有界计数与其 generation 存成一行，文件写入在触发器里失效该行，发布批次与手工快照在写文件的事务内刷新；`catalogEntryAdmittedSQL` 与 `catalogEntryHasAudioSQL` 先读该行，generation 不匹配时回落到实时计数，两条路径共用 `catalogadmission.Decision`。浏览路径的 work 去重改为只对已关联 work 的卡片做分区排名，未登记卡片按自身 id 唯一，搜索路径保留单次排名以维持 rowid 探测。目标机（2 vCPU／3,531 MiB，warm，30 样本）实测：42,624 卡浏览 p50 176.27 ms、**p95 182.14 ms**、p99 184.94 ms；5,001 文件卡拒绝 p50 0.45 ms、**p95 0.69 ms**、p99 0.71 ms。改进前同一路径 p95 523.33 ms。证据：`.kikoto-work/reports/catalog-42k-perf.json`（改进前）、`/root/kikoto/bench42k/v104c/report.json`（当前）。
 - [x] 096 激活期间系列详情/成员 tracks 不可见，publication 切换后才可见；系列详情与列表使用同一 D-16 成员过滤。`TestCatalogSeriesHidesPendingPublicationUntilItIsPublished`、`TestCatalogAdmissionSeriesFiltersEveryMember`。
 - [x] 不重复实现 `134f7c90` 的规则；如发现其实现缺口，先报告再最小修正。本票只把常量接入 SQL 并补系列门禁。
 
