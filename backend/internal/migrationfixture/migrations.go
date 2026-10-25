@@ -11,6 +11,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"testing/fstest"
@@ -40,6 +41,9 @@ var migrationFSOnce = sync.OnceValues(func() (fs.FS, error) {
 			files[name] = &fstest.MapFile{Data: data}
 		}
 	}
+	// The real 097 and 098 files are supplied by their owning branches. Once a
+	// branch has merged, the packaged catalog already carries that version, and
+	// adding a placeholder beside it would register the same version twice.
 	for _, placeholder := range []struct {
 		name string
 		sql  string
@@ -47,12 +51,27 @@ var migrationFSOnce = sync.OnceValues(func() (fs.FS, error) {
 		{"097_translation_chain_placeholder.sql", "-- Integration-order placeholder; the real 097 migration is supplied by its owning branch.\nSELECT 1;\n"},
 		{"098_translation_chain_placeholder.sql", "-- Integration-order placeholder; the real 098 migration is supplied by its owning branch.\nSELECT 1;\n"},
 	} {
+		if catalogHasVersion(files, placeholder.name[:3]) {
+			continue
+		}
 		if _, exists := files[placeholder.name]; !exists {
 			files[placeholder.name] = &fstest.MapFile{Data: []byte(placeholder.sql)}
 		}
 	}
 	return files, nil
 })
+
+// catalogHasVersion reports whether the catalog already contains a numbered
+// migration for the given three-digit version.
+func catalogHasVersion(files fstest.MapFS, version string) bool {
+	pattern := regexp.MustCompile(`^` + version + `_[a-z0-9][a-z0-9_]*\.sql$`)
+	for name := range files {
+		if pattern.MatchString(name) {
+			return true
+		}
+	}
+	return false
+}
 
 // FS returns the cached test catalog.
 func FS() (fs.FS, error) { return migrationFSOnce() }
