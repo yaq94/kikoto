@@ -26,11 +26,12 @@ type ShortSearchArm struct {
 // index. The scan covers the complete effective language/field range; only the
 // number of returned rows is capped.
 //
-// Rows come back ordered by (language, entity_kind, field, id), which is the
-// keyset order a caller can continue from. A positive limit caps the returned
-// rows; zero keeps the complete effective set, which is what a count or a
-// paginated total needs. The returned subquery exposes
-// (entity_id, language, entity_kind, field, id).
+// A positive limit caps the returned rows and orders them by
+// (language, entity_kind, field, id), which is the keyset order a caller can
+// continue from and which makes the cap deterministic. Zero keeps the complete
+// effective set unordered, which is what a count or a paginated total needs: a
+// sort there would read the whole range before returning anything. The returned
+// subquery exposes (entity_id, language, entity_kind, field, id).
 func ShortTranslationSearchSQL(targets []DisplaySearchTarget, arms []ShortSearchArm, limit int) (string, []any) {
 	if len(arms) == 0 || len(targets) == 0 {
 		return "", nil
@@ -48,7 +49,7 @@ func ShortTranslationSearchSQL(targets []DisplaySearchTarget, arms []ShortSearch
 				continue
 			}
 			branch := `SELECT ct.entity_id,ct.language,ct.entity_kind,ct.field,ct.id
-				FROM content_translation ct INDEXED BY idx_content_translation_short_current
+				FROM content_translation ct INDEXED BY idx_content_translation_short_scan
 				WHERE ct.language=? AND ct.entity_kind=? AND ct.field IN (` + placeholders + `)
 				  AND ` + shortTranslationCurrentSQL(target.Language, arm.ConfigKey) + `
 				  AND instr(ct.translated_text, ?) > 0`
@@ -75,9 +76,9 @@ func ShortTranslationSearchSQL(targets []DisplaySearchTarget, arms []ShortSearch
 		` + strings.Join(branches, `
 		UNION ALL
 		`) + `
-	) ORDER BY language,entity_kind,field,id`
+	)`
 	if limit > 0 {
-		sqlText += ` LIMIT ?`
+		sqlText += ` ORDER BY language,entity_kind,field,id LIMIT ?`
 		args = append(args, limit)
 	}
 	return sqlText, args

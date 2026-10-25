@@ -57,6 +57,9 @@ type languageReport struct {
 	ExactTitle queryResult `json:"exactTitle"`
 	FTS        queryResult `json:"fts"`
 	Short      queryResult `json:"short"`
+	// ShortComplete counts the whole effective set with no ordering. It is a
+	// diagnostic for an unpaged total, not a user path.
+	ShortComplete queryResult `json:"shortComplete"`
 }
 
 type sizeReport struct {
@@ -98,9 +101,9 @@ func main() {
 			size, report.Entities, report.InsertSeconds, mb(report.DBBytes),
 			mb(report.FTSBytes), mb(report.AfterVacuum), report.ExactCode.P95MS)
 		for _, language := range report.Languages {
-			fmt.Printf("  %-8s exact-title p95=%.2fms fts p95=%.2fms short p95=%.2fms (n=%d)\n",
+			fmt.Printf("  %-8s exact-title p95=%.2fms fts p95=%.2fms short p95=%.2fms short-complete p95=%.2fms (n=%d)\n",
 				language.Language, language.ExactTitle.P95MS, language.FTS.P95MS,
-				language.Short.P95MS, language.Short.Runs)
+				language.Short.P95MS, language.ShortComplete.P95MS, language.Short.Runs)
 		}
 	}
 	if *out != "" {
@@ -192,6 +195,8 @@ func measure(rows, runs int) (sizeReport, error) {
 		}
 		entry.Short = timeQuery(runs, func() (int, error) { return countQuery(db, shortSQL, shortArgs...) })
 		entry.Short.Plan = explainPlan(db, shortSQL, shortArgs...)
+		completeSQL, completeArgs := shortSearchAll(language, firstRunes(title, 2))
+		entry.ShortComplete = timeQuery(runs, func() (int, error) { return countQuery(db, completeSQL, completeArgs...) })
 		report.Languages = append(report.Languages, entry)
 	}
 	if _, err = db.Exec("VACUUM"); err != nil {
@@ -311,10 +316,22 @@ func firstRunes(text string, count int) string {
 	return string(runes)
 }
 
-// shortSearch returns the production 1-2 character query, wrapped as a count.
-// It goes through the same generator the API and the library use, so a change
-// in the real search path is measured here without editing the benchmark.
+// shortSearch returns the production 1-2 character query capped at one card
+// page, wrapped as a count.
 func shortSearch(language, needle string) (string, []any) {
+	return shortSearchWithLimit(language, needle, 200)
+}
+
+// shortSearchAll is the same predicate without a result cap. An exact paginated
+// total pays this cost, so it is measured separately from a card page.
+func shortSearchAll(language, needle string) (string, []any) {
+	return shortSearchWithLimit(language, needle, 0)
+}
+
+// shortSearchWithLimit goes through the same generator the API and the library
+// use, so a change in the real search path is measured here without editing the
+// benchmark.
+func shortSearchWithLimit(language, needle string, limit int) (string, []any) {
 	query, args := library.ShortTranslationSearchSQL(
 		[]library.DisplaySearchTarget{{Language: language, Query: needle}},
 		[]library.ShortSearchArm{{
@@ -326,7 +343,7 @@ func shortSearch(language, needle string) (string, []any) {
 				  AND (CASE WHEN ct.field='title' THEN ct.source_text=current_work.title
 				            ELSE ct.source_text=current_work.description END))`,
 		}},
-		200,
+		limit,
 	)
 	if query == "" {
 		return "", nil
@@ -364,10 +381,12 @@ func countExactTitle(db *sql.DB, language, title string) (int, error) {
 	return count, err
 }
 
-// countCode is the language-independent release-code lookup.
+// countCode is the language-independent release-code lookup. It uses the same
+// UPPER() comparison as the library's code clause, so the upper-code index
+// answers it instead of a full table scan.
 func countCode(db *sql.DB, code string) (int, error) {
 	var count int
-	err := db.QueryRow(`SELECT count(*) FROM work WHERE primary_code = ?`, code).Scan(&count)
+	err := db.QueryRow(`SELECT count(*) FROM work WHERE UPPER(primary_code) = UPPER(?)`, code).Scan(&count)
 	return count, err
 }
 

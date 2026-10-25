@@ -406,7 +406,7 @@ func TestOpenListCatalogShortTranslationSearchPlan(t *testing.T) {
 	if strings.Contains(plan, "SCAN content_translation\n") {
 		t.Fatalf("short translated search scans the whole table: %s", plan)
 	}
-	if !strings.Contains(plan, "idx_content_translation_short_current") {
+	if !strings.Contains(plan, "idx_content_translation_short_scan") {
 		t.Fatalf("short translated search does not use the short covering index: %s", plan)
 	}
 }

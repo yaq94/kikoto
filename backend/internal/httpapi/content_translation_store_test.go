@@ -55,8 +55,8 @@ func TestContentTranslationStoreMigrationCreatesSchema(t *testing.T) {
 		"idx_content_translation_language",
 		"idx_content_translation_language_id",
 		"idx_content_translation_effective",
-		"idx_content_translation_short",
-		"idx_content_translation_short_current",
+		"idx_content_translation_short_scan",
+
 		"translation_prefill_failure_due",
 		"idx_source_field_translation_owner",
 		"idx_source_field_translation_updated",

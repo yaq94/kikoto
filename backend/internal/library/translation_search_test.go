@@ -56,7 +56,7 @@ func TestContentTranslationSearchShortQueryBounded(t *testing.T) {
 	}
 	plan := explainQueryPlan(t, db, "SELECT COUNT(*) FROM work WHERE "+where, args...)
 	t.Logf("short query plan:\n%s", plan)
-	if !strings.Contains(plan, "idx_content_translation_short_current") {
+	if !strings.Contains(plan, "idx_content_translation_short_scan") {
 		t.Fatalf("short query does not use the short covering index: %s", plan)
 	}
 	if strings.Contains(plan, "SCAN content_translation\n") {
