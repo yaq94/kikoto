@@ -35,7 +35,11 @@ func TestContentTranslationCatalogTitleChecksSourceBeforeCacheWithoutRegistratio
 	defer source.Close()
 	s, host, admin, listener := translationHTTPFixture(t)
 	metadataReviewExec(t, s.db, `INSERT INTO file_source(id,code,display_name,source_type) VALUES(7,'example_remote_a','Example Remote A','openlist');
-		INSERT INTO source_catalog_entry(id,file_source_id,root_path,title) VALUES(1,7,'/Example catalog title','Example catalog title');`)
+		INSERT INTO source_catalog_entry(id,file_source_id,root_path,title) VALUES(1,7,'/Example catalog title','Example catalog title');
+		-- A source-backed card must carry a current audio file to pass the
+		-- admission rule that every read entry point shares.
+		INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes,observed_generation)
+			VALUES(1,'01.mp3','01.mp3','audio',1024,0);`)
 	if _, err := s.db.Exec(`INSERT INTO file_source_endpoint(file_source_id,base_url,api_url) VALUES(7,?,?)`, source.URL, source.URL); err != nil {
 		t.Fatal(err)
 	}

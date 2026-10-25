@@ -28,9 +28,9 @@ CREATE INDEX idx_content_translation_entity
   ON content_translation(entity_kind, entity_id, field, language);
 CREATE INDEX idx_content_translation_language
   ON content_translation(language, entity_kind, entity_id);
--- The 1-2 character fallback scans the newest rows of one language, then tests
--- instr() over translated_text. This covering index keeps that window read in
--- index order instead of sorting the whole table.
+-- Language-ordered walk over one kind. The 1-2 character path reads
+-- idx_content_translation_short_scan from 103 instead; this index stays part
+-- of the frozen 092 shape and is kept for range reads by language.
 CREATE INDEX idx_content_translation_language_id
   ON content_translation(language, entity_kind, id);
 

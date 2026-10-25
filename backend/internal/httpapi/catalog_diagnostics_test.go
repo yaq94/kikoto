@@ -21,11 +21,15 @@ func TestCatalogDiagnosticsOversizeCardsUseTheProbeBoundPerSource(t *testing.T) 
 		INSERT INTO source_catalog_entry(id,file_source_id,root_path,title,availability_status) VALUES
 		(7101,71,'/a/oversize','A oversize','available'),
 		(7102,71,'/a/boundary','A boundary','available'),
+		(7103,71,'/a/stale','A stale','available'),
 		(7201,72,'/b/oversize','B oversize','available');`)
 	seedAdmissionRows(t, db, 7101, "a", ".jpg", "other", catalogadmission.ProbeFiles+1, 1)
 	seedAdmissionRows(t, db, 7102, "a", ".mp3", "audio", 1, 1)
 	seedAdmissionRows(t, db, 7102, "n", ".jpg", "other", catalogadmission.ProbeFiles-1, 1)
 	seedAdmissionRows(t, db, 7201, "b", ".jpg", "other", catalogadmission.ProbeFiles+1, 1)
+	// Rows left by an older generation are provenance, not part of the
+	// current release, so they must not inflate the oversize count either.
+	seedAdmissionRows(t, db, 7103, "old", ".jpg", "other", catalogadmission.ProbeFiles+1, 0)
 
 	server := &Server{db: db}
 	request := httptest.NewRequest(http.MethodGet, "/api/remote-sources/71/catalog/diagnostics", nil)
@@ -46,11 +50,11 @@ func TestCatalogDiagnosticsOversizeCardsUseTheProbeBoundPerSource(t *testing.T) 
 	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
 		t.Fatal(err)
 	}
-	if payload.Totals.Entries != 2 {
-		t.Fatalf("entries = %d, want only the requested source's two cards", payload.Totals.Entries)
+	if payload.Totals.Entries != 3 {
+		t.Fatalf("entries = %d, want only the requested source's three cards", payload.Totals.Entries)
 	}
 	if payload.Totals.OversizeCards != 1 {
-		t.Fatalf("oversizeCards = %d, want one card over the shared bound", payload.Totals.OversizeCards)
+		t.Fatalf("oversizeCards = %d, want one current-generation card over the shared bound", payload.Totals.OversizeCards)
 	}
 }
 

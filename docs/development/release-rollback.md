@@ -230,7 +230,7 @@ directories under `/data`. Review unmatched transaction directories as
 described in [Database](../operations/database.md#backups) instead of deleting
 them.
 
-## 仓库内可执行入口
+## Executable Entry Points
 
 The release candidate uses three repository scripts. Each one fails closed:
 missing prerequisites and unexpected responses produce a nonzero exit status

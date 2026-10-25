@@ -35,6 +35,8 @@ export type UserDataImportIssue = {
   ref: string;
   reason:
     | "existing_record"
+    | "existing_status"
+    | "existing_progress"
     | "incoming_review_conflict"
     | "identity_conflict"
     | "unregistered_source"

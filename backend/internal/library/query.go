@@ -59,8 +59,9 @@ type ListOptions struct {
 	// text.
 	Language string
 	// TranslationConfigKey selects the current model output for a
-	// display-language search. Empty values accept only native rows; a model
-	// row from another endpoint, model, template or reasoning switch is stale.
+	// display-language search. Empty leaves model rows unfiltered, which is the
+	// caller's historical rule; a model row from another endpoint, model,
+	// template or reasoning switch is stale.
 	TranslationConfigKey string
 }
 

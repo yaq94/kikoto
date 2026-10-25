@@ -232,13 +232,12 @@ corpus behavior. The database measured 425.6 MB (`dbBytes` 446,291,968), the
 FTS index 35.9 MB, and 404.5 MB after `VACUUM`; insert time was 131–147 s and
 the WAL peak 23.3 MB.
 
-The `config_key` migration, persistent title/description rows, strict
-display-language search and complete short-query coverage are implemented:
 `translationPersistentCorpusSQL` excludes current corpus rows from eviction,
-`idx_content_translation_short_scan` serves the keyset walk, and the short query
-no longer uses a newest-row window. The 45.6 万行 numbers above come from the
-local `translation-bench` run on this machine; the target-hardware run and the
-admission join at that corpus size remain open in ticket 21 and ticket 24.
+`idx_content_translation_short_scan` serves the keyset walk, and the short
+query reads the complete effective range rather than a newest-row window. The
+45.6 万行 numbers above come from the local `translation-bench` run on this
+machine; the target-hardware run and the admission join at that corpus size
+are not yet measured.
 
 Free space is read from the nearest existing parent before the data directory
 exists. Low space pauses new background generation (`paused_low_disk`) while

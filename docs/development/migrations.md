@@ -80,7 +80,7 @@ references cascade; `catalog_series_member` retains its restrictive entry
 reference, so episode compensation removes pending-only membership explicitly
 before deleting an entry. Its snapshot is `compat/096_dev.sql`; with `103` at
 the chain head, `cd backend && go run ./cmd/schema-baseline -migrations
-./migrations -version-file ../VERSION` now writes `compat/103_dev.sql`.
+./migrations -version-file ../VERSION` writes `compat/103_dev.sql`.
 The numbered migration does not alter 095 or reconstruct an existing database
 from a baseline. See [Catalog series](catalog-series.md) for the staging,
 activation and recovery semantics.
@@ -333,21 +333,6 @@ filename.
 A `compat/<schema>_dev.sql` row stops startup in production and demo modes, and
 in development mode when the file is not packaged (see
 [Development Baselines](#development-baselines)).
-
-### Legacy 095 Checksum Preflight
-
-The only permitted ledger rewrite is a one-time, packaged preflight for the
-known legacy `095_source_field_translation_cache.sql` checksum. It must run
-before `prepareMigrationState` and `validateAndAdoptHistory`, and therefore
-before `MigrateFSWithOptions`; the normal `BeforeUpgrade` hook is too late
-because checksum validation has already failed. The preflight first creates its
-own database backup, then rewrites only that ledger row and only when the live
-table structure exactly matches the known legacy fingerprint. Any extra object,
-partial match, or different checksum refuses startup. There is no generic
-checksum-bypass switch. Migration `097` always rebuilds the table from valid
-`source_id` rows and recreates its indexes; new installs, current 095 databases
-and legacy 095 databases all execute the same non-destructive rebuild, so the
-numbered chain stays continuous and does not depend on a conditional no-op.
 
 Any other ledger filename stops startup with an unknown-migration-record error,
 or with a newer-than-supported error when its version is above the current
