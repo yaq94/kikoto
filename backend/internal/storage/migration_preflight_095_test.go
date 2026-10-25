@@ -13,35 +13,14 @@ import (
 	"github.com/yexca/kikoto/backend/migrations"
 )
 
-const legacy095MigrationSQL = `-- Remote source fields such as a work title, tag or directory display name
--- have no durable work or catalogue-entry identity. They used to call the model
--- again on every browse because content_translation only accepts entity kinds
--- that are part of the searchable corpus.
---
--- Keep their model output in a separate table. These rows are rebuildable
--- display cache, never search corpus: no FTS table or trigger refers to them,
--- and content_translation's published CHECK constraint stays unchanged.
-CREATE TABLE source_field_translation (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  cache_key TEXT NOT NULL UNIQUE,
-  source_id INTEGER NOT NULL,
-  work_code TEXT NOT NULL DEFAULT '',
-  field TEXT NOT NULL CHECK(field IN ('title','tag','directory')),
-  path TEXT NOT NULL DEFAULT '',
-  language TEXT NOT NULL,
-  source_text TEXT NOT NULL,
-  translated_text TEXT NOT NULL,
-  model TEXT NOT NULL DEFAULT '',
-  template_version TEXT NOT NULL DEFAULT '',
-  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX idx_source_field_translation_owner
-  ON source_field_translation(source_id, work_code, field, path, language);
-CREATE INDEX idx_source_field_translation_updated
-  ON source_field_translation(updated_at, id);
-`
+func legacy095MigrationSQL(t *testing.T) string {
+	t.Helper()
+	contents, err := os.ReadFile(filepath.Join("testdata", "legacy_095_no_foreign_key.sql"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(contents)
+}
 
 func TestLegacy095ChecksumConstantsMatchFrozenHistory(t *testing.T) {
 	if legacy095ChecksumCascade != currentMigration095Checksum {
@@ -54,7 +33,7 @@ func TestLegacy095ChecksumConstantsMatchFrozenHistory(t *testing.T) {
 	if got := migrationChecksum(current); got != currentMigration095Checksum {
 		t.Fatalf("current %s checksum = %s, want frozen %s", legacyMigration095Filename, got, currentMigration095Checksum)
 	}
-	if got := migrationChecksum([]byte(legacy095MigrationSQL)); got != legacy095ChecksumWithoutForeignKey {
+	if got := migrationChecksum([]byte(legacy095MigrationSQL(t))); got != legacy095ChecksumWithoutForeignKey {
 		t.Fatalf("historical no-foreign-key checksum = %s, want %s", got, legacy095ChecksumWithoutForeignKey)
 	}
 }
@@ -130,6 +109,18 @@ func TestLegacy095PreflightNormalizesExactHistoricalDatabase(t *testing.T) {
 	if _, err := os.Stat(audit.DatabaseBackupPath); err != nil {
 		t.Fatalf("preflight backup %q: %v", audit.DatabaseBackupPath, err)
 	}
+	backup, err := sql.Open("sqlite", "file:"+filepath.ToSlash(audit.DatabaseBackupPath)+"?mode=ro")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = backup.Close() }()
+	var backupChecksum string
+	if err := backup.QueryRow("SELECT checksum FROM schema_migration WHERE filename = ?", legacyMigration095Filename).Scan(&backupChecksum); err != nil {
+		t.Fatalf("read preflight backup ledger: %v", err)
+	}
+	if backupChecksum != legacy095ChecksumWithoutForeignKey {
+		t.Fatalf("preflight backup checksum = %s, want the pre-normalization %s", backupChecksum, legacy095ChecksumWithoutForeignKey)
+	}
 	if _, err := time.Parse(time.RFC3339Nano, audit.ExecutedAt); err != nil {
 		t.Fatalf("audit executedAt %q: %v", audit.ExecutedAt, err)
 	}
@@ -154,10 +145,12 @@ func TestLegacy095PreflightNormalizesExactHistoricalDatabase(t *testing.T) {
 func TestLegacy095PreflightRejectsSchemaMismatch(t *testing.T) {
 	for _, testCase := range []struct {
 		name   string
+		want   string
 		mutate func(*testing.T, *sql.DB)
 	}{
 		{
 			name: "extra column",
+			want: "schema fingerprint",
 			mutate: func(t *testing.T, db *sql.DB) {
 				if _, err := db.Exec("ALTER TABLE source_field_translation ADD COLUMN unexpected TEXT"); err != nil {
 					t.Fatal(err)
@@ -166,6 +159,7 @@ func TestLegacy095PreflightRejectsSchemaMismatch(t *testing.T) {
 		},
 		{
 			name: "missing column and index",
+			want: "schema fingerprint",
 			mutate: func(t *testing.T, db *sql.DB) {
 				if _, err := db.Exec(`
 					DROP INDEX idx_source_field_translation_owner;
@@ -177,6 +171,7 @@ func TestLegacy095PreflightRejectsSchemaMismatch(t *testing.T) {
 		},
 		{
 			name: "extra index",
+			want: "schema fingerprint",
 			mutate: func(t *testing.T, db *sql.DB) {
 				if _, err := db.Exec("CREATE INDEX unexpected_source_field_translation_index ON source_field_translation(language)"); err != nil {
 					t.Fatal(err)
@@ -185,10 +180,12 @@ func TestLegacy095PreflightRejectsSchemaMismatch(t *testing.T) {
 		},
 		{
 			name:   "wrong foreign key",
+			want:   "schema fingerprint",
 			mutate: replaceLegacy095ForeignKeyWithSetNull,
 		},
 		{
 			name: "extra trigger",
+			want: "schema fingerprint",
 			mutate: func(t *testing.T, db *sql.DB) {
 				if _, err := db.Exec(`
 					CREATE TRIGGER unexpected_source_field_translation_trigger
@@ -197,6 +194,15 @@ func TestLegacy095PreflightRejectsSchemaMismatch(t *testing.T) {
 						SELECT 1;
 					END;
 				`); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+		{
+			name: "missing table",
+			want: "table is missing",
+			mutate: func(t *testing.T, db *sql.DB) {
+				if _, err := db.Exec("DROP TABLE source_field_translation"); err != nil {
 					t.Fatal(err)
 				}
 			},
@@ -211,8 +217,8 @@ func TestLegacy095PreflightRejectsSchemaMismatch(t *testing.T) {
 			backupDir := filepath.Join(root, "backups")
 
 			err := MigrateFSWithOptions(db, migrations.Files, "test", MigrateOptions{PreflightBackupDir: backupDir})
-			if err == nil || !strings.Contains(err.Error(), "schema fingerprint") {
-				t.Fatalf("migration error = %v, want exact schema fingerprint refusal", err)
+			if err == nil || !strings.Contains(err.Error(), testCase.want) {
+				t.Fatalf("migration error = %v, want %q refusal", err, testCase.want)
 			}
 			var current int
 			if err := db.QueryRow("SELECT current_version FROM schema_state WHERE id = 1").Scan(&current); err != nil {
@@ -230,6 +236,13 @@ func TestLegacy095PreflightRejectsSchemaMismatch(t *testing.T) {
 			}
 			if audits := legacy095AuditFiles(t, backupDir); len(audits) != 0 {
 				t.Fatalf("rejected preflight wrote audit files: %v", audits)
+			}
+			backups, err := ListBackups(backupDir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(backups) != 0 {
+				t.Fatalf("rejected preflight wrote backups: %+v", backups)
 			}
 		})
 	}
@@ -310,6 +323,7 @@ func TestMigration097LeavesCurrentAndEarlierDatabasesCompatible(t *testing.T) {
 		}
 		assertCurrentSourceFieldTranslationSchema(t, db)
 		assertMigrationIntegrity(t, db)
+		assertMigration097Recorded(t, db)
 		var rows int
 		if err := db.QueryRow("SELECT COUNT(*) FROM source_field_translation WHERE cache_key = 'current-valid'").Scan(&rows); err != nil {
 			t.Fatal(err)
@@ -340,6 +354,7 @@ func TestMigration097LeavesCurrentAndEarlierDatabasesCompatible(t *testing.T) {
 		}
 		assertCurrentSourceFieldTranslationSchema(t, db)
 		assertMigrationIntegrity(t, db)
+		assertMigration097Recorded(t, db)
 		if audits := legacy095AuditFiles(t, backupDir); len(audits) != 0 {
 			t.Fatalf("084 upgrade triggered legacy preflight: %v", audits)
 		}
@@ -353,6 +368,23 @@ func TestMigration097FreshInstallIntegrity(t *testing.T) {
 	}
 	assertCurrentSourceFieldTranslationSchema(t, db)
 	assertMigrationIntegrity(t, db)
+	assertMigration097Recorded(t, db)
+}
+
+func assertMigration097Recorded(t *testing.T, db *sql.DB) {
+	t.Helper()
+	const filename = "097_source_field_translation_foreign_key.sql"
+	contents, err := migrations.Files.ReadFile(filename)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var checksum string
+	if err := db.QueryRow("SELECT checksum FROM schema_migration WHERE filename = ?", filename).Scan(&checksum); err != nil {
+		t.Fatalf("read %s ledger row: %v", filename, err)
+	}
+	if want := migrationChecksum(contents); checksum != want {
+		t.Fatalf("%s checksum = %s, want %s", filename, checksum, want)
+	}
 }
 
 func openLegacy095Database(t *testing.T) (*sql.DB, string) {
@@ -364,7 +396,7 @@ func openLegacy095Database(t *testing.T) (*sql.DB, string) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 	catalog := copyNumberedMigrationsThrough(t, filepath.Join("..", "..", "migrations"), 94)
-	writeMigration(t, catalog, legacyMigration095Filename, legacy095MigrationSQL)
+	writeMigration(t, catalog, legacyMigration095Filename, legacy095MigrationSQL(t))
 	if err := Migrate(db, catalog); err != nil {
 		t.Fatalf("create historical 095 database: %v", err)
 	}

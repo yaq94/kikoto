@@ -166,15 +166,14 @@ func TestAdminPreflight095ReportsNoLegacyChecksum(t *testing.T) {
 	t.Setenv("KIKOTO_MODE", "production")
 	t.Setenv("KIKOTO_DB_PATH", path)
 	t.Setenv("KIKOTO_DB_BACKUP_DIR", "")
-	backupDir := filepath.Join(t.TempDir(), "backups")
 	var stdout, stderr bytes.Buffer
-	if code := runAdminCommand([]string{"preflight-095", "--backup-dir", backupDir}, strings.NewReader(""), &stdout, &stderr); code != 0 {
+	if code := runAdminCommand([]string{"preflight-095", "--database", path}, strings.NewReader(""), &stdout, &stderr); code != 0 {
 		t.Fatalf("preflight-095 exit code = %d, stderr = %s", code, stderr.String())
 	}
 	if !strings.Contains(stdout.String(), "No legacy 095 checksum requires normalization; no change.") {
 		t.Fatalf("preflight-095 output = %s", stdout.String())
 	}
-	if _, err := os.Stat(backupDir); !errors.Is(err, fs.ErrNotExist) {
+	if _, err := os.Stat(filepath.Join(filepath.Dir(path), "backups")); !errors.Is(err, fs.ErrNotExist) {
 		t.Fatalf("preflight-095 created a backup directory for an empty database: %v", err)
 	}
 }

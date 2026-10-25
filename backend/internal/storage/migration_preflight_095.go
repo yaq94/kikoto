@@ -238,11 +238,10 @@ func PreflightLegacyMigration095(ctx context.Context, db *sql.DB, backupDir stri
 	if updated != 1 {
 		return Legacy095PreflightResult{}, fmt.Errorf("legacy 095 preflight: normalized %d rows, want 1", updated)
 	}
-	if err := tx.Commit(); err != nil {
-		return Legacy095PreflightResult{}, fmt.Errorf("legacy 095 preflight: commit checksum normalization: %w", err)
-	}
-	committed = true
 
+	// The audit file is staged before the commit and published after it. A
+	// failed commit therefore leaves no record claiming a normalization, and a
+	// published record always describes a committed ledger change.
 	finish := time.Now().UTC()
 	audit := legacy095PreflightAudit{
 		SchemaVersion:            95,
@@ -255,9 +254,22 @@ func PreflightLegacyMigration095(ctx context.Context, db *sql.DB, backupDir stri
 		DatabaseBackupPath:       backupPath,
 		Result:                   Legacy095PreflightNormalized,
 	}
-	auditPath, err := writeLegacy095PreflightAudit(resolvedBackupDir, audit)
+	auditPath, auditPartial, err := stageLegacy095PreflightAudit(resolvedBackupDir, finish, audit)
 	if err != nil {
 		return Legacy095PreflightResult{}, fmt.Errorf("legacy 095 preflight: record audit: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		_ = os.Remove(auditPartial)
+		return Legacy095PreflightResult{}, fmt.Errorf("legacy 095 preflight: commit checksum normalization: %w", err)
+	}
+	committed = true
+
+	if err := publishLegacy095PreflightAudit(auditPartial, auditPath); err != nil {
+		return Legacy095PreflightResult{}, fmt.Errorf(
+			"legacy 095 preflight: checksum normalization committed, but audit file %s could not be published: %w",
+			auditPartial,
+			err,
+		)
 	}
 	slog.Info("normalized legacy 095 migration checksum",
 		"migration", legacyMigration095Filename,
@@ -752,39 +764,42 @@ func legacy095BackupDirectory(ctx context.Context, db *sql.DB, configured string
 	return filepath.Join(filepath.Dir(databasePath), "backups"), nil
 }
 
-func writeLegacy095PreflightAudit(dir string, audit legacy095PreflightAudit) (string, error) {
+func stageLegacy095PreflightAudit(dir string, executedAt time.Time, audit legacy095PreflightAudit) (path string, partial string, err error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return "", err
+		return "", "", err
 	}
-	name := legacy095AuditPrefix + time.Now().UTC().Format("20060102T150405.000000000Z") + legacy095AuditSuffix
-	path, err := filepath.Abs(filepath.Join(dir, name))
+	name := legacy095AuditPrefix + executedAt.Format("20060102T150405.000000000Z") + legacy095AuditSuffix
+	path, err = filepath.Abs(filepath.Join(dir, name))
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
-	partial := path + ".partial"
+	partial = path + ".partial"
 	file, err := os.OpenFile(partial, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	encoder := json.NewEncoder(file)
 	encoder.SetIndent("", "  ")
 	if err := encoder.Encode(audit); err != nil {
 		_ = file.Close()
 		_ = os.Remove(partial)
-		return "", err
+		return "", "", err
 	}
 	if err := file.Sync(); err != nil {
 		_ = file.Close()
 		_ = os.Remove(partial)
-		return "", err
+		return "", "", err
 	}
 	if err := file.Close(); err != nil {
 		_ = os.Remove(partial)
-		return "", err
+		return "", "", err
 	}
+	return path, partial, nil
+}
+
+func publishLegacy095PreflightAudit(partial, path string) error {
 	if err := os.Rename(partial, path); err != nil {
-		_ = os.Remove(partial)
-		return "", err
+		return err
 	}
-	return path, nil
+	return nil
 }

@@ -33,8 +33,8 @@ line from standard input. With KIKOTO_ROOT_ACCOUNT_MODE=environment the
 environment-managed account is refused; change KIKOTO_ROOT_PASSWORD instead.
 
 preflight-095 normalizes only the known historical 095 checksum after checking
-the exact source_field_translation schema. It takes a database backup and
-writes an audit record, but does not run any numbered migration.
+the exact source_field_translation schema. For a matching database it takes a
+backup and writes an audit record, but it never runs a numbered migration.
 `
 
 // runAdminCommand handles `kikoto admin ...`. It works on the configured

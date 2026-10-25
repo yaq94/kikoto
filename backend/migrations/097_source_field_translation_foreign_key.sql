@@ -1,7 +1,9 @@
 -- Rebuild the display cache with the foreign key that the frozen 095 should
--- have shipped. Rows whose source no longer exists are unreachable cache and
--- are intentionally discarded. The migration runner performs the final
--- PRAGMA foreign_key_check before committing this file.
+-- have shipped. This file is unconditional: a fresh numbered chain, a database
+-- that recorded the frozen 095 checksum, and a legacy database normalized by
+-- the startup preflight all run this same rebuild. Rows whose source no longer
+-- exists are unreachable cache and are intentionally discarded. The migration
+-- runner performs the final PRAGMA foreign_key_check before committing.
 CREATE TABLE source_field_translation_rebuilt (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   cache_key TEXT NOT NULL UNIQUE,

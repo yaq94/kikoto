@@ -77,10 +77,11 @@ lookups by parent, entry and episode root. It also creates
 complete staged split between `pending` and `published`. Both source and entry
 references cascade; `catalog_series_member` retains its restrictive entry
 reference, so episode compensation removes pending-only membership explicitly
-before deleting an entry. Run `go generate ./migrations` to produce
-`compat/096_dev.sql`; the numbered migration does not alter 095 or reconstruct
-an existing database from a baseline. See [Catalog series](catalog-series.md)
-for the staging, activation and recovery semantics.
+before deleting an entry. Its snapshot is `compat/096_dev.sql`; with `097` at
+the chain head, `go generate ./migrations` now writes `compat/097_dev.sql`.
+The numbered migration does not alter 095 or reconstruct an existing database
+from a baseline. See [Catalog series](catalog-series.md) for the staging,
+activation and recovery semantics.
 
 Schema 097 is `097_source_field_translation_foreign_key.sql`. It rebuilds
 `source_field_translation` with `source_id` referencing `file_source(id) ON
@@ -112,8 +113,9 @@ already recorded that value needs no preflight. Only the older
 `70933dd4...` ledger value is conditional on the exact no-foreign-key table
 shape.
 
-Startup runs the preflight before the migration validator reads
-`schema_migration`. It compares `PRAGMA table_xinfo`, `index_list`,
+The migration entry point runs the preflight before it loads the catalog or
+validates the ledger, so every caller that reaches `MigrateFS` is covered. It
+compares `PRAGMA table_xinfo`, `index_list`,
 `index_xinfo`, `foreign_key_list`, and the table's trigger list with the
 historical fingerprint. Column order and definitions, all indexes including
 SQLite's unique autoindex, triggers, and foreign-key actions must match
@@ -162,7 +164,8 @@ backup directory (see [Database](../operations/database.md)) and, for a
 database below schema 035, preserves user-authored workflow definitions for
 review (see [Preset Workflows](../architecture/workflows.md#preset-workflows)).
 A hook failure stops startup before the schema changes. The hook does not run
-for an empty database.
+for an empty database. The legacy 095 preflight runs earlier, at the migration
+entry point described above.
 
 Each migration's SQL, a foreign-key check, the ledger row, and the
 schema-state advance commit in one SQLite transaction. The state is marked

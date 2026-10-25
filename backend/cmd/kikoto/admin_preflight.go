@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/yexca/kikoto/backend/internal/config"
 	"github.com/yexca/kikoto/backend/internal/storage"
 )
 
@@ -28,14 +27,13 @@ func runAdminPreflight095(args []string, stdout io.Writer, stderr io.Writer) int
 		flags.Usage()
 		return 2
 	}
-	cfg, err := config.Load()
-	if err != nil {
-		_, _ = fmt.Fprintln(stderr, "load configuration:", err)
-		return 1
-	}
 	databasePath := strings.TrimSpace(*databaseFlag)
 	if databasePath == "" {
-		databasePath = strings.TrimSpace(cfg.DatabasePath)
+		databasePath = strings.TrimSpace(os.Getenv("KIKOTO_DB_PATH"))
+	}
+	backupDir := strings.TrimSpace(*backupDirFlag)
+	if backupDir == "" {
+		backupDir = strings.TrimSpace(os.Getenv("KIKOTO_DB_BACKUP_DIR"))
 	}
 	if databasePath == "" {
 		_, _ = fmt.Fprintln(stderr, "database path is empty")
@@ -50,11 +48,7 @@ func runAdminPreflight095(args []string, stdout io.Writer, stderr io.Writer) int
 			return 1
 		}
 	}
-	backupDir := strings.TrimSpace(*backupDirFlag)
-	if backupDir == "" {
-		backupDir = strings.TrimSpace(cfg.DatabaseBackupDir)
-	}
-	if backupDir == "" && *databaseFlag != "" && databasePath != ":memory:" && !strings.HasPrefix(databasePath, "file:") {
+	if backupDir == "" && databasePath != ":memory:" && !strings.HasPrefix(databasePath, "file:") {
 		backupDir = filepath.Join(filepath.Dir(databasePath), "backups")
 	}
 	if backupDir == "" {
