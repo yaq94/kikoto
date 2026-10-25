@@ -113,7 +113,10 @@ func TestLowDiskPausesScanAndPrefillWithoutStoppingPlayback(t *testing.T) {
 	if _, err := f.server.runTranslationPrefillBatch(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if _, status, lastError := readPrefillState(t, f.server); status != "running" || lastError != "" {
+	// The corpus here is small enough that the resumed batch also finishes it.
+	// Either state proves the pause was lifted; what must not survive is the
+	// paused status or its low-disk reason.
+	if _, status, lastError := readPrefillState(t, f.server); (status != "running" && status != "complete") || lastError != "" {
 		t.Fatalf("prefill did not resume: %q/%q", status, lastError)
 	}
 	if modelCalls.Load() == 0 {
