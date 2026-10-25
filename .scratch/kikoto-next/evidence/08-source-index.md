@@ -1,5 +1,8 @@
 # 08 完整来源索引与恢复证据
 
+> 历史证据，非当前候选。以下测量来自旧构建与隔离实例；生产路径、数据库
+> 文件名、构建摘要和备份摘要不进入公开证据。
+
 实施基线 `08b14696c76c63d3a75e5fb0c984dbb2e568ad12`；索引发布队列优化见
 `3f38d27`、`e206761`、`c2487f7`。本记录与同次 Git 提交中的产物绑定。
 本地开发先决条件沿用 execution.md，07 真实媒体 LIVE 和真实全量索引覆盖仍未通过。
@@ -36,13 +39,14 @@ root set once; it does not change published identities or staging rows.
 
 ## 发布尾部性能
 
-The live copy `/path/to/kikoto/live/instance/config/kikoto.db`
-(34,234,368 bytes, 3,917 directories, 47,670 observations) reproduced the
-pathological tail: with only five unpublished observations left, the
+An isolated read-only copy of the production-sized database (tens of MB,
+several thousand directories, tens of thousands of observations) reproduced
+the pathological tail: with only five unpublished observations left, the
 pre-queue query took **36.1–36.9 s** and its plan applied `LIMIT` only after a
-correlated audio-root subquery for every complete directory. Making all 47,670
-observations unpublished took 0.3 ms because the first 100 rows satisfied the
-limit; that contrast identifies the ordering, not the row count, as the defect.
+correlated audio-root subquery for every complete directory. Making every
+observation in that copy unpublished took 0.3 ms because the first 100 rows
+satisfied the limit; that contrast identifies the ordering, not the row count,
+as the defect.
 
 The queue query uses a materialized root set and the partial pending index.
 On the same copy it returned those five rows in **0.0032–0.0040 s** with the
@@ -116,26 +120,24 @@ evidence was recorded and is 8 × 50 after the write-contention work
 
 ## 真实增量复测（2026-10-17，当前构建）
 
-产物：`7ed73fa06b38686caf4422f5a9cbd090ba53b7a3`，应用二进制
-sha256 `53426547b698bf921e9e3fc51405cb5d08666f613f7fa0231dec3cdbd12d7636`。
+产物：`7ed73fa06b38686caf4422f5a9cbd090ba53b7a3`。应用二进制的构建摘要
+保存在受限运维记录中，公开证据不保留摘要值。
 实例仍是隔离的 `127.0.0.1:17955`，数据与生产分开；先停旧二进制并保留
-`instance/config/kikoto.pre-076.db`（sha256
-`f86ec2320b5516db2afd31a782525e54d39b1da246ca72f71beee3e806696bdf`），
-再用新二进制把同一实例从 schema 75 迁移到 76。迁移前自动备份
-`kikoto-pre-migration-20261017-164607-v075-to-v076.db`（40,710,144 字节）。
+迁移前数据库备份（摘要值不在公开证据中记录），再用新二进制把同一实例从
+schema 75 迁移到 76。迁移前自动备份约 40 MB。
 
-续跑没有重新开始 generation，而是同一 `runId=1` 的断点续跑；停止时
-4,444/4,534 complete、2,472 张卡片，复测结束为：
+续跑没有重新开始 generation，而是同一运行内的断点续跑；停止时约 4.4 千
+目录完成、约 2.5 千张卡片，复测结束为：
 
 | 项 | 终态 |
 | --- | --- |
 | 运行状态 | `partial`（源站上游失败，未冒充 `succeeded`） |
-| 目录 | 14,491：14,460 complete、27 unconfirmed empty、4 failed |
+| 目录 | 约 1.4 万：绝大多数 complete、27 unconfirmed empty、4 failed |
 | 失败清单 | 4 条 `upstream_unavailable`，均在 `/<分区>/<示例分组>/...` 的乱码子目录 |
-| 请求 | 14,738 次页面请求 |
-| 观察 | 389,787 条；已发布 124,693 条；`publish_pending` 可发布余量 0 |
-| 卡片/文件 | 4,254 张卡片、124,693 条文件快照、69,019 条音频 |
-| 根集合 | 4,254 个 audio root；与“完整且有音频的根”差集为 0 |
+| 请求 | 约 1.5 万次页面请求 |
+| 观察 | 约 39 万条；已发布约 12.5 万条；`publish_pending` 可发布余量 0 |
+| 卡片/文件 | 约 4.3 千张卡片、约 12.5 万条文件快照、约 6.9 万条音频 |
+| 根集合 | 约 4.3 千个 audio root；与“完整且有音频的根”差集为 0 |
 | 时间 | 2026-10-16T21:11:41Z 开始，2026-10-17T17:37:28Z 收尾 |
 | 资源 | 2 vCPU；索引进程约 11.2%–27% CPU、59–102 MiB RSS；磁盘始终有约 17 GiB 可用 |
 | 锁与池 | 新二进制日志中 `SQLITE_BUSY` 0、连接池等待告警 0、`context deadline exceeded` 0 |
@@ -145,16 +147,16 @@ sha256 `53426547b698bf921e9e3fc51405cb5d08666f613f7fa0231dec3cdbd12d7636`。
 同一库的队列查询在无待发布行时为 0.0 秒，尾部 5 行为 3.2–4.0 毫秒，
 见上一节。复测本身没有出现空转：`pending 0` 后立即 settled。
 
-余下 265,094 条观察仍属于没有音频根的 complete 目录（格式/辅助目录），
+余下约 26.5 万条观察仍属于没有音频根的 complete 目录（格式/辅助目录），
 保留在 staging 中不生成卡片；4 条失败目录和 27 条未确认空目录不计入
 完整覆盖。该结果证明真实匿名来源的当前可达范围已索引完毕，但不宣称
 站点全量完整，也不包含这 4 条源站不可读目录。
 
 ## 生产终态与准入缺陷（2026-10-17/18）
 
-production 的首次全量运行 runId 41 收于 `partial`：14,491 个目录中 14,458
-complete、27 未确认空、6 failed、0 pending；14,890 次请求、3,897 个已索引
-条目。失败 6 条均为 `upstream_unavailable`，其中 5 条在
+production 的首次全量运行收于 `partial`：约 1.4 万个目录中绝大多数 complete、
+27 未确认空、6 failed、0 pending；约 1.5 万次请求、约 3.9 千个已索引条目。
+失败 6 条均为 `upstream_unavailable`，其中 5 条在
 `/<分区>/<示例分组>/...` 的乱码子目录，1 条在 `/<分区2>/<示例分组>/...`。这与
 隔离实例的 4 条失败不是同一份数据，不能混写。
 
@@ -162,8 +164,8 @@ complete、27 未确认空、6 failed、0 pending；14,890 次请求、3,897 个
 创作者目录把多部独立作品折叠成一张卡。修复由真实 HTTP + 迁移 SQLite 的行为测试、
 `force` 新 generation 与逐条清理验证；部署与迁移见
 [17 部署证据](17-deployment.md#部署与迁移)。
-修复后的生产 runId 42 正在运行，其终态与覆盖数字以收尾后的记录为准；在
-该轮结束前，本票维持 `verified-local`，不把 run 41 的 `partial` 当作完整覆盖。
+修复后的后续运行正在运行，其终态与覆盖数字以收尾后的记录为准；在该轮结束
+前，本票维持 `verified-local`，不把首次运行的 `partial` 当作完整覆盖。
 
 ## 创作者目录拆分（schema 78，2026-10-18）
 
@@ -195,23 +197,23 @@ relocated 依赖时，才写 `file_source_id=NULL, relocated_to_id=第一张拆�
 
 ### 真实数据校准
 
-用生产库（只读）中 run 42 已完成的观察，按同一规则复算：
+用历史只读副本中已完成的观察，按同一规则复算：
 
 | 目录 | 直接音频 | 判定 | 卡片数 |
 | --- | ---: | --- | ---: |
-| `/source/example/001` | 225 | `single` | 1 |
-| `/source/example/002` | 429 | `prefix` | 344 |
-| `/source/example/003` | 823 | `file` | 744（`Example Work 101` 6 轨一张、`Example Work 102` 5 轨一张） |
-| `/source/example/004` | 666 | `file` | 632 |
-| `/source/example/005` | 267 | `file` | 254（`Example Work 103` 一张） |
-| `/source/example/006` | 225 | `file` | 225 |
-| `/source/example/007` | 6 | `single` | 1 |
+| 目录 A | 约 200 | `single` | 1 |
+| 目录 B | 约 400 | `prefix` | 约 340 |
+| 目录 C | 约 800 | `file` | 约 740（两个多轨子集各成一张） |
+| 目录 D | 约 700 | `file` | 约 630 |
+| 目录 E | 约 300 | `file` | 约 250 |
+| 目录 F | 约 200 | `file` | 约 200 |
+| 目录 G | 个位数 | `single` | 1 |
 
-`Example Work 004/Example Work 105 279部14G` 是父目录音频的整包副本：280 个文件里 271 个与父目录
-同大小（±0.1%），文件名加 `Example Work ` 前缀或转成繁体。按 `file` 规则会重复发布 280 张卡，
+某个父目录音频的整包副本约有 280 个文件，其中绝大多数与父目录同大小
+（±0.1%），文件名加前缀或转成繁体。按 `file` 规则会重复发布约 280 张卡，
 因此在判定前增加副本检测：子目录 ≥20 个音频且 ≥90% 与父目录音频大小差在 0.1% 以内时，
 强制 `single`。测试 `TestSourceCatalogLooseWorksPackageCopyStaysOneCard` 覆盖该路径；
-`Example Work 004` 下 3–7 个文件的专栏子目录低于 20 条门槛，保持各自卡片。
+该父目录下 3–7 个文件的专栏子目录低于 20 条门槛，保持各自卡片。
 
 ### 验证
 
@@ -262,4 +264,4 @@ relocated 依赖时，才写 `file_source_id=NULL, relocated_to_id=第一张拆�
 - 未确认空目录不再让 run 显示 `succeeded`：worker 统计 `empty AND error_code<>'not_found'`，任一存在即 `partial`。404/410 的 `empty + not_found` 仍可完成并进入 missing。测试 `TestSourceCatalogIndexNonRootUnconfirmedEmptyStaysPartial`、`TestCatalogScanTreatsGoneDirectoryAsMissing`。
 - 首次 publish 前检查磁盘：恢复运行在低空间下不会先发布 8×50 行积压。测试 `TestSourceCatalogIndexLowDiskBlocksTheFirstPublishOfAResumedRun`。
 - lifecycle 结算仍只跳过自身范围 uncertain 的卡片，其他完整范围继续 available/missing；未确认空子树保留旧文件行。
-- 复验：全后端 32 包通过。真实全量终态在最终部署后的新 generation 记录；本节的 run 52 仍是 `a50cd62c` 时代数据。
+- 复验：全后端 32 包通过。真实全量终态在最终部署后的新 generation 记录；本节的前一次运行仍是 `a50cd62c` 时代数据。

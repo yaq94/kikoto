@@ -1,10 +1,15 @@
 # 21 来源索引整改：H 包基准与验收骨架
 
+> 历史证据，非当前候选。以下测量来自旧构建与隔离副本，用于说明性能变化和
+> 验收边界；部署路径、数据库体积、记录标识与原始日志均不进入公开证据。
+> 命令块中的 `<repo>`、`<bench-dir>`、`<logs-dir>` 是通用占位符。
+
 ## 1. 范围与不变量
 
-- 工作树：`/path/to/kikoto/work`，分支 `codex/rem-h`，基线提交 `17c4e5d4`。
+- 工作树：`<repo>`，分支 `codex/rem-h`，基线提交 `17c4e5d4`。
 - 只读产品代码；本提交只新增 `scripts/catalog-bench/` 与本文件。没有改 backend/frontend、迁移、部署或 Git 远端。
-- 生产实例：`kikoto:next-d55130fe`，schema `84`；数据库 `source_catalog_scan` 的来源 3 / generation 53。
+- 历史实例镜像标签 `kikoto:next-d55130fe`，schema `84`；测量对象为一份脱敏的
+  目录扫描副本，不记录来源标识与 generation 编号。
 - 基准副本不修改源库：源库以 `mode=ro` 打开（基准读取连接另加 `query_only(1)`；`VACUUM INTO` 连接只用 `mode=ro`，因为 `query_only` 会拒绝 VACUUM），`VACUUM INTO` 写入 `/tmp`；写路径基准在副本上 `BEGIN IMMEDIATE ... ROLLBACK`，副本也不落改动。
 - 保留的不变量：未知不等于删除；个人记录不随卡片/来源删除；共享关联与拆分必须本人确认；出站策略不绕过；不下载音频。H 包不实现功能，不改变这些语义。
 
@@ -18,42 +23,42 @@
 | 工作树提交 | `17c4e5d4` |
 | 生产镜像 | `kikoto:next-d55130fe` |
 | schema | 84（`schema_state.current_version=84`，`schema_migration` 最高 84） |
-| 源库 | `/path/to/kikoto/config/kikoto.db`，387,837,952 B |
-| 副本 | `/path/to/kikoto/bench/kikoto-before.db` → `/path/to/kikoto/bench/kikoto-before-17c4e5d4.db`，366,694,400 B |
-| 副本 sha256 | `2be092c0cd05cb1a5a2897f70d66f3032812cd0519d9b522cead9a15f79f8e01` |
+| 源库 | 历史部署数据库，约 3.7 亿字节 |
+| 副本 | `<bench-dir>/kikoto-before.db` → `<bench-dir>/kikoto-before-<commit>.db`，约 3.5 亿字节 |
+| 副本校验 | 测量时记录过 SHA-256，公开证据不保留摘要值 |
 | `VACUUM INTO` 耗时 | 6.76 s（服务器本地） |
-| 下载耗时 | 100.6 s（SFTP，366,694,400 B） |
+| 下载耗时 | 100.6 s（SFTP，约 3.5 亿字节） |
 
-计数（副本实测；除注明外与审计参考一致）：
+计数（副本实测；除注明外与审计参考一致，均以量级记录）：
 
 | 表/指标 | 值 |
 | --- | ---: |
-| `source_catalog_entry` | 114,081 |
-| `source_catalog_file` | 224,395 |
-| `source_catalog_observation` | 389,830 |
-| `source_catalog_directory` | 14,496 |
-| `publish_pending=1` | 171,604 |
-| run 53 | `partial`；14,463 complete、4 failed、27 unconfirmed empty、pending 0 |
-| observed / indexed | 389,823 / 41,569 |
-| `/source/example` | 本副本实测 499 目录、87,660 observation、87,657 file、25 audio；审计参考为 87,419 / 87,415 / 19，副本时点已推进 |
+| `source_catalog_entry` | 约 11.4 万条目 |
+| `source_catalog_file` | 约 22.4 万文件 |
+| `source_catalog_observation` | 约 39 万观察 |
+| `source_catalog_directory` | 约 1.4 万目录 |
+| `publish_pending=1` | 约 17 万行 |
+| 历史扫描 | `partial`；完成约 1.4 万目录、4 failed、27 unconfirmed empty、pending 0 |
+| observed / indexed | 约 39 万 / 约 4.2 万 |
+| 单个来源子树 | 本副本约 500 目录、约 8.8 万 observation、约 8.8 万 file、25 audio；审计参考为约 8.7 万 / 约 8.7 万 / 19，副本时点已推进 |
 | lifecycle | `stage=observe`、`lifecycle_cursor=0` |
-| `publish_cleanup_cursor` | 1,070,887 |
+| 发布清理游标 | 历史副本的非零游标；具体值不公开 |
 
 ### 2.2 查询耗时（服务器 Linux，modernc 驱动，warm）
 
 命令：
 
 ```sh
-/path/to/kikoto/bench/catalog-bench --db /path/to/kikoto/bench/kikoto-before.db --write-db /path/to/kikoto/bench/kikoto-write.db \
+<bench-dir>/catalog-bench --db <bench-dir>/kikoto-before.db --write-db <bench-dir>/kikoto-write.db \
   --runs 5 --write-runs 3 --only progress_exact,purge_empty_pending,root_incomplete,publish_1000_rows,publish_1000_rows_fixture \
-  --json-out /tmp/before-server-warm.json
+  --json-out <bench-dir>/before-server-warm.json
 ```
 
 | 查询 | median | min–max | 结果 | G 目标 |
 | --- | ---: | ---: | --- | ---: |
-| `progress_exact`（6 条语句） | **504.9 ms** | 498.4–515.7 | run 53 / 14,494 目录 | <20 ms |
+| `progress_exact`（6 条语句） | **504.9 ms** | 498.4–515.7 | 历史扫描 / 约 1.4 万目录 | <20 ms |
 | `purge_empty_pending`（空检查） | **199.7 ms** | 195.5–200.5 | stale=0 | <1 ms |
-| `root_incomplete`（`/source/example`） | **252.0 ms** | 248.1–257.3 | incomplete=0 | <5 ms |
+| `root_incomplete`（示例来源根） | **252.0 ms** | 248.1–257.3 | incomplete=0 | <5 ms |
 | `publish_1000_rows`（实际队列） | **27.8 ms** | 27.3–29.8 | 0 行 | <2 s |
 | `publish_1000_rows_fixture`（临时标记 1,000 行） | **5.1 ms** | 5.0–5.2 | 1,000 行 | <2 s |
 | `cleanup_100_cards`（cursor 0，3 次） | **2,446.8 ms** | 2,250.1–2,906.1 | 100 卡、31 张有目录行、removed=0 | <1 s |
@@ -84,8 +89,8 @@ C 结果复现了审计参考，说明副本和 SQL 口径正确。C 交叉核�
 
 ### 2.4 plan 摘要
 
-- `progress_exact`：observed/indexed 子查询为 `SEARCH o USING COVERING INDEX source_catalog_observation_revision (file_source_id=?)`，随后对每个 observation 做 `SEARCH d USING INDEX sqlite_autoindex_source_catalog_directory_1 (file_source_id=? AND path=?)`；389,823 次点查是 427 ms 的主因。目录聚合与分区页各走 `source_catalog_directory_root`，并各自建临时 B-tree（`count(DISTINCT)` / `GROUP BY`）。
-- `purge_empty_pending`：`SEARCH o USING COVERING INDEX source_catalog_observation_pending (file_source_id=?)` 后按 `path` 点查目录；为返回 0 仍扫过 171,604 条 pending。索引列只有 `file_source_id`，generation 条件在 join 后过滤。
+- `progress_exact`：observed/indexed 子查询为 `SEARCH o USING COVERING INDEX source_catalog_observation_revision (file_source_id=?)`，随后对每个 observation 做 `SEARCH d USING INDEX sqlite_autoindex_source_catalog_directory_1 (file_source_id=? AND path=?)`；约 39 万次点查是 427 ms 的主因。目录聚合与分区页各走 `source_catalog_directory_root`，并各自建临时 B-tree（`count(DISTINCT)` / `GROUP BY`）。
+- `purge_empty_pending`：`SEARCH o USING COVERING INDEX source_catalog_observation_pending (file_source_id=?)` 后按 `path` 点查目录；为返回 0 仍扫过约 17 万条 pending。索引列只有 `file_source_id`，generation 条件在 join 后过滤。
 - `root_incomplete`：目录臂 `SEARCH d USING INDEX source_catalog_directory_root (file_source_id=? AND generation=?)`；观察臂 `SEARCH o USING INDEX source_catalog_observation_pending (file_source_id=?)`，再按 path 点查 `pd`，audio root 用 `(file_source_id,generation,catalog_root)` 覆盖索引。
 - `publish_1000_rows`：从 `source_catalog_directory` 的 `(file_source_id)` 前缀开始按主键顺序扫，逐目录用 pending 索引取观察行，再 `EXISTS` audio_root；没有 publish 游标，空队列批次仍从目录头部重扫。
 - `cleanup_100_cards`：ID 取数走 `source_catalog_entry_lifecycle (file_source_id,last_seen_generation,id)`；每卡 `DELETE source_catalog_file` 走 `source_catalog_file_title (catalog_entry_id)`；有目录行的卡执行子路径删除，两个 `UNION ALL` 分支都呈现 `SEARCH source_catalog_entry USING INDEX source_catalog_entry_relocated (relocated_to_id=?)`，按 NULL 前缀扫全表 live entry，是 100 卡 2.45 s 的主要放大点。
@@ -93,7 +98,7 @@ C 结果复现了审计参考，说明副本和 SQL 口径正确。C 交叉核�
 
 ### 2.5 3 小时 slow / SQLITE_BUSY
 
-命令：`docker logs --since 3h kikoto > /path/to/kikoto/logs/kikoto-3h.txt 2>&1`，在 2026-10-21 10:05Z 左右采集。
+命令：`docker logs --since 3h kikoto > <logs-dir>/kikoto-3h.txt 2>&1`，在 2026-10-21 10:05Z 左右采集。
 
 | 指标 | 值 |
 | --- | ---: |
@@ -107,26 +112,26 @@ C 结果复现了审计参考，说明副本和 SQL 口径正确。C 交叉核�
 
 ## 3. 脚本与复现
 
-脚本：`/path/to/kikoto/work/scripts/catalog-bench/main.go`
-说明：`/path/to/kikoto/work/scripts/catalog-bench/README.md`
+脚本：`<repo>/scripts/catalog-bench/main.go`
+说明：`<repo>/scripts/catalog-bench/README.md`
 
 构建（模块在 `backend/`，命名文件构建可解析 `modernc.org/sqlite`）：
 
 ```sh
-cd /path/to/kikoto/work/backend
-go build -o /path/to/kikoto/bench/catalog-bench.exe ../scripts/catalog-bench/main.go
+cd <repo>/backend
+go build -o <bench-dir>/catalog-bench.exe ../scripts/catalog-bench/main.go
 ```
 
 服务器 Linux 交叉编译：
 
 ```sh
-GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o /path/to/kikoto/bench/catalog-bench-linux ../scripts/catalog-bench/main.go
+GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o <bench-dir>/catalog-bench-linux ../scripts/catalog-bench/main.go
 ```
 
 跑 before：
 
 ```sh
-cd /path/to/kikoto/bench
+cd <bench-dir>
 cp kikoto-before-17c4e5d4.db kikoto-write.db
 ./catalog-bench.exe --db kikoto-before-17c4e5d4.db --write-db kikoto-write.db \
   --logs docker-logs-3h.txt --runs 5 --write-runs 3 --label before \
@@ -146,15 +151,15 @@ cp kikoto-before-17c4e5d4.db kikoto-write.db
 | --- | --- | --- | --- | --- |
 | G1 | `sourceCatalogProgress`（默认计数器路径） | <20 ms | 504.9 ms（`?exact=1`） | 12.103 ms（11.027–13.818）；达标。`?exact=1` 作为对账查询降到 127.528 ms |
 | G2 | 空 pending 的 purge | <1 ms | 199.7 ms | 0 ms（max 0.532）；达标，改由旧 generation 的目录索引驱动，只在旧目录有 pending 时才读 observation |
-| G3 | `catalogRootIncomplete('/source/example')` | <5 ms | 252.0 ms | 0 ms（max 0.538）；达标，两臂都改成半开路径区间 |
+| G3 | `catalogRootIncomplete(<source-root>)` | <5 ms | 252.0 ms | 0 ms（max 0.538）；达标，两臂都改成半开路径区间 |
 | G4 | 发布 1,000 行 | <2 s | SELECT 5.1 ms；实际 0 行 27.8 ms | fixture 1,000 行 5.3 ms；真实 0 行 33.7 ms；达标 |
-| G5 | cleanup 100 卡（`--cleanup-cursor 1070887`） | <1 s | 2,446.8 ms（cursor 0）；生产日志 733–6,482 ms | 1.05 ms；达标（cursor 与 before 不同，见 §5） |
+| G5 | cleanup 100 卡（非零游标） | <1 s | 2,446.8 ms（cursor 0）；历史日志 733–6,482 ms | 1.05 ms；达标（cursor 与 before 不同，见 §5） |
 | G6 | lifecycle 100 entry | <200 ms | 37.1 ms；partial 运行不进入 lifecycle | 43.7 ms；达标；partial 现在也进入 lifecycle |
 | G7 | 3 小时慢事务 | 0 | 活跃窗口 51 条，全部 `cleanup_publish` | 待填 |
 | G8 | 3 小时 `SQLITE_BUSY` | 下降 80% | 63 条（窗口口径见 2.5） | 待填 |
 | G9 | 浏览首页 | <150 ms | 审计参考 249 + 248 ms（H 未复测） | 待填 |
-| G10 | 关键词搜索 | <100 ms | 审计：41,824 entry + 224,395 file 全扫（H 未复测） | 待填 |
-| G11 | 87k 卡 tracks 首屏 | <50 ms / <200 KB | 审计：一次加载整卡 87k 行（H 未复测） | 待填 |
+| G10 | 关键词搜索 | <100 ms | 审计：约 4.2 万 entry + 约 22.4 万 file 全扫（H 未复测） | 待填 |
+| G11 | 约 8.7 万卡 tracks 首屏 | <50 ms / <200 KB | 审计：一次加载整卡约 8.7 万行（H 未复测） | 待填 |
 | G12 | 无变化二次同步 | 0 发布行，未变化目录不重列 | N/A | `TestCatalogSyncNoChangeSecondRunListsNothing`：list 请求 0，发布 0 |
 | G13 | 深目录 +1 文件 | 只发布 1 行，无关目录请求 0 | N/A | `TestCatalogSyncDeepDirectoryAddsOnlyOneRow`：发布 1，目标目录 list 1 |
 | G14 | partial 一个子树 | 其他子树仍被发现，lifecycle 前进 | 4 failed + 27 empty；`stage=observe`、`cursor=0`，lifecycle 不前进 | `TestCatalogSyncFailedSubtreeKeepsOtherBranchesAndAdvancesLifecycle`、`TestCatalogSyncContinuesPastAFailedListing` |
@@ -165,12 +170,12 @@ cp kikoto-before-17c4e5d4.db kikoto-write.db
 ## 4.1 本轮 after 运行
 
 ```text
-# 1. 把 10-21 的生产快照副本迁移到当前 schema
+# 1. 把历史快照副本迁移到当前 schema
 go run ./.kikoto-work/bench/migrate92 ../.kikoto-work/bench/bench-093.db
 # 2. 用当前 HEAD 构建 bench
 cd backend && go build -o ../.kikoto-work/bench/catalog-bench-093.exe ../scripts/catalog-bench/main.go
 # 3. 测量
-catalog-bench-093.exe --db bench-093.db --vacuum-to bench-093-vacuum.db --write-db bench-093-write.db --source-id 3 --generation 53 --root /source/example --label g1-g6 --runs 5 --write-runs 3 --cleanup-cursor 1070887 --lifecycle-cursor 0 --json-out after-093-all.json
+catalog-bench-093.exe --db bench-093.db --vacuum-to bench-093-vacuum.db --write-db bench-093-write.db --source-id <source-id> --generation <generation> --root <source-root> --label g1-g6 --runs 5 --write-runs 3 --cleanup-cursor <cleanup-cursor> --lifecycle-cursor 0 --json-out after-093-all.json
 ```
 
 结果（schema 093，modernc 驱动，Windows，5 读 / 3 写）：
@@ -186,8 +191,8 @@ catalog-bench-093.exe --db bench-093.db --vacuum-to bench-093-vacuum.db --write-
 | `cleanup_100_cards` | 0 ms | 0 | 0.636 |
 | `lifecycle_100_entries` | 35.017 ms | 33.465 | 35.268 |
 
-迁移前后行数一致：entry 114,081、observation 389,830、pending 171,604；
-085 回填的 observed/indexed 与精确聚合一致（389,823 / 41,569）。
+迁移前后行数一致：entry 约 11.4 万、observation 约 39 万、pending 约 17 万；
+085 回填的 observed/indexed 与精确聚合一致（约 39 万 / 约 4.2 万）。
 `PRAGMA user_version` 恒为 0，版本以 `schema_state.current_version` 为准。
 
 G1–G3 的达标来自三处改动，均已带测试：
@@ -222,7 +227,7 @@ G4–G6 与 G12–G15 不依赖上述改动。
 ## 5. 已知限制与待确认
 
 - `publish_1000_rows` 只计 SELECT 阶段；`publish_1000_rows_fixture` 补上了 1,000 行标记的写入阶段（401.2 ms，含事务回滚）。
-- cleanup 固定从 cursor 0 开始，生产 `publish_cleanup_cursor=1,070,887`；2.45 s 与日志的 733–6,482 ms 是不同窗口，不能直接当同一批次。after 必须用同一 cursor。
+- cleanup 固定从 cursor 0 开始，历史部署的 `publish_cleanup_cursor` 为非零值；2.45 s 与日志的 733–6,482 ms 是不同窗口，不能直接当同一批次。after 必须用同一 cursor。
 - lifecycle 只看 observe 阶段；stage=reconcile 的 fingerprint/relocation 路径未计时。生产当前 stage=observe，所以可先覆盖该路径。
 - modernc 比 C SQLite 慢约 2–2.5 倍；before/after 必须同驱动、同机器、同 warm 条件。
 - `docker logs` 当前只覆盖约 9 分钟活跃告警，不是三小时；G7/G8 的 after 需要固定负载窗口和容器启动时间。
@@ -235,7 +240,7 @@ H 包没有产品代码、迁移或部署改动。回滚只需删除 `scripts/ca
 
 ## 7. C1–C9 最终外部探针
 
-时间：2026-10-24。工作树：`/path/to/kikoto/catalog-probe`；
+时间：2026-10-24。工作树：`<repo>`；
 分支 `codex/kikoto-catalog-probe`；HEAD `8b44f2b3`。探针文件
 `backend/internal/httpapi/audit_probe_test.go` 未跟踪，未提交。
 

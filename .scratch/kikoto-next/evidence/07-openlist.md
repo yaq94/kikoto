@@ -126,16 +126,15 @@ IP 未被封。`ba9ef02` 起 OpenList 客户端声明 `Kikoto/<version>` 并请�
 入口，真实 HTTP 与迁移 SQLite 参与，未配置应用代理（`route=direct proxies=0
 direct_fallback=false`）：
 
-| 请求 | 状态 | 字节 | sha256 |
+| 请求 | 状态 | 字节 | 内容校验 |
 | --- | --- | --- | --- |
-| `bytes=0-31` | 206 | 32 | `4fb6c3a4551197a5c98835c7b735fbb889c573969567972b605147e1983e97cf` |
-| `bytes=1024-1055` | 206 | 32 | `9740754c10a3a907c96ea936e635b8e238e298b21ae37330d79c32aa6aa44f31` |
+| `bytes=0-31` | 206 | 32 | 与源文件对应区间一致 |
+| `bytes=1024-1055` | 206 | 32 | 与源文件对应区间一致 |
 
 `TestOpenListLiveRangeSample` 退出 0（2.56 秒）；同一产物的
 `TestOpenListIdentitySelfCheck` 也退出 0（`fs/list` 200、`fs/get` 200、
-`size=3900160`）。二进制 sha256：应用级 LIVE
-`613a44cc91635adfca6c817ee1c99a87ad5fa69f634392394c6b4d97ce275732`，自检
-`a0e56060a2a73e575c2364600856704d2b339a56e52de01869c350d725c9068a`。运行所需
+`size=3900160`）。两个测试二进制的内容校验值保存在受限运维记录中，公开
+证据不保留摘要。运行所需
 端点、路径与实例变量保存在服务器临时目录，未进入仓库；摘要：
 `/tmp/kikoto-live-ba9ef02/`（`ticket07.log`、`run07.env`）。
 
