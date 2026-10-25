@@ -38,7 +38,8 @@ ledger must satisfy all of these:
 - Every filename is known to the running catalog: a packaged numbered file, a
   baseline the mode reads, or a retained checksum-only baseline entry (see
   [Accepted And Refused Ledgers](#accepted-and-refused-ledgers)).
-- Every recorded checksum matches the catalog's checksum for that filename.
+- Every recorded checksum matches the catalog's checksum for that filename, with
+  only the one-time legacy 095 preflight described below as an exception.
 - Each version appears once, and at most one row is a baseline.
 - Rows are contiguous from the baseline row, or from `001` when the ledger has
   no baseline.
@@ -69,6 +70,18 @@ its application version is recorded as `legacy`.
    invariant. `TestMigrateBaselineMatchesCompleteIncrementalChain` must pass:
    in production and in development mode, the selected baseline and the
    complete numbered chain produce the same schema and seed rows.
+
+Schema 096 is `096_catalog_episode_pending.sql`. It creates the pending
+source/parent/episode-root mapping used by finite episode scans and indexes
+lookups by parent, entry and episode root. It also creates
+`source_catalog_episode_publication`, whose single parent row switches a
+complete staged split between `pending` and `published`. Both source and entry
+references cascade; `catalog_series_member` retains its restrictive entry
+reference, so episode compensation removes pending-only membership explicitly
+before deleting an entry. Run `go generate ./migrations` to produce
+`compat/096_dev.sql`; the numbered migration does not alter 095 or reconstruct
+an existing database from a baseline. See [Catalog series](catalog-series.md)
+for the staging, activation and recovery semantics.
 
 ## Fresh Installs And Upgrades
 
@@ -223,6 +236,21 @@ A `compat/<schema>_dev.sql` row stops startup in production and demo modes, and
 in development mode when the file is not packaged (see
 [Development Baselines](#development-baselines)).
 
+### Legacy 095 Checksum Preflight
+
+The only permitted ledger rewrite is a one-time, packaged preflight for the
+known legacy `095_source_field_translation_cache.sql` checksum. It must run
+before `prepareMigrationState` and `validateAndAdoptHistory`, and therefore
+before `MigrateFSWithOptions`; the normal `BeforeUpgrade` hook is too late
+because checksum validation has already failed. The preflight first creates its
+own database backup, then rewrites only that ledger row and only when the live
+table structure exactly matches the known legacy fingerprint. Any extra object,
+partial match, or different checksum refuses startup. There is no generic
+checksum-bypass switch. Migration `097` always rebuilds the table from valid
+`source_id` rows and recreates its indexes; new installs, current 095 databases
+and legacy 095 databases all execute the same non-destructive rebuild, so the
+numbered chain stays continuous and does not depend on a conditional no-op.
+
 Any other ledger filename stops startup with an unknown-migration-record error,
 or with a newer-than-supported error when its version is above the current
 schema. This refuses databases that only unreleased development builds could
@@ -262,15 +290,20 @@ matches the backup.
 | v0.8.0 | `059` | `059_v0.8.0.sql` |
 | v0.8.1, v0.8.2 | `066` | `066_v0.8.1.sql` |
 | v0.8.3 | `068` | `068_v0.8.3.sql` |
-| development build (unreleased) | `095` | Development baseline only; `compat/095_dev.sql` |
+| development build (unreleased) | `096` | Development baseline only; `compat/096_dev.sql` |
+
+The remediation plan adds `097` through `100` after the current tracked head.
+`096_catalog_episode_pending.sql` is committed; the `097` preflight described
+below is the next numbered migration and must not be created out of sequence.
 
 Per-release upgrade steps are in the [release notes](../history/index.md).
 
 ## Kikoto-next Schema Additions
 
-Migrations `069` through `095` extend the source catalog, shared associations,
-personal transfer, and the recoverable index. Pending release notes and upgrade
-steps are in [Unreleased](../history/unreleased.md).
+Migrations `069` through `096` extend the source catalog, shared associations,
+personal transfer, and the recoverable index; the remediation chain adds
+`097`–`100`. Pending release notes and upgrade steps are in
+[Unreleased](../history/unreleased.md).
 
 | Migration | Change | Recovery and read behaviour |
 | --- | --- | --- |
@@ -301,6 +334,7 @@ steps are in [Unreleased](../history/unreleased.md).
 | `093_source_catalog_partition_index.sql` | `source_catalog_directory_partition` on `(file_source_id, generation, partition_path)` | The progress endpoint groups and counts partitions from the index instead of building a temporary b-tree |
 | `094_source_catalog_file_root.sql` | `source_catalog_file.source_root` | A folded format copy keeps the directory its files live in; an empty value keeps the card-wide base |
 | `095_source_field_translation_cache.sql` | `source_field_translation` for remote titles, tags and directory display names | Model output is rebuildable display cache outside search; every write participates in the translation byte budget |
+| `096_catalog_episode_pending.sql` | Pending episode publication and one publication-state row per source/parent | A failed or interrupted episode publication stays out of public reads until the complete split is switched to `published`; pending mappings are reused after restart |
 
 The Release To Schema Map above lists every numbered file. `069` rebuilds `work`
 and `logical_work` to relax code uniqueness and creates the catalog entry and
@@ -344,18 +378,20 @@ existing database still contains duplicates. `090` records per-phase catalog
 timings. `091` keeps damaged source names in a separate fix-list table. `092`
 stores the durable translation corpus, its FTS5 index and the prefill cursor.
 `093` adds one covering index; `094` adds one text column with an empty default;
-`095` adds an independent display-cache table and two indexes. None changes an
-existing catalog or personal row, and an older binary that never reads them
-still runs every other query.
+`095` adds an independent display-cache table and two indexes; `096` adds
+pending episode staging and publication-state tables with their lookup indexes.
+None changes an existing catalog or personal row, and an older binary that
+never reads them still runs every other query.
 
-The `084` through `095` changes retain existing rows. `087` is the only table
-rebuild; it copies every entry column and then recreates the indexes, triggers
-and view. `085`, `088`, `090`, `091` and `092` add tables or columns with
-defaults, `093` adds an index, `094` adds one column default and `095` adds a
-rebuildable cache table, so an older binary that never reads them still reads
-every other table. Startup refuses a database newer than the binary before running a
-handler. Rolling back any of these schemas requires a database snapshot, not a
-reverse migration; see [Release rollback](release-rollback.md).
+The `084` through `096` changes retain existing rows. `087` is the source-entry
+table rebuild; it copies every entry column and then recreates the indexes,
+triggers and view. `085`, `088`, `090`, `091` and `092` add tables or columns
+with defaults, `093` adds an index, `094` adds one column default, `095` adds a
+rebuildable cache table, and `096` adds pending-publication tables. An older
+binary that never reads them still reads every other table. Startup refuses a
+database newer than the binary before running a handler. Rolling back any of
+these schemas requires a database snapshot, not a reverse migration; see
+[Release rollback](release-rollback.md).
 
 `077` does not change entry identity. It lets a generation remove stale file
 rows left by an older generation without touching an entry that the current

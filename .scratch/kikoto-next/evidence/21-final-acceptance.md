@@ -24,7 +24,7 @@
 - `PRAGMA quick_check=ok`；`PRAGMA foreign_key_check` 返回 0 行。
 - 部署前快照包含数据库、WAL/SHM、环境文件、Compose 文件与回滚脚本；回滚镜像
   `kikoto:next-2d78344a` 与 schema 82 快照保留。回滚路径与兼容矩阵见
-  [发布回退](../development/release-rollback.md)。
+  [发布回退](../../../docs/development/release-rollback.md)。
 
 ## 内容翻译
 

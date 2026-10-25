@@ -44,6 +44,24 @@ keeps ordered catalog entries without changing their work or edition references.
 private reviews are never copied into preview payloads. See
 [Catalog series](../development/catalog-series.md).
 
+Schema 096 adds `source_catalog_episode_pending` for finite-scan episode
+publication. Its `source_id`, `parent_root`, and `catalog_entry_root` identify
+the source snapshot; `catalog_entry_id` references the staged entry with
+`ON DELETE CASCADE`, and the source also cascades. A unique
+`(source_id,parent_root,catalog_entry_root)` index selects one staged entry for
+each episode. Staging starts with `file_source_id IS NULL` and
+`availability_status='excluded'`. Activation may assign the source id in
+bounded batches, but the pending mapping remains the visibility gate until the
+final transaction. `source_catalog_episode_publication` stores one
+`pending`/`published` row for each source and parent; flipping that row publishes
+the complete split without rewriting every entry. Direct reads, source search
+and user-state writes exclude partially activated episode cards. Pending
+mappings, parent metadata files and stale-card status changes are applied in
+bounded follow-up transactions. Membership may reference a staged entry, but
+series readers require a published entry. See
+[Catalog series](../development/catalog-series.md) for the transaction and
+recovery boundary.
+
 ## Work Metadata
 
 Important tables:
@@ -559,18 +577,19 @@ merged name never replaces the target's display name.
 
 ## Translation Corpus
 
-`content_translation` is the durable, searchable translated-content corpus. A
-row is keyed by the unique `cache_key`, which separates entity kind and id,
+Under the issue 21 target, `content_translation` is the durable, searchable
+translated-content corpus. A row is keyed by the unique `cache_key`, which
+separates entity kind and id,
 field, language, source text, origin (`native` or `model`), model, base URL,
 template version and reasoning switch. The planned migration 099 adds a
 `config_key` covering the output-shaping configuration; a row with another key
 is stale and is not current coverage, while rows from before 099 are treated as
 legacy candidates until re-prefilled. Native rows store the source text
-unchanged; model rows store successful generated text. Current title and
-description rows for `work` and `source_catalog_entry`, plus title rows for
-`catalog_series`, are required for language-specific search and are never
-eviction candidates for the `cacheBytes` or `maxEntries` budgets. `tag` and
-`directory` translations remain display-only.
+unchanged; model rows store successful generated text. Under the issue 21 target,
+current title rows for `work`, `source_catalog_entry` and `catalog_series`, plus
+description rows for `work`, are required for language-specific search and are
+never eviction candidates for the `cacheBytes` or `maxEntries` budgets. `tag`
+and `directory` translations remain display-only.
 
 `content_translation_search` is an FTS5 trigram index over
 `content_translation.translated_text`, maintained by insert, update and delete
@@ -585,21 +604,30 @@ exceeds 100 ms at the target corpus size, a short-term n-gram index or an
 equivalent indexed structure is required rather than accepting an unbounded
 scan.
 
-Display-language text search covers `title` and `description`; `tag` and
-`directory` translations are not search inputs. `zh-cn`, `en-us`, `ja-jp` and
-`ko-kr` map to `zh-Hans`, `en-US`, `ja-JP` and `ko-KR` respectively. `zh-tw`
-reads `zh-Hans` and applies OpenCC `s2t`, while native `zh-Hant` rows remain
-separate and are also searchable. `origin` searches the original source index
-and never reads `content_translation`.
+Display-language text search covers `title` for entries and series, and
+`title` plus `description` for works; `tag` and `directory` translations are
+not search inputs. `source_catalog_entry` has no description column, so entry
+descriptions are not invented. `zh-cn`, `en-us`, `ja-jp` and `ko-kr` map to
+`zh-Hans`, `en-US`, `ja-JP` and `ko-KR` respectively. `zh-tw` reads `zh-Hans`
+and applies OpenCC `s2t`, while native `zh-Hant` rows remain separate and are
+also searchable. `origin` searches the original source index and never reads
+`content_translation`.
 
 `source_field_translation` is a rebuildable display cache for source-level
 fields such as a remote title, tag or directory name. It has no FTS table and is
-never read by content search. Non-title `content_translation` model rows and
-all `source_field_translation` rows may be evicted within the configured
-budgets. Superseded and retired rows are removed by a low-frequency cleanup;
+never read by content search. `tag`/`directory` model rows and all
+`source_field_translation` rows may be evicted within the configured budgets.
+Superseded and retired rows are removed by a low-frequency cleanup;
 they do not count as current coverage. See
 [ADR-0006](../decisions/ADR-0006-catalog-remediation-and-translation-consistency.md)
 and [ADR-0007](../decisions/ADR-0007-source-field-translation-cache.md).
+
+The configuration-key, persistent title/description, strict display-language
+search and complete short-query behavior above is the accepted issue 21 target
+contract. The reviewed code still evicts model rows (including title rows) and
+limits one- and two-character searches to the newest 50,000 rows per language;
+those gaps must be implemented and measured before this section is cited as
+current behavior.
 
 ## File Availability
 

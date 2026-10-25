@@ -1,7 +1,7 @@
 # Release Rollback
 
 This page gives the operator procedure for rolling back a Kikoto deployment
-whose schema reached `095`. It states which image can read which schema, how to
+whose schema reached `096`. It states which image can read which schema, how to
 take and restore a database snapshot, and what to check afterwards. It records
 no deployment result; run the commands on the target host and keep their output
 with the release record.
@@ -13,24 +13,29 @@ a database snapshot and starts a binary whose packaged migration catalog ends
 at that snapshot's schema. The image names are the ones used by the current
 next-release deployment; prefer a digest when the deployment recorded one.
 
-| Image | Highest packaged migration | Schema `092` | Schema `094` | Schema `095` |
-| --- | --- | --- | --- | --- |
-| current build | `095` | Migrates to `095` | Migrates to `095` | Migrates to `095` |
-| 094 image | `094` | Migrates to `094` | Keeps `094` | Refuses |
-| 092 image | `092` | Keeps `092` | Refuses | Refuses |
-| 084 image | `084` | Refuses | Refuses | Refuses |
-| 083 image | `083` | Refuses | Refuses | Refuses |
+| Image | Highest packaged migration | Schema `092` | Schema `094` | Schema `095` | Schema `096` |
+| --- | --- | --- | --- | --- | --- |
+| current build | `096` | Migrates to `096` | Migrates to `096` | Migrates to `096` | Migrates to `096` |
+| 095 image | `095` | Migrates to `095` | Migrates to `095` | Keeps `095` | Refuses |
+| 094 image | `094` | Migrates to `094` | Keeps `094` | Refuses | Refuses |
+| 092 image | `092` | Keeps `092` | Refuses | Refuses | Refuses |
+| 084 image | `084` | Refuses | Refuses | Refuses | Refuses |
+| 083 image | `083` | Refuses | Refuses | Refuses | Refuses |
 
 Numbered migrations have no down path. A rollback restores a snapshot taken
 before the upgrade and starts an image whose packaged catalog ends at that
 snapshot's schema. Do not delete columns, tables or rows to imitate a
-downgrade, and do not edit `schema_migration` or `schema_state`.
+downgrade, and do not edit `schema_migration` or `schema_state`. The sole
+exception is the packaged, fingerprint-guarded legacy 095 checksum preflight
+described in [Migrations](migrations.md#legacy-095-checksum-preflight); it
+backs up first and refuses any schema that does not exactly match the known
+legacy fingerprint.
 
 The refusal happens before any handler runs. The migration manager compares the
 database's schema version with the highest packaged migration and stops with
 `database schema version 78 is newer than this binary supports (77); use a
 compatible Kikoto version`. Do not edit `schema_migration` or `schema_state` to
-get past it.
+get past it; use only the documented legacy preflight when it applies.
 
 `077` adds `source_catalog_scan.publish_cleanup_cursor` and the
 `source_catalog_file_title` index. `078` adds
@@ -64,12 +69,15 @@ directory table. `094` adds one text column,
 keeps the card-wide base. `095` adds `source_field_translation`, a rebuildable
 display cache for remote titles, tags and directory names; it has no FTS index
 and is bounded by the same translation cache budget as `content_translation`.
+`096` adds pending episode staging and one publication-state row per source and
+parent; a staged split remains outside public reads until it is switched to
+`published`.
 
-No migration deletes or rewrites card or personal rows. A `068`–`094`
+No migration deletes or rewrites card or personal rows. A `068`–`095`
 snapshot restored into the current image upgrades along the numbered chain; a
-`095` database needs a binary that packages `095`. An `094` binary refuses
-`095`, an `083` binary must be paired with an `083` snapshot, and an `084`
-binary refuses `085` and later.
+`096` database needs a binary that packages `096`. An `095` binary refuses
+`096`, an `094` binary refuses `095`, an `083` binary must be paired with an
+`083` snapshot, and an `084` binary refuses `085` and later.
 
 ## Back Up Before A Deployment
 
@@ -93,8 +101,8 @@ Compose file. For the development stack, use `KIKOTO_DEV_CONFIG_DIR` (default
 The application also writes a `pre-migration` backup to
 `KIKOTO_DB_BACKUP_DIR` (default `config/backups`) before the first numbered
 migration of an existing database. Its name has the form
-`kikoto-pre-migration-<UTC>-v084-to-v095.db`; the first version in the suffix
-is the schema being left, so a `v084-to-v095` file is a `084` snapshot. Keep
+`kikoto-pre-migration-<UTC>-v084-to-v096.db`; the first version in the suffix
+is the schema being left, so a `v084-to-v096` file is a `084` snapshot. Keep
 the snapshot and the previous image reference (`KIKOTO_IMAGE` or the Compose
 override) together. The `rollbacks/` directory is outside `config/`, so the
 copy does not recurse into itself.
@@ -123,12 +131,12 @@ uses one can wait with `up -d --wait`. The production stack in this repository
 does not define that check; poll `/health` as shown under
 [Verify The Restored Instance](#verify-the-restored-instance).
 
-## Restore A Schema 95 Snapshot
+## Restore A Schema 95 Or 96 Snapshot
 
 Use this to return to the current build after a failed start or to recover a
-damaged `095` database. A `095` snapshot is readable by the current `095`
-image only; to return to schema `094`, `092` or `083`, restore that schema's snapshot
-and start an image that packages it.
+damaged `095` or `096` database. Use the image that packages the snapshot's
+schema; to return to schema `094`, `092` or `083`, restore that schema's
+snapshot and start an image that packages it.
 
 ```sh
 docker compose down
@@ -179,7 +187,7 @@ Then confirm:
    never give it an `081` database.
 5. A `092` instance lists the expected `content_translation` row count and
    reads a translated title. A failed generation leaves no new row.
-6. A `095` instance reports the scan progress endpoint below 20 ms with the
+6. A `095` or `096` instance reports the scan progress endpoint below 20 ms with the
    catalog counters and `?exact=1` below 200 ms on the production copy.
 
 The packaged `rollback-kikoto.sh` performs this restore with staged files,

@@ -7,7 +7,7 @@
 
 **当前部署：待本轮重新核实。** 历史部署 `2bae5db9`、镜像 `kikoto:next-2bae5db9`、schema 83 与 Full CI run `39496305624` 只作历史记录；当前分支 HEAD 尚未部署。生产 schema、镜像、备份和回滚前提必须写入 24 的候选账本后才能作为发布证据。
 
-**审查快照：** 文档基线 `6122b7bf`；代码审查基线 `301e6c63`。主工作区在审查时已提交 `0dee19ea`、`6dee3087`、`134f7c90`，其中 `134f7c90` 实现 D-16；其后的未提交目录暂存、096 迁移和翻译写入改动不属于已验收产物。历史 run 53 为 partial，不能当作完整覆盖。
+**审查快照：** 审查时文档基线 `6122b7bf`；代码审查基线 `301e6c63`。主工作区后来前进到 `d77e37e2`：`6b4a02ec` 提交了 `096_catalog_episode_pending.sql`、`compat/096_dev.sql` 和系列暂存，`728651a6` 提交了 v2 可选 `parent` 的个人传输实现，`47df9c11` 提交了 wall-clock/partial 调度修复；这些后续提交不属于本审查分支，也未按本表验收。历史 run 53 为 partial，不能当作完整覆盖。
 
 **当前候选：** 尚未冻结。01–19 的 `resolved` 仅表示其记录 SHA 上的历史本地证据，不等于当前候选已验收。24 必须对同一 SHA 重跑主责 AC、整改子项、Full CI、迁移、LIVE 和部署。
 
@@ -19,8 +19,8 @@
 | --- | --- | --- | --- |
 | [20 持续目录增量、固定调度与准入回归](issues/20-catalog-sync-and-admission.md) | partial 变化发现、固定调度、D-16 跨层边界 | in-progress | H/R、失败重试、恢复、三层一致准入、42k p95 |
 | [21 有效译文语料与严格语言搜索](issues/21-translation-corpus-and-search.md) | 有效语料、覆盖、严格搜索、短查询 | in-progress | H/R/F、当前有效集合、代码搜索对偶、真实规模基准 |
-| [22 个人备份父级归属](issues/22-personal-transfer-parent-identity.md) | 空库单集与父系列恢复 | pending | H/R、重复导入、冲突、多父级、隔离 |
-| [23 保留与仓库规范](issues/23-retention-and-repository-contracts.md) | 清理保护、迁移链、模型文档、证据脱敏 | pending | 合成 dry-run、保留回归、095/096/097、文档与敏感检查 |
+| [22 个人备份父级归属](issues/22-personal-transfer-parent-identity.md) | 空库单集与父系列恢复 | in-progress | H/R、重复导入、冲突、多父级、隔离；主仓库 `728651a6` 的系列详情缺口未关闭 |
+| [23 保留与仓库规范](issues/23-retention-and-repository-contracts.md) | 清理保护、迁移链、模型文档、证据脱敏 | in-progress | 合成 dry-run、保留回归、095/096/097、文档与敏感检查 |
 | [24 同候选集成与发布证据](issues/24-release-candidate-evidence.md) | 全部修复、双轴审查、部署验收 | pending | 同一 SHA 的 Full CI、迁移恢复、LIVE、生产终态 |
 
 17 不依赖 20–24；24 依赖 17–23。以上新票不覆盖旧 evidence 文件，原 01–19 的需求与主责继续有效。任何 `resolved` 都必须满足当前产物定义。
@@ -37,9 +37,9 @@
 
 ## 迁移协调
 
-- 当前已跟踪最高迁移为 `095_source_field_translation_cache.sql`。
-- 主工作区已有未提交的 `096_catalog_episode_pending.sql` 与 `compat/096_dev.sql`；096 已被系列暂存占用，未提交前不得把其他 DDL 塞入 096。
-- 计划编号：097 为 095 的条件修复/规范化；098 为目录调度；099 为译文语料契约；100 为 work 父级。任何编号变化必须同步迁移头、compat 文件和测试常量。
+- 当前已跟踪最高迁移为 `096_catalog_episode_pending.sql`，由 `6b4a02ec` 提交；`compat/096_dev.sql` 已存在。
+- 096 已被系列暂存占用，不得把其他 DDL 塞入 096。
+- 计划编号：097 为固定的 095 表重建槽位，新装、当前 095 和旧 095 都执行同一套重建；098 为目录调度；099 为译文语料契约；100 为 work 父级。任何编号变化必须同步迁移头、compat 文件和测试常量。
 - 095 曾在 `25f96c22` 首次加入（无外键），后在 `5defaa1c` 改为带 `ON DELETE CASCADE`；两个文件 SHA-256 不同。已执行旧 095 的数据库会触发 checksum 门禁，必须在 097 前提供兼容路径。是否存在旧 095 数据库仍待核实。
 - 新装、旧库升级、重复启动、并发启动和 compat 基线必须由 24 在同一 SHA 复验。
 

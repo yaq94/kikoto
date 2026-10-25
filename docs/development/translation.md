@@ -140,13 +140,15 @@ The interactive lane holds 256 waiting items and the background lane follows
 Asia/Shanghai the background lane is limited to two simultaneous calls, so a
 viewer still finds a free worker; inside the window it may use every slot.
 
-`content_translation` is durable search corpus, not an LRU cache. It stores one
-row per `cache_key` with `origin` `native` or `model`; `origin=native` rows hold
-the source text unchanged and never increment model usage. There is no
-`last_used_at`. Current `field='title'` and `field='description'` rows for
-`work` and `source_catalog_entry`, plus `field='title'` rows for
-`catalog_series`, are required for language-specific search and are never
-eviction candidates. `tag` and `directory` rows remain display-only. The
+Under the issue 21 target, `content_translation` is durable search corpus, not an
+LRU cache. It stores one row per `cache_key` with `origin` `native` or `model`;
+`origin=native` rows hold the source text unchanged and never increment model
+usage. There is no `last_used_at`. Current `field='title'` rows for `work`,
+`source_catalog_entry` and `catalog_series`, plus `field='description'` rows for
+`work`, are required for language-specific search and are never eviction
+candidates. `tag` and `directory` rows remain display-only;
+`source_catalog_entry` has no description column, so entry descriptions are not
+invented. The
 planned migration 099 adds a `config_key` covering the model, base URL,
 template version and reasoning switch; a row with another config key is stale
 and is not part of current coverage, while pre-099 rows remain legacy
@@ -164,8 +166,8 @@ SQLite page is already larger than the configured value. Native rows carry
 authored text and are never eviction candidates; personal records and source
 identities are in other tables and are never touched. Superseded rows are
 removed before live rows. The pass runs bounded batches so the SQLite writer is
-never held for a whole trim. If the budget is exceeded only by persistent title
-rows, the status reports `over_budget`; it does not delete search-critical
+never held for a whole trim. If the budget is exceeded only by persistent
+title/description rows, the status reports `over_budget`; it does not delete search-critical
 translations. When `minFreeBytes` is not met, new rows are not written at all:
 the caller still returns the translation it already fetched, reports
 `paused_low_disk`, and the durable copy waits for space.
@@ -176,13 +178,14 @@ superseded; it is never counted as current coverage. `zh-tw` viewers read the
 `zh-Hans` row and convert it with OpenCC `s2t` at display time, so the corpus
 does not store a second full-text copy. A title or description detected as
 `zh-Hant` is written as a native row and participates in searches for both
-scripts. The background prefill enumerates title and description for entries
-and local works, and title for series; it writes native rows for text already
-in the target language before queueing model calls. `zh-tw` is a display
-projection and is not a separate prefill queue.
+scripts. The background prefill enumerates title for entries, title for series,
+and title plus description for local works; it writes native rows for text
+already in the target language before queueing model calls. `zh-tw` is a
+display projection and is not a separate prefill queue.
 
-Display-language search applies only to text clauses and covers `title` and
-`description`; `tag` and `directory` translations are not search inputs.
+Display-language search applies only to text clauses and covers title for
+entries and series, plus title and description for works; `tag` and `directory`
+translations are not search inputs.
 `zh-cn`, `en-us`, `ja-jp` and `ko-kr` map to `zh-Hans`, `en-US`, `ja-JP` and
 `ko-KR`; `zh-tw` reads `zh-Hans` with OpenCC `s2t` and native `zh-Hant`. A
 release code or another structured identifier remains searchable regardless of
@@ -193,6 +196,13 @@ effective set with a covering `(language, entity_kind, field, id,
 translated_text)` index; if p95 exceeds 100 ms at the target corpus size, add a
 short-term n-gram index or equivalent indexed structure instead of accepting an
 unbounded scan.
+
+The `config_key` migration, persistent title/description rows, strict
+display-language search and complete short-query behavior are the issue 21
+target. The reviewed implementation still evicts model rows (including title
+rows) and limits one- and two-character searches to the newest 50,000 rows per
+language; do not cite those behaviors as completed evidence until the migration
+and replacement queries land.
 
 Free space is read from the nearest existing parent before the data directory
 exists. Low space pauses new background generation (`paused_low_disk`) while
