@@ -407,6 +407,96 @@ try {
   });
   assert.equal(audio.headers.get("content-range"), `bytes 0-43/${wav.length}`);
   assert.deepEqual(range, wav.subarray(0, 44));
+  // The release gate also reads the translation coverage, catalogue source
+  // list, search and personal review state through the same session.
+  const { body: prefillBody } = await request(
+    "/api/settings/translation/prefill",
+    { headers },
+  );
+  const prefill = JSON.parse(prefillBody);
+  assert.equal(typeof prefill.configKey, "string");
+  assert.equal(typeof prefill.total, "number");
+  const { body: translationBody } = await request("/api/settings/translation", {
+    headers,
+  });
+  const translation = JSON.parse(translationBody);
+  const translationRoundTrip = {
+    baseUrl: translation.baseUrl,
+    model: translation.model,
+    timeoutSeconds: translation.timeoutSeconds,
+    disableThinking: translation.disableThinking,
+    concurrency: translation.concurrency,
+    queueLimit: translation.queueLimit,
+    maxEntries: translation.maxEntries,
+    cacheBytes: translation.cacheBytes,
+    minFreeBytes: translation.minFreeBytes,
+  };
+  await request("/api/settings/translation", {
+    method: "PATCH",
+    headers,
+    body: JSON.stringify(translationRoundTrip),
+  });
+  const { body: sourcesBody } = await request("/api/library-sources", {
+    headers,
+  });
+  assert.ok(Array.isArray(JSON.parse(sourcesBody)));
+  await waitFor(async () => {
+    const { body } = await request(
+      `/api/works?q=${encodeURIComponent(work.primaryCode)}`,
+      { headers },
+    );
+    const search = JSON.parse(body);
+    return (
+      Array.isArray(search.works) &&
+      search.works.some(
+        (entry) =>
+          entry.id === work.id || entry.primaryCode === work.primaryCode,
+      )
+    );
+  }, "the scanned work to be searchable");
+  await request(
+    `/api/works?q=${encodeURIComponent(work.primaryCode)}&lang=zh-cn`,
+    { headers },
+  );
+  const { body: reviewBeforeBody } = await request(
+    `/api/works/${work.id}?includeMedia=false`,
+    { headers },
+  );
+  const reviewBefore = JSON.parse(reviewBeforeBody);
+  const reviewNote = `production-smoke-${randomUUID()}`;
+  const { body: reviewWriteBody } = await request(
+    `/api/works/${work.id}/user-state`,
+    {
+      method: "PATCH",
+      headers,
+      body: JSON.stringify({ rating: 5, note: reviewNote }),
+    },
+  );
+  const reviewWrite = JSON.parse(reviewWriteBody);
+  assert.equal(reviewWrite.personalRating, 5);
+  assert.equal(reviewWrite.personalNote, reviewNote);
+  const { body: reviewReadBody } = await request(
+    `/api/works/${work.id}?includeMedia=false`,
+    { headers },
+  );
+  const reviewRead = JSON.parse(reviewReadBody);
+  assert.equal(reviewRead.personalRating, 5);
+  assert.equal(reviewRead.personalNote, reviewNote);
+  await request(`/api/works/${work.id}/user-state`, {
+    method: "PATCH",
+    headers,
+    body: JSON.stringify({
+      rating: reviewBefore.personalRating ?? null,
+      note: reviewBefore.personalNote ?? "",
+    }),
+  });
+  const { body: reviewCleanupBody } = await request(
+    `/api/works/${work.id}?includeMedia=false`,
+    { headers },
+  );
+  const reviewCleanup = JSON.parse(reviewCleanupBody);
+  assert.equal(reviewCleanup.personalRating, reviewBefore.personalRating ?? null);
+  assert.equal(reviewCleanup.personalNote, reviewBefore.personalNote ?? "");
   await request("/api/auth/logout", {
     method: "POST",
     headers,
@@ -431,7 +521,7 @@ try {
     );
   }
   console.log(
-    "Production smoke passed: static assets, SPA routing, authentication, local scan and audio Range playback.",
+    "Production smoke passed: static assets, SPA routing, authentication, local scan, audio Range playback, translation coverage, sources, search and personal review.",
   );
 } catch (error) {
   if (created) {
