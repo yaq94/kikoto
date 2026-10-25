@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"database/sql"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -11,12 +12,29 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yexca/kikoto/backend/migrations"
+	"github.com/yexca/kikoto/backend/internal/migrationfixture"
 )
 
 var numberedMigrationFilePattern = regexp.MustCompile(`^[0-9]{3}_[a-z0-9][a-z0-9_]*\.sql$`)
 
-const latestNumberedMigrationVersion = 98
+const latestNumberedMigrationVersion = 99
+
+// testMigrationDir is the self-contained test catalog: the packaged chain plus
+// no-op 097/098 integration placeholders. Production Migrate still reads
+// migrations.Files, whose chain is completed by the owning branches.
+func testMigrationDir(t *testing.T) string {
+	t.Helper()
+	return migrationfixture.Dir(t)
+}
+
+func mustMigrationFixtureFS(t *testing.T) fs.FS {
+	t.Helper()
+	files, err := migrationfixture.FS()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return files
+}
 
 // latestReleasedBaseline is the newest file in migrations/baseline/, which
 // production uses for a fresh database.
@@ -35,7 +53,11 @@ func TestMigrationChecksumNormalizesLineEndings(t *testing.T) {
 
 func TestMigrateFreshDatabaseUsesLatestReleasedBaseline(t *testing.T) {
 	db := openMigrationManagerDB(t)
-	if err := MigrateFS(db, migrations.Files, "v0.8.3"); err != nil {
+	files, err := migrationfixture.FS()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := MigrateFS(db, files, "v0.8.3"); err != nil {
 		t.Fatalf("Migrate() error = %v", err)
 	}
 
@@ -69,7 +91,7 @@ func TestMigrateFreshDatabaseUsesLatestReleasedBaseline(t *testing.T) {
 
 func TestCreatorAndForeignKeyIndexesArePackaged(t *testing.T) {
 	db := openMigrationManagerDB(t)
-	if err := Migrate(db, filepath.Join("..", "..", "migrations")); err != nil {
+	if err := Migrate(db, testMigrationDir(t)); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	for _, name := range []string{
@@ -91,7 +113,7 @@ func TestCreatorAndForeignKeyIndexesArePackaged(t *testing.T) {
 }
 
 func TestMigrateUpgradesExistingDatabaseThroughNumberedChain(t *testing.T) {
-	sourceDir := filepath.Join("..", "..", "migrations")
+	sourceDir := testMigrationDir(t)
 	previousCatalog := copyNumberedMigrationsThrough(t, sourceDir, latestNumberedMigrationVersion-1)
 
 	db := openMigrationManagerDB(t)
@@ -126,8 +148,8 @@ func TestMigrateUpgradesExistingDatabaseThroughNumberedChain(t *testing.T) {
 }
 
 func TestMigratePreservesMislabeledV060Baseline(t *testing.T) {
-	previousCatalog := copyNumberedMigrations(t, filepath.Join("..", "..", "migrations"))
-	contents, err := migrations.Files.ReadFile("baseline/034_v0.6.0.sql")
+	previousCatalog := copyNumberedMigrations(t, testMigrationDir(t))
+	contents, err := migrationfixture.ReadFile("baseline/034_v0.6.0.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,7 +170,11 @@ func TestMigratePreservesMislabeledV060Baseline(t *testing.T) {
 	if _, err := db.Exec(`INSERT INTO app_setting (key, value_json) VALUES ('baseline_test', '"retained"')`); err != nil {
 		t.Fatal(err)
 	}
-	if err := MigrateFS(db, migrations.Files, "v0.6.1"); err != nil {
+	files, err := migrationfixture.FS()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := MigrateFS(db, files, "v0.6.1"); err != nil {
 		t.Fatalf("restart with corrected baseline catalog: %v", err)
 	}
 	var filename, checksum, baselineChecksum, value string
@@ -173,13 +199,13 @@ func TestMigratePreservesMislabeledV060Baseline(t *testing.T) {
 	if _, err := db.Exec(`UPDATE schema_migration SET checksum = 'tampered' WHERE version = 34`); err != nil {
 		t.Fatal(err)
 	}
-	if err := MigrateFS(db, migrations.Files, "v0.6.1"); err == nil || !strings.Contains(err.Error(), "checksum") {
+	if err := MigrateFS(db, files, "v0.6.1"); err == nil || !strings.Contains(err.Error(), "checksum") {
 		t.Fatalf("tampered historical baseline must still fail checksum validation, got %v", err)
 	}
 }
 
 func TestMigrateUpgradesRetiredBaselineLedger(t *testing.T) {
-	sourceDir := filepath.Join("..", "..", "migrations")
+	sourceDir := testMigrationDir(t)
 	for _, testCase := range []struct {
 		name            string
 		baseline        string
@@ -262,17 +288,21 @@ func TestMigrateCanRerunOnSingleConnectionMemoryDatabase(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	if err := MigrateFS(db, migrations.Files, "memory-first"); err != nil {
+	files, err := migrationfixture.FS()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := MigrateFS(db, files, "memory-first"); err != nil {
 		t.Fatalf("first MigrateFS() error = %v", err)
 	}
-	if err := MigrateFS(db, migrations.Files, "memory-second"); err != nil {
+	if err := MigrateFS(db, files, "memory-second"); err != nil {
 		t.Fatalf("second MigrateFS() error = %v", err)
 	}
 }
 
 func TestMigrateAdoptsLegacyMigrationLedger(t *testing.T) {
 	db := openMigrationManagerDB(t)
-	migrationDir := filepath.Join("..", "..", "migrations")
+	migrationDir := testMigrationDir(t)
 	initialSQL, err := os.ReadFile(filepath.Join(migrationDir, "001_initial.sql"))
 	if err != nil {
 		t.Fatal(err)
@@ -306,9 +336,9 @@ func TestMigrateAdoptsLegacyMigrationLedger(t *testing.T) {
 }
 
 func TestMigrateBaselineMatchesCompleteIncrementalChain(t *testing.T) {
-	migrationDir := filepath.Join("..", "..", "migrations")
-	if got := latestNumberedMigrationFilename(t, migrationDir); got != "098_catalog_schedule.sql" {
-		t.Fatalf("latest migration = %q, want the catalog schedule migration", got)
+	migrationDir := testMigrationDir(t)
+	if got := latestNumberedMigrationFilename(t, migrationDir); got != "099_translation_corpus_config.sql" {
+		t.Fatalf("latest migration = %q, want the translation corpus config migration", got)
 	}
 	incrementalDir := copyNumberedMigrations(t, migrationDir)
 
@@ -412,7 +442,7 @@ func assertCatalogEpisodePendingSchema(t *testing.T, db *sql.DB) {
 }
 
 func TestMigrateLocalizedMetadataDeduplicatesLegacySnapshots(t *testing.T) {
-	migrationDir := copyNumberedMigrationsThrough(t, filepath.Join("..", "..", "migrations"), 30)
+	migrationDir := copyNumberedMigrationsThrough(t, testMigrationDir(t), 30)
 	db := openMigrationManagerDB(t)
 	if err := Migrate(db, migrationDir); err != nil {
 		t.Fatalf("pre-localized migration error = %v", err)
@@ -451,7 +481,7 @@ func TestMigrateLocalizedMetadataDeduplicatesLegacySnapshots(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := Migrate(db, filepath.Join("..", "..", "migrations")); err != nil {
+	if err := Migrate(db, testMigrationDir(t)); err != nil {
 		t.Fatalf("localized migration error = %v", err)
 	}
 	var variants, snapshots int
@@ -467,7 +497,7 @@ func TestMigrateLocalizedMetadataDeduplicatesLegacySnapshots(t *testing.T) {
 }
 
 func TestMigrateSharedAvailabilityWatchMergesTargetsAndPausesConflictingSchedule(t *testing.T) {
-	migrationDir := copyNumberedMigrationsThrough(t, filepath.Join("..", "..", "migrations"), 31)
+	migrationDir := copyNumberedMigrationsThrough(t, testMigrationDir(t), 31)
 	db := openMigrationManagerDB(t)
 	if err := Migrate(db, migrationDir); err != nil {
 		t.Fatalf("pre-shared Availability Watch migration error = %v", err)
@@ -485,7 +515,7 @@ func TestMigrateSharedAvailabilityWatchMergesTargetsAndPausesConflictingSchedule
 			t.Fatal(err)
 		}
 	}
-	if err := Migrate(db, filepath.Join("..", "..", "migrations")); err != nil {
+	if err := Migrate(db, testMigrationDir(t)); err != nil {
 		t.Fatalf("shared Availability Watch migration error = %v", err)
 	}
 	var watchID, configuredBy, interval, enabled int
@@ -513,7 +543,7 @@ func TestMigrateSharedAvailabilityWatchMergesTargetsAndPausesConflictingSchedule
 }
 
 func TestMigrateRejectsChangedAppliedMigration(t *testing.T) {
-	migrationDir := copyNumberedMigrations(t, filepath.Join("..", "..", "migrations"))
+	migrationDir := copyNumberedMigrations(t, testMigrationDir(t))
 	db := openMigrationManagerDB(t)
 	if err := Migrate(db, migrationDir); err != nil {
 		t.Fatalf("initial Migrate() error = %v", err)
@@ -535,14 +565,14 @@ func TestMigrateRejectsChangedAppliedMigration(t *testing.T) {
 
 func TestMigrateRejectsFutureSchema(t *testing.T) {
 	db := openMigrationManagerDB(t)
-	if err := Migrate(db, filepath.Join("..", "..", "migrations")); err != nil {
+	if err := Migrate(db, testMigrationDir(t)); err != nil {
 		t.Fatalf("initial Migrate() error = %v", err)
 	}
 	if _, err := db.Exec("UPDATE schema_state SET current_version = ? WHERE id = 1", latestNumberedMigrationVersion+1); err != nil {
 		t.Fatal(err)
 	}
 
-	err := Migrate(db, filepath.Join("..", "..", "migrations"))
+	err := Migrate(db, testMigrationDir(t))
 	if err == nil || !strings.Contains(err.Error(), "newer than this binary supports") {
 		t.Fatalf("Migrate() with future schema error = %v, want future-schema refusal", err)
 	}
@@ -637,7 +667,7 @@ func TestMigrateRefusesUntrackedApplicationSchema(t *testing.T) {
 	if _, err := db.Exec("CREATE TABLE untracked_application_state (id INTEGER PRIMARY KEY)"); err != nil {
 		t.Fatal(err)
 	}
-	err := Migrate(db, filepath.Join("..", "..", "migrations"))
+	err := Migrate(db, testMigrationDir(t))
 	if err == nil || !strings.Contains(err.Error(), "no migration history") {
 		t.Fatalf("Migrate() with untracked application schema error = %v", err)
 	}
@@ -651,7 +681,7 @@ func TestMigrateRefusesEmptyHistoryForApplicationSchema(t *testing.T) {
 	`); err != nil {
 		t.Fatal(err)
 	}
-	err := Migrate(db, filepath.Join("..", "..", "migrations"))
+	err := Migrate(db, testMigrationDir(t))
 	if err == nil || !strings.Contains(err.Error(), "migration history is empty") {
 		t.Fatalf("Migrate() with empty history error = %v", err)
 	}
@@ -671,8 +701,12 @@ func TestMigrateConcurrentStartupIsIdempotent(t *testing.T) {
 	defer second.Close()
 
 	results := make(chan error, 2)
-	go func() { results <- MigrateFS(first, migrations.Files, "concurrent-first") }()
-	go func() { results <- MigrateFS(second, migrations.Files, "concurrent-second") }()
+	files, err := migrationfixture.FS()
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() { results <- MigrateFS(first, files, "concurrent-first") }()
+	go func() { results <- MigrateFS(second, files, "concurrent-second") }()
 	for i := 0; i < 2; i++ {
 		if err := <-results; err != nil {
 			t.Fatalf("concurrent MigrateFS() error = %v", err)
@@ -1013,7 +1047,7 @@ func diffStringMaps(left, right map[string]string) string {
 }
 
 func TestCatalogSearchMigrationBackfillsExistingRows(t *testing.T) {
-	sourceDir := filepath.Join("..", "..", "migrations")
+	sourceDir := testMigrationDir(t)
 	previousCatalog := copyNumberedMigrationsThrough(t, sourceDir, 84)
 	db := openMigrationManagerDB(t)
 	if err := Migrate(db, previousCatalog); err != nil {

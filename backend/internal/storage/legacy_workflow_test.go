@@ -2,13 +2,12 @@ package storage
 
 import (
 	"context"
-	"path/filepath"
 	"strings"
 	"testing"
 )
 
 func TestPreserveLegacyWorkflowsBeforeRemovalMigration(t *testing.T) {
-	sourceDir := filepath.Join("..", "..", "migrations")
+	sourceDir := testMigrationDir(t)
 	db := openMigrationManagerDB(t)
 	if err := Migrate(db, copyNumberedMigrationsThrough(t, sourceDir, 34)); err != nil {
 		t.Fatal(err)

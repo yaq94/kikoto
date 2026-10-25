@@ -53,9 +53,9 @@ type translationLanguageCount struct {
 	Model    int64  `json:"model"`
 }
 
-// getTranslationRuntime reports the persistent corpus and scheduler state.
-// cacheBytes is the configured model-text budget; the maintenance pass enforces
-// it in bounded batches.
+// getTranslationRuntime reports the current effective corpus and scheduler
+// state. Historical rows are excluded from the language summary; cacheBytes is
+// the soft budget for rebuildable display cache.
 func (s *Server) getTranslationRuntime(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.requirePermission(w, r, "sources:write"); !ok {
 		return
@@ -65,29 +65,33 @@ func (s *Server) getTranslationRuntime(w http.ResponseWriter, r *http.Request) {
 		writeTranslationSettingsError(w, err)
 		return
 	}
-	counts, err := s.translationLanguageCounts(r.Context())
-	if err != nil {
-		writeError(w, err)
-		return
-	}
 	prefill, err := s.translationPrefillStatus(r.Context())
 	if err != nil {
 		writeError(w, err)
 		return
 	}
+	counts, err := s.translationLanguageCounts(r.Context(), cfg)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
 	writeJSON(w, 200, struct {
-		Languages []translationLanguageCount `json:"languages"`
-		SoftBytes int64                      `json:"softBytes"`
-		Prefill   translationPrefillView     `json:"prefill"`
-		Queue     translation.QueueStats     `json:"queue"`
-	}{counts, cfg.CacheBytes, prefill, s.contentTranslationQueue(cfg).Stats()})
+		Languages  []translationLanguageCount `json:"languages"`
+		SoftBytes  int64                      `json:"softBytes"`
+		Prefill    translationPrefillView     `json:"prefill"`
+		Queue      translation.QueueStats     `json:"queue"`
+		OverBudget bool                       `json:"overBudget"`
+	}{counts, cfg.CacheBytes, prefill, s.contentTranslationQueue(cfg).Stats(), prefill.OverBudget})
 }
 
-func (s *Server) translationLanguageCounts(ctx context.Context) ([]translationLanguageCount, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT language, count(*),
+func (s *Server) translationLanguageCounts(ctx context.Context, cfg translation.Config) ([]translationLanguageCount, error) {
+	configKey := translation.ConfigKey(cfg)
+	rows, err := s.db.QueryContext(ctx, `SELECT language,count(*),
 		sum(CASE WHEN origin='native' THEN 1 ELSE 0 END),
 		sum(CASE WHEN origin='model' THEN 1 ELSE 0 END)
-		FROM content_translation GROUP BY language ORDER BY language`)
+		FROM content_translation
+		WHERE origin='native' OR (origin='model' AND config_key=?)
+		GROUP BY language ORDER BY language`, configKey)
 	if err != nil {
 		return nil, err
 	}

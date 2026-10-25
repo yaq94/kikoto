@@ -1,14 +1,13 @@
 package storage
 
 import (
-	"path/filepath"
 	"testing"
 )
 
 // Migration 038 must queue snapshots stored before it so an upgraded server
 // builds their card summaries in the background.
 func TestSnapshotCardSummaryMigrationQueuesExistingSnapshots(t *testing.T) {
-	sourceDir := filepath.Join("..", "..", "migrations")
+	sourceDir := testMigrationDir(t)
 	db := openMigrationManagerDB(t)
 	if err := Migrate(db, copyNumberedMigrationsThrough(t, sourceDir, 37)); err != nil {
 		t.Fatal(err)

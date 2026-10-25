@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yexca/kikoto/backend/internal/migrationfixture"
 	"github.com/yexca/kikoto/backend/internal/storage"
 	"github.com/yexca/kikoto/backend/internal/testfixture"
 )
@@ -26,7 +27,7 @@ func TestLibraryPagePerformance(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := storage.Migrate(db, "../../migrations"); err != nil {
+			if err := storage.MigrateFS(db, migrationfixture.MustFS(t), "test"); err != nil {
 				t.Fatal(err)
 			}
 			testfixture.SeedBrowse(t, db)

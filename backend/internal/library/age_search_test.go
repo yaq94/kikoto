@@ -1,9 +1,22 @@
 package library
 
-import "testing"
+import (
+	"path/filepath"
+	"testing"
+
+	"github.com/yexca/kikoto/backend/internal/migrationfixture"
+	"github.com/yexca/kikoto/backend/internal/storage"
+)
 
 func TestAgeSearchMatchesDisplayAndProviderAliasesAcrossFamilies(t *testing.T) {
-	db := openSearchTestDB(t, "../../migrations")
+	db, err := storage.Open(filepath.Join(t.TempDir(), "library.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if err := storage.MigrateFS(db, migrationfixture.MustFS(t), "test"); err != nil {
+		t.Fatal(err)
+	}
 	ids := []int64{}
 	for ordinal, age := range []string{"adult", "R-18", "general", "全年齢", "r15", "", "unknown"} {
 		id := insertSearchWork(t, db, ordinal, "Example Work")

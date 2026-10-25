@@ -163,7 +163,7 @@ func (s *Server) saveSourceFieldTranslations(ctx context.Context, rows []sourceF
 		return "", fmt.Errorf("save source field translations: %w", err)
 	}
 	if cfgErr == nil {
-		s.pruneTranslationCacheAfterWrite(ctx, cfg)
+		s.pruneTranslationCacheAfterWrite(ctx, cfg, len(rows))
 	}
 	return contentTranslationStored, nil
 }

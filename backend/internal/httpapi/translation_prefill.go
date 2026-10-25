@@ -21,36 +21,35 @@ import (
 // several nights, and the cursor is committed after each batch so a restart
 // resumes instead of starting over.
 const (
-	translationPrefillBatchSize   = 50
-	translationPrefillInterval    = 15 * time.Second
-	translationPrefillParallel    = 8
-	translationPrefillFailureStop = 3
+	translationPrefillBatchSize = 50
+	translationPrefillInterval  = 15 * time.Second
+	translationPrefillParallel  = 8
 )
-
-// prefillLanguages are the languages the model can produce. Traditional
-// Chinese is derived from Simplified at display time and is not stored twice.
-var prefillLanguages = []string{
-	translation.SourceEnglish,
-	translation.SourceHans,
-	translation.SourceJapanese,
-	translation.SourceKorean,
-}
 
 type translationPrefillLanguage struct {
 	Language string `json:"language"`
 	Rows     int64  `json:"rows"`
 	Missing  int64  `json:"missing"`
+	Stale    int64  `json:"stale"`
+	Failed   int64  `json:"failed"`
+	Retry    int64  `json:"retry"`
 }
 
 type translationPrefillView struct {
-	Status        string                       `json:"status"`
-	Cursor        int64                        `json:"cursor"`
-	Total         int64                        `json:"total"`
-	Languages     []translationPrefillLanguage `json:"languages"`
-	NightWindow   bool                         `json:"nightWindow"`
-	LastError     string                       `json:"lastError,omitempty"`
-	UpdatedAt     string                       `json:"updatedAt,omitempty"`
-	RatePerMinute float64                      `json:"ratePerMinute"`
+	Status         string                       `json:"status"`
+	Cursor         int64                        `json:"cursor"`
+	CursorLanguage string                       `json:"cursorLanguage,omitempty"`
+	CursorKind     string                       `json:"cursorKind,omitempty"`
+	CursorField    string                       `json:"cursorField,omitempty"`
+	ConfigKey      string                       `json:"configKey"`
+	Total          int64                        `json:"total"`
+	Languages      []translationPrefillLanguage `json:"languages"`
+	NightWindow    bool                         `json:"nightWindow"`
+	LastError      string                       `json:"lastError,omitempty"`
+	UpdatedAt      string                       `json:"updatedAt,omitempty"`
+	RatePerMinute  float64                      `json:"ratePerMinute"`
+	OverBudget     bool                         `json:"overBudget"`
+	BudgetBytes    int64                        `json:"budgetBytes"`
 }
 
 // translationPrefillState reads only the durable cursor/status row. The worker
@@ -58,7 +57,10 @@ type translationPrefillView struct {
 func (s *Server) translationPrefillState(ctx context.Context) (translationPrefillView, error) {
 	view := translationPrefillView{Status: "idle", Languages: []translationPrefillLanguage{}}
 	var updated string
-	err := s.db.QueryRowContext(ctx, `SELECT cursor_entry_id,status,last_error,updated_at FROM translation_prefill_state WHERE id=1`).Scan(&view.Cursor, &view.Status, &view.LastError, &updated)
+	err := s.db.QueryRowContext(ctx, `SELECT cursor_language,cursor_kind,cursor_field,cursor_id,
+		config_key,status,last_error,updated_at FROM translation_prefill_state WHERE id=1`).
+		Scan(&view.CursorLanguage, &view.CursorKind, &view.CursorField, &view.Cursor,
+			&view.ConfigKey, &view.Status, &view.LastError, &updated)
 	if errors.Is(err, sql.ErrNoRows) {
 		view.Status = "idle"
 	} else if err != nil {
@@ -68,7 +70,7 @@ func (s *Server) translationPrefillState(ctx context.Context) (translationPrefil
 	return view, nil
 }
 
-// translationPrefillStatus reads the durable cursor and per-language coverage.
+// translationPrefillStatus reads the durable cursor and effective coverage.
 // It is the operator view; the background worker must use
 // translationPrefillState instead.
 func (s *Server) translationPrefillStatus(ctx context.Context) (translationPrefillView, error) {
@@ -78,32 +80,43 @@ func (s *Server) translationPrefillStatus(ctx context.Context) (translationPrefi
 	}
 	view.NightWindow = translation.IsNightWindow(time.Now())
 	view.RatePerMinute = s.translationPrefillRate()
-	if err = s.db.QueryRowContext(ctx, `SELECT count(*) FROM source_catalog_entry
-		WHERE relocated_to_id IS NULL AND availability_status='available' AND trim(title)<>''`).Scan(&view.Total); err != nil {
-		return view, err
-	}
-	rows, err := s.db.QueryContext(ctx, `SELECT language, count(*) FROM content_translation
-		WHERE entity_kind='entry' AND field='title' GROUP BY language`)
+	cfg, err := translation.NewStore(s.db).Load(ctx)
 	if err != nil {
 		return view, err
 	}
-	defer rows.Close()
-	byLanguage := map[string]int64{}
-	for rows.Next() {
-		var language string
-		var count int64
-		if err = rows.Scan(&language, &count); err != nil {
-			return view, err
-		}
-		byLanguage[language] = count
-	}
-	if err = rows.Err(); err != nil {
+	coverage, err := s.translationCorpusCoverageFor(ctx, cfg)
+	if err != nil {
 		return view, err
 	}
-	for _, language := range append(prefillLanguages, translation.SourceHant) {
-		view.Languages = append(view.Languages, translationPrefillLanguage{Language: language, Rows: byLanguage[language], Missing: max64(view.Total-byLanguage[language], 0)})
+	view.ConfigKey = translation.ConfigKey(cfg)
+	view.Total = coverage.Total
+	for _, language := range append(append([]string{}, translationModelLanguages...), translation.SourceHant) {
+		item := coverage.Languages[language]
+		view.Languages = append(view.Languages, translationPrefillLanguage{
+			Language: language, Rows: item.Rows, Missing: item.Missing,
+			Stale: item.Stale, Failed: item.Failed, Retry: item.Retry,
+		})
 	}
+	// A stored complete status is not permission to claim complete coverage:
+	// a model change, changed text, failure or retirement leaves gaps.
+	if view.Status == "complete" && !coverage.complete() {
+		view.Status = "running"
+		if view.LastError == "" {
+			view.LastError = coverageMessage(coverage)
+		}
+	}
+	overBudget, budget, err := s.translationBudgetReport(ctx, cfg)
+	if err != nil {
+		return view, err
+	}
+	view.OverBudget = overBudget
+	view.BudgetBytes = budget
 	return view, nil
+}
+
+func coverageMessage(coverage translationCorpusCoverage) string {
+	return fmt.Sprintf("coverage incomplete: %d missing, %d stale, %d failed, %d retry",
+		coverage.Missing, coverage.Stale, coverage.Failed, coverage.Retry)
 }
 
 func max64(a, b int64) int64 {
@@ -150,32 +163,6 @@ func (s *Server) noteTranslationPrefillWrite(count int) {
 	s.translationPrefillWrites = kept
 }
 
-// noteTranslationPrefillFailure counts consecutive batches in which at least
-// one language for the entry failed. A later batch with no failure clears it.
-func (s *Server) noteTranslationPrefillFailure(entryID int64) int {
-	s.translationPrefillMu.Lock()
-	defer s.translationPrefillMu.Unlock()
-	if s.translationPrefillFailures == nil {
-		s.translationPrefillFailures = map[int64]int{}
-	}
-	s.translationPrefillFailures[entryID]++
-	return s.translationPrefillFailures[entryID]
-}
-
-func (s *Server) clearTranslationPrefillFailure(entryID int64) {
-	s.translationPrefillMu.Lock()
-	defer s.translationPrefillMu.Unlock()
-	delete(s.translationPrefillFailures, entryID)
-}
-
-func (s *Server) clearTranslationPrefillFailures(entryIDs []int64) {
-	s.translationPrefillMu.Lock()
-	defer s.translationPrefillMu.Unlock()
-	for _, entryID := range entryIDs {
-		delete(s.translationPrefillFailures, entryID)
-	}
-}
-
 // runTranslationPrefillWorker is started with the other background workers.
 // It idles when the corpus is complete and resumes automatically when a new
 // entry needs rows.
@@ -213,12 +200,41 @@ func (s *Server) runTranslationPrefillBatch(ctx context.Context) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	configKey := translation.ConfigKey(cfg)
 	state, err := s.translationPrefillState(ctx)
 	if err != nil {
 		return false, err
 	}
+	if state.ConfigKey != configKey {
+		// A model, endpoint, template or reasoning change makes the completed
+		// prefix meaningless. Restart the scan; coverage still skips every row
+		// that is already current under the new key.
+		if _, err = s.db.ExecContext(ctx, `UPDATE translation_prefill_state SET
+			config_key=?,cursor_language='',cursor_kind='entry',cursor_field='title',cursor_id=0,
+			status=CASE WHEN status='complete' THEN 'running' ELSE status END,
+			updated_at=CURRENT_TIMESTAMP WHERE id=1`, configKey); err != nil {
+			return false, err
+		}
+		state.ConfigKey = configKey
+		state.CursorLanguage, state.CursorKind, state.CursorField, state.Cursor = "", "entry", "title", 0
+	}
 	if state.Status == "complete" {
-		return false, nil
+		// A complete cursor is only a stored observation. Verify the effective
+		// corpus so a model change, changed title or skipped entry resumes work
+		// instead of leaving the pass permanently complete.
+		coverage, err := s.translationCorpusCoverageFor(ctx, cfg)
+		if err != nil {
+			return false, err
+		}
+		if coverage.complete() {
+			return false, nil
+		}
+		if _, err = s.db.ExecContext(ctx, `UPDATE translation_prefill_state
+			SET status='running',last_error=?,updated_at=CURRENT_TIMESTAMP WHERE id=1`,
+			coverageMessage(coverage)); err != nil {
+			return false, err
+		}
+		state.Status = "running"
 	}
 	if state.Status == "paused" {
 		// A manual pause waits for the operator. A low-disk pause is a
@@ -236,72 +252,112 @@ func (s *Server) runTranslationPrefillBatch(ctx context.Context) (bool, error) {
 		_, err = s.db.ExecContext(ctx, `UPDATE translation_prefill_state SET status='paused', last_error=?, updated_at=CURRENT_TIMESTAMP WHERE id=1`, pause)
 		return false, err
 	}
-	entries, err := s.translationPrefillEntries(ctx, state.Cursor)
+	// A due retry is taken before new items: a failure must not sit behind a
+	// long queue of fresh cards, and its persisted attempt count is the only
+	// retry budget.
+	retries, err := s.dueTranslationPrefillFailures(ctx, cfg, translationPrefillBatchSize)
 	if err != nil {
 		return false, err
 	}
-	if len(entries) == 0 {
-		_, err = s.db.ExecContext(ctx, `UPDATE translation_prefill_state SET status='complete', last_error='', updated_at=CURRENT_TIMESTAMP WHERE id=1`)
-		return false, err
+	pageLimit := translationPrefillBatchSize - len(retries)
+	items := []translationCorpusItem{}
+	next := translationPrefillCursor{
+		Language: state.CursorLanguage, Kind: state.CursorKind, Field: state.CursorField, ID: state.Cursor,
 	}
-	lastID := entries[len(entries)-1].id
-	// A skipped entry can fall back into the window when a lower failure pulls
-	// the cursor back. Do not spend the batch on it again; the count already
-	// proved it is not making progress.
-	active := make([]translationPrefillEntry, 0, len(entries))
-	alreadySkipped := []int64{}
-	for _, entry := range entries {
-		if s.translationPrefillFailureCount(entry.id) >= translationPrefillFailureStop {
-			alreadySkipped = append(alreadySkipped, entry.id)
+	if pageLimit > 0 {
+		items, next, err = s.translationCorpusPage(ctx, next, pageLimit)
+		if err != nil {
+			return false, err
+		}
+	}
+	// Do not spend the batch on an item that already has a current row. This
+	// is also how a model/config change resumes only the missing rows.
+	retryKeys := make(map[string]struct{}, len(retries))
+	for _, item := range retries {
+		retryKeys[translationPrefillItemKey(item)] = struct{}{}
+	}
+	pending := make([]translationCorpusItem, 0, len(items))
+	for _, item := range items {
+		if _, retrying := retryKeys[translationPrefillItemKey(item)]; retrying {
+			// The retry queue already owns this item for this batch.
 			continue
 		}
-		active = append(active, entry)
-	}
-	written := 0
-	var failed map[int64]error
-	var runErr error
-	if len(active) > 0 {
-		written, failed, runErr = s.translationPrefillFields(ctx, cfg, active)
-	}
-	cursor := lastID
-	message := ""
-	if runErr != nil {
-		// A batch-level failure was not attributed to an entry. Keep the
-		// cursor before this batch so the next tick retries it.
-		cursor = active[0].id - 1
-		message = errorText(runErr)
-	} else {
-		retrying := []int64{}
-		skipped := append([]int64(nil), alreadySkipped...)
-		failedIDs := make([]int64, 0, len(failed))
-		for id := range failed {
-			failedIDs = append(failedIDs, id)
+		current, currentErr := s.translationCorpusItemCurrent(ctx, item, configKey)
+		if currentErr != nil {
+			return false, currentErr
 		}
-		sort.Slice(failedIDs, func(i, j int) bool { return failedIDs[i] < failedIDs[j] })
-		for _, id := range failedIDs {
-			attempts := s.noteTranslationPrefillFailure(id)
-			if attempts < translationPrefillFailureStop {
-				retrying = append(retrying, id)
-				if id-1 < cursor {
-					cursor = id - 1
-				}
+		if !current {
+			exhausted, exhaustedErr := s.translationPrefillItemExhausted(ctx, item, configKey)
+			if exhaustedErr != nil {
+				return false, exhaustedErr
+			}
+			if exhausted {
+				// The item is permanently failed for this source hash. It still
+				// keeps coverage incomplete, but retrying it every pass would
+				// spend the whole batch on one bad card.
 				continue
 			}
-			skipped = append(skipped, id)
+			pending = append(pending, item)
 		}
-		for _, entry := range active {
-			if _, ok := failed[entry.id]; !ok {
-				s.clearTranslationPrefillFailure(entry.id)
-			}
-		}
-		sort.Slice(skipped, func(i, j int) bool { return skipped[i] < skipped[j] })
-		message = translationPrefillFailureMessage(failed, retrying, skipped)
 	}
-	if _, err = s.db.ExecContext(ctx, `UPDATE translation_prefill_state SET cursor_entry_id=?, status='running', last_error=?, updated_at=CURRENT_TIMESTAMP WHERE id=1`, cursor, message); err != nil {
+	// A retry is one item. Expanding it to every model language here would
+	// multiply the persisted attempt and lose the field/language granularity,
+	// so each due failure is processed as its own item.
+	work := append(append([]translationCorpusItem{}, retries...), pending...)
+	if len(work) > translationPrefillBatchSize {
+		work = work[:translationPrefillBatchSize]
+	}
+	written, failures, runErr := s.translationPrefillItems(ctx, cfg, work)
+	message := ""
+	if runErr != nil {
+		message = errorText(runErr)
+	} else if len(failures) > 0 {
+		message = prefillFailureMessage(failures)
+	}
+	if _, err = s.db.ExecContext(ctx, `UPDATE translation_prefill_state SET
+		cursor_language=?,cursor_kind=?,cursor_field=?,cursor_id=?,
+		config_key=?,status='running',last_error=?,updated_at=CURRENT_TIMESTAMP WHERE id=1`,
+		next.Language, next.Kind, next.Field, next.ID, configKey, message); err != nil {
 		return false, err
 	}
 	s.noteTranslationPrefillWrite(written)
-	return len(entries) == translationPrefillBatchSize, runErr
+	if len(items) < pageLimit && len(retries) == 0 {
+		// The scan reached its end. Completion still depends on the effective
+		// coverage, not on the cursor position.
+		coverage, err := s.translationCorpusCoverageFor(ctx, cfg)
+		if err != nil {
+			return false, err
+		}
+		if coverage.complete() {
+			_, err = s.db.ExecContext(ctx, `UPDATE translation_prefill_state
+				SET status='complete',last_error='',updated_at=CURRENT_TIMESTAMP WHERE id=1`)
+			return false, err
+		}
+		if coverage.Missing+coverage.Stale > 0 && len(items) == 0 {
+			// The cursor is past the end but rows below it are missing or stale
+			// without a title change trigger. Restart one scan so they are not
+			// stranded behind the end position.
+			if _, err = s.db.ExecContext(ctx, `UPDATE translation_prefill_state SET
+				cursor_language='',cursor_kind='entry',cursor_field='title',cursor_id=0,
+				updated_at=CURRENT_TIMESTAMP WHERE id=1`); err != nil {
+				return false, err
+			}
+		}
+		// Keep a concrete failure reason visible. Coverage is a summary, not a
+		// replacement for the upstream error the operator needs to act on.
+		if message == "" {
+			if _, err = s.db.ExecContext(ctx, `UPDATE translation_prefill_state
+				SET last_error=?,updated_at=CURRENT_TIMESTAMP WHERE id=1`, coverageMessage(coverage)); err != nil {
+				return false, err
+			}
+		}
+		return false, nil
+	}
+	return len(items) == pageLimit || len(retries) > 0, runErr
+}
+
+func translationPrefillItemKey(item translationCorpusItem) string {
+	return fmt.Sprintf("%s/%d/%s/%s", item.EntityKind, item.EntityID, item.Field, item.Language)
 }
 
 // translationDiskPause keeps the background translation pass from consuming
@@ -328,43 +384,19 @@ func (s *Server) translationDiskPause(cfg translation.Config) string {
 	return ""
 }
 
-// translationPrefillFailureCount is the process-local consecutive-failure
-// count for one entry.
-func (s *Server) translationPrefillFailureCount(entryID int64) int {
-	s.translationPrefillMu.Lock()
-	defer s.translationPrefillMu.Unlock()
-	return s.translationPrefillFailures[entryID]
-}
-
-// translationPrefillFailureMessage keeps skipped ids/count at the front so
-// truncation to the column's 300-byte budget never hides what was skipped.
-func translationPrefillFailureMessage(failed map[int64]error, retrying, skipped []int64) string {
-	parts := []string{}
-	if len(skipped) > 0 {
-		ids := make([]string, 0, len(skipped))
-		for _, id := range skipped {
-			ids = append(ids, fmt.Sprintf("%d", id))
-		}
-		parts = append(parts, fmt.Sprintf("skipped %d entries after %d failures: %s", len(skipped), translationPrefillFailureStop, strings.Join(ids, ",")))
-		for _, id := range skipped {
-			if err := failed[id]; err != nil {
-				parts = append(parts, fmt.Sprintf("entry %d: %v", id, err))
-				break
-			}
-		}
+// prefillFailureMessage summarizes persisted failures without depending on an
+// in-process map. It is bounded by the state column's 300-byte budget.
+func prefillFailureMessage(failures map[string]error) string {
+	keys := make([]string, 0, len(failures))
+	for key := range failures {
+		keys = append(keys, key)
 	}
-	if len(retrying) > 0 {
-		reasons := make([]string, 0, len(retrying))
-		for _, id := range retrying {
-			if err := failed[id]; err != nil {
-				reasons = append(reasons, fmt.Sprintf("entry %d: %v", id, err))
-			}
-		}
-		if len(reasons) > 0 {
-			parts = append(parts, "retrying "+strings.Join(reasons, "; "))
-		}
+	sort.Strings(keys)
+	parts := make([]string, 0, min(len(keys), 4))
+	for _, key := range keys[:min(len(keys), 4)] {
+		parts = append(parts, fmt.Sprintf("%s: %v", key, failures[key]))
 	}
-	text := strings.Join(parts, "; ")
+	text := fmt.Sprintf("%d failed items; %s", len(keys), strings.Join(parts, "; "))
 	if len(text) > 300 {
 		text = text[:300]
 	}
@@ -382,178 +414,184 @@ func errorText(err error) string {
 	return text
 }
 
-type translationPrefillEntry struct {
-	id       int64
-	title    string
-	sourceID int64
-}
-
-func (s *Server) translationPrefillEntries(ctx context.Context, after int64) ([]translationPrefillEntry, error) {
-	// The background pass has no viewer to scope it. It must honour the same
-	// source boundary as the reader: a disabled source, or a source that is no
-	// longer an admitted catalog, is not sent to the model.
-	rows, err := s.db.QueryContext(ctx, `SELECT e.id, COALESCE(e.file_source_id,0), e.title FROM source_catalog_entry e
-		JOIN file_source source ON source.id=e.file_source_id
-		WHERE e.id>? AND e.relocated_to_id IS NULL AND e.availability_status='available' AND trim(e.title)<>''
-			AND source.enabled=1 AND source.source_type=?
-		ORDER BY e.id LIMIT ?`, after, sourceTypeOpenList, translationPrefillBatchSize)
-	if err != nil {
-		return nil, err
+// translationPrefillItems writes native rows where the source already is the
+// target language and queues the missing model rows for one batch. Each item
+// is one entity kind, field and language, so entry titles, series titles and
+// local work title/description fields are all covered by the same path.
+func (s *Server) translationPrefillItems(ctx context.Context, cfg translation.Config, items []translationCorpusItem) (int, map[string]error, error) {
+	configKey := translation.ConfigKey(cfg)
+	type itemTask struct {
+		item translationCorpusItem
+		key  string
 	}
-	defer rows.Close()
-	entries := []translationPrefillEntry{}
-	for rows.Next() {
-		var entry translationPrefillEntry
-		if err = rows.Scan(&entry.id, &entry.sourceID, &entry.title); err != nil {
-			return nil, err
-		}
-		entries = append(entries, entry)
-	}
-	return entries, rows.Err()
-}
-
-// translationPrefillFields writes the native row and queues the missing model
-// rows for one batch. The work is bounded and shares the background lane, so a
-// viewer's request is never queued behind a whole backfill. The returned map is
-// the set of entries with at least one failed language; the batch caller owns
-// cursor movement and retry accounting.
-func (s *Server) translationPrefillFields(ctx context.Context, cfg translation.Config, entries []translationPrefillEntry) (int, map[int64]error, error) {
-	type entryTasks struct {
-		entry    translationPrefillEntry
-		once     sync.Once
-		names    []string
-		namesErr error
-	}
-	type task struct {
-		work     *entryTasks
-		language string
-		key      string
-	}
-	tasks := []task{}
-	failed := map[int64]error{}
+	tasks := make([]itemTask, 0, len(items))
 	written := 0
-	for _, entry := range entries {
-		detected := translation.DetectSourceLanguage(entry.title)
-		work := &entryTasks{entry: entry}
-		// A Traditional title is already the text a Traditional reader wants.
-		// Recording it as a native row keeps the four model languages from
-		// re-translating it and makes the coverage report truthful.
+	failures := map[string]error{}
+	var failureMu sync.Mutex
+	recordFailure := func(item translationCorpusItem, err error) {
+		if err == nil {
+			return
+		}
+		failureMu.Lock()
+		failures[translationPrefillItemKey(item)] = err
+		failureMu.Unlock()
+		// The persisted attempt count is the retry budget. A failed write of the
+		// failure row is itself surfaced on the next pass by the missing row.
+		_, _ = s.recordTranslationPrefillFailure(ctx, item, configKey, err)
+	}
+	type protectedNames struct {
+		once  sync.Once
+		names []string
+		err   error
+	}
+	namesLoaded := map[string]*protectedNames{}
+	for _, item := range items {
+		detected := translation.DetectSourceLanguage(item.SourceText)
 		if detected == translation.SourceHant {
-			key := contentTranslationCacheKey("entry", entry.id, "", "title", translation.SourceHant, entry.title, "native", "", "", "", false)
-			row := contentTranslationRow{CacheKey: key, EntityKind: "entry", EntityID: entry.id, Field: "title", Language: translation.SourceHant, SourceText: entry.title, TranslatedText: entry.title, Origin: "native"}
+			// A Traditional source is authored text. Store it once as native so a
+			// zh-tw reader can match it, then let the model produce the other
+			// languages (including Simplified).
+			hantItem := item
+			hantItem.Language = translation.SourceHant
+			key := contentTranslationCacheKey(item.EntityKind, item.EntityID, "", item.Field, translation.SourceHant, item.SourceText, "native", "", "", "", false)
+			row := contentTranslationRow{CacheKey: key, EntityKind: item.EntityKind, EntityID: item.EntityID,
+				Field: item.Field, Language: translation.SourceHant, SourceText: item.SourceText,
+				TranslatedText: item.SourceText, Origin: "native"}
 			cacheStatus, err := s.saveContentTranslations(ctx, []contentTranslationRow{row})
 			if err != nil {
-				failed[entry.id] = err
+				recordFailure(hantItem, err)
+			} else if cacheStatus != contentTranslationStored {
+				recordFailure(hantItem, errTranslationCachePaused)
+			} else {
+				written++
+			}
+		}
+		nativeLanguage := ""
+		switch {
+		case detected == item.Language:
+			nativeLanguage = detected
+		}
+		key := contentTranslationCacheKey(item.EntityKind, item.EntityID, "", item.Field, item.Language, item.SourceText, "model", cfg.Model, cfg.BaseURL, translation.TemplateVersion, cfg.DisableThinking)
+		if nativeLanguage != "" {
+			key = contentTranslationCacheKey(item.EntityKind, item.EntityID, "", item.Field, nativeLanguage, item.SourceText, "native", "", "", "", false)
+			row := contentTranslationRow{CacheKey: key, EntityKind: item.EntityKind, EntityID: item.EntityID,
+				Field: item.Field, Language: nativeLanguage, SourceText: item.SourceText,
+				TranslatedText: item.SourceText, Origin: "native"}
+			cacheStatus, err := s.saveContentTranslations(ctx, []contentTranslationRow{row})
+			if err != nil {
+				recordFailure(item, err)
 				continue
 			}
 			if cacheStatus != contentTranslationStored {
-				failed[entry.id] = errTranslationCachePaused
+				recordFailure(item, errTranslationCachePaused)
 				continue
 			}
 			written++
-		}
-		for _, language := range prefillLanguages {
-			if detected == language {
-				key := contentTranslationCacheKey("entry", entry.id, "", "title", language, entry.title, "native", "", "", "", false)
-				row := contentTranslationRow{CacheKey: key, EntityKind: "entry", EntityID: entry.id, Field: "title", Language: language, SourceText: entry.title, TranslatedText: entry.title, Origin: "native"}
-				cacheStatus, err := s.saveContentTranslations(ctx, []contentTranslationRow{row})
-				if err != nil {
-					if _, ok := failed[entry.id]; !ok {
-						failed[entry.id] = err
-					}
-					continue
-				}
-				if cacheStatus != contentTranslationStored {
-					if _, ok := failed[entry.id]; !ok {
-						failed[entry.id] = errTranslationCachePaused
-					}
-					continue
-				}
-				written++
-				continue
+			if err := s.clearTranslationPrefillFailures(ctx, item, configKey); err != nil {
+				recordFailure(item, err)
 			}
-			key := contentTranslationCacheKey("entry", entry.id, "", "title", language, entry.title, "model", cfg.Model, cfg.BaseURL, translation.TemplateVersion, cfg.DisableThinking)
-			tasks = append(tasks, task{work: work, language: language, key: key})
+			continue
 		}
+		if item.Language == translation.SourceHant {
+			// A native Traditional row is authored content, never a model lane.
+			continue
+		}
+		tasks = append(tasks, itemTask{item: item, key: key})
 	}
 	if len(tasks) == 0 {
-		return written, failed, nil
+		return written, failures, nil
 	}
 	keys := make([]string, 0, len(tasks))
-	for _, item := range tasks {
-		keys = append(keys, item.key)
+	for _, task := range tasks {
+		keys = append(keys, task.key)
 	}
 	existing, err := s.lookupContentTranslations(ctx, keys)
 	if err != nil {
-		return written, failed, err
+		return written, failures, err
 	}
 	sem := make(chan struct{}, translationPrefillParallel)
 	var wg sync.WaitGroup
 	var mu sync.Mutex
-	recordFailure := func(entryID int64, err error) {
-		if err == nil {
-			return
-		}
-		mu.Lock()
-		if _, ok := failed[entryID]; !ok {
-			failed[entryID] = err
-		}
-		mu.Unlock()
-	}
-	for _, item := range tasks {
-		if _, ok := existing[item.key]; ok {
+	for _, task := range tasks {
+		if row, ok := existing[task.key]; ok && row.ConfigKey == configKey {
 			continue
 		}
 		wg.Add(1)
 		sem <- struct{}{}
-		go func(item task) {
+		go func(task itemTask) {
 			defer wg.Done()
 			defer func() { <-sem }()
-			item.work.once.Do(func() {
-				item.work.names, item.work.namesErr = s.catalogEntryProtectedNamesForPrefill(ctx, item.work.entry.id)
+			namesKey := fmt.Sprintf("%s/%d", task.item.EntityKind, task.item.EntityID)
+			mu.Lock()
+			names, ok := namesLoaded[namesKey]
+			if !ok {
+				names = &protectedNames{}
+				namesLoaded[namesKey] = names
+			}
+			mu.Unlock()
+			names.once.Do(func() {
+				names.names, names.err = s.translationPrefillProtectedNames(ctx, task.item.EntityKind, task.item.EntityID)
 			})
-			// A protected-name lookup that failed cannot be told apart from an
-			// empty list. Sending the title without them would hand a published
-			// circle or cast name to the model, so the entry waits for a retry.
-			if item.work.namesErr != nil {
-				recordFailure(item.work.entry.id, item.work.namesErr)
+			if names.err != nil {
+				recordFailure(task.item, names.err)
 				return
 			}
-			target := translationTarget{modelLanguage: item.language}
-			text, translateErr := s.translateInBackground(ctx, cfg, item.key, item.work.names, item.work.entry.title, target)
+			target := translationTarget{modelLanguage: task.item.Language}
+			text, translateErr := s.translateInBackground(ctx, cfg, task.key, names.names, task.item.SourceText, target)
 			if translateErr != nil {
-				recordFailure(item.work.entry.id, translateErr)
+				recordFailure(task.item, translateErr)
 				return
 			}
-			row := contentTranslationRow{CacheKey: item.key, EntityKind: "entry", EntityID: item.work.entry.id, Field: "title", Language: item.language, SourceText: item.work.entry.title, TranslatedText: text, Origin: "model", Model: cfg.Model, TemplateVersion: translation.TemplateVersion}
+			row := contentTranslationRow{CacheKey: task.key, EntityKind: task.item.EntityKind,
+				EntityID: task.item.EntityID, Field: task.item.Field, Language: task.item.Language,
+				SourceText: task.item.SourceText, TranslatedText: text, Origin: "model",
+				ConfigKey: configKey, Model: cfg.Model, TemplateVersion: translation.TemplateVersion}
 			cacheStatus, saveErr := s.saveContentTranslations(ctx, []contentTranslationRow{row})
 			if saveErr != nil {
-				recordFailure(item.work.entry.id, saveErr)
+				recordFailure(task.item, saveErr)
 				return
 			}
 			if cacheStatus != contentTranslationStored {
-				recordFailure(item.work.entry.id, errTranslationCachePaused)
+				recordFailure(task.item, errTranslationCachePaused)
+				return
+			}
+			if err := s.clearTranslationPrefillFailures(ctx, task.item, configKey); err != nil {
+				recordFailure(task.item, err)
 				return
 			}
 			mu.Lock()
 			written++
 			mu.Unlock()
-		}(item)
+		}(task)
 	}
 	wg.Wait()
-	return written, failed, nil
+	return written, failures, nil
 }
 
-// catalogEntryProtectedNamesForPrefill reuses the same protected-name rules as
-// an interactive request. A failure is returned to the caller, which skips the
-// entry: sending a title without its names would hand a published circle or
-// cast name to the model.
-func (s *Server) catalogEntryProtectedNamesForPrefill(ctx context.Context, entryID int64) ([]string, error) {
-	entry, _, err := s.loadSourceCatalogEntry(ctx, entryID)
-	if err != nil {
-		return nil, err
+// translationPrefillProtectedNames applies the same circle/cast protection as
+// an interactive request. A failure is returned so the item waits for a retry
+// instead of sending a published name to the model.
+func (s *Server) translationPrefillProtectedNames(ctx context.Context, kind string, id int64) ([]string, error) {
+	switch kind {
+	case "entry":
+		entry, _, err := s.loadSourceCatalogEntry(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		return s.catalogEntryProtectedNames(ctx, entry)
+	case "series":
+		return s.catalogSeriesProtectedNames(ctx, id)
+	default:
+		work, err := s.loadWorkDetail(ctx, 0, id, false)
+		if err != nil {
+			return nil, err
+		}
+		names := append([]string{work.Circle}, work.VoiceActors...)
+		for _, credit := range work.VoiceCredits {
+			names = append(names, credit.DisplayName)
+		}
+		return names, nil
 	}
-	return s.catalogEntryProtectedNames(ctx, entry)
 }
 
 // getTranslationPrefill serves the operator view.
@@ -582,7 +620,23 @@ func (s *Server) setTranslationPrefill(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusBadRequest, "translation_invalid_input", "Choose running or paused.", false)
 		return
 	}
-	if _, err := s.db.ExecContext(r.Context(), `UPDATE translation_prefill_state SET status=?, last_error='', updated_at=CURRENT_TIMESTAMP WHERE id=1`, input.Status); err != nil {
+	cfg, err := translation.NewStore(s.db).Load(r.Context())
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	// The cursor is part of the configuration identity. Changing the model,
+	// endpoint, template or reasoning switch starts a fresh queue; otherwise a
+	// resumed pass would keep walking a cursor whose completed prefix is stale.
+	if _, err := s.db.ExecContext(r.Context(), `UPDATE translation_prefill_state SET
+		status=?,last_error='',config_key=?,
+		cursor_language=CASE WHEN config_key<>? THEN '' ELSE cursor_language END,
+		cursor_kind=CASE WHEN config_key<>? THEN 'entry' ELSE cursor_kind END,
+		cursor_field=CASE WHEN config_key<>? THEN 'title' ELSE cursor_field END,
+		cursor_id=CASE WHEN config_key<>? THEN 0 ELSE cursor_id END,
+		updated_at=CURRENT_TIMESTAMP WHERE id=1`,
+		input.Status, translation.ConfigKey(cfg), translation.ConfigKey(cfg), translation.ConfigKey(cfg),
+		translation.ConfigKey(cfg), translation.ConfigKey(cfg)); err != nil {
 		writeError(w, err)
 		return
 	}
@@ -611,7 +665,8 @@ func noteCatalogEntriesPublishedTx(ctx context.Context, tx *sql.Tx, entryIDs []i
 		}
 	}
 	_, err := tx.ExecContext(ctx, `UPDATE translation_prefill_state
-		SET cursor_entry_id=min(cursor_entry_id, ?-1),
+		SET cursor_language='',cursor_kind='entry',cursor_field='title',
+			cursor_id=CASE WHEN cursor_id=0 THEN 0 ELSE min(cursor_id, ?-1) END,
 			status=CASE WHEN status='complete' THEN 'running' ELSE status END,
 			updated_at=CURRENT_TIMESTAMP
 		WHERE id=1`, lowest)

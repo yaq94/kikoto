@@ -280,9 +280,10 @@ func TestContentTranslationInvalidatesOnModelChangeAndReportsLowDiskPause(t *tes
 		t.Fatalf("language summary: %#v", runtime)
 	}
 	// The corpus keeps one row per model instead of overwriting a single cache
-	// entry, so the previous model's text stays searchable.
+	// entry, but only the current output-shaping configuration is part of the
+	// effective summary and strict search.
 	zh := languages[0].(map[string]any)
-	if zh["language"] != "zh-Hans" || zh["rows"] != float64(2) || zh["model"] != float64(2) || runtime["softBytes"] != float64(4096) {
+	if zh["language"] != "zh-Hans" || zh["rows"] != float64(1) || zh["model"] != float64(1) || runtime["softBytes"] != float64(4096) {
 		t.Fatalf("soft budget reported as enforced: %#v", runtime)
 	}
 	translationRequest(t, host, admin, "PATCH", "/api/settings/translation", `{"minFreeBytes":1099511627776,"cacheBytes":4096}`, 200)

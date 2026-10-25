@@ -1,7 +1,6 @@
 package storage
 
 import (
-	"path/filepath"
 	"testing"
 )
 
@@ -9,7 +8,7 @@ import (
 // queue without touching works that only have DLsite metadata or rewriting
 // their stored fields.
 func TestRemoteMetadataFallbackMigrationQueuesRemoteWorks(t *testing.T) {
-	source := filepath.Join("..", "..", "migrations")
+	source := testMigrationDir(t)
 	db := openMigrationManagerDB(t)
 	if err := Migrate(db, copyNumberedMigrationsThrough(t, source, 53)); err != nil {
 		t.Fatal(err)

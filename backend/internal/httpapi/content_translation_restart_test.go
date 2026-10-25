@@ -7,19 +7,22 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"path/filepath"
 	"sync/atomic"
 	"testing"
 
 	"github.com/yexca/kikoto/backend/internal/config"
+	"github.com/yexca/kikoto/backend/internal/migrationfixture"
 	"github.com/yexca/kikoto/backend/internal/storage"
+	"github.com/yexca/kikoto/backend/internal/translation"
 )
 
 func TestContentTranslationCorpusAndIndependentPreferencesSurviveRestart(t *testing.T) {
 	var calls atomic.Int32
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
-		_, _ = io.WriteString(w, `{"choices":[{"message":{"content":"Example translated title"},"finish_reason":"stop"}]}`)
+		_, _ = io.WriteString(w, `{"choices":[{"message":{"content":"示例译文"},"finish_reason":"stop"}]}`)
 	}))
 	defer upstream.Close()
 	root := t.TempDir()
@@ -33,7 +36,7 @@ func TestContentTranslationCorpusAndIndependentPreferencesSurviveRestart(t *test
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := storage.Migrate(db, filepath.Join("..", "..", "migrations")); err != nil {
+		if err := storage.MigrateFS(db, migrationfixture.MustFS(t), "test"); err != nil {
 			t.Fatal(err)
 		}
 		app = NewServer(db, config.Config{Mode: config.ModeProduction, RootUsername: "root", CacheRoot: filepath.Join(root, "cache")})
@@ -80,6 +83,16 @@ func TestContentTranslationCorpusAndIndependentPreferencesSurviveRestart(t *test
 	if stored["cacheStatus"] != "stored" || stored["status"] != "translated" {
 		t.Fatalf("cold corpus did not store the translation: %#v", stored)
 	}
+	translationCfg, err := translation.NewStore(db).Load(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The title row is search corpus. A 4 KiB soft budget must report
+	// over_budget and keep the row, not evict it.
+	translationCfg.CacheBytes = 4096
+	if err := app.pruneContentTranslations(context.Background(), translationCfg); err != nil {
+		t.Fatalf("retention before restart: %v", err)
+	}
 	stop()
 	start(false)
 	defer stop()
@@ -90,6 +103,15 @@ func TestContentTranslationCorpusAndIndependentPreferencesSurviveRestart(t *test
 	var origin string
 	if err := db.QueryRow(`SELECT origin FROM content_translation WHERE entity_kind='work' AND entity_id=1 AND field='title' AND language='zh-Hans'`).Scan(&origin); err != nil || origin != "model" {
 		t.Fatalf("stored row origin=%q err=%v", origin, err)
+	}
+	// The durable corpus still answers both language paths after a restart.
+	translatedSearch := requestLibraryWorks(t, db, "q="+url.QueryEscape("示例")+"&lang=zh-cn")
+	if translatedSearch.Total != 1 || len(translatedSearch.Works) != 1 || translatedSearch.Works[0].ID != 1 {
+		t.Fatalf("zh-cn search after restart = %d %#v", translatedSearch.Total, translatedSearch.Works)
+	}
+	originSearch := requestLibraryWorks(t, db, "q="+url.QueryEscape("Example")+"&lang=origin")
+	if originSearch.Total != 1 || len(originSearch.Works) != 1 || originSearch.Works[0].ID != 1 {
+		t.Fatalf("origin search after restart = %d %#v", originSearch.Total, originSearch.Works)
 	}
 	for _, user := range []struct {
 		cookie       *http.Cookie

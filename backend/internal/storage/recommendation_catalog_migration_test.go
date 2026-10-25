@@ -1,7 +1,6 @@
 package storage
 
 import (
-	"path/filepath"
 	"testing"
 )
 
@@ -9,7 +8,7 @@ import (
 // history or large v5 caches in the migration transaction. Cache reclamation
 // belongs to the bounded worker.
 func TestRecommendationCatalogUpgradePreservesPersonalDataAndQueuesExistingWorks(t *testing.T) {
-	source := filepath.Join("..", "..", "migrations")
+	source := testMigrationDir(t)
 	previous := copyNumberedMigrationsThrough(t, source, 62)
 	db := openMigrationManagerDB(t)
 	if err := Migrate(db, previous); err != nil {

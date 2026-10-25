@@ -7,7 +7,7 @@ import (
 )
 
 func TestMarkedFavoriteListMigrationPreservesExplicitLegacyFavorites(t *testing.T) {
-	migrationDir := filepath.Join("..", "..", "migrations")
+	migrationDir := testMigrationDir(t)
 	preMarkedDir := t.TempDir()
 	entries, err := os.ReadDir(migrationDir)
 	if err != nil {
@@ -71,7 +71,7 @@ func TestMarkedFavoriteListMigrationPreservesExplicitLegacyFavorites(t *testing.
 }
 
 func TestMarkedFavoriteListMigrationConvertsEmptyLegacyDefault(t *testing.T) {
-	migrationDir := filepath.Join("..", "..", "migrations")
+	migrationDir := testMigrationDir(t)
 	preMarkedDir := t.TempDir()
 	entries, err := os.ReadDir(migrationDir)
 	if err != nil {
@@ -126,7 +126,7 @@ func TestMarkedFavoriteListMigrationConvertsEmptyLegacyDefault(t *testing.T) {
 }
 
 func TestMarkedFavoriteListMigrationMovesStateOnlyFavoritesOutOfConvertedDefault(t *testing.T) {
-	migrationDir := filepath.Join("..", "..", "migrations")
+	migrationDir := testMigrationDir(t)
 	preMarkedDir := preMarkedMigrationDir(t, migrationDir)
 	db, err := Open(filepath.Join(t.TempDir(), "state-only-favorites.db"))
 	if err != nil {
@@ -174,7 +174,7 @@ func TestMarkedFavoriteListMigrationMovesStateOnlyFavoritesOutOfConvertedDefault
 }
 
 func TestMarkedFavoriteListMigrationPreservesExistingUserStateTimestamps(t *testing.T) {
-	migrationDir := filepath.Join("..", "..", "migrations")
+	migrationDir := testMigrationDir(t)
 	preMarkedDir := preMarkedMigrationDir(t, migrationDir)
 	db, err := Open(filepath.Join(t.TempDir(), "preserved-state-time.db"))
 	if err != nil {
