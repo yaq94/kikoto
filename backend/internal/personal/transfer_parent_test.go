@@ -59,13 +59,13 @@ func exportBackup(t *testing.T, s Store, user int64) Backup {
 	return b
 }
 
-// A v3 episode review alone must recreate the series parent, the series work and
+// A v2 episode review alone must recreate the series parent, the series work and
 // the catalog-series row without inventing a source membership.
-func TestTransferV3RestoresPersonalOnlyParentAndRoundTrips(t *testing.T) {
+func TestTransferV2RestoresPersonalOnlyParentAndRoundTrips(t *testing.T) {
 	s := emptyTransferStore(t)
 	rating := 4
 	episodeRef, parentRef := refWith("w", '1'), refWith("s", '2')
-	backup := Backup{Format: "kikoto-user-data", Version: 3, Works: []BackupWork{{
+	backup := Backup{Format: "kikoto-user-data", Version: 2, Works: []BackupWork{{
 		Identity: &BackupIdentity{
 			Ref:   episodeRef,
 			Kind:  "episode",
@@ -115,7 +115,7 @@ func TestTransferV3RestoresPersonalOnlyParentAndRoundTrips(t *testing.T) {
 	}
 
 	exported := exportBackup(t, s, 1)
-	if exported.Version != 3 || len(exported.Works) != 1 {
+	if exported.Version != 2 || len(exported.Works) != 1 {
 		t.Fatalf("export = version %d, %d works", exported.Version, len(exported.Works))
 	}
 	identity := exported.Works[0].Identity
@@ -151,11 +151,11 @@ func TestTransferV3RestoresPersonalOnlyParentAndRoundTrips(t *testing.T) {
 
 // A series that also appears as a top-level BackupWork is created once and keeps
 // its own review; the episode's minimal parent never overwrites it.
-func TestTransferV3TopLevelSeriesKeepsItsReview(t *testing.T) {
+func TestTransferV2TopLevelSeriesKeepsItsReview(t *testing.T) {
 	s := emptyTransferStore(t)
 	seriesRating, episodeRating := 5, 2
 	parentRef, episodeRef, seriesRef := refWith("s", '3'), refWith("w", '4'), refWith("w", '5')
-	backup := Backup{Format: "kikoto-user-data", Version: 3, Works: []BackupWork{
+	backup := Backup{Format: "kikoto-user-data", Version: 2, Works: []BackupWork{
 		{Identity: &BackupIdentity{Ref: episodeRef, Kind: "episode", Title: "Example Episode",
 			Parent: &BackupIdentity{Ref: parentRef, Kind: "series", Title: "Example Series"}},
 			Rating: &episodeRating, Note: "Episode note"},
@@ -190,31 +190,9 @@ func TestTransferV3TopLevelSeriesKeepsItsReview(t *testing.T) {
 	}
 }
 
-// A v3 episode without a parent is blocked, not registered as a standalone work.
-func TestTransferV3EpisodeWithoutParentIsBlocked(t *testing.T) {
-	s := emptyTransferStore(t)
-	rating := 3
-	backup := Backup{Format: "kikoto-user-data", Version: 3, Works: []BackupWork{{
-		Identity: &BackupIdentity{Ref: refWith("w", '6'), Kind: "episode", Title: "Example Episode"},
-		Rating:   &rating,
-	}}}
-	preview, err := s.PreviewImport(context.Background(), 1, backup)
-	if err != nil || preview.NewWorks != 0 || len(preview.Issues) != 1 || preview.Issues[0].Reason != "parent_required" {
-		t.Fatalf("preview = %+v, %v", preview, err)
-	}
-	result := importBackup(t, s, 1, backup)
-	if result.ImportedWorks != 0 || result.SkippedWorks != 1 || len(result.Issues) != 1 || result.Issues[0].Reason != "parent_required" {
-		t.Fatalf("restore = %+v", result)
-	}
-	var works int
-	if err := s.DB.QueryRow(`SELECT count(*) FROM work`).Scan(&works); err != nil || works != 0 {
-		t.Fatalf("blocked episode wrote %d works, %v", works, err)
-	}
-}
-
 // A parent reference owned by a catalog entry, another series, or a second
 // parent alias is contradictory and blocks only that episode.
-func TestTransferV3ParentReferenceConflicts(t *testing.T) {
+func TestTransferV2ParentReferenceConflicts(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
 		setup string
@@ -251,7 +229,7 @@ func TestTransferV3ParentReferenceConflicts(t *testing.T) {
 			execFixture(t, s.DB, tc.setup)
 			parentRef := refWith("s", '7')
 			parent := tc.build(t, s, parentRef)
-			backup := Backup{Format: "kikoto-user-data", Version: 3, Works: []BackupWork{{
+			backup := Backup{Format: "kikoto-user-data", Version: 2, Works: []BackupWork{{
 				Identity: &BackupIdentity{Ref: refWith("w", '8'), Kind: "episode", Title: "Example Episode", Parent: parent},
 				Note:     "Episode note",
 			}}}
@@ -268,10 +246,10 @@ func TestTransferV3ParentReferenceConflicts(t *testing.T) {
 }
 
 // A non-empty library keeps its existing parent when the backup names another.
-func TestTransferV3KeepsExistingDifferentParent(t *testing.T) {
+func TestTransferV2KeepsExistingDifferentParent(t *testing.T) {
 	s := emptyTransferStore(t)
 	episodeRef, firstParent := refWith("w", '9'), refWith("s", 'a')
-	first := Backup{Format: "kikoto-user-data", Version: 3, Works: []BackupWork{{
+	first := Backup{Format: "kikoto-user-data", Version: 2, Works: []BackupWork{{
 		Identity: &BackupIdentity{Ref: episodeRef, Kind: "episode", Title: "Example Episode",
 			Parent: &BackupIdentity{Ref: firstParent, Kind: "series", Title: "First Series"}},
 		Note: "Original note",
@@ -310,7 +288,7 @@ func TestTransferV3KeepsExistingDifferentParent(t *testing.T) {
 
 // A parent chain that loops is reported as a cycle instead of being followed
 // forever or silently flattened.
-func TestTransferV3ParentCycleIsReported(t *testing.T) {
+func TestTransferV2ParentCycleIsReported(t *testing.T) {
 	s := emptyTransferStore(t)
 	execFixture(t, s.DB, `INSERT INTO work(id,primary_code,title) VALUES(701,'','Series A'),(702,'','Series B');
 		INSERT INTO catalog_series(id,title,work_id) VALUES(801,'Series A',701),(802,'Series B',702);
@@ -320,7 +298,7 @@ func TestTransferV3ParentCycleIsReported(t *testing.T) {
 	if err := s.DB.QueryRow(`SELECT ref FROM personal_transfer_ref WHERE series_id=801`).Scan(&parentRef); err != nil {
 		t.Fatal(err)
 	}
-	backup := Backup{Format: "kikoto-user-data", Version: 3, Works: []BackupWork{{
+	backup := Backup{Format: "kikoto-user-data", Version: 2, Works: []BackupWork{{
 		Identity: &BackupIdentity{Ref: refWith("w", 'c'), Kind: "episode", Title: "Example Episode",
 			Parent: &BackupIdentity{Ref: parentRef, Kind: "series", Title: "Series A"}},
 	}}}
@@ -362,9 +340,9 @@ func TestTransferV2EpisodeWithoutParentKeepsLegacyBehavior(t *testing.T) {
 
 // Two series works with empty codes are normal numberless identities and must
 // not collide on the partial code index.
-func TestTransferV3TwoEmptyCodeSeriesDoNotCollide(t *testing.T) {
+func TestTransferV2TwoEmptyCodeSeriesDoNotCollide(t *testing.T) {
 	s := emptyTransferStore(t)
-	backup := Backup{Format: "kikoto-user-data", Version: 3, Works: []BackupWork{
+	backup := Backup{Format: "kikoto-user-data", Version: 2, Works: []BackupWork{
 		{Identity: &BackupIdentity{Ref: refWith("w", 'e'), Kind: "series", Title: "First Series"}},
 		{Identity: &BackupIdentity{Ref: refWith("w", 'f'), Kind: "series", Title: "Second Series"}},
 	}}
@@ -382,14 +360,14 @@ func TestTransferV3TwoEmptyCodeSeriesDoNotCollide(t *testing.T) {
 
 // A known catalog series without a work is registered and bound; the restore
 // never invents a catalog entry or membership for the empty library.
-func TestTransferV3BindsKnownCatalogSeriesWithoutWork(t *testing.T) {
+func TestTransferV2BindsKnownCatalogSeriesWithoutWork(t *testing.T) {
 	s := emptyTransferStore(t)
 	execFixture(t, s.DB, `INSERT INTO catalog_series(id,title) VALUES(901,'Known Series');`)
 	var parentRef string
 	if err := s.DB.QueryRow(`SELECT ref FROM personal_transfer_ref WHERE series_id=901`).Scan(&parentRef); err != nil {
 		t.Fatal(err)
 	}
-	backup := Backup{Format: "kikoto-user-data", Version: 3, Works: []BackupWork{{
+	backup := Backup{Format: "kikoto-user-data", Version: 2, Works: []BackupWork{{
 		Identity: &BackupIdentity{Ref: refWith("w", '2'), Kind: "episode", Title: "Example Episode",
 			Parent: &BackupIdentity{Ref: parentRef, Kind: "series", Title: "Known Series"}},
 		Note: "Episode note",
@@ -418,10 +396,10 @@ func TestTransferV3BindsKnownCatalogSeriesWithoutWork(t *testing.T) {
 }
 
 // Several episodes naming the same parent create that parent once.
-func TestTransferV3SharedParentIsCreatedOnce(t *testing.T) {
+func TestTransferV2SharedParentIsCreatedOnce(t *testing.T) {
 	s := emptyTransferStore(t)
 	parentRef := refWith("s", '3')
-	backup := Backup{Format: "kikoto-user-data", Version: 3, Works: []BackupWork{
+	backup := Backup{Format: "kikoto-user-data", Version: 2, Works: []BackupWork{
 		{Identity: &BackupIdentity{Ref: refWith("w", '4'), Kind: "episode", Title: "Episode One",
 			Parent: &BackupIdentity{Ref: parentRef, Kind: "series", Title: "Example Series"}}, Note: "One"},
 		{Identity: &BackupIdentity{Ref: refWith("w", '5'), Kind: "episode", Title: "Episode Two",
@@ -440,8 +418,9 @@ func TestTransferV3SharedParentIsCreatedOnce(t *testing.T) {
 	}
 }
 
-// A v2 entry has no parent field, so a parent there rejects the document. A
-// malformed v3 parent is a per-entry conflict and must not reject other records.
+// Version 2 accepts an optional parent. A malformed parent is a per-entry
+// conflict and must not reject other records. A version this build does not
+// define rejects the document instead of being guessed.
 func TestTransferParentFormatValidation(t *testing.T) {
 	base := func(version int, parent *BackupIdentity) []byte {
 		raw, err := json.Marshal(Backup{Format: "kikoto-user-data", Version: version, Works: []BackupWork{{
@@ -454,20 +433,21 @@ func TestTransferParentFormatValidation(t *testing.T) {
 		return raw
 	}
 	valid := &BackupIdentity{Ref: refWith("s", '2'), Kind: "series", Title: "Example Series"}
-	if _, err := ParseImport(ImportRequest{Format: "kikoto", Data: base(3, valid)}); err != nil {
-		t.Fatalf("valid v3 parent: %v", err)
+	if _, err := ParseImport(ImportRequest{Format: "kikoto", Data: base(2, valid)}); err != nil {
+		t.Fatalf("valid v2 parent: %v", err)
 	}
-	if _, err := ParseImport(ImportRequest{Format: "kikoto", Data: base(2, valid)}); !errors.Is(err, ErrInvalid) {
-		t.Fatalf("v2 parent error = %v", err)
+	const unsupportedVersion = 3
+	if _, err := ParseImport(ImportRequest{Format: "kikoto", Data: base(unsupportedVersion, valid)}); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("unsupported version error = %v, want ErrInvalid", err)
 	}
 	nested := *valid
 	nested.Parent = valid
-	if _, err := ParseImport(ImportRequest{Format: "kikoto", Data: base(3, &nested)}); err != nil {
+	if _, err := ParseImport(ImportRequest{Format: "kikoto", Data: base(2, &nested)}); err != nil {
 		t.Fatalf("nested parent should be blocked per entry, not rejected: %v", err)
 	}
 	wrongKind := *valid
 	wrongKind.Kind = "episode"
-	if _, err := ParseImport(ImportRequest{Format: "kikoto", Data: base(3, &wrongKind)}); err != nil {
+	if _, err := ParseImport(ImportRequest{Format: "kikoto", Data: base(2, &wrongKind)}); err != nil {
 		t.Fatalf("wrong-kind parent should be blocked per entry, not rejected: %v", err)
 	}
 }
@@ -490,7 +470,7 @@ func TestTransferMalformedParentBlocksOnlyItsEntry(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s := emptyTransferStore(t)
-			backup := Backup{Format: "kikoto-user-data", Version: 3, Works: []BackupWork{
+			backup := Backup{Format: "kikoto-user-data", Version: 2, Works: []BackupWork{
 				{Identity: &BackupIdentity{Ref: refWith("w", '6'), Kind: "episode", Title: "Blocked Episode", Parent: tc.parent}},
 				{Identity: &BackupIdentity{Ref: refWith("w", '7'), Kind: "work", Title: "Safe Work"}, Note: "Safe note"},
 			}}
@@ -500,7 +480,7 @@ func TestTransferMalformedParentBlocksOnlyItsEntry(t *testing.T) {
 			}
 			blocked := false
 			for _, issue := range result.Issues {
-				if issue.Reason == "parent_conflict" || issue.Reason == "parent_required" {
+				if issue.Reason == "parent_conflict" {
 					blocked = true
 				}
 			}

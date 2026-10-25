@@ -181,7 +181,7 @@ func TestPersonalTransferRestoresKnownUnregisteredCatalogSeriesAndEpisodeAcrossR
 		t.Fatal(err)
 	}
 	rating4, rating5, rating3 := 4, 5, 3
-	backup := personal.Backup{Format: "kikoto-user-data", Version: 3, Works: []personal.BackupWork{
+	backup := personal.Backup{Format: "kikoto-user-data", Version: 2, Works: []personal.BackupWork{
 		{Identity: &personal.BackupIdentity{Ref: standaloneRef, Kind: "work", Title: "Numberless Work"}, ListeningStatus: "finished", Rating: &rating4, Note: "Standalone note"},
 		{Identity: &personal.BackupIdentity{Ref: episodeRef, Kind: "episode", Title: "Episode One",
 			Parent: &personal.BackupIdentity{Ref: seriesRef, Kind: "series", Title: "Numberless Series"}}, ListeningStatus: "listening", Rating: &rating5, Note: "Episode note"},

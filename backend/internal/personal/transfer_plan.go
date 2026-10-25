@@ -10,7 +10,6 @@ import (
 func buildImportPlan(ctx context.Context, tx *sql.Tx, user int64, b Backup) (importPlan, error) {
 	p := importPlan{
 		preview:          ImportPreview{Works: len(b.Works), Playlists: len(b.Playlists), Tags: len(b.Tags), MissingCodes: []string{}},
-		version:          b.Version,
 		works:            map[string]int64{},
 		matches:          map[string]identityMatch{},
 		reviewConflicts:  map[int64]bool{},
@@ -255,14 +254,12 @@ func intString(value int64) string {
 	return string(digits[index:])
 }
 
-// planEpisodeParent resolves the episode's single series parent. A v3 episode
-// without a valid parent blocks only that entry; it is never imported as an
-// independent work. v2 has no parent field and keeps its previous behavior.
+// planEpisodeParent resolves the episode's single series parent. An episode
+// that names a parent must resolve it unambiguously; a missing or invalid
+// parent blocks only that entry instead of importing it as an independent
+// work. An episode without a parent field keeps the legacy v2 behavior.
 func planEpisodeParent(ctx context.Context, tx *sql.Tx, p *importPlan, w *BackupWork, m identityMatch) (transferParent, string, error) {
 	if w.Identity.Parent == nil {
-		if p.version >= 3 {
-			return transferParent{}, "parent_required", nil
-		}
 		return transferParent{}, "", nil
 	}
 	parent, problem, err := resolvePlannedParent(ctx, tx, p, w.Identity.Parent)

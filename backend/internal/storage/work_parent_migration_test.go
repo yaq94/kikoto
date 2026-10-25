@@ -2,6 +2,7 @@ package storage
 
 import (
 	"database/sql"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -92,5 +93,58 @@ func TestWorkParentMigrationBackfillsOnlyUnambiguousMembership(t *testing.T) {
 		if got != expected {
 			t.Fatalf("work %d parent = %v, want %v", id, got, expected)
 		}
+	}
+	// Every unresolved relation must stay queryable instead of existing only in
+	// a log line. The report is rebuilt from current evidence, so the same
+	// fixture yields one row per unresolved work.
+	report := map[int64]string{}
+	rows, err := db.Query(`SELECT work_id,reason,detail FROM work_parent_backfill_report ORDER BY work_id`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var id int64
+		var reason, detail string
+		if err := rows.Scan(&id, &reason, &detail); err != nil {
+			t.Fatal(err)
+		}
+		if detail == "" {
+			t.Fatalf("work %d report has no detail", id)
+		}
+		report[id] = reason
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	wantReport := map[int64]string{3: "multi_parent", 4: "missing", 8: "conflict"}
+	if len(report) != len(wantReport) {
+		t.Fatalf("backfill report = %#v, want %#v", report, wantReport)
+	}
+	for id, reason := range wantReport {
+		if report[id] != reason {
+			t.Fatalf("work %d report reason = %q, want %q (all: %#v)", id, report[id], reason, report)
+		}
+	}
+	// Re-running the report step must rebuild the same rows, not duplicate them.
+	// The ledger applies the file once; the rebuild tail is the repeatable part.
+	reportSQL, err := os.ReadFile(filepath.Join(sourceDir, "101_work_parent_backfill_report.sql"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	const rebuild = "DELETE FROM work_parent_backfill_report;"
+	index := strings.Index(string(reportSQL), rebuild)
+	if index < 0 {
+		t.Fatal("report migration has no rebuild section")
+	}
+	if _, err := db.Exec(string(reportSQL[index:])); err != nil {
+		t.Fatalf("re-run report rebuild: %v", err)
+	}
+	var after int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM work_parent_backfill_report`).Scan(&after); err != nil {
+		t.Fatal(err)
+	}
+	if after != len(wantReport) {
+		t.Fatalf("repeated migration report rows = %d, want %d", after, len(wantReport))
 	}
 }

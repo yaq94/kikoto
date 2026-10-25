@@ -29,7 +29,7 @@ func TestAuditPersonalTransferSeriesViewListsRestoredEpisode(t *testing.T) {
 	var exported personal.Backup
 	workReferenceRequest(t, source, owner, http.MethodGet, "/api/user-data/export", "",
 		http.StatusOK, &exported)
-	if exported.Version != 3 || len(exported.Works) != 1 {
+	if exported.Version != 2 || len(exported.Works) != 1 {
 		t.Fatalf("exported backup = version %d, %d works", exported.Version, len(exported.Works))
 	}
 	identity := exported.Works[0].Identity
@@ -58,8 +58,8 @@ func TestAuditPersonalTransferSeriesViewListsRestoredEpisode(t *testing.T) {
 	workReferenceRequest(t, target, admin, http.MethodPost, "/api/user-data/import/preview", body,
 		http.StatusOK, &preview)
 	for _, issue := range preview.Issues {
-		if issue.Reason == "relationships_not_imported" || issue.Reason == "parent_required" {
-			t.Fatalf("v3 preview kept an unresolved parent issue: %+v", preview.Issues)
+		if issue.Reason == "relationships_not_imported" {
+			t.Fatalf("version 2 preview kept an unresolved parent issue: %+v", preview.Issues)
 		}
 	}
 	var result personal.ImportResult
@@ -69,8 +69,8 @@ func TestAuditPersonalTransferSeriesViewListsRestoredEpisode(t *testing.T) {
 		t.Fatalf("restore = %+v, want the episode imported", result)
 	}
 	for _, issue := range result.Issues {
-		if issue.Reason == "relationships_not_imported" || issue.Reason == "parent_required" {
-			t.Fatalf("v3 import kept an unresolved parent issue: %+v", result.Issues)
+		if issue.Reason == "relationships_not_imported" {
+			t.Fatalf("version 2 import kept an unresolved parent issue: %+v", result.Issues)
 		}
 	}
 

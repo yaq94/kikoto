@@ -415,7 +415,6 @@ export const personalHans = {
         identity_conflict: "身份引用存在矛盾，本对象已跳过。",
         unregistered_source: "已知来源尚未登记，请先登记后导入此记录。",
         source_reference_retained: "已保留此来源引用供后续传输，未建立来源连接。",
-        parent_required: "版本 3 的此单集没有父系列。本集已跳过，不会作为独立作品恢复。",
         parent_cycle: "此单集的父链回到自身。条目已跳过，不写入关系。",
         parent_conflict: "备份中的父系列与现有共享归属矛盾。本集已跳过，现有归属保持不变。",
         relationships_not_imported:
