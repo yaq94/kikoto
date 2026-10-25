@@ -15,7 +15,7 @@
 
 ## 数据模型与迁移
 
-在 096 提交后使用计划编号 099（若 097 用于 095 修复，则按连续链调整）：
+在 096 提交后使用计划编号 099（097 是 095 重建，098 是目录调度；迁移运行器拒绝跳号，实测 `expected version 097, found 099`）。21 的 099 只能在前两项已提交并存在后落地；不得为提前测试翻译而临时复制 099 到其他编号。
 
 - `content_translation` 增加 `config_key TEXT NOT NULL DEFAULT ''`；索引 `(language, entity_kind, field, config_key, entity_id)`，并为短查询增加覆盖索引 `(language, entity_kind, field, id, translated_text)`。
 - `translation_prefill_state` 增加 `config_key TEXT NOT NULL DEFAULT ''`、`cursor_kind TEXT NOT NULL DEFAULT 'entry'`、`cursor_field TEXT NOT NULL DEFAULT 'title'`、`cursor_language TEXT NOT NULL DEFAULT ''`、`cursor_id INTEGER NOT NULL DEFAULT 0`；保留 `status`、`last_error`、`updated_at`。游标顺序固定为 `(kind, field, id, language)`。失败不是“跳过”：先把失败行写入持久 retry 表，再推进游标；失败行由独立 retry 队列按 `next_retry_at` 重试，不能因为游标继续而丢失该语言，也不能因为一个永久失败把整个扫描停在同一实体。
