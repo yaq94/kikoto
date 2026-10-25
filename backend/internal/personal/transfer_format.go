@@ -140,7 +140,7 @@ func ParseImport(request ImportRequest) (Backup, error) {
 		if err := DecodeJSON(request.Data, &backup, true); err != nil {
 			return backup, err
 		}
-		if backup.Format != "kikoto-user-data" || (backup.Version != 1 && backup.Version != 2 && backup.Version != 3) {
+		if backup.Format != "kikoto-user-data" || (backup.Version != 1 && backup.Version != 2) {
 			return backup, ErrInvalid
 		}
 	case "kikoeru":
@@ -213,16 +213,12 @@ func validateBackup(b *Backup) error {
 			if !validBackupIdentity(w.Identity) {
 				return ErrInvalid
 			}
-			if b.Version == 2 && w.Identity.Parent != nil {
-				return ErrInvalid
-			}
-			// A malformed v3 parent blocks only its entry in the import plan, so
-			// other records still import. A v2 parent has no defined meaning and
-			// rejects the document.
-			// Parent references are validated per entry by the import plan, so a
-			// contradictory parent blocks only its episode. They are deliberately
-			// not part of this document-wide uniqueness set: a parent series and
-			// its top-level BackupWork legitimately share the same series alias.
+			// A malformed parent blocks only its entry in the import plan, so
+			// other records still import; the parent's ref, kind and title are
+			// validated there before any relation is written. Parent references
+			// are deliberately not part of this document-wide uniqueness set: a
+			// parent series and its top-level BackupWork legitimately share the
+			// same series alias.
 			for _, ref := range append([]string{w.Identity.Ref}, w.Identity.References...) {
 				if references[ref] {
 					return ErrInvalid

@@ -46,8 +46,8 @@ func exportIdentity(ctx context.Context, tx *sql.Tx, work int64, includeParent b
 	}
 	if parent == nil {
 		// No persisted relation exists to carry. The entry is still exported so
-		// the review is not lost; a v3 import reports parent_required rather
-		// than inventing a series from the title.
+		// the review is not lost; the import reports that the parent was not
+		// restored rather than inventing a series from the title.
 		return i, nil
 	}
 	i.Parent = parent

@@ -27,7 +27,7 @@ func (s Store) Export(ctx context.Context, user int64) ([]byte, error) {
 		return nil, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	b := Backup{Format: "kikoto-user-data", Version: 3, ExportedAt: time.Now().UTC().Format(time.RFC3339), Works: []BackupWork{}, Tags: []BackupTag{}, Playlists: []BackupPlaylist{}}
+	b := Backup{Format: "kikoto-user-data", Version: 2, ExportedAt: time.Now().UTC().Format(time.RFC3339), Works: []BackupWork{}, Tags: []BackupTag{}, Playlists: []BackupPlaylist{}}
 	// Stop while reading, before many large notes can accumulate in memory.
 	// JSON framing and escaping are checked against the exact budget below.
 	textBudget := MaxTransferBytes

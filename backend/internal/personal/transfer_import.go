@@ -60,7 +60,6 @@ type ImportResult struct {
 
 type importPlan struct {
 	preview              ImportPreview
-	version              int
 	works                map[string]int64
 	matches              map[string]identityMatch
 	reviewConflicts      map[int64]bool

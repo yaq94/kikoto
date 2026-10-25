@@ -27,8 +27,8 @@ func TestPersonalTransferExportsEveryEvaluationLevel(t *testing.T) {
 	}
 	var backup map[string]any
 	workReferenceRequest(t, app, admin, "GET", "/api/user-data/export", "", 200, &backup)
-	if backup["version"] != float64(3) {
-		t.Fatalf("portable backup version = %v, want 3", backup["version"])
+	if backup["version"] != float64(2) {
+		t.Fatalf("portable backup version = %v, want 2", backup["version"])
 	}
 	works := backup["works"].([]any)
 	if len(works) != 4 {
