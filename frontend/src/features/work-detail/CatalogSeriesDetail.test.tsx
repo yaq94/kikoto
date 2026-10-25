@@ -3,11 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import "@/i18n";
 import type { CatalogSeriesEpisode } from "@/lib/api";
-import {
-  CatalogSeriesEpisodeItem,
-  catalogSeriesEpisodeIntent,
-  openCatalogSeriesEpisode,
-} from "./CatalogSeriesDetail";
+import { CatalogSeriesEpisodeItem, catalogSeriesEpisodeIntent, openCatalogSeriesEpisode } from "./CatalogSeriesDetail";
 
 vi.mock("@/app/workDetailNavigation", () => ({ openWorkDetail: vi.fn() }));
 

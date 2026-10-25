@@ -171,9 +171,7 @@ test("rejects allowlist entries without a reason or with a non-placeholder patte
   delete missingReason.reason;
   assert.throws(
     () =>
-      parseAllowlist(
-        JSON.stringify({ version: 1, entries: [missingReason] }),
-      ),
+      parseAllowlist(JSON.stringify({ version: 1, entries: [missingReason] })),
     /reason/u,
   );
 

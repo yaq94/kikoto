@@ -27,13 +27,13 @@ const productionRecordIdPattern =
 const syntheticContextPattern = /(?:fixture|synthetic|合成)/iu;
 const dbByteCountPattern =
   /\bkikoto[A-Za-z0-9._-]*\.db\b[^\n]{0,120}\b\d[\d,]*\s*(?:B|bytes?|字节)/iu;
-const sha256Pattern =
-  /\bsha(?:-|\s)?256\b[^\n]{0,80}\b[0-9a-f]{64}\b/iu;
+const sha256Pattern = /\bsha(?:-|\s)?256\b[^\n]{0,80}\b[0-9a-f]{64}\b/iu;
 const dockerLogsRedirectPattern =
   /\bdocker\s+logs\b[^\n]*?(?:>>?|tee\s+(?:-a\s+)?)\s*(?:["'`])?([^\s"'`|;&]+)/giu;
 const syntheticAllowlistPattern =
   /(?:(?:fixture|synthetic|合成)[-_ ]?[A-Za-z0-9]|\bRJ0{6}\d{2}\b|\b(?:entry[_-]?id|source[_-]?id)\s*[:=]\s*[0-3]\b)/iu;
-const genericTemplateMarkerPattern = /(?:generic command template|通用命令模板)/iu;
+const genericTemplateMarkerPattern =
+  /(?:generic command template|通用命令模板)/iu;
 const fencePattern = /^\s*(`{3,}|~{3,})(.*)$/u;
 const genericPlaceholderPrefixPattern =
   /^(?:\/path\/to\/|<[A-Za-z][A-Za-z0-9_-]*>)/u;
@@ -280,16 +280,16 @@ export function parseAllowlist(contents) {
     }
     const file = validateAllowlistFile(entry.file, entryIndex);
     if (
-      ![RULE.PRODUCTION_PATH, RULE.RELEASE_NUMBER, RULE.PRODUCTION_RECORD_ID, RULE.DEPLOYMENT_DETAIL].includes(
-        entry.rule,
-      )
+      ![
+        RULE.PRODUCTION_PATH,
+        RULE.RELEASE_NUMBER,
+        RULE.PRODUCTION_RECORD_ID,
+        RULE.DEPLOYMENT_DETAIL,
+      ].includes(entry.rule)
     ) {
       throw new Error(`allowlist entry ${entryIndex} has an invalid rule`);
     }
-    if (
-      typeof entry.pattern !== "string" ||
-      entry.pattern.trim() === ""
-    ) {
+    if (typeof entry.pattern !== "string" || entry.pattern.trim() === "") {
       throw new Error(`allowlist entry ${entryIndex} has an invalid pattern`);
     }
     if (
@@ -321,7 +321,9 @@ export function parseAllowlist(contents) {
     }
     const key = `${file}\0${entry.rule}\0${entry.pattern}`;
     if (seen.has(key)) {
-      throw new Error(`allowlist entry ${entryIndex} duplicates an earlier entry`);
+      throw new Error(
+        `allowlist entry ${entryIndex} duplicates an earlier entry`,
+      );
     }
     seen.add(key);
     entries.push({
@@ -405,11 +407,7 @@ function loadAllowlist(root = repositoryRoot) {
   }
 }
 
-export function checkEvidenceFiles(
-  files,
-  entries,
-  root = repositoryRoot,
-) {
+export function checkEvidenceFiles(files, entries, root = repositoryRoot) {
   const findings = [];
   for (const file of files) {
     const fullPath = path.resolve(root, file);

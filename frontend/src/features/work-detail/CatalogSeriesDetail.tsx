@@ -30,10 +30,7 @@ export function openCatalogSeriesEpisode(
 ) {
   const intent = catalogSeriesEpisodeIntent(episode);
   if (!intent) return false;
-  return openWorkDetail(
-    intent,
-    { returnTo: `/catalog-series/${seriesId}`, returnLabel: seriesTitle },
-  );
+  return openWorkDetail(intent, { returnTo: `/catalog-series/${seriesId}`, returnLabel: seriesTitle });
 }
 
 export function CatalogSeriesEpisodeItem({

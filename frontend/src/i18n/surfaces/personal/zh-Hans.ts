@@ -418,7 +418,8 @@ export const personalHans = {
         parent_required: "版本 3 的此单集没有父系列。本集已跳过，不会作为独立作品恢复。",
         parent_cycle: "此单集的父链回到自身。条目已跳过，不写入关系。",
         parent_conflict: "备份中的父系列与现有共享归属矛盾。本集已跳过，现有归属保持不变。",
-        relationships_not_imported: "版本 2 文件没有父系列信息。单集已作为独立对象恢复，系列成员须通过资料编辑流程确认。",
+        relationships_not_imported:
+          "版本 2 文件没有父系列信息。单集已作为独立对象恢复，系列成员须通过资料编辑流程确认。",
         playlist_preserved: "列表包含无法归属的引用，保留整个列表。",
       },
       previewCounts: {

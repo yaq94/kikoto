@@ -428,10 +428,8 @@ export const personalKorean = {
         identity_conflict: "식별 참조가 충돌하여 이 항목을 건너뜁니다.",
         unregistered_source: "알려진 소스가 등록되지 않았습니다. 먼저 등록하세요.",
         source_reference_retained: "전송용 소스 참조를 보관하며 소스 연결은 만들지 않습니다.",
-        parent_required:
-          "버전 3 에피소드에 부모 시리즈가 없습니다. 단독 작품으로 복원하지 않고 건너뜁니다.",
-        parent_cycle:
-          "에피소드의 부모 체인이 에피소드 자신으로 돌아옵니다. 항목을 건너뛰고 관계를 쓰지 않습니다.",
+        parent_required: "버전 3 에피소드에 부모 시리즈가 없습니다. 단독 작품으로 복원하지 않고 건너뜁니다.",
+        parent_cycle: "에피소드의 부모 체인이 에피소드 자신으로 돌아옵니다. 항목을 건너뛰고 관계를 쓰지 않습니다.",
         parent_conflict:
           "백업의 부모 시리즈가 기존 공유 소속과 모순됩니다. 에피소드를 건너뛰며 기존 소속은 바꾸지 않습니다.",
         relationships_not_imported:
