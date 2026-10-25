@@ -353,12 +353,12 @@ matches the backup.
 | v0.8.0 | `059` | `059_v0.8.0.sql` |
 | v0.8.1, v0.8.2 | `066` | `066_v0.8.1.sql` |
 | v0.8.3 | `068` | `068_v0.8.3.sql` |
-| development build (unreleased) | `097` | Development baseline only; `compat/097_dev.sql` |
+| development build (unreleased) | `098` | Development baseline only; `compat/098_dev.sql` |
 
-The remediation plan adds `098` through `100` after the current tracked head.
-`096_catalog_episode_pending.sql` and `097_source_field_translation_foreign_key.sql`
-are committed; `098` is the next numbered migration and must not be created out
-of sequence.
+The remediation plan adds `099` and `100` after the current tracked head.
+`096_catalog_episode_pending.sql`, `097_source_field_translation_foreign_key.sql`
+and `098_catalog_schedule.sql` are committed; `099` is the next numbered
+migration and must not be created out of sequence.
 
 Per-release upgrade steps are in the [release notes](../history/index.md).
 
