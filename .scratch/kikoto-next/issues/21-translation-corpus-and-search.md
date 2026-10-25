@@ -5,7 +5,7 @@
 **Blocked by:** [03：简繁转换与受保护名称保持](03-traditional-chinese-conversion.md)（02 为传递前置）；[07](07-openlist-first-playable-slice.md)（entry 实体）；[08](08-recoverable-full-source-index.md)（有效集合与准入）；[20](20-catalog-sync-and-admission.md)（098 迁移）。
 
 **Status:** ready-for-agent
-**Implementation:** in-progress；`f3dc3a41` 补齐 099 配置键、有效语料覆盖、持久 prefill 失败、保留规则与严格语言搜索；098/099 已合入集成分支，`compat/099_dev.sql` 已生成。仍缺短查询 keyset 与 D-16 join、`failed` 状态、覆盖分项、可复现基准与真实迁移链重跑。
+**Implementation:** in-progress；`f3dc3a41` 补齐 099 配置键、有效语料覆盖、持久 prefill 失败、保留规则与严格语言搜索；`0c945b3e` 增加 102 的 `failed` 状态枚举与失败表 `(config_key, source_hash)` 索引；`bc880d91` 把本地、远程与 bench 的 1–2 字查询统一到共享短查询生成器，并给远程短查询补上 D-16 准入。098/099/102 已合入集成分支，`compat/102_dev.sql` 已生成。仍缺短查询 keyset `after` 续扫、D-16 join 的目标规模证据、应用侧写入 `failed` 终态、45.6 万行目标环境基准、编号/标题等值与短查询 p95 证据，以及真实迁移链重跑。
 
 **依据:** [正式规格](../spec.md)、[整改计划](../review-remediation-plan.md)、[ADR-0006](../../../docs/decisions/ADR-0006-catalog-remediation-and-translation-consistency.md)、翻译工作包 D-27/D-29/D-30。
 
@@ -86,19 +86,21 @@ prefill 必须按 `entity_kind × field` 枚举：entry 的 title、series 的 t
 
 ## 验收清单
 
+本票整体保持 `in-progress`。下面已勾选项只表示对应子项在当前分支有本地测试或代码证据，不代表整票通过，也不替代 45.6 万行目标环境基准和真实迁移链重跑。
+
 - [x] 软预算不删除当前 title／description 译文；可重建缓存、superseded、retired 的边界有 H 测试。
 - [x] 覆盖统计关联当前有效实体、当前字段、当前 config_key、当前 source_text；连续失败、跳过、退役和配置变化不能显示 complete。
-- [x] prefill 游标包含语言维度；失败先持久化再推进，重启后 retry 队列仍会重试该语言，不能被后续实体推进掩盖；永久失败不会阻塞其他实体。
+- [x] prefill 游标包含语言维度；失败先持久化再推进，重启后 retry 队列仍会重试该语言，不能被后续实体推进掩盖；永久失败不会阻塞其他实体。102 已允许状态行写 `failed`，但 worker 目前仍停在 `running` 加 `last_error`，该终态仍待实现。
 - [x] 目标语言搜索严格只返回目标语言译文或原生同语言内容；`origin` 才出现原文；编号查询不受语言过滤。
 - [x] work 的标题与简介、entry/series 的标题都参与目标语言搜索与覆盖；entry 不伪造 description；标签、目录名不进入搜索索引。
-- [ ] 1–2 字查询覆盖完整有效集合，明确结果数上限和 p95，不再只扫描每语言最新 50,000 行。当前是三套分段实现（`library/query.go` 的递归 CTE、`content_translation_store.go` 的 Go 循环、`openlist_catalog.go` 的 UNION ALL），没有真正的 keyset 续扫，也没有 join D-16 准入；49.45 ms 来自有缺陷的 bench，不能作为证据。
+- [ ] 1–2 字查询覆盖完整有效集合，明确结果数上限和 p95，不再只扫描每语言最新 50,000 行。`bc880d91` 已把本地、远程与 bench 统一到 `library.ShortTranslationSearchSQL`，远程入口用 `catalogEntryAdmittedSQL` 作为行范围的一部分；仍缺 keyset 续扫的 `after` 参数、D-16 join 的目标规模证据和目标环境 p95，49.45 ms 来自旧的有缺陷 bench，不能作为验收数据。
 - [x] 本地与远程搜索、简繁归一化、动态内容、重启和失败恢复 H/R/F 覆盖。
-- [ ] modernc SQLite、45.6 万行基准。`backend/cmd/translation-bench/main.go` 当前每个实体只落一种语言、`ORDER BY random()` 采样、FTS/短查询固定 `zh-Hans`，抽到其他语言时近乎零命中；默认 `--rows` 也不是 456,000。29.07 / 49.45 ms 不可复现，需重写语料与采样后重跑。
-- [ ] “精确命中”按两条用户路径分别测量。bench 仍是 `WHERE cache_key=?`，正是本票禁止的写法；需改为 `primary_code` 等值与目标语言标题整串等值两条查询。
+- [ ] modernc SQLite、45.6 万行基准。`bc880d91` 已重写语料与采样：每个实体写四种模型语言、按 id 确定性取样、默认 `--rows 456000`，短查询调用共享生成器；仍缺在目标硬件（2 vCPU／2 GiB、warm、≥20 样本）上的实际运行结果，旧 29.07 / 49.45 ms 不可复现，不能作为验收数据。
+- [ ] “精确命中”按两条用户路径分别测量并留证。bench 已改为 `primary_code` 等值与目标语言标题整串等值两条查询，不再使用 `cache_key`；仍需在目标语料上跑出 p95，并确认标题查询走预期索引。
 
 **测试入口:** H、R、少量 F、必要 U；真实模型与规模证据由 24 汇总。
 
-**本地验证限制：** 分支开发期通过 `internal/migrationfixture` 注入 no-op 097/098 占位；占位不进仓库。098 已由 `cad25804` 合入，099 已由 `f3dc3a41` 合入、`compat/099_dev.sql` 已由 `cab1f2f7` 生成；真实链上的 storage 与 httpapi 重跑仍未完成，完成前不得把本票标为 `verified-local`。
+**本地验证限制：** 分支开发期通过 `internal/migrationfixture` 在版本缺失时注入 no-op 097/098 占位；占位不进仓库。098 已由 `cad25804` 合入，099 已由 `f3dc3a41` 合入，101/102 已由 `0c945b3e` 合入，`compat/102_dev.sql` 已生成；真实链上的 storage 与 httpapi 重跑仍未完成，完成前不得把本票标为 `verified-local`。
 
 **迁移设计稿处置：** 另一 worktree 的 099 设计稿给 `source_catalog_entry` 加 `description`，与第 44 行、`docs/architecture/data-model.md` 和 OpenList `Object` 结构冲突，落地时删除该列；`cursor_language` 默认值统一为 `''`，游标顺序统一为 `(kind, field, id, language)`。测试编号使用 `testfixture.WorkCodeAt`，超过 400 条使用 `HighCardinalityWorkCodeAt`。
 

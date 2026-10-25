@@ -1,7 +1,7 @@
 # Release Rollback
 
 This page gives the operator procedure for rolling back a Kikoto deployment
-whose schema reached `100`. It states which image can read which schema, how to
+whose schema reached `102`. It states which image can read which schema, how to
 take and restore a database snapshot, and what to check afterwards. It records
 no deployment result; run the commands on the target host and keep their output
 with the release record.
@@ -13,17 +13,19 @@ a database snapshot and starts a binary whose packaged migration catalog ends
 at that snapshot's schema. The image names are the ones used by the current
 next-release deployment; prefer a digest when the deployment recorded one.
 
-| Image | Highest packaged migration | `094` | `095` | `096` | `097` | `098` | `099` | `100` |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| current build | `100` | to `100` | to `100` | to `100` | to `100` | to `100` | to `100` | Keeps `100` |
-| 099 image | `099` | to `099` | to `099` | to `099` | to `099` | to `099` | Keeps `099` | Refuses |
-| 098 image | `098` | to `098` | to `098` | to `098` | to `098` | Keeps `098` | Refuses | Refuses |
-| 097 image | `097` | to `097` | to `097` | to `097` | Keeps `097` | Refuses | Refuses | Refuses |
-| 095 image | `095` | to `095` | Keeps `095` | Refuses | Refuses | Refuses | Refuses | Refuses |
-| 094 image | `094` | Keeps `094` | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses |
-| 092 image | `092` | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses |
-| 084 image | `084` | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses |
-| 083 image | `083` | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses |
+| Image | Highest packaged migration | `094` | `095` | `096` | `097` | `098` | `099` | `100` | `101` | `102` |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| current build | `102` | to `102` | to `102` | to `102` | to `102` | to `102` | to `102` | to `102` | to `102` | Keeps `102` |
+| 101 image | `101` | to `101` | to `101` | to `101` | to `101` | to `101` | to `101` | to `101` | Keeps `101` | Refuses |
+| 100 image | `100` | to `100` | to `100` | to `100` | to `100` | to `100` | to `100` | Keeps `100` | Refuses | Refuses |
+| 099 image | `099` | to `099` | to `099` | to `099` | to `099` | to `099` | Keeps `099` | Refuses | Refuses | Refuses |
+| 098 image | `098` | to `098` | to `098` | to `098` | to `098` | Keeps `098` | Refuses | Refuses | Refuses | Refuses |
+| 097 image | `097` | to `097` | to `097` | to `097` | Keeps `097` | Refuses | Refuses | Refuses | Refuses | Refuses |
+| 095 image | `095` | to `095` | Keeps `095` | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses |
+| 094 image | `094` | Keeps `094` | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses |
+| 092 image | `092` | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses |
+| 084 image | `084` | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses |
+| 083 image | `083` | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses |
 
 Numbered migrations have no down path. A rollback restores a snapshot taken
 before the upgrade and starts an image whose packaged catalog ends at that
@@ -74,13 +76,20 @@ display cache for remote titles, tags and directory names; it has no FTS index
 and is bounded by the same translation cache budget as `content_translation`.
 `096` adds pending episode staging and one publication-state row per source and
 parent; a staged split remains outside public reads until it is switched to
-`published`.
+`published`. `097` rebuilds the display cache with a cascading source
+reference. `098` adds the persisted catalog schedule. `099` adds the
+translation config key and prefill cursor columns. `100` adds
+`work.parent_work_id` and its index. `101` adds the parent-backfill report and
+an idempotent backfill. `102` rebuilds `translation_prefill_state` to allow the
+`failed` status and indexes the prefill failure table by
+`(config_key, source_hash)`.
 
-No migration deletes or rewrites card or personal rows. A `068`–`095`
+No migration deletes or rewrites card or personal rows. A `068`–`101`
 snapshot restored into the current image upgrades along the numbered chain; a
-`096` database needs a binary that packages `096`. An `095` binary refuses
-`096`, an `094` binary refuses `095`, an `083` binary must be paired with an
-`083` snapshot, and an `084` binary refuses `085` and later.
+`102` database needs a binary that packages `102`. A `101` binary refuses
+`102`, a `100` binary refuses `101`, an `095` binary refuses `096`, an `094`
+binary refuses `095`, an `083` binary must be paired with an `083` snapshot,
+and an `084` binary refuses `085` and later.
 
 ## Back Up Before A Deployment
 
@@ -110,6 +119,15 @@ the snapshot and the previous image reference (`KIKOTO_IMAGE` or the Compose
 override) together. The `rollbacks/` directory is outside `config/`, so the
 copy does not recurse into itself.
 
+Keep a named snapshot for every schema the rollback matrix lists:
+`rollbacks/schema-095`, `rollbacks/schema-096`, `rollbacks/schema-097`,
+`rollbacks/schema-098`, `rollbacks/schema-099`, `rollbacks/schema-100`,
+`rollbacks/schema-101` and `rollbacks/schema-102`. The automatic
+pre-migration backup is named after the schema it leaves, so copy it to the
+matching `schema-NNN` directory before the next upgrade overwrites the
+reference. A snapshot only helps if its image is still available; record the
+image digest beside the directory.
+
 ## Restore A Schema 79 Snapshot
 
 Use this to return to the `079` image.
@@ -134,10 +152,10 @@ uses one can wait with `up -d --wait`. The production stack in this repository
 does not define that check; poll `/health` as shown under
 [Verify The Restored Instance](#verify-the-restored-instance).
 
-## Restore A Schema 95 Through 100 Snapshot
+## Restore A Schema 95 Through 102 Snapshot
 
 Use this to return to the current build after a failed start or to recover a
-damaged `095` through `100` database. Use the image that packages the snapshot's
+damaged `095` through `102` database. Use the image that packages the snapshot's
 schema; to return to schema `094`, `092` or `083`, restore that schema's
 snapshot and start an image that packages it.
 
@@ -192,6 +210,11 @@ Then confirm:
    reads a translated title. A failed generation leaves no new row.
 6. A `095` or `096` instance reports the scan progress endpoint below 20 ms with the
    catalog counters and `?exact=1` below 200 ms on the production copy.
+7. A `101` instance reads `work.parent_work_id` and the
+   `work_parent_backfill_report` table. A `102` instance also reads the rebuilt
+   prefill state. In both cases the status query returns the snapshot's version
+   and the parent report does not contain rows for works that already have a
+   parent.
 
 No rollback helper is packaged in this repository. Run the manual procedure
 above; keep the snapshot directory, checksum and previous image reference in the

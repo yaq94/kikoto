@@ -12,17 +12,17 @@
 
 **审查快照：** 审查时文档基线为 `6122b7bf`，代码基线为 `301e6c63`；当时主工作区已提交 `0dee19ea`、`6dee3087`、`134f7c90`。
 
-**当前集成状态（2026-10-25 复核）：** 集成分支 `codex/kikoto-catalog-remediation` 已到 `60951b10`，迁移头 `100`（`compat/099_dev.sql`、`compat/100_dev.sql` 已生成）。工单 20 的 098 状态机、系列准入与 episode publication 事务内删除 mapping 已合入；21 的 099 与严格语言搜索已由 `f3dc3a41` 合入；22 的迁移 100 与 `work.parent_work_id` 已由 `64b25252` 合入，但导出格式升到 v3，与已确认的 v2 决定冲突；23 只剩文档收口；24 未开始。逐项结论见 [审查记录](audit-20261025-review.md)。
+**当前集成状态（2026-10-26 复核）：** 集成分支 `codex/kikoto-catalog-remediation` 已到 `bc880d91`，迁移头 `102`（`101_work_parent_backfill_report.sql`、`102_translation_prefill_status.sql` 已提交，`compat/102_dev.sql` 已生成）。工单 20 的 098 状态机、系列准入与 episode publication 事务内删除 mapping 已合入；21 的 099/102、严格语言搜索与共享短查询生成器已合入，远程短查询已带 D-16 准入；22 的迁移 100 与 `work.parent_work_id` 已合入，导出格式已裁决回到 v2 + 可选 `parent`，代码与用户页由 22 子代理收口；23 只剩文档收口；24 未开始。逐项结论见 [审查记录](audit-20261025-review.md)。
 
-交接复核时（2026-10-24 至 2026-10-25）主仓库曾前进到 `d77e37e2`：`6b4a02ec` 提交了 `096_catalog_episode_pending.sql`、`compat/096_dev.sql` 和系列暂存实现，`728651a6` 提交了 v2 可选 `parent` 的个人传输实现，`47df9c11` 提交了 wall-clock/partial 调度修复，`9bafa1ea` 合并了部分整改文档。它们都不属于本审查分支，也未被本票验收；后续实现必须以实际 SHA、测试和证据重新核对，不能把“已提交”当成“已满足合同”。
+交接复核时（2026-10-24 至 2026-10-25）主仓库曾前进到 `d77e37e2`：`6b4a02ec` 提交了 `096_catalog_episode_pending.sql`、`compat/096_dev.sql` 和系列暂存实现，`728651a6` 提交了 v2 可选 `parent` 的个人传输实现，`47df9c11` 提交了 wall-clock/partial 调度修复，`9bafa1ea` 合并了部分整改文档。这些提交均已并入当前分支，但仍需在当前候选上重新验收；后续实现必须以实际 SHA、测试和证据重新核对，不能把“已提交”当成“已满足合同”。
 
 ## 0. 已核实的裁决
 
-1. **D-16 规则已实现，跨层门禁仍需收口。** `134f7c90` 加入三条阈值；`531acdf4` 已把 SQL 常量改为引用 `catalogadmission.Probe*`、修正旧注释、给系列详情加 pending 与准入、把 episode mapping 删除移入发布事务。仍缺：单卡个人评价写入、播放准备、媒体流、作品目录标签的完整准入，系列零可见成员时返回 200 空列表，以及 42k p95。
-2. **严格目标语言搜索已实现，残余在短查询路径。** 远程显示语言搜索已不再并入原文 FTS、原文标题或文件名；编号查询独立于语言过滤。仍然存在的是：1–2 字查询没有真正的 keyset 续扫，本地、远程、bench 各有一套分段实现；远程短查询与长查询都没有 join D-16 准入。以下第 5、6 条按审查基线保留，用于说明为什么必须改成当前形态。
-3. **持久语料仍被预算淘汰。** `content_translation_retention.go` 会删除 model 行，包括当前搜索所需的标题；`translation_prefill.go` 的覆盖率只按语言统计历史行，不能证明当前有效条目、原文、模型和模板已覆盖。prefill 目前只枚举 entry，不枚举 series 与 work。
-4. **空库单集父级在审查基线上未恢复；主仓库后续实现仍未闭环。** `transfer_plan.go` 原来对未知 episode 只报告 `relationships_not_imported`，随后 `transfer_import.go` 创建独立 work。主仓库 `728651a6` 已加入 v2 可选 `parent`，但它通过合成 `source_catalog_entry`／`catalog_series_member` 恢复，而系列详情查询会过滤 `file_source_id IS NULL` 的成员；因此“系列卡能列出恢复的单集”仍无证据。该实现与下面 7.1 的 `work.parent_work_id` 合同也不一致，不能视为 22 完成。
-5. **ADR 与迁移治理已修正到当前链。** 来源字段缓存 ADR 为 0007；095 冻结为两个已发布指纹；096–100 均已提交，迁移头 100。ADR-0006 已声明同时修正 ADR-0007 的 schema 与繁体表述；099 与 100 已落地，剩余是当前候选上的复验。
+1. **D-16 规则已实现，跨层门禁仍需收口。** `134f7c90` 加入三条阈值；`531acdf4` 已把 SQL 常量改为引用 `catalogadmission.Probe*`、修正旧注释、给系列详情加 pending 与准入、把 episode mapping 删除移入发布事务。仍缺：单卡个人评价写入、播放准备、媒体流、作品目录标签的完整准入，系列零可见成员时返回 200 空列表，零文件与旧 generation 集合统一，目录优先 sync 的 due 推进顺序，诊断阈值过滤，以及 42k p95。
+2. **严格目标语言搜索已实现，残余在短查询路径。** 以下描述的是审查基线 `301e6c63` 的历史状态，用于说明为什么必须统一生成器：远程显示语言搜索当时仍并入原文 FTS、原文标题或文件名，1–2 字查询在本地、远程、bench 各有一套分段实现，远程短查询与长查询都没有 join D-16 准入。当前分支已由 `f3dc3a41` 移除原文回退，并由 `bc880d91` 合并共享短查询生成器、给远程短查询补上 D-16 准入；当前残余是短查询 keyset 续扫（缺 `after` 游标）与 D-16 join 的真实规模证据、`failed` 终态未写入、45.6 万行目标环境基准与真实迁移链重跑，详见[工单 21](issues/21-translation-corpus-and-search.md)。
+3. **持久语料在审查基线上会被预算淘汰；当前已改为软预算告警。** 审查时 `content_translation_retention.go` 会删除 model 行，包括当前搜索所需的标题；prefill 的覆盖率也只按语言统计历史行，且只枚举 entry。当前分支已把当前 title／description 行纳入不可淘汰的持久语料，覆盖率改为关联有效实体、当前字段与 `config_key`；超限只报 `over_budget`。剩余证据是真实规模基准与当前候选复验。
+4. **空库单集父级在审查基线上未恢复；当前已按 `work.parent_work_id` 实现。** 审查时 `transfer_plan.go` 对未知 episode 只报告 `relationships_not_imported`，随后创建独立 work。`64b25252` 已合入迁移 100、父级写入与系列详情回退，`catalogEntryId=0`、`workId` 非空的单集可以在没有成员行时列出；导出格式已裁决为 v2 + 可选 `parent`，代码、用户页与多父级/权限测试由 22 子代理收口。
+5. **ADR 与迁移治理已修正到当前链。** 来源字段缓存 ADR 为 0007；095 冻结为两个已发布指纹；096–102 均已提交，迁移头 102，`compat/102_dev.sql` 已生成。ADR-0006 已声明同时修正 ADR-0007 的 schema 与繁体表述；099、100、101、102 已落地，剩余是当前候选上的真实迁移链复验。
 6. **发布依赖已固定。** 24 依赖 17–23；17 只依赖 03、05、09、10、14、15、16、18、19，不再把 20–24 写进 17 的阻塞边。20–24 是整改子项，不是原 AC 的替代主责。
 7. **已提交证据含敏感信息。** 21 号目录证据含生产路径、数据库路径和真实作品编号；22 号 dry-run JSON 是生产记录回放。公开证据必须脱敏或改为合成报告；`make sensitive-check` 只扫 diff，不能作为已提交证据的脱敏证明。
 
@@ -43,7 +43,7 @@
 | 工单 | 本票可写 | 只读或等待交接 |
 | --- | --- | --- |
 | 20 | `source_catalog_daily.go`、`source_catalog_sync.go`、`source_catalog_schedule.go`、`catalog_series.go` 与 `catalog_episode_staging*.go` 的读取/恢复门禁、对应测试、`catalogadmission/` 边界测试 | `openlist_catalog.go` 的准入 SQL 由 `134f7c90` 交付；不要重写；主仓库 `6b4a02ec` 的系列暂存主体已提交但不是本票产物，其他未提交调度文件不可搬入 |
-| 21 | `content_translation_store.go`、`content_translation_retention.go`、`translation_prefill.go`、`library/query.go`、`openlist_catalog.go` 的搜索分支、对应测试、`docs/development/translation.md` | 先合入主会话已提交的有界写入修复 `6dee3087`；未提交的 `content_translation_*`、`openlist_catalog.go` 不得直接搬运 |
+| 21 | `content_translation_store.go`、`content_translation_retention.go`、`translation_prefill.go`、`library/query.go`、`library/short_search.go`、`openlist_catalog.go` 的搜索分支、`cmd/translation-bench`、对应测试、`docs/development/translation.md` | 先合入主会话已提交的有界写入修复 `6dee3087`；短查询只维护 `library/short_search.go` 一处生成器，本地、远程与 bench 都调用它，不得再各写一套分段 SQL |
 | 22 | `backend/internal/personal/transfer_*`、HTTP 传输测试、work 父级迁移 | `catalog_series` 的来源发现逻辑归 11；不要猜测或重建来源成员 |
 | 23 | `catalogprune` 回归测试、`backend/cmd/kikoto/main.go` 的早期 preflight 调用、`backend/internal/storage/migration.go` 或新增 preflight 文件、备份实现、`docs/architecture/data-model.md`、`docs/development/release-rollback.md`、`docs/development/migrations.md`、指定测试夹具、证据文件 | 译文保留行为和 `docs/development/translation.md` 归 21；096 已提交，097 固定为下一个连续编号 |
 | 24 | `execution.md`、17–24 的发布证据、部署与回滚记录 | 不修改 01–23 的功能代码；只接收已提交候选 |
@@ -114,18 +114,7 @@ CREATE INDEX source_catalog_schedule_due
 
 ### 5.2 派发状态机
 
-1. 在 `BEGIN IMMEDIATE` 事务中读取 `source_catalog_schedule`、`source_catalog_scan`、当前 `workflow_run`、`source_catalog_sync_run` 和 source 状态；source 不满足 `enabled=1 AND source_type='openlist'` 时直接返回。
-2. **先检查运行中状态。** 已有 `queued/running` 的 full 或 `running` 的 sync：不创建第二个任务；`manual_pending`、到期标记和 `resume_full_pending` 只保留；sync 运行中 weekly 到期时设置 `resume_full_pending=1`，不得在 sync 内创建 full。该分支必须先于 `resume_full_pending` 创建分支。
-3. 若 `now < deferred_until`，直接返回。若 `deferred_until` 已过，重新检查低空间、维护 hold 和磁盘未知；条件仍存在时写回 `deferred_until=now+1h` 和 `deferred_reason`，不能把时间到期当作条件解除；条件解除后才清空延后字段。
-4. 若 `resume_full_pending=1`：`pending_full_run_id` 指向的 full 仍 queued/running 时保留并返回；succeeded 时推进 `weekly_due_at` 并清空 `resume_full_pending`／`pending_full_run_id`；failed/cancelled 时只清空 `pending_full_run_id`，保留 pending 并本轮返回，下一轮再创建；没有 pending run 且没有 queued/running full 时创建 weekly full，写入 `pending_full_run_id`，但保留 `resume_full_pending=1`，创建成功不等于完成。
-5. 否则计算 `effective_due = min(daily_due_at, weekly_due_at)`；若 `weekly_due_at <= daily_due_at` 且已到期，选择 `weekly`（全量对账），否则选择 `daily`（目录优先增量）。两者同时到期时只创建一个任务。
-6. 没有运行任务时才创建任务，并在同一事务推进 due；创建失败或事务回滚时不得推进 due：
-   - daily：`daily_due_at = next 03:00`；`weekly_due_at` 不动。
-   - weekly：`weekly_due_at = next Sunday 03:00`；`daily_due_at = next 03:00`，避免周日重复。
-   - manual：消费 `manual_pending`；按当前 generation 状态选择增量或维护同步，不改变日／周计划。若同一轮已经因 daily/weekly 到期创建任务，则视为该任务已覆盖手动刷新，消费 `manual_pending`，不得再排第二个任务。
-7. 最后 generation 为 `partial/failed/cancelled` 时，启动“维护同步”：对 complete 目录做目录优先探测，对 failed/restricted/pending 目录重试未完成范围；不先排 full generation，不并发 resume。只有没有任何可复用 generation 时才请求 full resume；weekly 同时到期时把 `resume_full_pending=1`，等维护同步结束后再跑 full。
-8. `weekly` 全量任务必须与 sync 串行；sync 运行期间只记录 `weekly` 待处理，不能直接插入 full。
-9. 低空间、维护 hold 或磁盘未知时只设置 `deferred_until=now+1h` 和 `deferred_reason`，保留原 due、pending、`pending_full_run_id` 和检查点；恢复后只追赶一次，不循环补跑。不能只推 daily 而留下已过期的 weekly，否则 weekly 会绕过延后。
+派发必须在一个 `BEGIN IMMEDIATE` 事务里完成“读取运行状态、判定到期与延后、创建任务、推进 due”的整套决策。拆成多次读写会让两个调度 tick 同时看到同一个到期边界，或者出现 due 已推进而任务未创建的窗口；先检查运行中任务、后处理 `resume_full_pending`，也是为了避免重复创建 full。具体分支、字段语义与失败顺序以[工单 20 的派发算法](issues/20-catalog-sync-and-admission.md#派发算法)为准，本计划不重复维护第二份。
 
 ### 5.3 force 增量
 
@@ -157,7 +146,7 @@ CREATE INDEX source_catalog_schedule_due
 
 ### 6.1 数据模型与迁移
 
-在 096 已提交后使用计划编号 099（097 是 095 重建，098 是目录调度；迁移运行器拒绝跳号，实测缺 097/098 时 099 会报 `expected version 097, found 099`）。21 的 099 只能在前两项提交存在后落地，不得临时改号绕过。
+21 的迁移是 099（097 是 095 重建，098 是目录调度），后续 102 只为 prefill 增加 `failed` 状态和失败表索引。迁移运行器拒绝跳号，实测缺 097/098 时 099 会报 `expected version 097, found 099`；编号只能按已提交链依次落地，不得临时改号绕过。
 
 - `content_translation` 增加 `config_key TEXT NOT NULL DEFAULT ''`；索引 `(language, entity_kind, field, config_key, entity_id)`，并增加短查询覆盖索引 `(language, entity_kind, field, id, translated_text)`。
 - `translation_prefill_state` 增加 `config_key TEXT NOT NULL DEFAULT ''`、`cursor_kind TEXT NOT NULL DEFAULT 'entry'`、`cursor_field TEXT NOT NULL DEFAULT 'title'`、`cursor_language TEXT NOT NULL DEFAULT ''`、`cursor_id INTEGER NOT NULL DEFAULT 0`、`last_error TEXT` 仍保留。`id=1` 单行状态足够，因为一个配置只有一个 prefill 队列；游标顺序固定为 `(kind, field, id, language)`。
@@ -190,7 +179,7 @@ prefill 必须按 `entity_kind × field` 枚举：entry 的 title、series 的 t
 - 当前行条件：`origin='native'` 或 `config_key=当前 config_key`；source_text 必须等于当前实体的当前字段文本；实体必须仍有效。
 - `complete` 只在所有有效实体、所有可搜索字段、所有目标语言均无 missing、stale、failed、retry 时成立；游标到结尾、历史行数量、连续失败跳过都不能写 complete。重启从 `(cursor_kind, cursor_field, cursor_id, cursor_language)` 继续。失败必须写入 `translation_prefill_failure` 后再推进游标；不得把失败当成已覆盖。游标推进与失败重试是两件事：失败行由独立 retry 队列按 `next_retry_at` 重试，不能因为游标继续而丢失该语言，也不能因为一个永久失败把整个扫描停在同一实体。成功或原文／配置变化后清理对应旧失败行，失败表必须有界。
 - 新条目、标题／简介变化、模型／base URL／模板／reasoning 变化，必须重置对应实体的覆盖状态和 prefill 游标；series 标题变化也重置。
-- 失败条目进入持久 retry；连续失败达到上限后状态为 `failed`，不是 skipped，也不计入 covered；继续处理其他实体，整体保持 incomplete。
+- 失败条目进入持久 retry；连续失败达到上限后状态应为 `failed`，不是 skipped，也不计入 covered；继续处理其他实体，整体保持 incomplete。102 已允许该状态值，当前 worker 仍只写 `running` 与 `last_error`，应用侧终态写入是未完成项。
 
 ### 6.4 搜索
 
@@ -200,10 +189,10 @@ prefill 必须按 `entity_kind × field` 枚举：entry 的 title、series 的 t
 | 目标语言文本 | 只查目标语言 native 或当前 `config_key` 的 model 标题与简介；不并入原文 FTS，不回退原文 |
 | 编号、精确代码 | 语言无关；始终查 `primary_code`／`work` 代码，不因显示语言被过滤 |
 | 3 字以上 | FTS5 trigram，join 有效实体、当前行和 D-16 准入 |
-| 1–2 字 | 在完整有效集合上按 `(language, entity_kind, field, id)` keyset 分页 `instr`；只限制返回条数，不限制扫描行数；p95 超过 100 ms 时必须增加短词 n-gram 索引或等价索引 |
+| 1–2 字 | 在完整有效集合上按 `(language, entity_kind, field, id)` 稳定排序并 `instr` 匹配；只限制返回条数，不限制扫描行数；p95 超过 100 ms 时必须增加短词 n-gram 索引或等价索引。共享生成器目前提供稳定排序，但还没有 `after` 续扫参数，分页续扫仍未完成 |
 | `zh-tw` | 查询先 t2s；同时查 `zh-Hans` 与原生 `zh-Hant`；原生繁体行按原查询命中 |
 
-本地 `library/query.go` 与远程 `openlist_catalog.go` 必须调用同一套 `DisplaySearchTargets` 和 `config_key` 条件。文本搜索覆盖 work 的标题与简介、entry/series 的标题；标签、目录名仍可显示翻译，但不能被当作可搜索文本。删除或改写 `TestContentTranslationSearchRemoteIncludesOriginalText` 等固化错误行为的测试；新增“目标语言下按编号仍可搜索”“原文标题不命中”和“work 简介可命中”的测试。
+本地 `library/query.go`、远程 `openlist_catalog.go` 与 `cmd/translation-bench` 都调用 `library.ShortTranslationSearchSQL` 这一处生成器，并使用同一套 `DisplaySearchTargets` 与 `config_key` 条件；远程短查询把 `catalogEntryAdmittedSQL` 放进行范围，避免不合格卡片占用结果预算。文本搜索覆盖 work 的标题与简介、entry/series 的标题；标签、目录名仍可显示翻译，但不能被当作可搜索文本。删除或改写 `TestContentTranslationSearchRemoteIncludesOriginalText` 等固化错误行为的测试；新增“目标语言下按编号仍可搜索”“原文标题不命中”和“work 简介可命中”的测试。
 
 ### 6.5 保留与预算
 
@@ -226,13 +215,7 @@ prefill 必须按 `entity_kind × field` 枚举：entry 的 title、series 的 t
 
 ### 7.1 数据模型
 
-- 采用迁移 100 的 `work.parent_work_id INTEGER REFERENCES work(id) ON DELETE RESTRICT` 和索引；`kind` 由 `personal_transfer_ref.object_kind`／catalog series 成员关系推断，不新增 `work.kind` 列。只允许 `kind=episode` 的 work 设置父级，父级必须是 `kind=series` 的 work。主仓库 `728651a6` 目前走的是 v2 可选 `parent` 加合成 `source_catalog_entry`／`catalog_series_member` 的替代路径；在 22 完成前必须二选一并对齐文档、迁移和系列读取，不能两套合同并存。
-- 导入 episode 时把主 `personal_transfer_ref.object_kind` 写成 `episode`；导出时 `work.parent_work_id` 非空也推断为 episode，避免空库往返后退回 work。
-- 应用层拒绝自引用、父级不是 series、父级为 episode、循环、以及一个 episode 有多个不同父级。一个 work 只能有一个明确父系列；来源发现出现多个不同父系列时保留 null 并报告 `parent_conflict`，不猜测。
-- 未知父级不只创建普通 work：同时创建 `catalog_series`（`source_id NULL`、`source_key NULL`、`work_id` 指向父 work），使系列入口可识别；已有 `catalog_series` 只补 `work_id`。父级不创建 `catalog_series_member`，空库没有 `source_catalog_entry`；可见成员关系由 `work.parent_work_id` 读取。
-- 新建 `catalog_series` 的触发器会生成随机 `s:` ref。备份父 ref 空闲时改为备份 ref；已指向同一 series 时复用；指向其他对象时报告 `parent_conflict` 并回滚。`personal_transfer_series` 唯一索引禁止一个 series 保留两个 ref。
-- 迁移回填只在 `catalog_series.work_id` 与成员 `source_catalog_entry.work_id` 都非空且不同、且该 entry 只属于一个 series 时写入；多父级、缺失或矛盾记录只进入报告。
-- `work.primary_code` 与 `logical_work.canonical_code` 在 069 后允许空值，非空值才有部分唯一索引；系列 work 可以继续使用空代码，但必须测试同一备份包含多个系列 work 时不触发唯一约束。若实现新增内部代码，它只能作为内部标识，不能进入编号解析或用户可见的发行编号。
+迁移 100 用 `work.parent_work_id` 表达单集的唯一父系列，而不是把父级塞进共享成员表。这样空库恢复不依赖来源目录行，也不会把一份备份里的父级关系写成所有用户共享的目录事实。字段约束、`kind` 推断、冲突与回填报告的具体规则见[工单 22 的数据模型](issues/22-personal-transfer-parent-identity.md#数据模型)；本计划只保留这条设计理由，避免同一合同在计划与工单各维护一份。
 
 ### 7.2 备份格式：v2 + 可选 `parent`
 
@@ -256,7 +239,7 @@ prefill 必须按 `entity_kind × field` 枚举：entry 的 title、series 的 t
 - 导出 episode 时，即使父系列没有本人评价，也必须导出父级的稳定 `s:` ref 和最小标题；父级 references 只保存为父级别名，不写入 episode 的 `References`。
 - 父级的 references 必须都能解析为同一个 series；指向 episode、其他 work 或未知对象的引用报告 `parent_conflict`，不能保存到 episode。
 - `personal_transfer_ref` 每个 series 只允许一个 ref；父级有多个同义 `s:` 别名时，保留 `Parent.Ref` 作为主 ref，其余报告 `parent_alias_not_imported`，不能因为别名数量阻止父级恢复。
-- v3 的 episode 必须有合法 `Parent`；缺失或非法父级报告 `parent_conflict`／`parent_required`，blocked，不创建独立 episode。v2 没有父级字段时按原行为导入并报告 `relationships_not_imported`，不能标记为“父级已恢复”。
+- 格式保持 `version: 2`，`parent` 为可选字段；不新增 `version: 3`，同一语义不能有两套格式。备份带有 `parent` 时按上述规则校验并恢复；没有父级字段的旧文件按原行为导入并报告该单集未恢复父级，不能标记为“父级已恢复”。
 
 ### 7.3 导入顺序与失败边界
 
@@ -280,7 +263,7 @@ prefill 必须按 `entity_kind × field` 枚举：entry 的 title、series 的 t
 - v2 旧格式、无媒体下载、用户隔离、迁移前后结构一致。
 - 迁移：新装与旧库升级后 `work.parent_work_id` 和索引一致；已发布迁移不回写。
 - 文档：`docs/development/personal-transfer.md` 与五个 `docs/user/*/personal-data.md` 按“v2 + 可选 parent”说明父级、失败语义和“仅显式父级恢复”的例外。
-- 现状阻断：主仓库 `728651a6` 的实现未让 `GET /api/catalog-series/{id}` 返回恢复的单集（空库合成 entry 的 `file_source_id` 为 NULL，被现有查询过滤）；在该缺口关闭前，22 只能标记 `in-progress`，不能标记 `verified-local` 或 `resolved`。
+- 现状：`64b25252` 已让 `GET /api/catalog-series/{id}` 在没有成员行时回退到 `work.parent_work_id`，返回 `catalogEntryId=0`、`workId` 非空的单集视图；导出器仍写 `version: 3`，格式收口与多父级、父级登记权限测试由 22 子代理完成。在这些项通过前，22 只能标记 `in-progress`。
 
 ## 8. Task 5：工单 23，个人引用保留、迁移兼容与仓库规范
 
@@ -293,16 +276,16 @@ prefill 必须按 `entity_kind × field` 枚举：entry 的 title、series 的 t
 3. 重新生成合成 dry-run；报告只含合成 fixture、计数和原因，不含生产 entryId／sourceId／path。
 4. 旧 dry-run 只作历史，不可 apply；具体生产计数不进入公开证据。
 
-### 8.2 迁移 095/096/097–100
+### 8.2 迁移 095–102
 
 - 095 冻结：记录 `25f96c22` 首次加入（无外键）和 `5defaa1c` 修改（`ON DELETE CASCADE`）的事实与两个 SHA-256；当前文件不再改写。
 - 096 已由 `6b4a02ec` 提交（`096_catalog_episode_pending.sql`、`compat/096_dev.sql` 和系列暂存实现）；不得把其他变更塞进 096。
 - 确认是否有数据库执行过旧 095：
-  - 没有旧库：记录证据；097 仍统一重建 `source_field_translation`，保持 `095 → 096 → 097 → 098 → 099 → 100` 连续。新装基线以冻结 095 和已提交 096 为准。
+  - 没有旧库：记录证据；097 仍统一重建 `source_field_translation`，保持 `095 → 096 → 097 → 098 → 099 → 100 → 101 → 102` 连续。新装基线以冻结 095 和已提交 096 为准。
   - 有旧库：097 同样重建 `source_field_translation`：新表带外键、复制合法 source_id 行、丢弃孤儿缓存、重建索引、`PRAGMA foreign_key_check` 0 行。不得根据“是否有旧库”分叉 097。
 - 旧 095 的 checksum 与当前 095 不同，`migration.go` 会在到达 097 前拒绝启动。097 本身无法解决这个门禁，必须在 `prepareMigrationState` / `validateAndAdoptHistory` 之前、`MigrateFSWithOptions` 之前提供一次性 preflight：只对精确匹配旧 095 表结构指纹的数据库，先在自身事务中创建备份，再把该 ledger 行的 checksum 规范化为当前 095 checksum；不匹配、部分匹配或存在额外对象时拒绝启动。
 - 禁止通用“忽略 checksum”开关。preflight 记录旧／新 checksum、schema 指纹、时间、备份路径和结果，并提供离线等价命令；097 只做结构重建。涉及 `backend/cmd/kikoto/main.go`、`backend/internal/storage/migration.go` 或新的早期 preflight 文件、备份实现、`docs/development/migrations.md` 与 `docs/development/release-rollback.md`。
-- 096 已提交；097 可以直接写，但迁移头、`compat/096_dev.sql`、测试常量必须连续一致。097 的 SQL 必须在新装、当前 095、旧 095 三种数据库上执行同一套重建路径。
+- 096–102 已提交：101 增加 `work_parent_backfill_report` 并幂等重跑父级回填，102 重建 `translation_prefill_state` 以允许 `failed` 状态，并给 `translation_prefill_failure` 补 `(config_key, source_hash)` 索引；`compat/102_dev.sql` 已生成。迁移头、compat 文件与测试常量必须连续一致，097 的 SQL 仍须在新装、当前 095、旧 095 三种数据库上执行同一套重建路径。
 
 ### 8.3 文档与证据
 
@@ -317,19 +300,7 @@ prefill 必须按 `entity_kind × field` 枚举：entry 的 title、series 的 t
 
 **文件：** `execution.md`、17–24、`evidence/`、部署与回滚文档。
 
-1. 候选账本：最终 SHA、分支、镜像 digest、schema、配置指纹、提交清单；工作区必须干净。
-2. 明确列出 20–23 的提交和另一会话交付的已提交修复；不包含未审阅工作区文件。096 已提交，但仍须在当前候选上完成迁移和测试验收。
-3. 对同一 SHA 完成 matt-code-review 双轴审查、Full CI、类型／构建、H/R/F/U、必要 race。
-- 原始 AC-14 的系列证据、单集格式副本、Bonus/轨道容器和成员上限回归必须在当前 SHA 通过；未提交的系列修复或测试不能计入。
-4. 迁移链：新装、既有库升级、旧 095 变体（若存在）和恢复；`PRAGMA foreign_key_check` 0 行。
-5. 备份、恢复和可执行回滚路径演练；记录镜像、schema、数据库快照和回滚触发条件。
-6. 组合负载：播放中扫描、翻译、浏览、评价；音轨／队列／进度保持；低空间暂停与恢复。
-7. 真实完整索引：分区、目录、条目、失败、受限、未确认空目录分别报告；未完成不得称 complete。
-8. 有限 LIVE：真实 Index 翻译、匿名媒体 Range／定位读取；记录版本、请求、耗时和脱敏文本。
-9. 少量非视觉 F：文本、操作、请求、持久状态和媒体功能；截图采集关闭，既有视觉测试不改写。
-10. AC 子项矩阵：20 机制、21 语料搜索、22 父级、23 文档规范；24 只汇总发布证据，不冒充行为主责。
-11. AC-25 播放中音轨／队列／进度、AC-26 进度证据、AC-27 出站边界、AC-28 截图关闭与既有视觉测试不改写全部列入清单。
-12. 部署后真实服务验收：健康、登录、翻译、目录、搜索、个人记录、媒体 Range；失败时按已验证方案回滚并继续。
+24 的价值在于把分散工单的证据绑到同一个 SHA，而不是再写一套验收标准。候选账本、Full CI、迁移恢复、组合负载、真实索引、LIVE、部署与回滚的可执行门禁都在[工单 24](issues/24-release-candidate-evidence.md#发布门禁)；本计划只规定执行顺序：先冻结干净候选并记录提交清单，再按该门禁逐项取得证据，最后才允许汇总为发布结论。任何一项缺失都保持 `pending` 或 `in-progress`，不能以历史构建、健康检查或代理报告替代。
 
 ## 10. 完成定义
 
