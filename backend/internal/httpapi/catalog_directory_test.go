@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-func TestCatalogDirectoriesUseWorkIdentityWithoutAdmission(t *testing.T) {
+func TestCatalogDirectoriesUseWorkIdentity(t *testing.T) {
 	f := newRoleBoundaryFixture(t)
 	if _, err := f.server.db.Exec(`
 	 INSERT INTO work(id,primary_code,title) VALUES(1,'RJ00000000','Example Work'),(2,'RJ00000001','Example Edition'),(3,'','Example Numberless');
@@ -24,7 +24,10 @@ func TestCatalogDirectoriesUseWorkIdentityWithoutAdmission(t *testing.T) {
 	 (4,2,'/Example/Numberless','','Example Numberless',3),
 	 (5,2,'/Example/Unregistered','','Example Unregistered',NULL),
 	 (6,2,'/Example/Alias','RJ00000004','Example Alias',NULL);
-	 INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes) VALUES(3,'real.wav','Display track','audio',100),(4,'real.wav','Display track','audio',100),(5,'real.wav','Display track','audio',100);
+		 INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes) VALUES
+			(1,'track.mp3','Track','audio',100),(2,'track.mp3','Track','audio',100),
+			(3,'real.wav','Display track','audio',100),(4,'real.wav','Display track','audio',100),(5,'real.wav','Display track','audio',100),
+			(6,'track.mp3','Track','audio',100);
 	`); err != nil {
 		t.Fatal(err)
 	}

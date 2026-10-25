@@ -480,7 +480,18 @@ func TestSourceCatalogDailyRelistsRootFiles(t *testing.T) {
 	if availability != "unconfirmed_empty" {
 		t.Fatalf("empty root card status=%q, want unconfirmed_empty", availability)
 	}
-	assertReview(t, reviewRequest(t, f.handler, f.cookie, http.MethodGet, "/api/source-catalog/"+entryID, "", 200), float64(3), "Retained")
+	// An unconfirmed empty directory has no current published file set, so the
+	// card is not readable through the admission gate. The personal record is
+	// still retained and becomes readable again once the source republishes it.
+	reviewRequest(t, f.handler, f.cookie, http.MethodGet, "/api/source-catalog/"+entryID, "", http.StatusNotFound)
+	var retained int
+	if err = f.server.db.QueryRow(`SELECT rating FROM user_work_state u
+		JOIN source_catalog_entry e ON e.work_id=u.work_id WHERE e.id=?`, entryID).Scan(&retained); err != nil {
+		t.Fatalf("personal record was dropped with the empty card: %v", err)
+	}
+	if retained != 3 {
+		t.Fatalf("retained rating=%d, want 3", retained)
+	}
 }
 
 // A confirmed 404/410 directory is completed coverage, so it must not appear in

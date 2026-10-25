@@ -174,7 +174,10 @@ func TestOpenListReviewRegistersNumberlessWorksWithoutMedia(t *testing.T) {
 	db := openMigratedTestDB(t)
 	_, err := db.Exec(`INSERT INTO file_source(id,code,display_name,source_type) VALUES(7,'example_remote_a','Example Remote A','openlist');
 		INSERT INTO file_source_endpoint(file_source_id,api_url,base_url) VALUES(7,'https://source.example.invalid','https://source.example.invalid');
-		INSERT INTO source_catalog_entry(id,file_source_id,root_path,title) VALUES(1,7,'/Example A','Example A'),(2,7,'/Example B','Example B');`)
+		INSERT INTO source_catalog_entry(id,file_source_id,root_path,title) VALUES(1,7,'/Example A','Example A'),(2,7,'/Example B','Example B');
+		-- A published card always has audio; the review must not need media items.
+		INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes) VALUES
+			(1,'track.mp3','track.mp3','audio',100),(2,'track.mp3','track.mp3','audio',100);`)
 	if err != nil {
 		t.Fatal(err)
 	}
