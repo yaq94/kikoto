@@ -78,7 +78,8 @@ complete staged split between `pending` and `published`. Both source and entry
 references cascade; `catalog_series_member` retains its restrictive entry
 reference, so episode compensation removes pending-only membership explicitly
 before deleting an entry. Its snapshot is `compat/096_dev.sql`; with `097` at
-the chain head, `go generate ./migrations` now writes `compat/097_dev.sql`.
+the chain head, `cd backend && go run ./cmd/schema-baseline -migrations .
+-version-file ../../VERSION` now writes `compat/097_dev.sql`.
 The numbered migration does not alter 095 or reconstruct an existing database
 from a baseline. See [Catalog series](catalog-series.md) for the staging,
 activation and recovery semantics.

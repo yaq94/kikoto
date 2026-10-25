@@ -274,6 +274,57 @@ func TestLegacy095PreflightDoesNotBypassUnknownChecksums(t *testing.T) {
 	}
 }
 
+func TestLegacy095PreflightRejectsMissingChecksum(t *testing.T) {
+	db, root := openLegacy095Database(t)
+	if _, err := db.Exec(`
+		UPDATE schema_migration
+		SET checksum = ''
+		WHERE filename = ?
+	`, legacyMigration095Filename); err != nil {
+		t.Fatal(err)
+	}
+	backupDir := filepath.Join(root, "backups")
+	err := MigrateFSWithOptions(db, migrations.Files, "test", MigrateOptions{PreflightBackupDir: backupDir})
+	if err == nil || !strings.Contains(err.Error(), "has no recorded checksum") {
+		t.Fatalf("migration error = %v, want the missing-checksum refusal", err)
+	}
+	var checksum string
+	if err := db.QueryRow("SELECT checksum FROM schema_migration WHERE filename = ?", legacyMigration095Filename).Scan(&checksum); err != nil {
+		t.Fatal(err)
+	}
+	if checksum != "" {
+		t.Fatalf("refused preflight adopted checksum %s", checksum)
+	}
+	if audits := legacy095AuditFiles(t, backupDir); len(audits) != 0 {
+		t.Fatalf("missing-checksum refusal wrote audit files: %v", audits)
+	}
+}
+
+func TestLegacy095PreflightRejectsLedgerWithoutChecksumColumn(t *testing.T) {
+	db, root := openLegacy095Database(t)
+	if _, err := db.Exec(`
+		ALTER TABLE schema_migration RENAME TO schema_migration_with_checksum;
+		CREATE TABLE schema_migration (
+			filename TEXT PRIMARY KEY,
+			version INTEGER,
+			applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+		);
+		INSERT INTO schema_migration (filename, version)
+		SELECT filename, version FROM schema_migration_with_checksum;
+		DROP TABLE schema_migration_with_checksum;
+	`); err != nil {
+		t.Fatal(err)
+	}
+	backupDir := filepath.Join(root, "backups")
+	err := MigrateFSWithOptions(db, migrations.Files, "test", MigrateOptions{PreflightBackupDir: backupDir})
+	if err == nil || !strings.Contains(err.Error(), "without version and checksum columns") {
+		t.Fatalf("migration error = %v, want the incomplete-ledger refusal", err)
+	}
+	if audits := legacy095AuditFiles(t, backupDir); len(audits) != 0 {
+		t.Fatalf("incomplete-ledger refusal wrote audit files: %v", audits)
+	}
+}
+
 // The preflight must complete before the ordinary ledger validator runs. A
 // broken ledger therefore still receives its normalized checksum and audit
 // record; the later gap error proves the validator had not rejected the old
@@ -314,6 +365,7 @@ func TestMigration097LeavesCurrentAndEarlierDatabasesCompatible(t *testing.T) {
 			INSERT INTO source_field_translation(
 				cache_key, source_id, field, language, source_text, translated_text
 			) VALUES ('current-valid', 97, 'title', 'zh-Hans', 'Current', '当前');
+			CREATE INDEX probe_current_095_rebuild ON source_field_translation(language);
 		`); err != nil {
 			t.Fatal(err)
 		}
@@ -331,9 +383,27 @@ func TestMigration097LeavesCurrentAndEarlierDatabasesCompatible(t *testing.T) {
 		if rows != 1 {
 			t.Fatalf("current 095 row count = %d, want 1", rows)
 		}
+		// The probe index exists only on the pre-097 table. Its absence proves
+		// that 097 rebuilt this database instead of skipping an already-current
+		// checksum.
+		var probe int
+		if err := db.QueryRow(`
+			SELECT COUNT(*) FROM sqlite_schema
+			WHERE type = 'index' AND name = 'probe_current_095_rebuild'
+		`).Scan(&probe); err != nil {
+			t.Fatal(err)
+		}
+		if probe != 0 {
+			t.Fatalf("probe index survived, so 097 did not rebuild the current 095 table")
+		}
 		if audits := legacy095AuditFiles(t, backupDir); len(audits) != 0 {
 			t.Fatalf("current 095 database triggered legacy preflight: %v", audits)
 		}
+		if err := MigrateFSWithOptions(db, migrations.Files, "test-restart", MigrateOptions{PreflightBackupDir: backupDir}); err != nil {
+			t.Fatalf("restart after the 097 rebuild: %v", err)
+		}
+		assertCurrentSourceFieldTranslationSchema(t, db)
+		assertMigrationIntegrity(t, db)
 	})
 
 	t.Run("084 upgrade", func(t *testing.T) {
@@ -358,6 +428,11 @@ func TestMigration097LeavesCurrentAndEarlierDatabasesCompatible(t *testing.T) {
 		if audits := legacy095AuditFiles(t, backupDir); len(audits) != 0 {
 			t.Fatalf("084 upgrade triggered legacy preflight: %v", audits)
 		}
+		if err := MigrateFSWithOptions(db, migrations.Files, "test-restart", MigrateOptions{PreflightBackupDir: backupDir}); err != nil {
+			t.Fatalf("restart after the 084 upgrade: %v", err)
+		}
+		assertCurrentSourceFieldTranslationSchema(t, db)
+		assertMigrationIntegrity(t, db)
 	})
 }
 

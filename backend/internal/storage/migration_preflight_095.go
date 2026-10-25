@@ -303,6 +303,31 @@ func readLegacy095Ledger(ctx context.Context, queryer schemaQueryer) (legacy095L
 		return legacy095Ledger{}, fmt.Errorf("legacy 095 preflight: inspect migration ledger: %w", err)
 	}
 	if columns != 3 {
+		var hasFilename int
+		if err := queryer.QueryRowContext(ctx, `
+			SELECT COUNT(*)
+			FROM pragma_table_info('schema_migration')
+			WHERE name = 'filename'
+		`).Scan(&hasFilename); err != nil {
+			return legacy095Ledger{}, fmt.Errorf("legacy 095 preflight: inspect migration ledger: %w", err)
+		}
+		if hasFilename == 0 {
+			return legacy095Ledger{}, nil
+		}
+		var legacyRows int
+		if err := queryer.QueryRowContext(ctx, `
+			SELECT COUNT(*)
+			FROM schema_migration
+			WHERE filename = ?
+		`, legacyMigration095Filename).Scan(&legacyRows); err != nil {
+			return legacy095Ledger{}, fmt.Errorf("legacy 095 preflight: inspect migration ledger: %w", err)
+		}
+		if legacyRows > 0 {
+			return legacy095Ledger{}, fmt.Errorf(
+				"legacy 095 preflight rejected: migration ledger records %s without version and checksum columns",
+				legacyMigration095Filename,
+			)
+		}
 		return legacy095Ledger{}, nil
 	}
 	rows, err := queryer.QueryContext(ctx, `
@@ -338,6 +363,15 @@ func readLegacy095Ledger(ctx context.Context, queryer schemaQueryer) (legacy095L
 	}
 	if err := rows.Err(); err != nil {
 		return legacy095Ledger{}, fmt.Errorf("legacy 095 preflight: read migration ledger: %w", err)
+	}
+	// A 095 row without a checksum would otherwise be adopted from the packaged
+	// catalog without proving the live table shape. Checksums predate 095, so
+	// this row is not a pre-checksum ledger and must match one frozen revision.
+	if count == 1 && ledger.checksum == "" {
+		return legacy095Ledger{}, fmt.Errorf(
+			"legacy 095 preflight rejected: %s has no recorded checksum; restore the ledger or a backup",
+			legacyMigration095Filename,
+		)
 	}
 	return ledger, nil
 }
