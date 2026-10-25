@@ -5,7 +5,7 @@
 **Blocked by:** [09：每日更新与已有扫描复用](09-daily-index-update.md)（08 为传递前置）。
 
 **Status:** ready-for-agent
-**Implementation:** in-progress；主仓库 `47df9c11` 已提交 wall-clock 和 partial probe 修复，并在最新 SHA 通过专项调度测试；但该实现仍以 `app_setting` 保存 due，尚未落地本票的 `source_catalog_schedule`、`manual_pending` 和 `deferred_reason`。必须按行为验收决定保留简化实现还是补齐表；旧审查 worktree 的未提交调度代码不能作为当前产物。
+**Implementation:** in-progress；主仓库 `47df9c11` 已提交 wall-clock 和 partial probe 修复，并在最新 SHA 通过专项调度测试；但该实现仍以 `app_setting` 保存 due，尚未落地本票的 `source_catalog_schedule`、`manual_pending` 和 `deferred_reason`。必须按行为验收决定保留简化实现还是补齐表；审查 worktree 的未提交调度代码已实测失败（`no such column: run_setting.value_json`），不能作为当前产物，也不能搬入主分支。
 
 **依据:** [正式规格](../spec.md)、[整改计划](../review-remediation-plan.md)、[ADR-0006](../../../docs/decisions/ADR-0006-catalog-remediation-and-translation-consistency.md)、`kikoto-remediation-addendum-20261021.md` 的 D-16/D-22/D-25。
 
