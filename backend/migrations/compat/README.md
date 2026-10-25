@@ -25,5 +25,5 @@ Regenerate this baseline from the numbered chain:
 
 ```sh
 cd backend
-go run ./cmd/schema-baseline -migrations . -version-file ../../VERSION
+go run ./cmd/schema-baseline -migrations ./migrations -version-file ../VERSION
 ```

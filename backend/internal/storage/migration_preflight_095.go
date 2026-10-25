@@ -140,6 +140,9 @@ func PreflightLegacyMigration095(ctx context.Context, db *sql.DB, backupDir stri
 			err,
 		)
 	}
+	if err := ensureNoLegacy095StagingObject(ctx, db); err != nil {
+		return Legacy095PreflightResult{}, err
+	}
 	expected := sourceFieldTranslationSchemaDefinition(false)
 	if err := compareSourceFieldTranslationSchema(expected, actual); err != nil {
 		return Legacy095PreflightResult{}, fmt.Errorf(
@@ -213,6 +216,9 @@ func PreflightLegacyMigration095(ctx context.Context, db *sql.DB, backupDir stri
 	actual, err = readSourceFieldTranslationSchema(ctx, tx)
 	if err != nil {
 		return Legacy095PreflightResult{}, fmt.Errorf("legacy 095 preflight: reinspect %s: %w", sourceFieldTranslationName, err)
+	}
+	if err := ensureNoLegacy095StagingObject(ctx, tx); err != nil {
+		return Legacy095PreflightResult{}, err
 	}
 	if err := compareSourceFieldTranslationSchema(expected, actual); err != nil {
 		return Legacy095PreflightResult{}, fmt.Errorf(
@@ -559,6 +565,24 @@ func readSourceFieldTranslationSchema(ctx context.Context, queryer schemaQueryer
 		return sourceFieldTranslationSchema{}, err
 	}
 	return schema, nil
+}
+
+// 097 creates source_field_translation_rebuilt and renames it in the same
+// transaction. A surviving staging table means an earlier attempt did not roll
+// back cleanly, so the database is not the exact legacy shape.
+func ensureNoLegacy095StagingObject(ctx context.Context, queryer schemaQueryer) error {
+	var count int
+	if err := queryer.QueryRowContext(ctx, `
+		SELECT COUNT(*)
+		FROM sqlite_schema
+		WHERE name = 'source_field_translation_rebuilt'
+	`).Scan(&count); err != nil {
+		return fmt.Errorf("legacy 095 preflight: inspect staging object: %w", err)
+	}
+	if count != 0 {
+		return errors.New("legacy 095 preflight rejected: source_field_translation_rebuilt exists; a previous 097 attempt did not roll back cleanly")
+	}
+	return nil
 }
 
 func sourceFieldTranslationFingerprint(schema sourceFieldTranslationSchema) string {

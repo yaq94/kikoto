@@ -207,6 +207,15 @@ func TestLegacy095PreflightRejectsSchemaMismatch(t *testing.T) {
 				}
 			},
 		},
+		{
+			name: "leftover rebuild staging table",
+			want: "source_field_translation_rebuilt exists",
+			mutate: func(t *testing.T, db *sql.DB) {
+				if _, err := db.Exec("CREATE TABLE source_field_translation_rebuilt (id INTEGER PRIMARY KEY)"); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			db, root := openLegacy095Database(t)
