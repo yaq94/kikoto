@@ -142,6 +142,22 @@ func (s *Server) beginCatalogEpisodePublication(ctx context.Context, sourceID in
 		return err
 	}
 	defer release()
+	// A published split keeps its identity even if an older build left pending
+	// mappings behind. Finish that cleanup before the state row is reset to
+	// pending; otherwise the next clearCatalogEpisodePendingFiles pass would
+	// treat live files as staged rows and delete them.
+	var state string
+	err = tx.QueryRowContext(ctx, `SELECT state FROM source_catalog_episode_publication
+		WHERE source_id=? AND parent_root=?`, sourceID, parent).Scan(&state)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	if state == "published" {
+		if _, err = tx.ExecContext(ctx, `DELETE FROM source_catalog_episode_pending
+			WHERE source_id=? AND parent_root=?`, sourceID, parent); err != nil {
+			return err
+		}
+	}
 	if _, err = tx.ExecContext(ctx, `INSERT INTO source_catalog_episode_publication(
 			source_id,parent_root,state,updated_at) VALUES(?,?,'pending',CURRENT_TIMESTAMP)
 		ON CONFLICT(source_id,parent_root) DO UPDATE SET state='pending',updated_at=CURRENT_TIMESTAMP`,
@@ -157,8 +173,12 @@ func (s *Server) clearCatalogEpisodePublication(ctx context.Context, sourceID in
 		return err
 	}
 	defer release()
+	// A published split is immutable until a later staging pass explicitly
+	// re-opens it. Compensation for a failed retry must not erase that state:
+	// the leftover pending mappings are the only record that would otherwise
+	// make the next clear pass delete already published files.
 	if _, err = tx.ExecContext(ctx, `DELETE FROM source_catalog_episode_publication
-		WHERE source_id=? AND parent_root=?`, sourceID, parent); err != nil {
+		WHERE source_id=? AND parent_root=? AND state<>'published'`, sourceID, parent); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -187,7 +207,11 @@ func (s *Server) clearCatalogEpisodePendingFilesBatch(ctx context.Context, sourc
 	defer release()
 	rows, err := tx.QueryContext(ctx, `SELECT f.rowid FROM source_catalog_file f
 		JOIN source_catalog_episode_pending p ON p.catalog_entry_id=f.catalog_entry_id
-		WHERE p.source_id=? AND p.parent_root=? ORDER BY f.rowid LIMIT ?`,
+		WHERE p.source_id=? AND p.parent_root=?
+			AND NOT EXISTS(SELECT 1 FROM source_catalog_episode_publication publication
+				WHERE publication.source_id=p.source_id AND publication.parent_root=p.parent_root
+					AND publication.state='published')
+		ORDER BY f.rowid LIMIT ?`,
 		sourceID, parent, catalogEpisodeWriteRows)
 	if err != nil {
 		return 0, err
@@ -462,7 +486,6 @@ func (s *Server) finalizeCatalogEpisodeRoots(ctx context.Context, sourceID int64
 		return 0, errCatalogEpisodeParentPinned
 	}
 	keep := map[int64]bool{}
-	keepIDs := []int64{}
 	var first int64
 	for _, root := range roots {
 		id, pending, lookupErr := catalogEpisodeEntryTx(ctx, tx.Tx, sourceID, parent, root)
@@ -482,7 +505,6 @@ func (s *Server) finalizeCatalogEpisodeRoots(ctx context.Context, sourceID int64
 			}
 		}
 		keep[id] = true
-		keepIDs = append(keepIDs, id)
 		if first == 0 {
 			first = id
 		}
@@ -498,6 +520,14 @@ func (s *Server) finalizeCatalogEpisodeRoots(ctx context.Context, sourceID int64
 	if affected, affectedErr := result.RowsAffected(); affectedErr != nil || affected != 1 {
 		return 0, fmt.Errorf("publish catalog episode state: affected=%d err=%v", affected, affectedErr)
 	}
+	// The mappings are bookkeeping for the visibility gate, so they leave in the
+	// same transaction as the published state. A separate cleanup step could
+	// fail after the split became public and leave rows that a later staging
+	// pass would mistake for hidden files.
+	if _, err = tx.ExecContext(ctx, `DELETE FROM source_catalog_episode_pending
+		WHERE source_id=? AND parent_root=?`, sourceID, parent); err != nil {
+		return 0, err
+	}
 	if existing != 0 && len(parentFiles) == 0 {
 		if _, err = tx.ExecContext(ctx, `UPDATE source_catalog_entry SET file_source_id=NULL,relocated_to_id=?,updated_at=CURRENT_TIMESTAMP WHERE id=?`, first, existing); err != nil {
 			return 0, err
@@ -509,7 +539,6 @@ func (s *Server) finalizeCatalogEpisodeRoots(ctx context.Context, sourceID int64
 	if err = tx.Commit(); err != nil {
 		return 0, err
 	}
-	s.deleteCatalogEpisodeMappings(ctx, sourceID, parent, keepIDs)
 	if len(parentFiles) > 0 {
 		parentID, persistErr := s.persistCatalogEpisodeParentFiles(ctx, sourceID, parent, parentFiles)
 		if persistErr != nil {
@@ -576,6 +605,9 @@ func (s *Server) discardCatalogEpisodePendingBatch(ctx context.Context, sourceID
 			(SELECT count(*) FROM source_catalog_file f WHERE f.catalog_entry_id=e.id)
 		FROM source_catalog_episode_pending p JOIN source_catalog_entry e ON e.id=p.catalog_entry_id
 			WHERE p.source_id=? AND p.parent_root=? AND p.catalog_entry_id>?
+				AND NOT EXISTS(SELECT 1 FROM source_catalog_episode_publication publication
+					WHERE publication.source_id=p.source_id AND publication.parent_root=p.parent_root
+						AND publication.state='published')
 			ORDER BY p.catalog_entry_id LIMIT ?`, sourceID, parent, afterID, catalogEpisodeWriteRows)
 	if err != nil {
 		return 0, afterID, err
@@ -646,6 +678,9 @@ func deleteCatalogPendingEntryTx(ctx context.Context, tx *sql.Tx, sourceID int64
 			WHERE p.source_id=? AND p.parent_root=? AND p.catalog_entry_root=? AND p.catalog_entry_id=? AND e.root_path=?
 				AND (e.file_source_id IS NULL OR e.file_source_id=?) AND e.work_id IS NULL AND e.relocated_to_id IS NULL
 			AND NOT EXISTS(SELECT 1 FROM source_catalog_entry r WHERE r.relocated_to_id=e.id)
+				AND NOT EXISTS(SELECT 1 FROM source_catalog_episode_publication publication
+					WHERE publication.source_id=p.source_id AND publication.parent_root=p.parent_root
+						AND publication.state='published')
 			AND NOT (`+personalState+`))`,
 		sourceID, parent, root, entryID, root, sourceID).Scan(&removable); err != nil {
 		return err

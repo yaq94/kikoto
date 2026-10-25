@@ -5,7 +5,7 @@
 **Blocked by:** [09：每日更新与已有扫描复用](09-daily-index-update.md)（08 为传递前置）。
 
 **Status:** ready-for-agent
-**Implementation:** in-progress；`47df9c11` 已提交 wall-clock 与 partial probe 修复并通过专项测试。现状：due 存在 `app_setting`，没有 `source_catalog_schedule`，也没有 `manual_pending`、`deferred_until`、`resume_full_pending`、`pending_full_run_id`；weekly 在 full 入队时推进（不是成功后），派发只比较 daily due；force 只作用于 full generation。本票按下列行为验收落地 098 与状态机，不以 `app_setting` 简化实现替代。
+**Implementation:** implemented；`531acdf4` 落地 098 `source_catalog_schedule` 与单事务派发状态机，`6cf4ee1c` 合入集成分支的 097。`app_setting` 的 `source_catalog_daily:`／`source_catalog_full:` 只在 098 迁移内读取。当前实现：deferred 保留原 due 并在到期后重查资源条件；`pending_full_run_id` 绑定 resume full，只有该 run 成功才推进 weekly 并清标记；partial/failed/cancelled 走维护同步；force 不再创建 full。证据见下方“实现与证据”。
 
 **依据:** [正式规格](../spec.md)、[整改计划](../review-remediation-plan.md)、[ADR-0006](../../../docs/decisions/ADR-0006-catalog-remediation-and-translation-consistency.md)、`kikoto-remediation-addendum-20261021.md` 的 D-16/D-22/D-25。
 
@@ -86,24 +86,32 @@ CREATE INDEX source_catalog_schedule_due
 - 计数必须与卡片详情读取同一份当前发布文件集合；若旧 generation 行仍可能残留，必须过滤当前 generation，不能把历史文件算进该卡。系列成员的计数只算该成员 entry，不能把同系列其他成员的文件相加。
 - 浏览 API 先测 42,624 张卡的 p95；若三条相关子查询不达标，增加 `source_catalog_entry_admission` 统计表并在发布／文件变更事务维护，不能用陈旧计数过滤。
 
-**已提交 096 的待补门禁：** `backend/internal/httpapi/catalog_series.go` 的 `getCatalogSeries` 当前只要求 `source_catalog_entry.file_source_id IS NOT NULL`，没有使用 `catalogEntryAdmittedSQL`（D-16）或 `catalogEntryPendingSQL`（096 pending publication）。096 激活期间，entry 已获得 `file_source_id` 但父 publication 仍为 `pending`，系列详情会提前列出该成员；超过 D-16 的成员也不会被过滤。20 必须给系列详情和成员 tracks 加同一组门禁，并补“激活批次之间不可见、publication 后可见”的 H 测试。
+**已提交 096 的待补门禁：** 已修复。`getCatalogSeries` 同时应用 `catalogEntryPendingSQL` 与 `catalogEntryAdmittedSQL`，系列列表与成员 tracks 使用同一组门禁；`TestCatalogSeriesHidesPendingPublicationUntilItIsPublished` 覆盖“激活批次之间不可见、publication 后可见”，`TestCatalogAdmissionSeriesFiltersEveryMember` 覆盖列表/详情/tracks 的逐成员过滤。
 
-**096 恢复风险：** `deleteCatalogEpisodeMappings` 在 publication 提交后只记录删除失败并返回；下一次扫描的 `beginCatalogEpisodePublication` 会把 state 重置为 `pending`，随后 `clearCatalogEpisodePendingFiles` 会按残留 pending mapping 删除已发布 entry 的文件。必须让 mapping 清理可重试或在清理时排除已公开发布 entry，并补“publication 成功后注入 mapping 删除失败，重启再扫描不丢公开媒体”的 R 测试。
+**096 恢复风险：** 已修复。`finalizeCatalogEpisodeRoots` 在 publication 翻为 `published` 的同一事务内删除 pending mapping；`beginCatalogEpisodePublication` 与清理辅助查询把 `published` 视为不可回退边界，残留 mapping 不会再让 `clearCatalogEpisodePendingFiles` 删除公开文件。`TestCatalogEpisodePublishedFilesSurviveAStalePendingMappingRetry` 注入 mapping 删除失败，证明公开状态与文件都保留，故障解除后重试也不丢文件。
 
 ## 验收清单
 
-- [ ] partial 时 complete 分支新增文件被发现；failed/restricted/pending 范围重试；unknown 不判缺失；重复发布不产生重复卡片。
-- [ ] 进程关闭重启后同一 generation 续跑；手动刷新在运行中只排队一次，结束后执行一次。
-- [ ] 每日／周日 03:00 边界、两者同时到期、等于时间、跨日、重启追赶、低空间恢复均有 H/R 证据。
-- [ ] 低空间或维护 hold 只设置一次 `deferred_until`／`deferred_reason`；到期后重新检查条件，条件未解除时继续延后，不能误跑 full。
-- [ ] queued full 不会被 `resume_full_pending` 重复创建；`resume_full_pending` 只在 full 终态 succeeded 后清零并推进 weekly due，failed/cancelled 保留待重试。
-- [ ] force sync 不再触发 `errCatalogSyncRunning`；同一来源不产生 full 与 sync 重叠写；手动请求与同一轮已到期任务只执行一次。
-- [ ] D-16 的 0/1/4/5 audio、2000/2001 nonAudio、5000/5001 files 在入队／发布／API 三层一致；系列成员逐条判定。
-- [ ] 42k 卡浏览与 5,001 文件卡拒绝路径的 p95 证据（2 vCPU／2 GiB、warm、≥20 样本，浏览 p95 ≤ 300 ms、p99 ≤ 800 ms）；超限先落地 `source_catalog_entry_admission` 再复测；不得以全表扫描换取正确性。
-- [ ] 096 激活期间系列详情/成员 tracks 不可见，publication 切换后才可见；系列详情与列表使用同一 D-16 成员过滤。
-- [ ] 不重复实现 `134f7c90` 的规则；如发现其实现缺口，先报告再最小修正。
+- [x] partial 时 complete 分支新增文件被发现；failed/restricted/pending 范围重试；unknown 不判缺失；重复发布不产生重复卡片。`TestCatalogSchedulePartialGenerationRunsIncrementalDiscovery`、`TestCatalogSchedulePartialWithPendingRangesStillProbesCompletedBranches`、`TestCatalogScheduleParentListingFailureKeepsChildrenUntilListingSucceeds`。
+- [x] 进程关闭重启后同一 generation 续跑；手动刷新在运行中只排队一次，结束后执行一次。`TestSourceCatalogDailyStartsOnlyAfterCompleteAndSurvivesRestart`、`TestCatalogScheduleManualPendingConsumedOnce`、`TestManualFullIndexQueuesWhileIncrementalSyncRuns`。
+- [x] 每日／周日 03:00 边界、两者同时到期、等于时间、跨日、重启追赶、低空间恢复均有 H/R 证据。`TestCatalogScheduleDailyBoundaryAndMissedCatchUp`、`TestCatalogScheduleSundayRunsFullReconciliation`、`TestCatalogScheduleSimultaneousDueCreatesOneWeekly`、`TestCatalogScheduleDeferredCatchesUpOnce`、`TestSourceCatalogDailyRetriesALowDiskPauseAfterOneHour`。
+- [x] 低空间或维护 hold 只设置一次 `deferred_until`／`deferred_reason`；到期后重新检查条件，条件未解除时继续延后，不能误跑 full。`TestCatalogScheduleDeferredCatchesUpOnce` 与低空间测试断言原因和一次追赶；维护 hold 复用 `TestCatalogSyncPausesForMaintenanceAndRetriesAfterTheHold`。
+- [x] queued full 不会被 `resume_full_pending` 重复创建；`resume_full_pending` 只在 full 终态 succeeded 后清零并推进 weekly due，failed/cancelled 保留待重试。`TestCatalogScheduleResumeFullPendingWinsAndClears`、`TestCatalogScheduleFailedResumeFullRetriesWithoutMovingWeekly`。
+- [x] force sync 不再触发 `errCatalogSyncRunning`；同一来源不产生 full 与 sync 重叠写；手动请求与同一轮已到期任务只执行一次。`TestCatalogScheduleRunningSyncDefersFullAndKeepsDue`、`TestManualFullIndexQueuesWhileIncrementalSyncRuns`、`TestIncrementalSyncRefusesWhileFullGenerationRuns`。
+- [x] D-16 的 0/1/4/5 audio、2000/2001 nonAudio、5000/5001 files 在入队／发布／API 三层一致；系列成员逐条判定。`TestCatalogAdmissionPublishingPublishesEveryCardWithAudio`、`TestCatalogAdmissionAPIShowsEveryCardWithAudio`、`TestCatalogAdmissionSeriesFiltersEveryMember`。
+- [ ] 42k 卡浏览与 5,001 文件卡拒绝路径的 p95 证据（2 vCPU／2 GiB、warm、≥20 样本，浏览 p95 ≤ 300 ms、p99 ≤ 800 ms）；超限先落地 `source_catalog_entry_admission` 再复测；不得以全表扫描换取正确性。本 worktree 未在目标硬件执行 42k 基准，保持未勾选。
+- [x] 096 激活期间系列详情/成员 tracks 不可见，publication 切换后才可见；系列详情与列表使用同一 D-16 成员过滤。`TestCatalogSeriesHidesPendingPublicationUntilItIsPublished`、`TestCatalogAdmissionSeriesFiltersEveryMember`。
+- [x] 不重复实现 `134f7c90` 的规则；如发现其实现缺口，先报告再最小修正。本票只把常量接入 SQL 并补系列门禁。
 
 **测试入口:** H、R，必要的纯规则 U；真实覆盖由 24 汇总。
+
+## 实现与证据
+
+- 迁移：`backend/migrations/098_catalog_schedule.sql` 创建 `source_catalog_schedule`，含 `deferred_reason` 与 `pending_full_run_id`，并只回填 enabled OpenList 来源。`backend/internal/storage/catalog_schedule_migration_test.go` 覆盖 84→098、合法旧值保留、过期/非法值回退、重复启动不重写；`migration_manager_test.go` 覆盖新装与增量链 schema 一致。按集成约定，本分支不生成 `compat/098_dev.sql`。
+- 调度：`source_catalog_schedule.go` 提供行生命周期与 due 计算；`source_catalog_daily.go` 在 `beginTxWithDatabaseBusyRetry` 中完成资源重查、resume 优先、manual 消费、单任务创建与同事务 due 推进。`source_catalog_schedule_test.go` 覆盖边界、同时到期、跨日追赶、deferred、resume 成功/失败、manual、disabled/enable、维护同步、父 listing 不完整。
+- D-16：`catalogadmission.Probe*` 是唯一常量源；`catalogEntryAdmittedSQL`、发布计数和单卡 API 都由它生成。系列列表、详情和成员 tracks 对每个成员独立过滤，计数只取该成员 `source_catalog_file`。
+- 096：系列详情在 pending publication 期间隐藏成员；publication 翻为 `published` 后同一查询可见。映射清理与发布状态同事务，`published` 是不可回退边界，注入清理失败后公开文件保持不变。
+- 验证命令与结果记录在交付报告；42k 性能证据未在本 worktree 采集，保持未勾选。
 
 ## Comments
 

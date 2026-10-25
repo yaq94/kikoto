@@ -323,3 +323,96 @@ func TestCatalogAdmissionAPIShowsEveryCardWithAudio(t *testing.T) {
 		t.Fatalf("admissible tracks status = %d, body=%s", response.Code, response.Body.String())
 	}
 }
+
+// Series membership is evaluated per member. An over-limit episode disappears
+// from the series card, the series detail and its own tracks route, while the
+// qualified sibling stays visible. A series with no qualified member is not
+// listed at all.
+func TestCatalogAdmissionSeriesFiltersEveryMember(t *testing.T) {
+	db := openMigratedTestDB(t)
+	metadataReviewExec(t, db, `INSERT INTO file_source(id,code,display_name,source_type,enabled)
+		VALUES(85,'admission-series','Admission Series','openlist',1);
+		INSERT INTO source_catalog_entry(id,file_source_id,root_path,title,availability_status) VALUES
+			(8501,85,'/series/good-1','Good 1','available'),
+			(8502,85,'/series/bad','Bad','available'),
+			(8503,85,'/series/good-2','Good 2','available'),
+			(8504,85,'/only-bad/bad','Only bad','available');
+		INSERT INTO catalog_series(id,title) VALUES(1,'Mixed series'),(2,'Only refused');`)
+	metadataReviewExec(t, db, `INSERT INTO catalog_series_member(series_id,catalog_entry_id,position,evidence) VALUES
+		(1,8501,1,'manual'),(1,8502,2,'manual'),(1,8503,3,'manual'),(2,8504,1,'manual')`)
+	metadataReviewExec(t, db, `WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<2)
+		INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes)
+		SELECT 8501,'a'||i||'.mp3','a'||i,'audio',1 FROM n;
+		INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes)
+		VALUES(8502,'a.mp3','a','audio',1)`)
+	metadataReviewExec(t, db, `WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<6000)
+		INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes)
+		SELECT 8502,'n'||i||'.jpg','n'||i,'other',1 FROM n;
+		INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes)
+		VALUES(8503,'a.mp3','a','audio',1)`)
+	metadataReviewExec(t, db, `INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes)
+		VALUES(8504,'a.mp3','a','audio',1)`)
+	metadataReviewExec(t, db, `WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<6000)
+		INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes)
+		SELECT 8504,'n'||i||'.jpg','n'||i,'other',1 FROM n`)
+
+	server := NewServer(db, config.Config{})
+	source := remoteSourceForUse{ID: 85, Enabled: true, SourceType: "openlist"}
+	request := httptest.NewRequest(http.MethodGet, "/api/remote-sources/85/works", nil)
+	response := httptest.NewRecorder()
+	server.listOpenListWorks(response, request, source)
+	var works remoteWorksResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &works); err != nil {
+		t.Fatal(err)
+	}
+	if len(works.Works) != 1 || works.Works[0].SeriesID != 1 {
+		t.Fatalf("browse cards = %+v, want only the mixed series", works.Works)
+	}
+
+	request = httptest.NewRequest(http.MethodGet, "/api/catalog-series/1", nil)
+	request.SetPathValue("id", "1")
+	response = httptest.NewRecorder()
+	server.getCatalogSeries(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("series detail status = %d body=%s", response.Code, response.Body.String())
+	}
+	var view catalogSeriesView
+	if err := json.Unmarshal(response.Body.Bytes(), &view); err != nil {
+		t.Fatal(err)
+	}
+	if len(view.Episodes) != 2 {
+		t.Fatalf("series detail episodes = %+v, want the two qualified members", view.Episodes)
+	}
+	for _, episode := range view.Episodes {
+		if episode.CatalogEntryID == 8502 {
+			t.Fatal("over-limit member remained in the series detail")
+		}
+	}
+
+	tracks := httptest.NewRequest(http.MethodGet, "/api/source-catalog/8502/tracks", nil)
+	tracks.SetPathValue("id", "8502")
+	response = httptest.NewRecorder()
+	server.getSourceCatalogTracks(response, tracks)
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("over-limit member tracks status = %d", response.Code)
+	}
+	tracks = httptest.NewRequest(http.MethodGet, "/api/source-catalog/8501/tracks", nil)
+	tracks.SetPathValue("id", "8501")
+	response = httptest.NewRecorder()
+	server.getSourceCatalogTracks(response, tracks)
+	if response.Code != http.StatusOK {
+		t.Fatalf("qualified member tracks status = %d", response.Code)
+	}
+
+	request = httptest.NewRequest(http.MethodGet, "/api/catalog-series/2", nil)
+	request.SetPathValue("id", "2")
+	response = httptest.NewRecorder()
+	server.getCatalogSeries(response, request)
+	var refused catalogSeriesView
+	if err := json.Unmarshal(response.Body.Bytes(), &refused); err != nil {
+		t.Fatal(err)
+	}
+	if len(refused.Episodes) != 0 {
+		t.Fatalf("series without a qualified member exposed %+v", refused.Episodes)
+	}
+}

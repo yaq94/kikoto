@@ -143,6 +143,11 @@ func insertRemoteSourceSeed(ctx context.Context, tx *sql.Tx, seed normalizedRemo
 	if err != nil {
 		return err
 	}
+	if seed.SourceType == sourceTypeOpenList && seed.Enabled {
+		if err = ensureCatalogScheduleTx(ctx, tx, sourceID, time.Now().UTC()); err != nil {
+			return err
+		}
+	}
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO file_source_endpoint (file_source_id, base_url, api_url, fallback_url, work_url_template)
 		VALUES (?, ?, ?, ?, ?)
@@ -273,6 +278,12 @@ func (s *Server) createFileSource(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
+	if payload.SourceType == sourceTypeOpenList && payload.Enabled {
+		if err := ensureCatalogScheduleTx(r.Context(), tx, sourceID, s.catalogTime()); err != nil {
+			writeError(w, err)
+			return
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		writeError(w, err)
 		return
@@ -341,6 +352,21 @@ func (s *Server) updateFileSource(w http.ResponseWriter, r *http.Request) {
 	if !updated {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "source not found"})
 		return
+	}
+	// Disabling keeps the row but skips scheduling; enabling again starts from
+	// the next local boundary instead of inheriting a held or expired one. A
+	// rename or budget change of an enabled source must not move its schedule.
+	if !wasEnabled && payload.SourceType == sourceTypeOpenList && payload.Enabled {
+		if err := resetCatalogScheduleTx(r.Context(), tx, id, s.catalogTime()); err != nil {
+			writeError(w, err)
+			return
+		}
+	}
+	if wasEnabled && payload.SourceType == sourceTypeOpenList && payload.Enabled {
+		if err := ensureCatalogScheduleTx(r.Context(), tx, id, s.catalogTime()); err != nil {
+			writeError(w, err)
+			return
+		}
 	}
 	var code string
 	if err := tx.QueryRowContext(r.Context(), "SELECT code FROM file_source WHERE id = ?", id).Scan(&code); err != nil {
