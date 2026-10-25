@@ -23,7 +23,9 @@ type catalogSyncTestEntry struct {
 	Modified string
 }
 
-func TestManualFullIndexRefusesWhileIncrementalSyncRuns(t *testing.T) {
+// A manual refresh requested while a sync holds the writer is accepted and
+// queued once. It must not create a second writer or replace the generation.
+func TestManualFullIndexQueuesWhileIncrementalSyncRuns(t *testing.T) {
 	tree := newCatalogSyncTestTree()
 	tree.set("/", catalogSyncTestEntry{Name: "Partition A", IsDir: true, Modified: "p1"})
 	tree.set("/Partition A", catalogSyncTestEntry{Name: "Work 001", IsDir: true, Modified: "w1"})
@@ -40,9 +42,16 @@ func TestManualFullIndexRefusesWhileIncrementalSyncRuns(t *testing.T) {
 	if _, err := f.server.db.Exec(`INSERT INTO source_catalog_sync_run(file_source_id,status,note) VALUES(?,'running','')`, sourceID); err != nil {
 		t.Fatal(err)
 	}
-	resp := f.request(t, http.MethodPost, "/catalog/index", `{}`, http.StatusConflict)
-	if resp["code"] != "catalog_sync_running" {
+	resp := f.request(t, http.MethodPost, "/catalog/index", `{}`, http.StatusAccepted)
+	if resp["runId"] != float64(generation) || resp["existing"] != true {
 		t.Fatalf("manual full response = %#v", resp)
+	}
+	var pending int
+	if err := f.server.db.QueryRow(`SELECT manual_pending FROM source_catalog_schedule WHERE file_source_id=?`, sourceID).Scan(&pending); err != nil {
+		t.Fatal(err)
+	}
+	if pending != 1 {
+		t.Fatal("manual refresh during a sync was not queued")
 	}
 	var after int64
 	if err := f.server.db.QueryRow(`SELECT workflow_run_id FROM source_catalog_scan WHERE file_source_id=?`, sourceID).Scan(&after); err != nil {
