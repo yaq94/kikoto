@@ -3,9 +3,10 @@
 // a card that the publisher refuses from reappearing through another path.
 package catalogadmission
 
-// Probe bounds keep diagnostic counts small. They do not decide admission: a
-// directory with audio stays playable however many artwork, subtitle or archive
-// files accompany it.
+// Probe bounds are the admission thresholds. The publisher, the browse API and
+// the prune tool read these three constants, and SQL counts stop one row past
+// each bound so a large card costs the same as a small one. A directory with
+// audio therefore stays playable only while it remains inside these limits.
 const (
 	ProbeFiles    = 5000
 	ProbeNonAudio = 2000

@@ -7,7 +7,6 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -139,40 +138,47 @@ func TestSourceCatalogDailyStartsOnlyAfterCompleteAndSurvivesRestart(t *testing.
 	entryID := strconv.Itoa(int(list["works"].([]any)[0].(map[string]any)["catalogEntryId"].(float64)))
 	workReferenceRequest(t, f.app, f.cookie, http.MethodPatch, "/api/source-catalog/"+entryID+"/user-state", `{"rating":3,"note":"Example retained note"}`, 200, nil)
 	// The incremental probe has no publisher to pause. Expire the weekly marker
-	// so this tick starts a full generation, which is the path that owns the
-	// low-disk check.
+	// so this tick reaches the weekly decision. A low disk defers the schedule
+	// instead of creating a run, so the completed generation stays untouched.
 	low.Store(true)
-	if _, err := f.server.db.Exec(`INSERT INTO app_setting(key,value_json) VALUES(?,?)
-		ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json`, catalogFullSettingPrefix+"1",
-		strconv.FormatInt(now.Load()-int64(8*24*time.Hour/time.Second), 10)); err != nil {
+	if _, err := f.server.db.Exec(`UPDATE source_catalog_schedule
+		SET weekly_due_at=?,daily_due_at=?,deferred_until=0 WHERE file_source_id=1`,
+		now.Load()-int64(8*24*time.Hour/time.Second), now.Load()-int64(8*24*time.Hour/time.Second)); err != nil {
 		t.Fatal(err)
 	}
 	now.Add(int64(time.Hour / time.Second))
-	p = waitCatalogDaily(t, f, func(p map[string]any) bool { return p["runId"] != first && p["status"] == "paused" })
-	third := p["runId"]
-	if p["requests"] != float64(0) || p["pauseReason"] != "low_disk_space" {
-		t.Fatalf("scheduled scan ignored disk limit: %#v", p)
+	waitCatalogDaily(t, f, func(p map[string]any) bool {
+		var deferred int64
+		if err := f.server.db.QueryRow(`SELECT deferred_until FROM source_catalog_schedule WHERE file_source_id=1`).Scan(&deferred); err != nil {
+			t.Fatal(err)
+		}
+		return deferred > now.Load()
+	})
+	p = f.request(t, http.MethodGet, "/catalog/index", "", 200)
+	if p["runId"] != first || p["status"] != "complete" {
+		t.Fatalf("low-disk dispatch replaced the completed generation: %#v", p)
 	}
 	closeApp()
 	now.Add(int64(6 * time.Hour / time.Second))
+	low.Store(false)
 	f, closeApp = boot(false)
 	f.server.Go(f.server.StartJobRunner)
-	waitCatalogDaily(t, f, func(p map[string]any) bool { return p["status"] == "paused" && p["runId"] == third })
-	// Repeated manual starts and a due timer all keep the paused generation.
+	// The deferred weekly boundary catches up once after the disk recovers.
+	p = waitCatalogDaily(t, f, func(p map[string]any) bool { return p["runId"] != first })
+	third := p["runId"]
+	// Repeated manual starts and a due timer all join the new generation.
 	for range 4 {
 		joined := f.request(t, http.MethodPost, "/catalog/index", `{}`, 202)
 		if joined["runId"] != third || joined["existing"] != true {
-			t.Fatal("paused scan was duplicated")
+			t.Fatal("weekly full was duplicated")
 		}
 	}
 	var detail map[string]any
 	workReferenceRequest(t, f.app, f.cookie, http.MethodGet, "/api/source-catalog/"+entryID, "", 200, &detail)
 	assertReview(t, detail, float64(3), "Example retained note")
-	low.Store(false)
-	f.request(t, http.MethodPost, "/catalog/index", `{}`, 202)
 	p = waitCatalogDaily(t, f, func(p map[string]any) bool { return p["status"] == "complete" })
 	if p["runId"] != third || p["indexedEntries"] != float64(2) {
-		t.Fatal("paused checkpoint did not resume")
+		t.Fatal("deferred weekly full did not complete")
 	}
 	closeApp()
 }
@@ -244,6 +250,10 @@ func TestSourceCatalogDailyJoinsQueuedRunningAndCancelledScansWithSavedBudget(t 
 		_ = json.NewEncoder(w).Encode(map[string]any{"code": 200, "data": map[string]any{"content": items, "total": len(items)}})
 	}))
 	f.server.catalogNow = func() time.Time { return time.Unix(now.Load(), 0).UTC() }
+	setCatalogScheduleTestState(t, f, catalogScheduleState{
+		Daily:  now.Load(),
+		Weekly: now.Load() + int64(7*24*time.Hour/time.Second),
+	})
 	createAccountManagedTestUser(t, f.server, "synthetic-listener", "synthetic-password")
 	other := loginTestSession(t, f.handler, "synthetic-listener", "synthetic-password")
 	reviewRequest(t, f.handler, other, http.MethodPost, f.base+"/catalog/index", `{}`, 403)
@@ -277,9 +287,9 @@ func TestSourceCatalogDailyJoinsQueuedRunningAndCancelledScansWithSavedBudget(t 
 	waitCatalogDaily(t, f, func(p map[string]any) bool { return p["status"] == "cancelled" })
 	block.Store(false)
 	now.Add(int64(24 * time.Hour / time.Second))
-	p := waitCatalogDaily(t, f, func(p map[string]any) bool { return p["status"] == "complete" })
+	p := waitCatalogSyncSettled(t, f)
 	if p["runId"] != queued {
-		t.Fatal("daily recovery replaced cancelled generation")
+		t.Fatalf("daily recovery replaced cancelled generation: %#v", p)
 	}
 	options := p["options"].(map[string]any)
 	if options["concurrency"] != float64(1) || options["intervalMs"] != float64(1000) {
@@ -359,9 +369,10 @@ func TestSourceCatalogDailyRetriesAFailedRun(t *testing.T) {
 	if _, err := f.server.db.Exec(`UPDATE source_catalog_scan SET pause_reason='source_unavailable' WHERE file_source_id=1`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.server.db.Exec(`DELETE FROM app_setting WHERE key=?`, catalogDailySettingPrefix+"1"); err != nil {
-		t.Fatal(err)
-	}
+	setCatalogScheduleTestState(t, f, catalogScheduleState{
+		Daily:  now.Load(),
+		Weekly: now.Load() + int64(24*time.Hour/time.Second),
+	})
 	now.Add(int64(48 * time.Hour / time.Second))
 	if err := f.server.dispatchDueCatalogUpdates(context.Background()); err != nil {
 		t.Fatal(err)
@@ -370,11 +381,14 @@ func TestSourceCatalogDailyRetriesAFailedRun(t *testing.T) {
 	if err := f.server.db.QueryRow(`SELECT workflow_run_id FROM source_catalog_scan WHERE file_source_id=1`).Scan(&nextRun); err != nil {
 		t.Fatal(err)
 	}
-	var jobStatus string
-	if err := f.server.db.QueryRow(`SELECT status FROM workflow_job WHERE workflow_run_id=? AND worker_type=?`, runID, sourceCatalogIndexWorkerType).Scan(&jobStatus); err != nil {
+	if nextRun != int64(runID.(float64)) {
+		t.Fatal("failed run was replaced by a new full generation")
+	}
+	var syncRuns int
+	if err := f.server.db.QueryRow(`SELECT count(*) FROM source_catalog_sync_run WHERE file_source_id=1`).Scan(&syncRuns); err != nil {
 		t.Fatal(err)
 	}
-	if nextRun == int64(runID.(float64)) && jobStatus != "queued" {
+	if syncRuns == 0 {
 		t.Fatal("failed run was not scheduled for a retry")
 	}
 }
@@ -400,11 +414,9 @@ func TestSourceCatalogDailyRetriesALowDiskPauseAfterOneHour(t *testing.T) {
 			WHERE file_source_id=1 AND path='/'`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.server.db.Exec(`DELETE FROM app_setting WHERE key=?`, catalogDailySettingPrefix+"1"); err != nil {
-		t.Fatal(err)
-	}
+	setCatalogScheduleTestState(t, f, catalogScheduleState{Daily: now.Load(), Weekly: now.Load() + int64(48*time.Hour/time.Second)})
 	f.server.catalogDiskSpace = func(string) (diskSpaceSnapshot, error) { return diskSpaceSnapshot{Available: 0}, nil }
-	// Before the backoff ends the paused generation is left alone.
+	// The disk floor only defers the schedule; it does not create a writer.
 	if err := f.server.dispatchDueCatalogUpdates(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -422,6 +434,15 @@ func TestSourceCatalogDailyRetriesALowDiskPauseAfterOneHour(t *testing.T) {
 	if syncRuns != 0 {
 		t.Fatal("low-disk backoff was ignored")
 	}
+	state := readCatalogSchedule(t, f)
+	if state.Deferred != now.Load()+int64(time.Hour/time.Second) || state.DeferredReason != "low_disk" {
+		t.Fatalf("low-disk pause did not persist its reason: %+v", state)
+	}
+	// Once the disk recovers, the deferred source catches up with one
+	// directory-first sync over the same generation.
+	f.server.catalogDiskSpace = func(string) (diskSpaceSnapshot, error) {
+		return diskSpaceSnapshot{Available: 4 << 30}, nil
+	}
 	now.Add(int64(time.Hour/time.Second) + 1)
 	if err := f.server.dispatchDueCatalogUpdates(context.Background()); err != nil {
 		t.Fatal(err)
@@ -434,17 +455,11 @@ func TestSourceCatalogDailyRetriesALowDiskPauseAfterOneHour(t *testing.T) {
 		t.Fatal("low-disk retry did not resume the same generation")
 	}
 	sync := p["lastSync"].(map[string]any)
-	if sync["status"] != "partial" || !strings.Contains(sync["note"].(string), "low_disk_space") {
-		t.Fatalf("low-disk retry sync = %#v", sync)
+	if sync["status"] == "running" {
+		t.Fatalf("low-disk retry did not settle: %#v", sync)
 	}
-	if sync["requests"] != float64(0) {
-		t.Fatalf("low-disk retry spent %v requests", sync["requests"])
-	}
-	var due int64
-	if err := f.server.db.QueryRow(`SELECT CAST(value_json AS INTEGER) FROM app_setting WHERE key=?`, catalogDailySettingPrefix+"1").Scan(&due); err != nil {
-		t.Fatal(err)
-	}
-	if remaining := due - now.Load(); remaining < 50*60 || remaining > 70*60 {
-		t.Fatalf("low-disk retry due in %d seconds, want about an hour", remaining)
+	state = readCatalogSchedule(t, f)
+	if state.Deferred != 0 || state.DeferredReason != "" {
+		t.Fatalf("recovered source kept its deferral: %+v", state)
 	}
 }

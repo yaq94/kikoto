@@ -16,7 +16,7 @@ import (
 
 var numberedMigrationFilePattern = regexp.MustCompile(`^[0-9]{3}_[a-z0-9][a-z0-9_]*\.sql$`)
 
-const latestNumberedMigrationVersion = 96
+const latestNumberedMigrationVersion = 98
 
 // latestReleasedBaseline is the newest file in migrations/baseline/, which
 // production uses for a fresh database.
@@ -307,8 +307,8 @@ func TestMigrateAdoptsLegacyMigrationLedger(t *testing.T) {
 
 func TestMigrateBaselineMatchesCompleteIncrementalChain(t *testing.T) {
 	migrationDir := filepath.Join("..", "..", "migrations")
-	if got := latestNumberedMigrationFilename(t, migrationDir); got != "096_catalog_episode_pending.sql" {
-		t.Fatalf("latest migration = %q, want the catalog episode pending migration", got)
+	if got := latestNumberedMigrationFilename(t, migrationDir); got != "098_catalog_schedule.sql" {
+		t.Fatalf("latest migration = %q, want the catalog schedule migration", got)
 	}
 	incrementalDir := copyNumberedMigrations(t, migrationDir)
 
@@ -317,6 +317,7 @@ func TestMigrateBaselineMatchesCompleteIncrementalChain(t *testing.T) {
 		t.Fatalf("incremental Migrate() error = %v", err)
 	}
 	assertCatalogEpisodePendingSchema(t, incremental)
+	assertCatalogScheduleSchema(t, incremental)
 	// Production selects the newest released baseline; development selects
 	// the newest baseline across baseline/ and compat/, which also proves the
 	// packaged compat/ files form a valid development catalog.
@@ -333,6 +334,7 @@ func TestMigrateBaselineMatchesCompleteIncrementalChain(t *testing.T) {
 				t.Fatalf("baseline Migrate() error = %v", err)
 			}
 			assertCatalogEpisodePendingSchema(t, baseline)
+			assertCatalogScheduleSchema(t, baseline)
 			if got, want := schemaSnapshot(t, baseline), schemaSnapshot(t, incremental); !equalStringMaps(got, want) {
 				t.Fatalf("baseline schema differs from complete incremental chain\n%s", diffStringMaps(got, want))
 			}
@@ -340,6 +342,35 @@ func TestMigrateBaselineMatchesCompleteIncrementalChain(t *testing.T) {
 				t.Fatalf("baseline seed data differs from complete incremental chain\n%s", diffStringMaps(got, want))
 			}
 		})
+	}
+}
+
+func assertCatalogScheduleSchema(t *testing.T, db *sql.DB) {
+	t.Helper()
+	var tableSQL string
+	if err := db.QueryRow(`SELECT COALESCE(sql,'') FROM sqlite_schema
+		WHERE type='table' AND name='source_catalog_schedule'`).Scan(&tableSQL); err != nil {
+		t.Fatalf("read source_catalog_schedule schema: %v", err)
+	}
+	for _, column := range []string{"file_source_id", "daily_due_at", "weekly_due_at", "deferred_until", "deferred_reason", "manual_pending", "resume_full_pending", "pending_full_run_id", "updated_at"} {
+		if !strings.Contains(tableSQL, column) {
+			t.Fatalf("source_catalog_schedule schema is missing %q: %s", column, tableSQL)
+		}
+	}
+	var indexes int
+	if err := db.QueryRow(`SELECT count(*) FROM sqlite_schema
+		WHERE type='index' AND tbl_name='source_catalog_schedule' AND name='source_catalog_schedule_due'`).Scan(&indexes); err != nil {
+		t.Fatal(err)
+	}
+	if indexes != 1 {
+		t.Fatalf("source_catalog_schedule due index=%d, want 1", indexes)
+	}
+	var foreignKeys int
+	if err := db.QueryRow(`SELECT count(*) FROM pragma_foreign_key_list('source_catalog_schedule')`).Scan(&foreignKeys); err != nil {
+		t.Fatal(err)
+	}
+	if foreignKeys != 2 {
+		t.Fatalf("source_catalog_schedule foreign keys=%d, want 2", foreignKeys)
 	}
 }
 

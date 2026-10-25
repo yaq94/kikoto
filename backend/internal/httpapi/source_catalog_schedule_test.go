@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"database/sql"
 	"net/http"
 	"strconv"
 	"testing"
@@ -12,21 +13,85 @@ func shanghaiTestTime(year int, month time.Month, day, hour, minute int) time.Ti
 	return time.Date(year, month, day, hour, minute, 0, 0, time.FixedZone("Asia/Shanghai", 8*60*60))
 }
 
-func readCatalogDue(t *testing.T, f catalogIndexFixture, prefix string) int64 {
-	t.Helper()
-	value := readCatalogSetting(t, f, prefix+"1")
-	due, err := strconv.ParseInt(value, 10, 64)
-	if err != nil {
-		t.Fatalf("parse %s: %v", prefix, err)
-	}
-	return due
+type catalogScheduleState struct {
+	Daily, Weekly, Deferred   int64
+	DeferredReason            string
+	ManualPending, ResumeFull bool
+	PendingFullRunID          sql.NullInt64
 }
 
-// The coordinator stores wall-clock boundaries, not completion time plus a
-// rolling interval. A weekday boundary checks 03:00 Asia/Shanghai exactly, a
-// multi-day stop catches up once, and an immediate second poll cannot repeat
-// the dispatch.
-func TestSourceCatalogDailyWallClockBoundaryAndMissedCatchUp(t *testing.T) {
+func readCatalogSchedule(t *testing.T, f catalogIndexFixture) catalogScheduleState {
+	t.Helper()
+	var state catalogScheduleState
+	var manual, resume int
+	if err := f.server.db.QueryRow(`SELECT daily_due_at,weekly_due_at,deferred_until,deferred_reason,manual_pending,resume_full_pending,pending_full_run_id
+		FROM source_catalog_schedule WHERE file_source_id=?`, f.sourceID(t)).
+		Scan(&state.Daily, &state.Weekly, &state.Deferred, &state.DeferredReason, &manual, &resume, &state.PendingFullRunID); err != nil {
+		t.Fatalf("read catalog schedule: %v", err)
+	}
+	state.ManualPending = manual != 0
+	state.ResumeFull = resume != 0
+	return state
+}
+
+// setCatalogScheduleTestState writes the schedule fields a dispatcher test
+// wants without the values it intentionally leaves alone. A plain UPDATE would
+// keep a stale manual_pending or resume_full_pending from an earlier step and
+// silently turn the next dispatch into a different branch.
+func setCatalogScheduleTestState(t *testing.T, f catalogIndexFixture, state catalogScheduleState) {
+	t.Helper()
+	if _, err := f.server.db.Exec(`UPDATE source_catalog_schedule SET
+			daily_due_at=?,weekly_due_at=?,deferred_until=?,deferred_reason='',manual_pending=?,resume_full_pending=?,pending_full_run_id=NULL,updated_at=CURRENT_TIMESTAMP
+		WHERE file_source_id=?`, state.Daily, state.Weekly, state.Deferred,
+		catalogSyncBoolInt(state.ManualPending), catalogSyncBoolInt(state.ResumeFull), f.sourceID(t)); err != nil {
+		t.Fatalf("set catalog schedule: %v", err)
+	}
+}
+
+// seedCatalogScheduleAt writes the boundaries a source would have after its
+// initial full crawl. Tests create the fixture before they install their fake
+// clock, so the row inserted at source creation uses real time; seeding makes
+// the wall-clock expectations independent of when the test runs.
+func seedCatalogScheduleAt(t *testing.T, f catalogIndexFixture, now time.Time) catalogScheduleState {
+	t.Helper()
+	state := catalogScheduleState{
+		Daily:  nextCatalogDailyDue(now).Unix(),
+		Weekly: nextCatalogWeeklyDue(now).Unix(),
+	}
+	setCatalogScheduleTestState(t, f, state)
+	return state
+}
+
+func countCatalogSyncRuns(t *testing.T, f catalogIndexFixture) int {
+	t.Helper()
+	var count int
+	if err := f.server.db.QueryRow(`SELECT count(*) FROM source_catalog_sync_run WHERE file_source_id=?`, f.sourceID(t)).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	return count
+}
+
+func countQueuedFullJobs(t *testing.T, f catalogIndexFixture) int {
+	t.Helper()
+	var count int
+	if err := f.server.db.QueryRow(`SELECT count(*) FROM workflow_job WHERE worker_type=? AND status IN ('queued','running')`,
+		sourceCatalogIndexWorkerType).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	return count
+}
+
+func dispatchCatalog(t *testing.T, f catalogIndexFixture) {
+	t.Helper()
+	if err := f.server.dispatchDueCatalogUpdates(context.WithValue(context.Background(), catalogIndexNoPacingKey{}, true)); err != nil {
+		t.Fatalf("dispatch catalog updates: %v", err)
+	}
+}
+
+// The persisted boundaries are wall clock values. A weekday tick before 03:00
+// does nothing, the exact boundary starts one sync, and a multi-day stop
+// catches up once instead of replaying every missed day.
+func TestCatalogScheduleDailyBoundaryAndMissedCatchUp(t *testing.T) {
 	tree := newCatalogSyncTestTree()
 	tree.set("/", catalogSyncTestEntry{Name: "Partition A", IsDir: true, Modified: "p1"})
 	tree.set("/Partition A", catalogSyncTestEntry{Name: "Work 001", IsDir: true, Modified: "w1"})
@@ -37,89 +102,56 @@ func TestSourceCatalogDailyWallClockBoundaryAndMissedCatchUp(t *testing.T) {
 	if p := f.runFullScan(t, ""); p["status"] != "complete" {
 		t.Fatalf("full scan did not complete: %#v", p)
 	}
-
 	nextDaily := shanghaiTestTime(2030, time.January, 2, 3, 0).UTC().Unix()
-	nextFull := shanghaiTestTime(2030, time.January, 6, 3, 0).UTC().Unix()
-	if got := readCatalogDue(t, f, catalogDailySettingPrefix); got != nextDaily {
-		t.Fatalf("next daily due = %d (%s), want %d (%s)", got, time.Unix(got, 0).In(shanghaiTestTime(2030, 1, 1, 0, 0).Location()).Format(time.RFC3339), nextDaily, time.Unix(nextDaily, 0).In(shanghaiTestTime(2030, 1, 1, 0, 0).Location()).Format(time.RFC3339))
-	}
-	if got := readCatalogDue(t, f, catalogFullSettingPrefix); got != nextFull {
-		t.Fatalf("next full due = %d, want %d", got, nextFull)
-	}
+	nextWeekly := shanghaiTestTime(2030, time.January, 6, 3, 0).UTC().Unix()
+	setCatalogScheduleTestState(t, f, catalogScheduleState{Daily: nextDaily, Weekly: nextWeekly})
 	if p := f.request(t, http.MethodGet, "/catalog/index", "", 200); p["nextUpdateAt"] != time.Unix(nextDaily, 0).In(catalogScheduleLocation).Format(time.RFC3339) ||
-		p["nextFullAt"] != time.Unix(nextFull, 0).In(catalogScheduleLocation).Format(time.RFC3339) {
+		p["nextFullAt"] != time.Unix(nextWeekly, 0).In(catalogScheduleLocation).Format(time.RFC3339) {
 		t.Fatalf("progress did not expose wall-clock boundaries: %#v", p)
 	}
 
-	// One second before the wall-clock boundary does nothing.
 	now = shanghaiTestTime(2030, time.January, 2, 2, 59)
 	f.server.catalogNow = func() time.Time { return now }
-	if err := f.server.dispatchDueCatalogUpdates(context.WithValue(context.Background(), catalogIndexNoPacingKey{}, true)); err != nil {
-		t.Fatal(err)
-	}
-	var syncRuns int
-	if err := f.server.db.QueryRow(`SELECT count(*) FROM source_catalog_sync_run WHERE file_source_id=?`, f.sourceID(t)).Scan(&syncRuns); err != nil {
-		t.Fatal(err)
-	}
-	if syncRuns != 0 {
-		t.Fatalf("sync ran before 03:00: %d", syncRuns)
+	dispatchCatalog(t, f)
+	if runs := countCatalogSyncRuns(t, f); runs != 0 {
+		t.Fatalf("sync ran before 03:00: %d", runs)
 	}
 
-	// The exact boundary dispatches one incremental sync.
 	now = shanghaiTestTime(2030, time.January, 2, 3, 0)
 	f.server.catalogNow = func() time.Time { return now }
-	if err := f.server.dispatchDueCatalogUpdates(context.WithValue(context.Background(), catalogIndexNoPacingKey{}, true)); err != nil {
-		t.Fatal(err)
-	}
+	dispatchCatalog(t, f)
 	waitCatalogSyncSettled(t, f)
-	if err := f.server.db.QueryRow(`SELECT count(*) FROM source_catalog_sync_run WHERE file_source_id=?`, f.sourceID(t)).Scan(&syncRuns); err != nil {
-		t.Fatal(err)
+	if runs := countCatalogSyncRuns(t, f); runs != 1 {
+		t.Fatalf("boundary produced %d sync runs, want 1", runs)
 	}
-	if syncRuns != 1 {
-		t.Fatalf("boundary produced %d sync runs, want 1", syncRuns)
+	if got := readCatalogSchedule(t, f).Daily; got != shanghaiTestTime(2030, time.January, 3, 3, 0).UTC().Unix() {
+		t.Fatalf("daily due after dispatch = %d, want the next local 03:00", got)
 	}
-	firstSync := syncRuns
-	if err := f.server.dispatchDueCatalogUpdates(context.WithValue(context.Background(), catalogIndexNoPacingKey{}, true)); err != nil {
-		t.Fatal(err)
-	}
-	if err := f.server.db.QueryRow(`SELECT count(*) FROM source_catalog_sync_run WHERE file_source_id=?`, f.sourceID(t)).Scan(&syncRuns); err != nil {
-		t.Fatal(err)
-	}
-	if syncRuns != firstSync {
-		t.Fatalf("immediate second poll repeated the trigger: %d sync runs", syncRuns)
+	dispatchCatalog(t, f)
+	if runs := countCatalogSyncRuns(t, f); runs != 1 {
+		t.Fatalf("immediate second poll repeated the trigger: %d sync runs", runs)
 	}
 
-	// A multi-day stop dispatches at most one catch-up, then waits for the next
-	// local 03:00 instead of replaying each missed day.
+	// Three missed days produce one catch-up, not three.
 	now = shanghaiTestTime(2030, time.January, 5, 10, 0)
 	f.server.catalogNow = func() time.Time { return now }
-	if err := f.server.dispatchDueCatalogUpdates(context.WithValue(context.Background(), catalogIndexNoPacingKey{}, true)); err != nil {
-		t.Fatal(err)
-	}
+	dispatchCatalog(t, f)
 	waitCatalogSyncSettled(t, f)
-	if err := f.server.db.QueryRow(`SELECT count(*) FROM source_catalog_sync_run WHERE file_source_id=?`, f.sourceID(t)).Scan(&syncRuns); err != nil {
-		t.Fatal(err)
+	if runs := countCatalogSyncRuns(t, f); runs != 2 {
+		t.Fatalf("missed boundary produced %d total sync runs, want 2", runs)
 	}
-	if syncRuns != 2 {
-		t.Fatalf("missed boundary produced %d total sync runs, want 2", syncRuns)
+	if got := readCatalogSchedule(t, f).Daily; got != shanghaiTestTime(2030, time.January, 6, 3, 0).UTC().Unix() {
+		t.Fatalf("daily due after catch-up = %d, want the next local 03:00", got)
 	}
-	if got, want := readCatalogDue(t, f, catalogDailySettingPrefix), shanghaiTestTime(2030, time.January, 6, 3, 0).UTC().Unix(); got != want {
-		t.Fatalf("next daily due after catch-up = %d, want %d", got, want)
-	}
-	if err := f.server.dispatchDueCatalogUpdates(context.WithValue(context.Background(), catalogIndexNoPacingKey{}, true)); err != nil {
-		t.Fatal(err)
-	}
-	if err := f.server.db.QueryRow(`SELECT count(*) FROM source_catalog_sync_run WHERE file_source_id=?`, f.sourceID(t)).Scan(&syncRuns); err != nil {
-		t.Fatal(err)
-	}
-	if syncRuns != 2 {
-		t.Fatalf("catch-up replayed more than one missed boundary: %d sync runs", syncRuns)
+	dispatchCatalog(t, f)
+	if runs := countCatalogSyncRuns(t, f); runs != 2 {
+		t.Fatalf("catch-up replayed more than one missed boundary: %d sync runs", runs)
 	}
 }
 
-// Sunday 03:00 starts a new full generation rather than another incremental
-// sync. Weekday 03:00 in the same week stays incremental.
-func TestSourceCatalogDailySundayRunsFullReconciliation(t *testing.T) {
+// Sunday starts a new full generation; a weekday boundary in the same week
+// stays a directory-first sync over the existing generation.
+func TestCatalogScheduleSundayRunsFullReconciliation(t *testing.T) {
 	tree := newCatalogSyncTestTree()
 	tree.set("/", catalogSyncTestEntry{Name: "Partition A", IsDir: true, Modified: "p1"})
 	tree.set("/Partition A", catalogSyncTestEntry{Name: "Work 001", IsDir: true, Modified: "w1"})
@@ -134,13 +166,14 @@ func TestSourceCatalogDailySundayRunsFullReconciliation(t *testing.T) {
 	if err := f.server.db.QueryRow(`SELECT workflow_run_id FROM source_catalog_scan WHERE file_source_id=?`, f.sourceID(t)).Scan(&firstGeneration); err != nil {
 		t.Fatal(err)
 	}
+	setCatalogScheduleTestState(t, f, catalogScheduleState{
+		Daily:  shanghaiTestTime(2030, time.January, 2, 3, 0).UTC().Unix(),
+		Weekly: shanghaiTestTime(2030, time.January, 6, 3, 0).UTC().Unix(),
+	})
 
-	// Tuesday 03:00 is an incremental update.
 	now = shanghaiTestTime(2030, time.January, 2, 3, 0)
 	f.server.catalogNow = func() time.Time { return now }
-	if err := f.server.dispatchDueCatalogUpdates(context.WithValue(context.Background(), catalogIndexNoPacingKey{}, true)); err != nil {
-		t.Fatal(err)
-	}
+	dispatchCatalog(t, f)
 	waitCatalogSyncSettled(t, f)
 	var generation int64
 	if err := f.server.db.QueryRow(`SELECT workflow_run_id FROM source_catalog_scan WHERE file_source_id=?`, f.sourceID(t)).Scan(&generation); err != nil {
@@ -150,17 +183,16 @@ func TestSourceCatalogDailySundayRunsFullReconciliation(t *testing.T) {
 		t.Fatalf("weekday update replaced generation %d with %d", firstGeneration, generation)
 	}
 
-	// Sunday 03:00 is the weekly full reconciliation.
 	now = shanghaiTestTime(2030, time.January, 6, 3, 0)
 	f.server.catalogNow = func() time.Time { return now }
-	if err := f.server.dispatchDueCatalogUpdates(context.WithValue(context.Background(), catalogIndexNoPacingKey{}, true)); err != nil {
-		t.Fatal(err)
-	}
-	var jobs int
-	if err := f.server.db.QueryRow(`SELECT count(*) FROM workflow_job WHERE worker_type=? AND status='queued'`, sourceCatalogIndexWorkerType).Scan(&jobs); err != nil {
-		t.Fatal(err)
-	}
-	if jobs != 1 {
+	// Normal daily dispatches have advanced the daily boundary to this same
+	// tick; the Sunday boundary is then the earlier or equal one and wins.
+	setCatalogScheduleTestState(t, f, catalogScheduleState{
+		Daily:  now.Unix(),
+		Weekly: now.Unix(),
+	})
+	dispatchCatalog(t, f)
+	if jobs := countQueuedFullJobs(t, f); jobs != 1 {
 		t.Fatalf("Sunday dispatch queued %d full jobs, want 1", jobs)
 	}
 	if p := f.drain(t); p["status"] != "complete" {
@@ -172,18 +204,327 @@ func TestSourceCatalogDailySundayRunsFullReconciliation(t *testing.T) {
 	if generation == firstGeneration {
 		t.Fatal("Sunday dispatch reused the incremental generation")
 	}
-	if got, want := readCatalogDue(t, f, catalogFullSettingPrefix), shanghaiTestTime(2030, time.January, 13, 3, 0).UTC().Unix(); got != want {
-		t.Fatalf("next full due = %d, want %d", got, want)
+	state := readCatalogSchedule(t, f)
+	if want := shanghaiTestTime(2030, time.January, 13, 3, 0).UTC().Unix(); state.Weekly != want {
+		t.Fatalf("next weekly due = %d, want %d", state.Weekly, want)
 	}
-	if got, want := readCatalogDue(t, f, catalogDailySettingPrefix), shanghaiTestTime(2030, time.January, 7, 3, 0).UTC().Unix(); got != want {
-		t.Fatalf("next daily due = %d, want %d", got, want)
+	if want := shanghaiTestTime(2030, time.January, 7, 3, 0).UTC().Unix(); state.Daily != want {
+		t.Fatalf("next daily due after weekly = %d, want %d", state.Daily, want)
+	}
+	if state.ResumeFull {
+		t.Fatal("weekly dispatch left resume_full_pending set")
+	}
+}
+
+// Daily and weekly boundaries that are both due on one tick produce a single
+// weekly full, not a sync followed by a full.
+func TestCatalogScheduleSimultaneousDueCreatesOneWeekly(t *testing.T) {
+	tree := newCatalogSyncTestTree()
+	tree.set("/", catalogSyncTestEntry{Name: "Partition A", IsDir: true, Modified: "p1"})
+	tree.set("/Partition A", catalogSyncTestEntry{Name: "Work 001", IsDir: true, Modified: "w1"})
+	tree.set("/Partition A/Work 001", catalogSyncTestEntry{Name: "01.mp3", Size: 100, Modified: "f1"})
+	f := newCatalogSyncFixture(t, tree)
+	now := shanghaiTestTime(2030, time.January, 6, 3, 0)
+	f.server.catalogNow = func() time.Time { return now }
+	if p := f.runFullScan(t, ""); p["status"] != "complete" {
+		t.Fatalf("full scan did not complete: %#v", p)
+	}
+	setCatalogScheduleTestState(t, f, catalogScheduleState{Daily: now.Unix(), Weekly: now.Unix()})
+	dispatchCatalog(t, f)
+	if jobs := countQueuedFullJobs(t, f); jobs != 1 {
+		t.Fatalf("simultaneous due queued %d full jobs, want 1", jobs)
+	}
+	if runs := countCatalogSyncRuns(t, f); runs != 0 {
+		t.Fatalf("simultaneous due also started %d syncs", runs)
+	}
+	if p := f.drain(t); p["status"] != "complete" {
+		t.Fatalf("weekly full did not complete: %#v", p)
+	}
+	state := readCatalogSchedule(t, f)
+	if state.Weekly != shanghaiTestTime(2030, time.January, 13, 3, 0).UTC().Unix() ||
+		state.Daily != shanghaiTestTime(2030, time.January, 7, 3, 0).UTC().Unix() {
+		t.Fatalf("simultaneous due advanced to %+v", state)
+	}
+	dispatchCatalog(t, f)
+	if jobs := countQueuedFullJobs(t, f); jobs != 0 {
+		t.Fatalf("second poll repeated the weekly full: %d jobs", jobs)
+	}
+}
+
+// A weekly boundary that came due while a sync held the lease leaves one
+// pending bit. The next dispatch creates the full and records its run id but
+// keeps the bit until that run succeeds; only then does the weekly boundary
+// advance and the pending state clear.
+func TestCatalogScheduleResumeFullPendingWinsAndClears(t *testing.T) {
+	tree := newCatalogSyncTestTree()
+	tree.set("/", catalogSyncTestEntry{Name: "Partition A", IsDir: true, Modified: "p1"})
+	tree.set("/Partition A", catalogSyncTestEntry{Name: "Work 001", IsDir: true, Modified: "w1"})
+	tree.set("/Partition A/Work 001", catalogSyncTestEntry{Name: "01.mp3", Size: 100, Modified: "f1"})
+	f := newCatalogSyncFixture(t, tree)
+	now := shanghaiTestTime(2030, time.January, 6, 10, 0)
+	f.server.catalogNow = func() time.Time { return now }
+	if p := f.runFullScan(t, ""); p["status"] != "complete" {
+		t.Fatalf("full scan did not complete: %#v", p)
+	}
+	var before int64
+	if err := f.server.db.QueryRow(`SELECT workflow_run_id FROM source_catalog_scan WHERE file_source_id=?`, f.sourceID(t)).Scan(&before); err != nil {
+		t.Fatal(err)
+	}
+	// Daily is still ahead: only the pending bit may start work.
+	setCatalogScheduleTestState(t, f, catalogScheduleState{
+		Daily:      now.Add(24 * time.Hour).Unix(),
+		Weekly:     now.Add(48 * time.Hour).Unix(),
+		ResumeFull: true,
+	})
+	dispatchCatalog(t, f)
+	if jobs := countQueuedFullJobs(t, f); jobs != 1 {
+		t.Fatalf("resume_full_pending queued %d full jobs, want 1", jobs)
+	}
+	if runs := countCatalogSyncRuns(t, f); runs != 0 {
+		t.Fatalf("resume_full_pending started %d syncs, want a weekly full", runs)
+	}
+	state := readCatalogSchedule(t, f)
+	if !state.ResumeFull || !state.PendingFullRunID.Valid {
+		t.Fatalf("weekly full creation cleared its own pending state: %+v", state)
+	}
+	if state.Weekly != now.Add(48*time.Hour).Unix() {
+		t.Fatalf("weekly due moved before the full succeeded: %+v", state)
+	}
+	if p := f.drain(t); p["status"] != "complete" {
+		t.Fatalf("resumed full did not complete: %#v", p)
+	}
+	dispatchCatalog(t, f)
+	state = readCatalogSchedule(t, f)
+	if state.ResumeFull || state.PendingFullRunID.Valid {
+		t.Fatalf("succeeded full did not clear resume state: %+v", state)
+	}
+	if want := shanghaiTestTime(2030, time.January, 13, 3, 0).UTC().Unix(); state.Weekly != want {
+		t.Fatalf("weekly due after resume = %d, want %d", state.Weekly, want)
+	}
+	var after int64
+	if err := f.server.db.QueryRow(`SELECT workflow_run_id FROM source_catalog_scan WHERE file_source_id=?`, f.sourceID(t)).Scan(&after); err != nil {
+		t.Fatal(err)
+	}
+	if after == before {
+		t.Fatal("resume_full_pending reused the completed generation")
+	}
+	dispatchCatalog(t, f)
+	if jobs := countQueuedFullJobs(t, f); jobs != 0 {
+		t.Fatalf("full completion re-queued itself: %d jobs", jobs)
+	}
+}
+
+// A resume full that fails or is cancelled must not advance the weekly clock.
+// The run id is forgotten, the pending bit survives, and the next tick creates
+// exactly one replacement.
+func TestCatalogScheduleFailedResumeFullRetriesWithoutMovingWeekly(t *testing.T) {
+	tree := newCatalogSyncTestTree()
+	tree.set("/", catalogSyncTestEntry{Name: "Partition A", IsDir: true, Modified: "p1"})
+	tree.set("/Partition A", catalogSyncTestEntry{Name: "Work 001", IsDir: true, Modified: "w1"})
+	tree.set("/Partition A/Work 001", catalogSyncTestEntry{Name: "01.mp3", Size: 100, Modified: "f1"})
+	f := newCatalogSyncFixture(t, tree)
+	now := shanghaiTestTime(2030, time.January, 6, 10, 0)
+	f.server.catalogNow = func() time.Time { return now }
+	if p := f.runFullScan(t, ""); p["status"] != "complete" {
+		t.Fatalf("full scan did not complete: %#v", p)
+	}
+	weekly := now.Add(48 * time.Hour).Unix()
+	setCatalogScheduleTestState(t, f, catalogScheduleState{
+		Daily:      now.Add(24 * time.Hour).Unix(),
+		Weekly:     weekly,
+		ResumeFull: true,
+	})
+	dispatchCatalog(t, f)
+	state := readCatalogSchedule(t, f)
+	if !state.PendingFullRunID.Valid {
+		t.Fatal("resume full did not record its run id")
+	}
+	failedID := state.PendingFullRunID.Int64
+	if _, err := f.server.db.Exec(`UPDATE workflow_run SET status='failed',finished_at=CURRENT_TIMESTAMP WHERE id=?`, failedID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.server.db.Exec(`UPDATE workflow_job SET status='failed',locked_by='',locked_at=NULL,heartbeat_at=NULL WHERE workflow_run_id=?`, failedID); err != nil {
+		t.Fatal(err)
+	}
+	dispatchCatalog(t, f)
+	state = readCatalogSchedule(t, f)
+	if !state.ResumeFull || state.PendingFullRunID.Valid {
+		t.Fatalf("failed resume full did not return to a retryable state: %+v", state)
+	}
+	if state.Weekly != weekly {
+		t.Fatalf("failed resume full moved the weekly boundary: %+v", state)
+	}
+	if jobs := countQueuedFullJobs(t, f); jobs != 0 {
+		t.Fatalf("failed run was immediately replaced in the same tick: %d jobs", jobs)
+	}
+	dispatchCatalog(t, f)
+	state = readCatalogSchedule(t, f)
+	if !state.PendingFullRunID.Valid || state.PendingFullRunID.Int64 == failedID {
+		t.Fatalf("retry did not create a replacement full: %+v", state)
+	}
+	if jobs := countQueuedFullJobs(t, f); jobs != 1 {
+		t.Fatalf("retry queued %d full jobs, want 1", jobs)
+	}
+}
+
+// A manual request that arrived while work was running is consumed once and
+// never moves the daily or weekly boundary.
+func TestCatalogScheduleManualPendingConsumedOnce(t *testing.T) {
+	tree := newCatalogSyncTestTree()
+	tree.set("/", catalogSyncTestEntry{Name: "Partition A", IsDir: true, Modified: "p1"})
+	tree.set("/Partition A", catalogSyncTestEntry{Name: "Work 001", IsDir: true, Modified: "w1"})
+	tree.set("/Partition A/Work 001", catalogSyncTestEntry{Name: "01.mp3", Size: 100, Modified: "f1"})
+	f := newCatalogSyncFixture(t, tree)
+	now := shanghaiTestTime(2030, time.January, 2, 10, 0)
+	f.server.catalogNow = func() time.Time { return now }
+	if p := f.runFullScan(t, ""); p["status"] != "complete" {
+		t.Fatalf("full scan did not complete: %#v", p)
+	}
+	daily := now.Add(24 * time.Hour).Unix()
+	weekly := now.Add(72 * time.Hour).Unix()
+	setCatalogScheduleTestState(t, f, catalogScheduleState{Daily: daily, Weekly: weekly, ManualPending: true})
+	dispatchCatalog(t, f)
+	waitCatalogSyncSettled(t, f)
+	if runs := countCatalogSyncRuns(t, f); runs != 1 {
+		t.Fatalf("manual request produced %d sync runs, want 1", runs)
+	}
+	state := readCatalogSchedule(t, f)
+	if state.ManualPending {
+		t.Fatal("manual request was not consumed")
+	}
+	if state.Daily != daily || state.Weekly != weekly {
+		t.Fatalf("manual request moved the boundaries: %+v", state)
+	}
+	dispatchCatalog(t, f)
+	if runs := countCatalogSyncRuns(t, f); runs != 1 {
+		t.Fatalf("manual request ran %d times, want once", runs)
+	}
+}
+
+// While a sync holds the writer the dispatcher must not enqueue a full. It
+// records the weekly boundary as pending and leaves every due value untouched.
+func TestCatalogScheduleRunningSyncDefersFullAndKeepsDue(t *testing.T) {
+	tree := newCatalogSyncTestTree()
+	tree.set("/", catalogSyncTestEntry{Name: "Partition A", IsDir: true, Modified: "p1"})
+	tree.set("/Partition A", catalogSyncTestEntry{Name: "Work 001", IsDir: true, Modified: "w1"})
+	tree.set("/Partition A/Work 001", catalogSyncTestEntry{Name: "01.mp3", Size: 100, Modified: "f1"})
+	f := newCatalogSyncFixture(t, tree)
+	now := shanghaiTestTime(2030, time.January, 6, 3, 0)
+	f.server.catalogNow = func() time.Time { return now }
+	if p := f.runFullScan(t, ""); p["status"] != "complete" {
+		t.Fatalf("full scan did not complete: %#v", p)
+	}
+	setCatalogScheduleTestState(t, f, catalogScheduleState{Daily: now.Unix(), Weekly: now.Unix()})
+	if _, err := f.server.db.Exec(`INSERT INTO source_catalog_sync_run(file_source_id,status,note) VALUES(?,'running','')`, f.sourceID(t)); err != nil {
+		t.Fatal(err)
+	}
+	dispatchCatalog(t, f)
+	state := readCatalogSchedule(t, f)
+	if !state.ResumeFull {
+		t.Fatal("weekly boundary during a running sync was not remembered")
+	}
+	if state.Daily != now.Unix() || state.Weekly != now.Unix() {
+		t.Fatalf("running sync advanced the schedule: %+v", state)
+	}
+	if jobs := countQueuedFullJobs(t, f); jobs != 0 {
+		t.Fatalf("running sync created %d overlapping full jobs", jobs)
+	}
+	if runs := countCatalogSyncRuns(t, f); runs != 1 {
+		t.Fatalf("dispatcher created %d additional syncs, want none", runs-1)
+	}
+}
+
+// A resource hold writes only deferred_until. The deferred source stays quiet
+// until the deadline, then catches up exactly once.
+func TestCatalogScheduleDeferredCatchesUpOnce(t *testing.T) {
+	tree := newCatalogSyncTestTree()
+	tree.set("/", catalogSyncTestEntry{Name: "Partition A", IsDir: true, Modified: "p1"})
+	tree.set("/Partition A", catalogSyncTestEntry{Name: "Work 001", IsDir: true, Modified: "w1"})
+	tree.set("/Partition A/Work 001", catalogSyncTestEntry{Name: "01.mp3", Size: 100, Modified: "f1"})
+	f := newCatalogSyncFixture(t, tree)
+	now := shanghaiTestTime(2030, time.January, 2, 3, 0)
+	f.server.catalogNow = func() time.Time { return now }
+	if p := f.runFullScan(t, ""); p["status"] != "complete" {
+		t.Fatalf("full scan did not complete: %#v", p)
+	}
+	daily := now.Unix()
+	weekly := now.Add(72 * time.Hour).Unix()
+	setCatalogScheduleTestState(t, f, catalogScheduleState{Daily: daily, Weekly: weekly, Deferred: now.Add(time.Hour).Unix()})
+	dispatchCatalog(t, f)
+	if runs := countCatalogSyncRuns(t, f); runs != 0 {
+		t.Fatalf("deferred source started %d syncs", runs)
+	}
+	state := readCatalogSchedule(t, f)
+	if state.Daily != daily || state.Weekly != weekly || state.Deferred != now.Add(time.Hour).Unix() {
+		t.Fatalf("waiting tick changed the schedule: %+v", state)
+	}
+
+	now = now.Add(time.Hour)
+	f.server.catalogNow = func() time.Time { return now }
+	dispatchCatalog(t, f)
+	waitCatalogSyncSettled(t, f)
+	if runs := countCatalogSyncRuns(t, f); runs != 1 {
+		t.Fatalf("deferred recovery produced %d sync runs, want 1", runs)
+	}
+	state = readCatalogSchedule(t, f)
+	if state.Deferred != 0 {
+		t.Fatalf("recovery left deferred_until=%d", state.Deferred)
+	}
+	dispatchCatalog(t, f)
+	if runs := countCatalogSyncRuns(t, f); runs != 1 {
+		t.Fatalf("deferred recovery replayed: %d sync runs", runs)
+	}
+}
+
+// A disabled source keeps its row but is skipped, and enabling it again starts
+// from the next local boundary instead of inheriting the old one.
+func TestCatalogScheduleDisabledSourceIsSkippedAndResetOnEnable(t *testing.T) {
+	tree := newCatalogSyncTestTree()
+	tree.set("/", catalogSyncTestEntry{Name: "Partition A", IsDir: true, Modified: "p1"})
+	tree.set("/Partition A", catalogSyncTestEntry{Name: "Work 001", IsDir: true, Modified: "w1"})
+	tree.set("/Partition A/Work 001", catalogSyncTestEntry{Name: "01.mp3", Size: 100, Modified: "f1"})
+	f := newCatalogSyncFixture(t, tree)
+	now := shanghaiTestTime(2030, time.January, 2, 3, 0)
+	f.server.catalogNow = func() time.Time { return now }
+	if p := f.runFullScan(t, ""); p["status"] != "complete" {
+		t.Fatalf("full scan did not complete: %#v", p)
+	}
+	setCatalogScheduleTestState(t, f, catalogScheduleState{Daily: now.Unix(), Weekly: now.Add(48 * time.Hour).Unix()})
+	sourceID := f.sourceID(t)
+	if _, err := f.server.db.Exec(`UPDATE file_source SET enabled=0 WHERE id=?`, sourceID); err != nil {
+		t.Fatal(err)
+	}
+	dispatchCatalog(t, f)
+	if runs := countCatalogSyncRuns(t, f); runs != 0 {
+		t.Fatalf("disabled source started %d syncs", runs)
+	}
+	now = shanghaiTestTime(2030, time.January, 3, 3, 0)
+	f.server.catalogNow = func() time.Time { return now }
+	dispatchCatalog(t, f)
+	if runs := countCatalogSyncRuns(t, f); runs != 0 {
+		t.Fatalf("disabled source started %d syncs after a later tick", runs)
+	}
+
+	// Re-enable through the real update route so the reset is part of the same
+	// transaction as the source change.
+	var apiURL string
+	if err := f.server.db.QueryRow(`SELECT api_url FROM file_source_endpoint WHERE file_source_id=?`, sourceID).Scan(&apiURL); err != nil {
+		t.Fatal(err)
+	}
+	reviewRequest(t, f.handler, f.cookie, http.MethodPatch, "/api/file-sources/"+strconv.FormatInt(sourceID, 10),
+		`{"displayName":"Example Remote A","sourceType":"openlist","enabled":true,"endpoint":{"apiUrl":"`+apiURL+`"}}`, 200)
+	state := readCatalogSchedule(t, f)
+	if state.Daily != shanghaiTestTime(2030, time.January, 4, 3, 0).UTC().Unix() ||
+		state.Weekly != shanghaiTestTime(2030, time.January, 6, 3, 0).UTC().Unix() ||
+		state.Deferred != 0 || state.ManualPending || state.ResumeFull {
+		t.Fatalf("re-enabled source inherited a schedule: %+v", state)
 	}
 }
 
 // A terminal partial generation keeps its checkpoints, but the daily update is
 // still a directory-first sync: it retries the failed branch and independently
 // discovers changes in the branches that completed.
-func TestSourceCatalogDailyPartialGenerationRunsIncrementalDiscovery(t *testing.T) {
+func TestCatalogSchedulePartialGenerationRunsIncrementalDiscovery(t *testing.T) {
 	tree := newCatalogSyncTestTree()
 	tree.set("/",
 		catalogSyncTestEntry{Name: "Partition A", IsDir: true, Modified: "p1"},
@@ -206,15 +547,12 @@ func TestSourceCatalogDailyPartialGenerationRunsIncrementalDiscovery(t *testing.
 	if err := f.server.db.QueryRow(`SELECT workflow_run_id FROM source_catalog_scan WHERE file_source_id=?`, f.sourceID(t)).Scan(&generation); err != nil {
 		t.Fatal(err)
 	}
-
-	// A successful branch changes while the other branch is still failing.
-	tree.addFile("/Partition A/Work A", "a2.mp3", 200, "fa2")
-	tree.setModified("/Partition A", "Work A", "wa2")
 	now = shanghaiTestTime(2030, time.January, 2, 3, 0)
 	f.server.catalogNow = func() time.Time { return now }
-	if err := f.server.dispatchDueCatalogUpdates(context.WithValue(context.Background(), catalogIndexNoPacingKey{}, true)); err != nil {
-		t.Fatal(err)
-	}
+	setCatalogScheduleTestState(t, f, catalogScheduleState{Daily: now.Unix(), Weekly: now.Add(96 * time.Hour).Unix()})
+	tree.addFile("/Partition A/Work A", "a2.mp3", 200, "fa2")
+	tree.setModified("/Partition A", "Work A", "wa2")
+	dispatchCatalog(t, f)
 	p = waitCatalogSyncSettled(t, f)
 	if p["runId"] != float64(generation) {
 		t.Fatalf("partial daily update replaced generation: %#v", p)
@@ -229,8 +567,6 @@ func TestSourceCatalogDailyPartialGenerationRunsIncrementalDiscovery(t *testing.
 	if list := f.request(t, http.MethodGet, "/works?q=a2", "", 200); len(list["works"].([]any)) != 1 {
 		t.Fatalf("new file in the completed branch is not searchable: %#v", list)
 	}
-	// The failed branch was retried, and its absence is not treated as a
-	// deletion: no card or file may be marked missing.
 	var missing int
 	if err := f.server.db.QueryRow(`SELECT count(*) FROM source_catalog_entry WHERE file_source_id=? AND availability_status='missing'`, f.sourceID(t)).Scan(&missing); err != nil {
 		t.Fatal(err)
@@ -239,16 +575,14 @@ func TestSourceCatalogDailyPartialGenerationRunsIncrementalDiscovery(t *testing.
 		t.Fatalf("failed branch produced %d missing cards", missing)
 	}
 
-	// Once the source recovers, the next maintenance sync retries the same
-	// failed range and publishes its card without a new full generation.
+	// Once the source recovers, the next maintenance sync retries the failed
+	// range and publishes its card without a new full generation.
 	tree.mu.Lock()
 	delete(tree.listFail, "/Partition B")
 	tree.mu.Unlock()
 	now = shanghaiTestTime(2030, time.January, 3, 3, 0)
 	f.server.catalogNow = func() time.Time { return now }
-	if err := f.server.dispatchDueCatalogUpdates(context.WithValue(context.Background(), catalogIndexNoPacingKey{}, true)); err != nil {
-		t.Fatal(err)
-	}
+	dispatchCatalog(t, f)
 	p = waitCatalogSyncSettled(t, f)
 	sync = p["lastSync"].(map[string]any)
 	if sync["status"] != "succeeded" {
@@ -266,11 +600,10 @@ func TestSourceCatalogDailyPartialGenerationRunsIncrementalDiscovery(t *testing.
 	}
 }
 
-// A partial scan that stopped before the end of the tree still retries its
-// pending range through the same directory-first sync, and that sync also
-// probes the completed branches. A full resume must not freeze the successful
-// branches until the pending range finishes.
-func TestSourceCatalogDailyPartialWithPendingRangesStillProbesCompletedBranches(t *testing.T) {
+// A partial scan that stopped before the end of the tree retries its pending
+// range through the same directory-first sync and still probes the completed
+// branches. A full resume must not freeze the successful branches.
+func TestCatalogSchedulePartialWithPendingRangesStillProbesCompletedBranches(t *testing.T) {
 	tree := newCatalogSyncTestTree()
 	tree.set("/",
 		catalogSyncTestEntry{Name: "Partition A", IsDir: true, Modified: "p1"},
@@ -293,8 +626,6 @@ func TestSourceCatalogDailyPartialWithPendingRangesStillProbesCompletedBranches(
 	if err := f.server.db.QueryRow(`SELECT workflow_run_id FROM source_catalog_scan WHERE file_source_id=?`, f.sourceID(t)).Scan(&generation); err != nil {
 		t.Fatal(err)
 	}
-	// Model a scan that stopped before reaching Partition B: that branch stays
-	// pending while Partition A completed.
 	if _, err := f.server.db.Exec(`UPDATE source_catalog_directory
 		SET status='pending',error_code='',sync_state=''
 		WHERE file_source_id=? AND path='/Partition B'`, f.sourceID(t)); err != nil {
@@ -311,12 +642,10 @@ func TestSourceCatalogDailyPartialWithPendingRangesStillProbesCompletedBranches(
 	tree.mu.Lock()
 	delete(tree.listFail, "/Partition B")
 	tree.mu.Unlock()
-
 	now = shanghaiTestTime(2030, time.January, 2, 3, 0)
 	f.server.catalogNow = func() time.Time { return now }
-	if err := f.server.dispatchDueCatalogUpdates(context.WithValue(context.Background(), catalogIndexNoPacingKey{}, true)); err != nil {
-		t.Fatal(err)
-	}
+	setCatalogScheduleTestState(t, f, catalogScheduleState{Daily: now.Unix(), Weekly: now.Add(96 * time.Hour).Unix()})
+	dispatchCatalog(t, f)
 	p = waitCatalogSyncSettled(t, f)
 	if p["runId"] != float64(generation) {
 		t.Fatalf("pending partial dispatch replaced generation: %#v", p)
@@ -341,20 +670,12 @@ func TestSourceCatalogDailyPartialWithPendingRangesStillProbesCompletedBranches(
 	if indexJobs != 1 {
 		t.Fatalf("pending partial dispatched %d full index jobs, want the original one", indexJobs)
 	}
-	var fullJobStatus string
-	if err := f.server.db.QueryRow(`SELECT status FROM workflow_job WHERE workflow_run_id=? AND worker_type=?`, generation, sourceCatalogIndexWorkerType).Scan(&fullJobStatus); err != nil {
-		t.Fatal(err)
-	}
-	if fullJobStatus == "queued" || fullJobStatus == "running" {
-		t.Fatalf("partial daily dispatch also resumed the full index job: %q", fullJobStatus)
-	}
 }
 
 // A successful dirs response proves which direct child folders exist only when
 // the same directory's file listing is complete. If the listing fails, a folder
-// missing from dirs must keep its card and files until a later complete
-// listing confirms the absence.
-func TestCatalogSyncParentListingFailureKeepsChildrenUntilListingSucceeds(t *testing.T) {
+// missing from dirs keeps its card and files until a later complete listing.
+func TestCatalogScheduleParentListingFailureKeepsChildrenUntilListingSucceeds(t *testing.T) {
 	tree := newCatalogSyncTestTree()
 	tree.set("/", catalogSyncTestEntry{Name: "Partition", IsDir: true, Modified: "p1"})
 	tree.set("/Partition",
@@ -371,7 +692,6 @@ func TestCatalogSyncParentListingFailureKeepsChildrenUntilListingSucceeds(t *tes
 	}
 	reviewRequest(t, f.handler, f.cookie, http.MethodPatch, "/api/source-catalog/"+strconv.FormatInt(cardID, 10)+"/user-state", `{"rating":4,"note":"Example retained"}`, 200)
 
-	// The child disappears from the tree, but the parent's own listing fails.
 	tree.set("/Partition", catalogSyncTestEntry{Name: "keep.txt", Size: 10, Modified: "k1"})
 	tree.setModified("/", "Partition", "p2")
 	tree.mu.Lock()
@@ -397,7 +717,6 @@ func TestCatalogSyncParentListingFailureKeepsChildrenUntilListingSucceeds(t *tes
 	}
 	assertReview(t, reviewRequest(t, f.handler, f.cookie, http.MethodGet, "/api/source-catalog/"+strconv.FormatInt(cardID, 10), "", 200), float64(4), "Example retained")
 
-	// A later complete listing may retire the absent child.
 	tree.mu.Lock()
 	delete(tree.listFail, "/Partition")
 	tree.mu.Unlock()

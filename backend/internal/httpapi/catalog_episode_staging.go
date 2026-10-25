@@ -142,6 +142,22 @@ func (s *Server) beginCatalogEpisodePublication(ctx context.Context, sourceID in
 		return err
 	}
 	defer release()
+	// A published split keeps its identity even if an older build left pending
+	// mappings behind. Finish that cleanup before the state row is reset to
+	// pending; otherwise the next clearCatalogEpisodePendingFiles pass would
+	// treat live files as staged rows and delete them.
+	var state string
+	err = tx.QueryRowContext(ctx, `SELECT state FROM source_catalog_episode_publication
+		WHERE source_id=? AND parent_root=?`, sourceID, parent).Scan(&state)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	if state == "published" {
+		if _, err = tx.ExecContext(ctx, `DELETE FROM source_catalog_episode_pending
+			WHERE source_id=? AND parent_root=?`, sourceID, parent); err != nil {
+			return err
+		}
+	}
 	if _, err = tx.ExecContext(ctx, `INSERT INTO source_catalog_episode_publication(
 			source_id,parent_root,state,updated_at) VALUES(?,?,'pending',CURRENT_TIMESTAMP)
 		ON CONFLICT(source_id,parent_root) DO UPDATE SET state='pending',updated_at=CURRENT_TIMESTAMP`,
@@ -462,7 +478,6 @@ func (s *Server) finalizeCatalogEpisodeRoots(ctx context.Context, sourceID int64
 		return 0, errCatalogEpisodeParentPinned
 	}
 	keep := map[int64]bool{}
-	keepIDs := []int64{}
 	var first int64
 	for _, root := range roots {
 		id, pending, lookupErr := catalogEpisodeEntryTx(ctx, tx.Tx, sourceID, parent, root)
@@ -482,7 +497,6 @@ func (s *Server) finalizeCatalogEpisodeRoots(ctx context.Context, sourceID int64
 			}
 		}
 		keep[id] = true
-		keepIDs = append(keepIDs, id)
 		if first == 0 {
 			first = id
 		}
@@ -498,6 +512,14 @@ func (s *Server) finalizeCatalogEpisodeRoots(ctx context.Context, sourceID int64
 	if affected, affectedErr := result.RowsAffected(); affectedErr != nil || affected != 1 {
 		return 0, fmt.Errorf("publish catalog episode state: affected=%d err=%v", affected, affectedErr)
 	}
+	// The mappings are bookkeeping for the visibility gate, so they leave in the
+	// same transaction as the published state. A separate cleanup step could
+	// fail after the split became public and leave rows that a later staging
+	// pass would mistake for hidden files.
+	if _, err = tx.ExecContext(ctx, `DELETE FROM source_catalog_episode_pending
+		WHERE source_id=? AND parent_root=?`, sourceID, parent); err != nil {
+		return 0, err
+	}
 	if existing != 0 && len(parentFiles) == 0 {
 		if _, err = tx.ExecContext(ctx, `UPDATE source_catalog_entry SET file_source_id=NULL,relocated_to_id=?,updated_at=CURRENT_TIMESTAMP WHERE id=?`, first, existing); err != nil {
 			return 0, err
@@ -509,7 +531,6 @@ func (s *Server) finalizeCatalogEpisodeRoots(ctx context.Context, sourceID int64
 	if err = tx.Commit(); err != nil {
 		return 0, err
 	}
-	s.deleteCatalogEpisodeMappings(ctx, sourceID, parent, keepIDs)
 	if len(parentFiles) > 0 {
 		parentID, persistErr := s.persistCatalogEpisodeParentFiles(ctx, sourceID, parent, parentFiles)
 		if persistErr != nil {

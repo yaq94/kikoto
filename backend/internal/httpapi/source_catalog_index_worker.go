@@ -369,19 +369,6 @@ func (s *Server) catalogIndexDiskPause(options catalogIndexOptions) string {
 	return ""
 }
 
-// catalogScanSchedulesDaily decides whether a settled generation owns the
-// first daily update. A paused low-disk run is not finished coverage and must
-// not start the schedule; an upstream failure does not either. A generation
-// that reached the end of the tree with only unconfirmed empty or unreadable
-// directories does schedule: its next daily pass is the directory-first sync
-// that retries those ranges and probes the successful branches.
-func catalogScanSchedulesDaily(status, reason string, progress catalogIndexProgress) bool {
-	if reason != "" || progress.Pending > 0 {
-		return false
-	}
-	return status == "succeeded" || status == "partial"
-}
-
 func (s *Server) settleCatalogBatch(ctx context.Context, job workflowJobRecord, sourceID int64, status, reason string) error {
 	return s.settleCatalogBatchAt(ctx, job, sourceID, status, reason, time.Time{})
 }
@@ -406,19 +393,11 @@ func (s *Server) settleCatalogBatchAt(ctx context.Context, job workflowJobRecord
 	if err = verifyCatalogLease(ctx, tx.Tx, job); err != nil {
 		return err
 	}
-	if catalogScanSchedulesDaily(status, reason, progress) {
-		// Completion owns the next daily tick only. The weekly full marker is
-		// written when a new full generation is enqueued, so resuming this
-		// generation later cannot move the next Sunday boundary.
-		if err = setCatalogDailyNextUpdateTx(ctx, tx.Tx, sourceID, s.catalogTime()); err != nil {
-			return err
-		}
-	}
-	if reason == "low_disk_space" || reason == "disk_space_unknown" {
-		// A full scan and an incremental sync share the same disk policy:
-		// leave the generation resumable and retry after the condition has a
-		// chance to clear. The next pause re-arms this one-hour window.
-		if err = setCatalogDailyDueAt(ctx, tx.Tx, sourceID, s.catalogTime().Add(time.Hour)); err != nil {
+	if reason == "low_disk_space" || reason == "disk_space_unknown" || reason == "maintenance" {
+		// A full scan and an incremental sync share the same resource policy:
+		// defer the whole schedule by one hour, keep every boundary and
+		// checkpoint, and let the next pause re-arm the same window.
+		if err = setCatalogScheduleDeferredTx(ctx, tx.Tx, sourceID, s.catalogTime().Add(time.Hour), catalogDeferralReason(reason)); err != nil {
 			return err
 		}
 	}

@@ -390,15 +390,16 @@ func (s *Server) getSourceCatalogEntry(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// A metadata-only parent can exist as catalog provenance with sidecars but
-	// no playable audio. Hide that parent; zero-file entries remain readable
-	// because work matching and shared identities use them as synthetic rows.
+	// no playable audio. Hide that parent and any card outside the admission
+	// bounds; zero-file entries remain readable because work matching and shared
+	// identities use them as synthetic rows.
 	if entry.SourceID != 0 {
 		admission, err := catalogPublishedEntryAdmission(r.Context(), s.db, entry.ID)
 		if err != nil {
 			writeError(w, err)
 			return
 		}
-		if admission.Files > 0 && admission.Audio == 0 {
+		if admission.Files > 0 && !admission.Admitted() {
 			writeCatalogEntryNotAvailable(w, admission)
 			return
 		}

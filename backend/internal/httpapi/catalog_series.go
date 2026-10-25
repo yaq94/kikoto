@@ -76,6 +76,18 @@ func (s *Server) getCatalogSeries(w http.ResponseWriter, r *http.Request) {
 		writeCatalogGroupingError(w, err)
 		return
 	}
+	// A series is a view over its members, not a resource of its own. Every
+	// member is admitted separately: an over-limit or still-staged episode
+	// disappears from the detail without hiding its qualified siblings. A
+	// retained missing record stays readable because it carries personal state
+	// rather than a currently published file set, and a zero-file synthetic
+	// record keeps the same exception as the single-card detail route.
+	pendingMember := catalogEntryPendingSQL("e")
+	admittedMember := catalogEntryAdmittedSQL("e")
+	emptyMember := `NOT EXISTS(SELECT 1 FROM source_catalog_file zf WHERE zf.catalog_entry_id=e.id)`
+	pendingSuccessor := catalogEntryPendingSQL("successor")
+	admittedSuccessor := catalogEntryAdmittedSQL("successor")
+	emptySuccessor := `NOT EXISTS(SELECT 1 FROM source_catalog_file zsf WHERE zsf.catalog_entry_id=successor.id)`
 	rows, err := s.db.QueryContext(r.Context(), `WITH grouped AS (
 		SELECT COALESCE(successor.id,e.id) AS id,
 			COALESCE(NULLIF(successor.title,''),e.title) AS title,
@@ -95,6 +107,12 @@ func (s *Server) getCatalogSeries(w http.ResponseWriter, r *http.Request) {
 			LEFT JOIN shared_work_identity identity ON identity.work_id=COALESCE(successor.work_id,e.work_id)
 			WHERE ((e.relocated_to_id IS NULL AND e.file_source_id IS NOT NULL)
 				OR (e.relocated_to_id IS NOT NULL AND successor.file_source_id IS NOT NULL))
+				AND `+pendingMember+`
+				AND (
+					(e.relocated_to_id IS NULL AND (e.availability_status='missing' OR `+emptyMember+` OR `+admittedMember+`))
+					OR (e.relocated_to_id IS NOT NULL AND (COALESCE(successor.availability_status,'')='missing'
+						OR (`+pendingSuccessor+` AND (`+emptySuccessor+` OR `+admittedSuccessor+`))))
+				)
 				AND m.series_id IN (SELECT related.id FROM catalog_series selected JOIN catalog_series related ON related.id=selected.id OR related.work_id IN (SELECT peer.work_id FROM shared_work_identity own JOIN shared_work_identity peer ON peer.identity_work_id=own.identity_work_id WHERE own.work_id=selected.work_id) WHERE selected.id=?))
 			SELECT id,title,source_id,display_name,primary_code,work_id,status,position FROM grouped WHERE identity_rank=1 ORDER BY position,id`, id)
 	if err != nil {
