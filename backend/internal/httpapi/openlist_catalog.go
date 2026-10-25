@@ -315,6 +315,9 @@ func persistOpenListSnapshotTx(ctx context.Context, tx *sql.Tx, sourceID int64, 
 	if _, err = tx.ExecContext(ctx, `DELETE FROM source_catalog_relocation_candidate WHERE catalog_entry_id=?`, id); err != nil {
 		return 0, err
 	}
+	if err = refreshCatalogEntryAdmissionTx(ctx, tx, id); err != nil {
+		return 0, err
+	}
 	return id, nil
 }
 

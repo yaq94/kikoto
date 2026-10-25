@@ -176,6 +176,13 @@ func TestCatalog42KPerformance(t *testing.T) {
 
 	seedStarted := time.Now()
 	sourceID, oversizedID, fileCount := catalog42KSeed(t, db, cards)
+	// The seed writes file rows directly, so the admission triggers only
+	// invalidate the stored counts. Recompute them as the publish path would, or
+	// every card would measure the slow live-count fallback instead of the
+	// steady state a settled source serves.
+	if err := catalog42KRefreshAdmissions(db, sourceID); err != nil {
+		t.Fatalf("refresh admission counts: %v", err)
+	}
 	report.Environment.SeedDurationMs = catalog42KMillis(time.Since(seedStarted))
 	report.Fixture.Entries = cards + 1
 	report.Fixture.Files = fileCount
@@ -370,6 +377,21 @@ func catalog42KEnvPositiveInt(t *testing.T, name string, fallback int) int {
 // is over the 5,000-file admission limit. observed_generation matches
 // last_seen_generation so the fixture stays valid when the admission counts
 // are restricted to the current generation.
+// catalog42KRefreshAdmissions writes the stored admission counts the publish
+// path would have produced for the seeded cards. The fixture inserts file rows
+// directly, and those inserts only invalidate the stored row.
+func catalog42KRefreshAdmissions(db *sql.DB, sourceID int64) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err = refreshSourceCatalogEntryAdmissionsTx(context.Background(), tx, sourceID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 func catalog42KSeed(t *testing.T, db *sql.DB, cards int) (int64, int64, int) {
 	t.Helper()
 	const sourceID int64 = 1

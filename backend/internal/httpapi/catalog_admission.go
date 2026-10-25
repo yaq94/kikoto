@@ -181,24 +181,35 @@ func (s *Server) blockUnadmittedCatalogRootTx(ctx context.Context, tx *sql.Tx, s
 // catalogEntryAdmittedSQL filters a published card by the same thresholds as
 // the publisher and single-card API. The limits and probe bounds come from the
 // catalogadmission constants, so a rule change cannot leave this SQL on the old
-// numbers. Each count stops at the first row that can decide its threshold, and
-// the catalog entry index serves the probes.
+// numbers.
+//
+// The stored admission row answers the question with one primary-key lookup.
+// Its generation must match the entry, otherwise the counts describe an older
+// file set; a file write invalidates the row in the same transaction, so a
+// mismatch falls back to counting the live rows. Both arms call
+// catalogadmission.Decision, so the fast and slow paths cannot disagree.
 func catalogEntryAdmittedSQL(alias string) string {
-	publishedFiles := func(fileAlias string) string {
-		return fmt.Sprintf(`%[1]s.catalog_entry_id=%[2]s.id AND %[1]s.kind<>'folder' AND %[1]s.observed_generation=%[2]s.last_seen_generation`, fileAlias, alias)
-	}
 	return fmt.Sprintf(`(
-			EXISTS(SELECT 1 FROM source_catalog_file aqf WHERE aqf.catalog_entry_id=%[1]s.id AND aqf.kind='audio' AND aqf.observed_generation=%[1]s.last_seen_generation)
-			AND %[2]s
-	            AND (SELECT count(*) FROM (SELECT 1 FROM source_catalog_file af WHERE %[3]s LIMIT %[4]d)) <= %[5]d
-            AND NOT (
-	                (SELECT count(*) FROM (SELECT 1 FROM source_catalog_file anf WHERE %[6]s AND anf.kind<>'audio' AND anf.kind<>'folder' LIMIT %[7]d)) > %[8]d
-		                AND (SELECT count(*) FROM (SELECT 1 FROM source_catalog_file aaf WHERE %[9]s AND aaf.kind='audio' LIMIT %[10]d)) < %[10]d
-            )
-			)`, alias, catalogEntryPendingSQL(alias),
-		publishedFiles("af"), catalogadmission.ProbeFiles+1, catalogadmission.ProbeFiles,
-		publishedFiles("anf"), catalogadmission.ProbeNonAudio+1, catalogadmission.ProbeNonAudio,
-		publishedFiles("aaf"), catalogadmission.ProbeAudio)
+			%[2]s AND COALESCE(
+				(SELECT admission.audio>0 AND admission.files<=%[3]d
+					AND NOT (admission.non_audio>%[4]d AND admission.audio<%[5]d)
+				 FROM source_catalog_entry_admission admission
+				 WHERE admission.catalog_entry_id=%[1]s.id AND admission.generation=%[1]s.last_seen_generation),
+				(SELECT live.audio>0 AND live.files<=%[3]d
+					AND NOT (live.non_audio>%[4]d AND live.audio<%[5]d)
+				 FROM (SELECT
+					(SELECT count(*) FROM (SELECT 1 FROM source_catalog_file af
+						WHERE af.catalog_entry_id=%[1]s.id AND af.kind<>'folder'
+						  AND af.observed_generation=%[1]s.last_seen_generation LIMIT %[6]d)) AS files,
+					(SELECT count(*) FROM (SELECT 1 FROM source_catalog_file aaf
+						WHERE aaf.catalog_entry_id=%[1]s.id AND aaf.kind='audio'
+						  AND aaf.observed_generation=%[1]s.last_seen_generation LIMIT %[5]d)) AS audio,
+					(SELECT count(*) FROM (SELECT 1 FROM source_catalog_file anf
+						WHERE anf.catalog_entry_id=%[1]s.id AND anf.kind<>'audio' AND anf.kind<>'folder'
+						  AND anf.observed_generation=%[1]s.last_seen_generation LIMIT %[7]d)) AS non_audio) AS live)
+			))`, alias, catalogEntryPendingSQL(alias),
+		catalogadmission.ProbeFiles, catalogadmission.ProbeNonAudio, catalogadmission.ProbeAudio,
+		catalogadmission.ProbeFiles+1, catalogadmission.ProbeNonAudio+1)
 }
 
 // catalogEntryAdmission is the structured answer for one card id. The counts
@@ -218,18 +229,20 @@ func catalogPublishedEntryAdmission(ctx context.Context, q interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
 }, id int64) (catalogEntryAdmission, error) {
 	var adm catalogEntryAdmission
-	// Count the card's current published file set: the rows observed in the
-	// generation that last published the entry. Rows left by an older
-	// generation are provenance for the tracks view, not part of this card's
-	// published release, and folder rows are directory markers rather than
-	// files. The publisher applies the same exclusion.
-	// One statement reads the entry's generation and its three bounded counts,
-	// so a concurrent publish cannot change the generation between the lookup
-	// and the counts.
+	// Read the stored counts when they describe the entry's current generation.
+	// A file write marks the row with an impossible generation, so a miss means
+	// the live rows are the only trustworthy source; both branches use the same
+	// caps as the SQL filter above.
 	err := q.QueryRowContext(ctx, fmt.Sprintf(`SELECT
-			(SELECT count(*) FROM (SELECT 1 FROM source_catalog_file f WHERE f.catalog_entry_id=e.id AND f.kind<>'folder' AND f.observed_generation=e.last_seen_generation LIMIT %d)),
-			(SELECT count(*) FROM (SELECT 1 FROM source_catalog_file f WHERE f.catalog_entry_id=e.id AND f.kind='audio' AND f.observed_generation=e.last_seen_generation LIMIT %d)),
-			(SELECT count(*) FROM (SELECT 1 FROM source_catalog_file f WHERE f.catalog_entry_id=e.id AND f.kind<>'audio' AND f.kind<>'folder' AND f.observed_generation=e.last_seen_generation LIMIT %d))
+			COALESCE((SELECT admission.files FROM source_catalog_entry_admission admission
+				WHERE admission.catalog_entry_id=e.id AND admission.generation=e.last_seen_generation),
+				(SELECT count(*) FROM (SELECT 1 FROM source_catalog_file f WHERE f.catalog_entry_id=e.id AND f.kind<>'folder' AND f.observed_generation=e.last_seen_generation LIMIT %d))),
+			COALESCE((SELECT admission.audio FROM source_catalog_entry_admission admission
+				WHERE admission.catalog_entry_id=e.id AND admission.generation=e.last_seen_generation),
+				(SELECT count(*) FROM (SELECT 1 FROM source_catalog_file f WHERE f.catalog_entry_id=e.id AND f.kind='audio' AND f.observed_generation=e.last_seen_generation LIMIT %d))),
+			COALESCE((SELECT admission.non_audio FROM source_catalog_entry_admission admission
+				WHERE admission.catalog_entry_id=e.id AND admission.generation=e.last_seen_generation),
+				(SELECT count(*) FROM (SELECT 1 FROM source_catalog_file f WHERE f.catalog_entry_id=e.id AND f.kind<>'audio' AND f.kind<>'folder' AND f.observed_generation=e.last_seen_generation LIMIT %d)))
 		FROM source_catalog_entry e WHERE e.id=?`,
 		catalogadmission.ProbeFiles+1, catalogadmission.ProbeAudio, catalogadmission.ProbeNonAudio+1),
 		id).Scan(&adm.Files, &adm.Audio, &adm.NonAudio)
@@ -258,6 +271,81 @@ func catalogPublishedEntryAdmitted(ctx context.Context, q interface {
 // is no implicit zero-file bypass.
 func catalogEntryAdmissionRequired(entry catalogEntry) bool {
 	return entry.SourceID != 0 && entry.Status != "missing"
+}
+
+// refreshCatalogEntryAdmissionTx rewrites the stored counts for one card from
+// its current published file set. It runs inside the publish transaction, after
+// the card's files are written, so a committed card always carries counts that
+// describe the rows a reader can see.
+func refreshCatalogEntryAdmissionTx(ctx context.Context, tx *sql.Tx, id int64) error {
+	_, err := tx.ExecContext(ctx, fmt.Sprintf(`INSERT INTO source_catalog_entry_admission(catalog_entry_id,generation,files,audio,non_audio)
+		SELECT e.id,e.last_seen_generation,
+			(SELECT count(*) FROM (SELECT 1 FROM source_catalog_file f
+				WHERE f.catalog_entry_id=e.id AND f.kind<>'folder'
+				  AND f.observed_generation=e.last_seen_generation LIMIT %d)),
+			(SELECT count(*) FROM (SELECT 1 FROM source_catalog_file f
+				WHERE f.catalog_entry_id=e.id AND f.kind='audio'
+				  AND f.observed_generation=e.last_seen_generation LIMIT %d)),
+			(SELECT count(*) FROM (SELECT 1 FROM source_catalog_file f
+				WHERE f.catalog_entry_id=e.id AND f.kind<>'audio' AND f.kind<>'folder'
+				  AND f.observed_generation=e.last_seen_generation LIMIT %d))
+		FROM source_catalog_entry e WHERE e.id=?
+		ON CONFLICT(catalog_entry_id) DO UPDATE SET
+			generation=excluded.generation,files=excluded.files,
+			audio=excluded.audio,non_audio=excluded.non_audio,updated_at=CURRENT_TIMESTAMP`,
+		catalogadmission.ProbeFiles+1, catalogadmission.ProbeAudio, catalogadmission.ProbeNonAudio+1), id)
+	return err
+}
+
+// refreshCatalogEntryAdmissionsTx is the batch form used by a publish batch.
+// The ids come from the same transaction that wrote their files, so one
+// statement refreshes the whole batch instead of one round trip per card.
+func refreshCatalogEntryAdmissionsTx(ctx context.Context, tx *sql.Tx, ids []int64) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	_, err := tx.ExecContext(ctx, fmt.Sprintf(`INSERT INTO source_catalog_entry_admission(catalog_entry_id,generation,files,audio,non_audio)
+		SELECT e.id,e.last_seen_generation,
+			(SELECT count(*) FROM (SELECT 1 FROM source_catalog_file f
+				WHERE f.catalog_entry_id=e.id AND f.kind<>'folder'
+				  AND f.observed_generation=e.last_seen_generation LIMIT %d)),
+			(SELECT count(*) FROM (SELECT 1 FROM source_catalog_file f
+				WHERE f.catalog_entry_id=e.id AND f.kind='audio'
+				  AND f.observed_generation=e.last_seen_generation LIMIT %d)),
+			(SELECT count(*) FROM (SELECT 1 FROM source_catalog_file f
+				WHERE f.catalog_entry_id=e.id AND f.kind<>'audio' AND f.kind<>'folder'
+				  AND f.observed_generation=e.last_seen_generation LIMIT %d))
+		FROM source_catalog_entry e WHERE e.id IN (`+sqlPlaceholders(len(ids))+`)
+		ON CONFLICT(catalog_entry_id) DO UPDATE SET
+			generation=excluded.generation,files=excluded.files,
+			audio=excluded.audio,non_audio=excluded.non_audio,updated_at=CURRENT_TIMESTAMP`,
+		catalogadmission.ProbeFiles+1, catalogadmission.ProbeAudio, catalogadmission.ProbeNonAudio+1),
+		int64Args(ids)...)
+	return err
+}
+
+// refreshSourceCatalogEntryAdmissionsTx recomputes every card of one source.
+// It serves a repair pass and the synthetic performance fixture; the publish
+// path uses the batch form because it already knows the cards it wrote.
+func refreshSourceCatalogEntryAdmissionsTx(ctx context.Context, tx *sql.Tx, sourceID int64) error {
+	_, err := tx.ExecContext(ctx, fmt.Sprintf(`INSERT INTO source_catalog_entry_admission(catalog_entry_id,generation,files,audio,non_audio)
+		SELECT e.id,e.last_seen_generation,
+			(SELECT count(*) FROM (SELECT 1 FROM source_catalog_file f
+				WHERE f.catalog_entry_id=e.id AND f.kind<>'folder'
+				  AND f.observed_generation=e.last_seen_generation LIMIT %d)),
+			(SELECT count(*) FROM (SELECT 1 FROM source_catalog_file f
+				WHERE f.catalog_entry_id=e.id AND f.kind='audio'
+				  AND f.observed_generation=e.last_seen_generation LIMIT %d)),
+			(SELECT count(*) FROM (SELECT 1 FROM source_catalog_file f
+				WHERE f.catalog_entry_id=e.id AND f.kind<>'audio' AND f.kind<>'folder'
+				  AND f.observed_generation=e.last_seen_generation LIMIT %d))
+		FROM source_catalog_entry e WHERE e.file_source_id=?
+		ON CONFLICT(catalog_entry_id) DO UPDATE SET
+			generation=excluded.generation,files=excluded.files,
+			audio=excluded.audio,non_audio=excluded.non_audio,updated_at=CURRENT_TIMESTAMP`,
+		catalogadmission.ProbeFiles+1, catalogadmission.ProbeAudio, catalogadmission.ProbeNonAudio+1),
+		sourceID)
+	return err
 }
 
 // clearCatalogRootPendingTx removes one blocked card from the publish queue.
