@@ -41,6 +41,7 @@ export type UserDataImportIssue = {
     | "source_reference_retained"
     | "parent_cycle"
     | "parent_conflict"
+    | "parent_alias_not_imported"
     | "relationships_not_imported"
     | "playlist_preserved";
   incoming?: { rating: number | null; note: string };

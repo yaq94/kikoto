@@ -18,6 +18,9 @@ type transferParent struct {
 	create   bool
 	key      string
 	freeRef  bool
+	// droppedAliases are alias references that cannot be stored because a
+	// series keeps exactly one reference. They are reported, not silently lost.
+	droppedAliases []string
 	// nested marks a series work that itself has a parent. The episode's parent
 	// chain is inspected separately so a loop reports parent_cycle while any
 	// other nesting reports parent_conflict.
@@ -60,9 +63,14 @@ func resolveParentPlan(ctx context.Context, tx *sql.Tx, parent *BackupIdentity) 
 			return plan, "", err
 		}
 		if !state.exists {
-			// The parent's own reference may be new. A declared alias must
-			// resolve; an unknown alias is not evidence for this series.
+			// The parent's own reference may be new. A series keeps one
+			// reference, so an alias of a new parent cannot be stored; it is
+			// reported instead of failing the parent.
 			if index > 0 {
+				if plan.freeRef || plan.seriesID == 0 {
+					plan.droppedAliases = append(plan.droppedAliases, ref)
+					continue
+				}
 				return plan, "parent_conflict", nil
 			}
 			plan.freeRef = true
@@ -138,18 +146,20 @@ func resolveParentPlan(ctx context.Context, tx *sql.Tx, parent *BackupIdentity) 
 
 // ensureParent creates or reuses the minimal series identity a backup names and
 // adopts the backup reference. A free reference replaces the trigger-generated
-// one; the same series reuses it; any other owner is contradictory.
-func ensureParent(ctx context.Context, tx *sql.Tx, planned transferParent, parent *BackupIdentity) (transferParent, string, error) {
+// one; the same series reuses it; any other owner is contradictory. The second
+// return value is a set of alias references that were skipped because the
+// primary reference already names that series.
+func ensureParent(ctx context.Context, tx *sql.Tx, planned transferParent, parent *BackupIdentity) (transferParent, []string, string, error) {
 	resolved, problem, err := resolveParentPlan(ctx, tx, parent)
 	if err != nil || problem != "" {
-		return resolved, problem, err
+		return resolved, nil, problem, err
 	}
 	resolved.key = planned.key
 	if resolved.seriesID == 0 && planned.seriesID != 0 {
 		resolved.seriesID, resolved.title = planned.seriesID, planned.title
 	}
 	if resolved.nested {
-		return resolved, "parent_conflict", nil
+		return resolved, nil, "parent_conflict", nil
 	}
 	// The same backup may carry the parent series as a top-level BackupWork
 	// under its own work reference. That series is already registered by the
@@ -158,19 +168,19 @@ func ensureParent(ctx context.Context, tx *sql.Tx, planned transferParent, paren
 		var parentOfWork sql.NullInt64
 		if err = tx.QueryRowContext(ctx, `SELECT parent_work_id FROM work WHERE id=?`, planned.workID).Scan(&parentOfWork); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
-				return resolved, "parent_conflict", nil
+				return resolved, nil, "parent_conflict", nil
 			}
-			return resolved, "", err
+			return resolved, nil, "", err
 		}
 		if parentOfWork.Valid {
-			return resolved, "parent_conflict", nil
+			return resolved, nil, "parent_conflict", nil
 		}
 		var seriesID int64
 		if err = tx.QueryRowContext(ctx, `SELECT id FROM catalog_series WHERE work_id=?`, planned.workID).Scan(&seriesID); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
-				return resolved, "parent_conflict", nil
+				return resolved, nil, "parent_conflict", nil
 			}
-			return resolved, "", err
+			return resolved, nil, "", err
 		}
 		resolved.create, resolved.workID, resolved.seriesID = false, planned.workID, seriesID
 	}
@@ -178,9 +188,9 @@ func ensureParent(ctx context.Context, tx *sql.Tx, planned transferParent, paren
 		var seriesID int64
 		if err := tx.QueryRowContext(ctx, `SELECT id FROM catalog_series WHERE work_id=?`, resolved.workID).Scan(&seriesID); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
-				return resolved, "parent_conflict", nil
+				return resolved, nil, "parent_conflict", nil
 			}
-			return resolved, "", err
+			return resolved, nil, "", err
 		}
 		resolved.seriesID = seriesID
 	}
@@ -190,90 +200,101 @@ func ensureParent(ctx context.Context, tx *sql.Tx, planned transferParent, paren
 	case resolved.seriesID != 0:
 		workID, err := insertTransferWork(ctx, tx, "", resolved.title, "series")
 		if err != nil {
-			return resolved, "", err
+			return resolved, nil, "", err
 		}
 		result, err := tx.ExecContext(ctx, `UPDATE catalog_series SET work_id=? WHERE id=? AND work_id IS NULL`, workID, resolved.seriesID)
 		if err != nil {
-			return resolved, "", err
+			return resolved, nil, "", err
 		}
 		changed, err := result.RowsAffected()
 		if err != nil || changed != 1 {
-			return resolved, "parent_conflict", nil
+			return resolved, nil, "parent_conflict", nil
 		}
 		resolved.workID = workID
 	default:
 		created = true
 		workID, err := insertTransferWork(ctx, tx, "", resolved.title, "series")
 		if err != nil {
-			return resolved, "", err
+			return resolved, nil, "", err
 		}
 		var seriesID int64
 		if err = tx.QueryRowContext(ctx, `INSERT INTO catalog_series(title,work_id) VALUES(?,?) RETURNING id`, resolved.title, workID).Scan(&seriesID); err != nil {
-			return resolved, "", err
+			return resolved, nil, "", err
 		}
 		resolved.seriesID, resolved.workID = seriesID, workID
 	}
-	if err = adoptParentRefs(ctx, tx, resolved, parent, created); err != nil {
+	skipped, err := adoptParentRefs(ctx, tx, resolved, parent, created)
+	if err != nil {
 		if errors.Is(err, ErrConflict) {
-			return resolved, "parent_conflict", nil
+			return resolved, nil, "parent_conflict", nil
 		}
-		return resolved, "", err
+		return resolved, nil, "", err
 	}
-	return resolved, "", nil
+	return resolved, skipped, "", nil
 }
 
-func adoptParentRefs(ctx context.Context, tx *sql.Tx, parent transferParent, identity *BackupIdentity, created bool) error {
+// adoptParentRefs stores the primary reference on the series row. A series
+// keeps exactly one reference (personal_transfer_series), so an alias that
+// resolves to the same series is skipped and returned for reporting instead of
+// being written a second time. An alias owned by another object still fails the
+// whole parent: silently dropping it would hide a contradiction.
+func adoptParentRefs(ctx context.Context, tx *sql.Tx, parent transferParent, identity *BackupIdentity, created bool) ([]string, error) {
 	if parent.seriesID == 0 || parent.workID == 0 {
-		return ErrConflict
+		return nil, ErrConflict
 	}
 	state, err := loadTransferRefState(ctx, tx, identity.Ref)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	switch {
 	case !state.exists:
 		if created {
 			result, err := tx.ExecContext(ctx, `UPDATE personal_transfer_ref SET ref=? WHERE series_id=?`, identity.Ref, parent.seriesID)
 			if err != nil {
-				return err
+				return nil, err
 			}
 			changed, err := result.RowsAffected()
 			if err != nil || changed != 1 {
-				return ErrConflict
+				return nil, ErrConflict
 			}
 		} else {
 			if _, err = tx.ExecContext(ctx, `INSERT INTO personal_transfer_ref(ref,work_id,object_kind) VALUES(?,?,'series')`, identity.Ref, parent.workID); err != nil {
-				return err
+				return nil, err
 			}
 		}
 	case state.series.Valid && state.series.Int64 == parent.seriesID:
 	case state.work.Valid && state.work.Int64 == parent.workID:
 	default:
-		return ErrConflict
+		return nil, ErrConflict
 	}
+	skipped := []string{}
+	skipped = append(skipped, parent.droppedAliases...)
 	for _, ref := range identity.References {
 		if ref == identity.Ref {
 			continue
 		}
 		state, err := loadTransferRefState(ctx, tx, ref)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if !state.exists {
-			if _, err = tx.ExecContext(ctx, `INSERT INTO personal_transfer_ref(ref,work_id,object_kind) VALUES(?,?,'series')`, ref, parent.workID); err != nil {
-				return err
-			}
+			// The series already has its primary reference. A new alias would
+			// be a second reference row for the same series, which the unique
+			// index forbids.
+			skipped = append(skipped, ref)
 			continue
 		}
 		if state.series.Valid && state.series.Int64 == parent.seriesID {
+			skipped = append(skipped, ref)
 			continue
 		}
 		if state.work.Valid && state.work.Int64 == parent.workID {
+			skipped = append(skipped, ref)
 			continue
 		}
-		return ErrConflict
+		return nil, ErrConflict
 	}
-	return nil
+	return skipped, nil
 }
 
 func episodeSeriesIDs(ctx context.Context, tx *sql.Tx, work, catalog int64) ([]int64, error) {

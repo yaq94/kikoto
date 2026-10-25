@@ -56,6 +56,20 @@ type ImportResult struct {
 	Tags            int           `json:"tags"`
 	SkippedProgress int           `json:"skippedProgress"`
 	Issues          []ImportIssue `json:"issues,omitempty"`
+
+	issueBytes int
+}
+
+// addIssue records a non-blocking note about an imported record. The issue
+// budget matches the preview budget so one import cannot report more text than
+// the response limit.
+func (r *ImportResult) addIssue(issue ImportIssue) error {
+	r.issueBytes += len(issue.Ref) + len(issue.Title) + len(issue.Reason)
+	if r.issueBytes > MaxTransferBytes {
+		return ErrLimit
+	}
+	r.Issues = append(r.Issues, issue)
+	return nil
 }
 
 type importPlan struct {
@@ -218,7 +232,7 @@ func (s Store) ImportWithRegistration(ctx context.Context, user int64, b Backup,
 			if planned.workID == 0 && planned.key != "" {
 				planned.workID = plan.works[planned.key]
 			}
-			parent, problem, err := ensureParent(ctx, tx, planned, w.Identity.Parent)
+			parent, skippedAliases, problem, err := ensureParent(ctx, tx, planned, w.Identity.Parent)
 			if err != nil {
 				return result, err
 			}
@@ -227,6 +241,11 @@ func (s Store) ImportWithRegistration(ctx context.Context, user int64, b Backup,
 			}
 			if parent.workID == 0 {
 				return result, ErrConflict
+			}
+			for _, ref := range skippedAliases {
+				if err = result.addIssue(ImportIssue{Ref: ref, Title: parent.title, Reason: "parent_alias_not_imported"}); err != nil {
+					return result, err
+				}
 			}
 			problem, err = ensureEpisodeParent(ctx, tx, id, parent.workID)
 			if err != nil {

@@ -431,6 +431,8 @@ export const personalKorean = {
         parent_cycle: "에피소드의 부모 체인이 에피소드 자신으로 돌아옵니다. 항목을 건너뛰고 관계를 쓰지 않습니다.",
         parent_conflict:
           "백업의 부모 시리즈가 기존 공유 소속과 모순됩니다. 에피소드를 건너뛰며 기존 소속은 바꾸지 않습니다.",
+        parent_alias_not_imported:
+          "부모 별칭이 같은 시리즈를 가리킵니다. 시리즈는 참조 하나로 복원하고 이 별칭은 저장하지 않습니다.",
         relationships_not_imported:
           "버전 2 파일에는 부모 시리즈가 없습니다. 에피소드를 독립 항목으로 복원하며, 시리즈 소속은 자료 편집에서 확인하세요.",
         playlist_preserved: "목록에 해결되지 않은 참조가 있어 전체 목록을 유지합니다.",

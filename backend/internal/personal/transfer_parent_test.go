@@ -190,8 +190,8 @@ func TestTransferV2TopLevelSeriesKeepsItsReview(t *testing.T) {
 	}
 }
 
-// A parent reference owned by a catalog entry, another series, or a second
-// parent alias is contradictory and blocks only that episode.
+// A parent reference owned by a catalog entry or another series is
+// contradictory and blocks only that episode.
 func TestTransferV2ParentReferenceConflicts(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
@@ -207,20 +207,6 @@ func TestTransferV2ParentReferenceConflicts(t *testing.T) {
 					t.Fatal(err)
 				}
 				return &BackupIdentity{Ref: owned, Kind: "series", Title: "Example Series"}
-			},
-		},
-		{
-			name:  "another series alias",
-			setup: `INSERT INTO catalog_series(id,title) VALUES(601,'First Series'),(602,'Second Series');`,
-			build: func(t *testing.T, s Store, parentRef string) *BackupIdentity {
-				var firstRef, secondRef string
-				if err := s.DB.QueryRow(`SELECT ref FROM personal_transfer_ref WHERE series_id=601`).Scan(&firstRef); err != nil {
-					t.Fatal(err)
-				}
-				if err := s.DB.QueryRow(`SELECT ref FROM personal_transfer_ref WHERE series_id=602`).Scan(&secondRef); err != nil {
-					t.Fatal(err)
-				}
-				return &BackupIdentity{Ref: firstRef, Kind: "series", Title: "First Series", References: []string{secondRef}}
 			},
 		},
 	} {
@@ -242,6 +228,47 @@ func TestTransferV2ParentReferenceConflicts(t *testing.T) {
 				t.Fatalf("conflicting parent wrote %d works, %v", works, err)
 			}
 		})
+	}
+}
+
+// personal_transfer_series allows one reference per series, so an alias that
+// names the same series cannot be stored. The episode still imports and the
+// skipped alias is reported instead of failing the whole parent.
+func TestTransferV2ParentAliasForTheSameSeriesIsReported(t *testing.T) {
+	s := emptyTransferStore(t)
+	primary, alias, episodeRef := refWith("s", 'c'), refWith("s", 'd'), refWith("w", 'e')
+	backup := Backup{Format: "kikoto-user-data", Version: 2, Works: []BackupWork{{
+		Identity: &BackupIdentity{
+			Ref: episodeRef, Kind: "episode", Title: "Example Episode",
+			Parent: &BackupIdentity{
+				Ref: primary, Kind: "series", Title: "Example Series",
+				References: []string{alias},
+			},
+		}, Note: "Episode note"},
+	}}
+	result := importBackup(t, s, 1, backup)
+	if result.ImportedWorks != 1 || result.SkippedWorks != 0 {
+		t.Fatalf("restore = %+v", result)
+	}
+	found := false
+	for _, issue := range result.Issues {
+		if issue.Reason == "parent_alias_not_imported" && issue.Ref == alias {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("issues = %+v, want the skipped alias", result.Issues)
+	}
+	var seriesRefs int
+	if err := s.DB.QueryRow(`SELECT count(*) FROM personal_transfer_ref WHERE series_id IS NOT NULL`).Scan(&seriesRefs); err != nil {
+		t.Fatal(err)
+	}
+	if seriesRefs != 1 {
+		t.Fatalf("series rows kept %d references, want one", seriesRefs)
+	}
+	var parent int64
+	if err := s.DB.QueryRow(`SELECT parent_work_id FROM work WHERE id=(SELECT id FROM work WHERE title='Example Episode')`).Scan(&parent); err != nil || parent == 0 {
+		t.Fatalf("episode parent = %d (%v)", parent, err)
 	}
 }
 

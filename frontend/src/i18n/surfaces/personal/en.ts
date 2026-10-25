@@ -435,6 +435,8 @@ export const personalEnglish = {
           "The episode's parent chain loops back to the episode. The entry is skipped and no relation is written.",
         parent_conflict:
           "The backup's parent series contradicts the existing shared membership. The episode is skipped and the existing membership is unchanged.",
+        parent_alias_not_imported:
+          "A parent alias names the same series under a second reference. The series is restored with one reference and this alias is not stored.",
         relationships_not_imported:
           "This version 2 file has no parent series. The episode is restored independently; series membership requires the shared editing workflow.",
         playlist_preserved: "A list contains an unresolved reference. The list is kept unchanged.",
