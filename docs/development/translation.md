@@ -193,8 +193,8 @@ serves the reader.
 Display-language search applies only to text clauses and covers `title` for
 entries and series, plus `title` and `description` for works; `tag` and
 `directory` translations are not search inputs.
-`zh-cn`, `en-us`, `ja-jp` and `ko-kr` map to `zh-Hans`, `en-US`, `ja-JP` and
-`ko-KR`; `zh-tw` reads `zh-Hans` with OpenCC `s2t` and native `zh-Hant`. A
+`zh-cn`, `en-us`, `ja-jp` and `ko-kr` map to the stored tokens `zh-Hans`, `en`,
+`ja` and `ko`; `zh-tw` reads `zh-Hans` with OpenCC `s2t` and native `zh-Hant`. A
 release code or another structured identifier remains searchable regardless of
 display language. `origin` searches the original source index and never reads
 `content_translation`; target-language text searches never merge original-title
@@ -208,11 +208,12 @@ case-insensitive comparison replaces a `lower()` call per candidate row. The
 29.07 ms for the three-character FTS query.
 
 The `config_key` migration, persistent title/description rows, strict
-display-language search and complete short-query behavior are the issue 21
-target. The reviewed implementation still evicts model rows (including title
-rows) and limits one- and two-character searches to the newest 50,000 rows per
-language; do not cite those behaviors as completed evidence until the migration
-and replacement queries land.
+display-language search and complete short-query behavior are implemented:
+`translationPersistentCorpusSQL` excludes current corpus rows from eviction,
+`idx_content_translation_short_current` serves the keyset walk, and the short
+query no longer uses a newest-row window. The 45.6 万行 benchmark numbers above
+come from the local `translation-bench` run; the production-scale measurement
+belongs to ticket 24.
 
 Free space is read from the nearest existing parent before the data directory
 exists. Low space pauses new background generation (`paused_low_disk`) while

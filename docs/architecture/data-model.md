@@ -623,11 +623,12 @@ they do not count as current coverage. See
 and [ADR-0007](../decisions/ADR-0007-source-field-translation-cache.md).
 
 The configuration-key, persistent title/description, strict display-language
-search and complete short-query behavior above is the accepted issue 21 target
-contract. The reviewed code still evicts model rows (including title rows) and
-limits one- and two-character searches to the newest 50,000 rows per language;
-those gaps must be implemented and measured before this section is cited as
-current behavior.
+search and complete short-query behavior above is the current contract:
+`translationPersistentCorpusSQL` keeps current corpus rows out of the eviction
+pool, and one- and two-character searches walk the complete effective set
+through `idx_content_translation_short_current` instead of a newest-row window.
+The local 45.6 万行 benchmark is recorded with the issue 21 evidence; the
+production-scale measurement belongs to ticket 24.
 
 ## File Availability
 
