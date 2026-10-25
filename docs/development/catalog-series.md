@@ -62,34 +62,32 @@ catalog ids and can be refreshed in place.
 After staging completes, activation gives public source identity to at most 100
 stored entries per transaction. Every batch rechecks the parent's work, series
 and incoming-alias state. The pending mapping stays in place during these
-batches, so direct catalog reads, source search and user-state writes continue
-to exclude the entries. `source_catalog_episode_publication` holds one row per
-source and parent. A final transaction rechecks the parent and flips that row
-to `published`, so 101 or more episodes become visible without rewriting every
-entry again. Pending mappings are then cleared in bounded batches. Parent
-metadata files and stale-card status changes run in bounded follow-up
-transactions after the visibility switch. The shared
+batches, so direct catalog reads, source search, series detail and user-state
+writes must exclude the entries. `source_catalog_episode_publication` holds one
+row per source and parent. A final transaction rechecks the parent and flips
+that row to `published`, so 101 or more episodes become visible without
+rewriting every entry again. Pending mappings are then cleared in bounded
+batches. Parent metadata files and stale-card status changes run in bounded
+follow-up transactions after the visibility switch. The shared
 pending-aware entry predicate distinguishes this state from a retained missing
 record, which may also have no public source. The pending mapping lets a new
 process reuse the same entry after interruption; a failed activation or
 visibility transition is compensated without publishing a partial split.
-Compensation
-removes pending-only series membership before deleting an unowned pending
-entry because that membership uses `ON DELETE RESTRICT`; file rows cascade
-with the entry. A failed compensation leaves the pending state recoverable
-and is returned together with the publication error. A parent with a work,
-series membership, or incoming alias stays an ordinary published root with
-its complete file snapshot and no staged residue. Neither pending cleanup nor
-activation deletes a work or personal record. Staging, activation, parent
+Compensation removes pending-only series membership before deleting an unowned
+pending entry because that membership uses `ON DELETE RESTRICT`; file rows
+cascade with the entry. A failed compensation leaves the pending state
+recoverable and is returned together with the publication error. A parent with
+a work, series membership, or incoming alias stays an ordinary published root
+with its complete file snapshot and no staged residue. Neither pending cleanup
+nor activation deletes a work or personal record. Staging, activation, parent
 metadata, and stale-card maintenance each write at most 100 entry/file rows per
 transaction; mapping cleanup removes at most 100 pending mappings per
 transaction.
 
-Full indexing attaches membership in the same transaction as catalog
-publication. Published containers keep their existing identity when later
-observations reveal episode children; a later numberless work below a reviewed
-grouping folder still receives its own card. Reading or grouping does not
-register works, download media, or change personal records.
+Published containers keep their existing identity when later observations
+reveal episode children; a later numberless work below a reviewed grouping
+folder still receives its own card. Reading or grouping does not register
+works, download media, or change personal records.
 A complete refresh marks episode cards that the listing no longer contains as
 `missing`, keeping their id, work link and personal records; the series view
 keeps listing them with `status: "missing"` so their personal records remain
@@ -115,7 +113,12 @@ readers when the instance allows anonymous access.
   Repeated confirmation returns the completed series id.
 - `GET /api/catalog-series/{id}` returns title, optional work id, ordered episodes
   and only the viewer's series `personalRating` and `personalNote`. Anonymous
-  reads return an empty personal state; episode membership contains no private fields.
+  reads return an empty personal state; episode membership contains no private
+  fields. Series detail and member tracks apply the same pending-publication and
+  admission gates as the series list; a staged batch is never exposed before the
+  parent publication row is `published`.
+  The reviewed 096 commit still reads series detail without those gates; issue 20
+  owns that correction and its regression test.
 
 Previews expire after 24 hours. An actor may retain at most 32 unexpired pending
 and 32 completed previews. Identity, location, title, source visibility,

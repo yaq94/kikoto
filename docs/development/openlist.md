@@ -79,31 +79,23 @@ Scan options are saved with the source's checkpoint and reused by an empty
 start request. An active run keeps its options until it is stopped and resumed.
 
 A full scan that reached the end of the tree enables daily updates for that
-source. The next daily boundary is 03:00 Asia/Shanghai and the next full
-reconciliation boundary is Sunday 03:00 Asia/Shanghai. Both are persisted as
-Unix seconds in `app_setting` (`source_catalog_daily:<source id>` and
-`source_catalog_full:<source id>`) and exposed as `nextUpdateAt` and
-`nextFullAt` in the index progress response. The existing workflow coordinator
-checks them on startup and while the application runs. A stopped application
-catches up with at most one due dispatch; elapsed days do not replay every
-missed boundary.
+source. The next due time is persisted in `app_setting` and is checked by the
+existing workflow coordinator on startup and while the application runs. A
+stopped application catches up with one update when it starts; elapsed days do
+not queue multiple crawls. A run that still has unconfirmed empty ranges also
+schedules the next re-observation, but the daily trigger resumes the same
+generation instead of creating an independent full crawl, so new content below
+a transient empty answer is eventually discovered. Failed and restricted ranges
+retry on the same schedule; a low-disk pause waits for the operator. Finite
+scans and disabled sources do not enable the schedule.
 
-A partial scan also schedules the daily boundary. The daily pass is a
-directory-first sync over the same generation: it probes completed branches for
-new or changed files, lists pending directories from their stored rows, retries
-failed, restricted and unconfirmed-empty ranges, and records an independent
-`source_catalog_sync_run`. A cancelled or failed generation resumes its full
-checkpoint. The Sunday boundary starts a new full generation after any queued
-or running work has settled, so a full reconciliation never overlaps an
-incremental sync. A low-disk pause moves the next daily attempt one hour out and
-keeps the checkpoint.
-
-Daily dispatch advances the persisted boundary in the same transaction as the
-enqueue or resume. A dispatch therefore does not mean the scan completed: only
-a `succeeded` generation with resolved directory ranges reports complete
-coverage, and partial or failed work leaves the unresolved ranges visible.
-Daily work uses the saved limits, existing source request policy and low-space
-pause. Manual starts still require `sources:write`.
+Daily dispatch uses the same transaction as manual dispatch: queued/running
+scans are joined, and cancelled, failed, paused or partial scans resume their
+existing generation. The due time advances with dispatch, so repeated coordinator
+checks do not continually retry a paused source. A complete success schedules
+the next update for 24 hours later. Daily work uses the saved limits, existing
+source request policy and low-space pause, and only complete coverage reports
+success. Manual starts still require `sources:write`.
 
 Every incremental update re-lists the source root in addition to probing child
 directories. Root-level files are not visible through the directory probe, so
@@ -160,41 +152,36 @@ observations and publication while stored cards remain readable. The disk check
 reserves additional response/WAL headroom; the database volume must also be
 monitored by the operator.
 
-Finite episode splits use `source_catalog_episode_pending` to keep new episode
-entries out of source search and public cards until the complete snapshot is
-ready. A staged entry has no public source and has `excluded` availability;
-its mapping records the source, parent root and episode root. Pending entries
-are reused after a restart. The shared entry-read predicate excludes them from
-direct detail reads, search and user-state registration without hiding retained
-missing records, which also have no public source. Once all staged writes
-commit, activation gives public source identity to at most 100 entries per
-transaction while their pending mappings keep the set hidden. A final
-transaction switches one parent publication-state row to `published`, so
-readers never observe only the first activation batch. Pending mappings,
-parent metadata files, and stale-card status changes are then cleared or
-written in bounded follow-up transactions. Staging, activation, parent
-metadata, and stale-card maintenance each write at most 100 entry/file rows in
-total, including a single episode's file list; mapping cleanup removes at most
-100 pending mappings per transaction. This is not a 100-root limit and is
-separate from the full-index publication batches of 50 observation rows. A
-parent that already owns a work, series membership, or incoming alias remains
-on the ordinary complete-snapshot path; its pending rows are reclaimed and its
-catalog id is returned. A failed activation removes only safe pending rows,
-while a failed compensation preserves them for the next scan and joins the
-cleanup error to the original error.
-
 Numbered directories own their descendants. A directory with audio, or with
 only recognized format subdirectories, owns its track/format tree; other
-directories remain traversal containers. Evidenced episodes own their descendants;
-existing published containers retain their identity and require explicit review
-to split. Episode series membership is attached in the staging transaction. No
-title matching merges catalog identities.
-A searchable card needs observed audio and must stay within the admission
-bounds: at most 5,000 files in total, and when non-audio files exceed 2,000 at
-least five audio files must remain. The indexer, publication path and browse API
-apply the same rule. Source-returned URLs are discarded; neither discovery nor
-publication registers works or downloads media. Missing observations do not
-delete cards or private records.
+directories remain traversal containers. Evidenced episodes own their
+descendants; existing published containers retain their identity and require
+explicit review to split. Episode series membership is attached in the staging
+transaction; the parent publication row is the visibility gate. No title
+matching merges catalog identities.
+
+Finite episode splits use `source_catalog_episode_pending` to keep new episode
+entries out of source search, public cards, series detail and user-state writes
+until the complete snapshot is ready. A staged entry has no public source and
+has `excluded` availability; its mapping records the source, parent root and
+episode root. Pending entries are reused after a restart. Once all staged writes
+commit, activation gives public source identity to at most 100 entries per
+transaction while their pending mappings keep the set hidden. A final
+transaction switches one parent publication-state row to `published`, so readers
+never observe only the first activation batch. Pending mappings, parent metadata
+files, and stale-card status changes are then cleared or written in bounded
+follow-up transactions. Staging, activation, parent metadata, and stale-card
+maintenance each write at most 100 entry/file rows in total, including a single
+episode's file list; mapping cleanup removes at most 100 pending mappings per
+transaction. This is not a 100-root limit and is separate from the full-index
+publication batches of 50 observation rows. A parent that already owns a work,
+series membership, or incoming alias remains on the ordinary complete-snapshot
+path; its pending rows are reclaimed and its catalog id is returned. A failed
+activation removes only safe pending rows, while a failed compensation preserves
+them for the next scan and joins the cleanup error to the original error.
+Only roots with observed playable audio become searchable cards. Source-returned
+URLs are discarded; neither discovery nor publication registers works or
+downloads media. Missing observations do not delete cards or private records.
 
 Directory pages with changing totals restart their bounded sequence up to two
 times, then remain failed. Repeated pages cannot count as progress. A manual
