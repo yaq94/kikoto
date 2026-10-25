@@ -495,7 +495,10 @@ try {
     { headers },
   );
   const reviewCleanup = JSON.parse(reviewCleanupBody);
-  assert.equal(reviewCleanup.personalRating, reviewBefore.personalRating ?? null);
+  assert.equal(
+    reviewCleanup.personalRating,
+    reviewBefore.personalRating ?? null,
+  );
   assert.equal(reviewCleanup.personalNote, reviewBefore.personalNote ?? "");
   await request("/api/auth/logout", {
     method: "POST",

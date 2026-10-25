@@ -417,8 +417,7 @@ export const personalHant = {
         source_reference_retained: "已保留此來源引用供後續傳輸，未建立來源連線。",
         parent_cycle: "此單集的父鏈回到自身。條目已略過，不寫入關係。",
         parent_conflict: "備份中的父系列與現有共用歸屬矛盾。本集已略過，現有歸屬保持不變。",
-        parent_alias_not_imported:
-          "父系列的別名指向同一系列。系列只保留一個引用，該別名未寫入。",
+        parent_alias_not_imported: "父系列的別名指向同一系列。系列只保留一個引用，該別名未寫入。",
         relationships_not_imported:
           "版本 2 檔案沒有父系列資訊。單集已作為獨立物件還原，系列成員須透過資料編輯流程確認。",
         playlist_preserved: "清單包含無法歸屬的引用，保留整份清單。",

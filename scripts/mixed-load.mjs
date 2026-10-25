@@ -253,7 +253,10 @@ function streamPathFromMedia(media) {
     if (item?.kind !== "audio" && item?.kind !== "video") continue;
     if (!Array.isArray(item?.locations)) continue;
     for (const location of item.locations) {
-      if (typeof location?.streamUrl !== "string" || location.streamUrl === "") {
+      if (
+        typeof location?.streamUrl !== "string" ||
+        location.streamUrl === ""
+      ) {
         continue;
       }
       if (
@@ -368,7 +371,9 @@ try {
   if (work) {
     searchQuery = String(work.title || work.primaryCode || "").trim();
     if (!searchQuery) {
-      setupErrors.push("The selected work has neither a title nor a primary code.");
+      setupErrors.push(
+        "The selected work has neither a title nor a primary code.",
+      );
     }
     originalReview = {
       rating: work.originalRating,
@@ -407,7 +412,10 @@ try {
           { expected: [200] },
         );
         if (result.ok && !Array.isArray(result.body?.works)) {
-          recordValidationError("browse", "The library response has no works array.");
+          recordValidationError(
+            "browse",
+            "The library response has no works array.",
+          );
         }
         return;
       }
@@ -420,7 +428,10 @@ try {
           { expected: [200] },
         );
         if (result.ok && !Array.isArray(result.body?.works)) {
-          recordValidationError("search", "The search response has no works array.");
+          recordValidationError(
+            "search",
+            "The search response has no works array.",
+          );
         }
         return;
       }
