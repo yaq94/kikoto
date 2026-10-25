@@ -42,7 +42,7 @@
 - `docs/development/migrations.md` 同步 095/096/097–100 的连续链和 compat 基线。
 - 测试编号改用 `testfixture.WorkCodeAt`；超过 400 条使用 `HighCardinalityWorkCodeAt`。
 - 公开证据去除 `/srv/...`、数据库路径、真实作品编号、生产 entryId/sourceId 和原始日志。
-- 新增 tracked-evidence 扫描（脚本或测试），不以 `make sensitive-check` 的 diff 结果代替；允许列表只用于合成占位符。
+- 新增 tracked-evidence 扫描（脚本或测试），不以 `make sensitive-check` 的 diff 结果代替；允许列表只用于合成占位符。规则见 [23 证据策略](../evidence/23-evidence-policy.md)。
 - 验证 `.scratch` 内相对链接；当前 `evidence/17-deployment.md` 与 `evidence/21-final-acceptance.md` 的 `release-rollback.md` 链接需要修正。
 
 ## 验收清单

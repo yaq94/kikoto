@@ -134,7 +134,7 @@ CREATE INDEX source_catalog_schedule_due
 - `catalogadmission.Decision` 是唯一规则源。`catalogEntryAdmittedSQL`、`catalogRootAdmissionTx`、单卡 API 计数必须由同一组常量生成，不得硬编码 5001/2001/5。
 - `catalogadmission/admission.go` 顶部注释改为“三项阈值决定准入；Probe* 是 SQL 计数上限”。
 - 旧测试中“大附属文件卡允许发布”的断言改为拒绝；正常多轨、音频附带字幕／压缩包仍允许。
-- 浏览 API 先测量 42,624 张卡的 p95。若三条相关子查询达不到预算，再增加 `source_catalog_entry_admission`（entry_id、files、audio、non_audio、reason、updated_at）并在发布／文件变更事务维护；不得直接信任陈旧计数。
+- 浏览 API 先在约 4.2 万张卡的历史规模上测量 p95。若三条相关子查询达不到预算，再增加 `source_catalog_entry_admission`（entry_id、files、audio、non_audio、reason、updated_at）并在发布／文件变更事务维护；不得直接信任陈旧计数。
 
 ### 5.5 验证
 
@@ -287,7 +287,7 @@ prefill 必须按 `entity_kind × field` 枚举：entry 的 title、series 的 t
 1. 验证并补齐 `catalogprune`：带 `personal_transfer_ref` 的 source-only 卡片跳过；work-backed alias 可重指向 work；stale dry-run apply 必须在删除前拒绝。
 2. 覆盖两类 alias：work-backed 与 source-only；有个人评价、播放进度或标签但无 `personal_transfer_ref` 的卡片也不得误删。
 3. 重新生成合成 dry-run；报告只含合成 fixture、计数和原因，不含生产 entryId／sourceId／path。
-4. 旧 643/642 dry-run 只作历史，不可 apply。
+4. 旧 dry-run 只作历史，不可 apply；具体生产计数不进入公开证据。
 
 ### 8.2 迁移 095/096/097–100
 
@@ -306,7 +306,7 @@ prefill 必须按 `entity_kind × field` 枚举：entry 的 title、series 的 t
 - `docs/development/translation.md` 由 21 提供最终文本；23 只做交叉引用和仓库格式检查。
 - `docs/development/release-rollback.md`：有 healthcheck 的 Compose 显示 `healthy`，生产无 healthcheck 只要求 `running`，以 `/health` 200 为门禁。
 - 测试编号改用 `testfixture.WorkCodeAt`；超过 400 条使用 `HighCardinalityWorkCodeAt`。
-- 公开证据去除 `/srv/...`、数据库路径、真实作品编号、生产 entryId/sourceId 和原始日志。
+- 公开证据去除生产主机路径、数据库路径、真实作品编号、生产记录标识和原始日志。
 - 新增 tracked-evidence 扫描（脚本或测试），不以 `make sensitive-check` 的 diff 结果代替；允许列表只用于合成占位符。
 
 ## 9. Task 6：工单 24，同候选集成与发布证据

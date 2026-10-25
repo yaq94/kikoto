@@ -30,10 +30,10 @@
 以下记录只证明注明的历史产物，不能关闭当前 17/20–24：
 
 - 01–07、09–16 的历史本地 H/F/R 证据保留在各自的 evidence 文件；其中 07 的真实媒体 Range 是旧独立实例证据，当前应用代理路径仍需 24 复验。
-- 08 的完整合成树、恢复与资源限制已通过；真实 run 53 仍为 partial（14,463/14,494 完成、4 失败、27 未确认空），真实全量覆盖待 24。
+- 08 的完整合成树、恢复与资源限制已通过；真实 run 53 仍为 partial（约 1.4 万目录中绝大多数完成、4 失败、27 未确认空），真实全量覆盖待 24。
 - 17 的旧部署 `7ed73fa0`（schema 68→76）与 `2bae5db9`（schema 83）只作历史；当前构建未部署。
 - 18、19 的本地 H/R/F 证据保留；最终 Full CI 终态由 24 在同一 SHA 取得。
-- 2026-10-24 前完成的目录身份、sidecar、翻译、关联与导入修复见 [20 证据](evidence/20-post-review-fixes.md)；旧 643/642 prune dry-run 只作历史。
+- 2026-10-24 前完成的目录身份、sidecar、翻译、关联与导入修复见 [20 证据](evidence/20-post-review-fixes.md)；旧 prune dry-run 只作历史，生产计数不再复述。
 
 ## 迁移协调
 
@@ -49,10 +49,11 @@
 
 | 检查 | 当前结果 | 说明 |
 | --- | --- | --- |
-| 文档链接 | 待重跑 | 修改后运行 `node scripts/check-doc-links.mjs`，并单独检查 `.scratch` 链接 |
-| 文档 locale | 待重跑 | `node scripts/check-doc-locales.mjs` |
-| 空白检查 | 待重跑 | `git diff --check` |
-| 敏感检查 | 不可作为已提交证据证明 | `make sensitive-check` 只扫 `git diff HEAD`；需要 tracked-evidence 扫描 |
+| 文档链接 | 通过 | `node scripts/check-doc-links.mjs`：134 份公开 Markdown，相对链接全部可解析；`.scratch` 链接见同一脚本 |
+| 文档 locale | 通过 | `node scripts/check-doc-locales.mjs`：5 个 locale、11 个用户页 |
+| 空白检查 | 通过 | `git diff --check` 无输出 |
+| 敏感检查 | 变更范围通过 | `make sensitive-check` 覆盖变更行；已跟踪证据另由 `make tracked-evidence-check` 全文扫描 |
+| tracked-evidence 扫描 | 通过 | 48 个已跟踪证据文件；规则见 [23 证据策略](evidence/23-evidence-policy.md) |
 | 01–16 历史本地证据 | 保留 | 只证明各自旧 SHA；当前候选由 24 重跑 |
 | 08 真实覆盖 | partial | run 53 未完成，失败/未确认空目录不计完整 |
 | 17 旧部署 | 历史 | `2bae5db9`/schema 83，不是当前候选 |
