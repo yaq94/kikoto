@@ -142,11 +142,19 @@ func (s *Server) dispatchCatalogUpdate(ctx context.Context, sourceID int64, now 
 		return err
 	}
 	if fullRunning || syncRunning {
-		// A running sync cannot create a full generation. Remember the weekly
-		// boundary for the scheduler and keep manual requests queued.
+		// A running sync cannot create a full generation, so a weekly boundary
+		// that came due during it becomes one pending full. A running full is
+		// registered as that pending run: its success advances the weekly
+		// boundary, and a failure leaves one retryable bit instead of a second
+		// full generation on the next tick. Manual requests stay queued.
 		if schedule.WeeklyDueAt <= now.Unix() && !schedule.ResumeFull {
 			if err = setCatalogResumeFullPendingTx(ctx, tx.Tx, sourceID); err != nil {
 				return err
+			}
+			if fullRunning {
+				if err = setCatalogPendingFullRunTx(ctx, tx.Tx, sourceID, generation); err != nil {
+					return err
+				}
 			}
 		}
 		return tx.Commit()
@@ -315,10 +323,33 @@ func (s *Server) dispatchCatalogUpdate(ctx context.Context, sourceID int64, now 
 	// cancelled generations use the same maintenance sync, which probes the
 	// completed branches and retries the unresolved ranges without creating a
 	// second full generation.
+	//
+	// The due boundary moves only after the sync row exists. If another writer
+	// still holds the lease, enqueue returns errCatalogIndexRunning and the
+	// whole transaction commits nothing, so the next tick retries the same
+	// boundary instead of losing the day.
+	return s.dispatchCatalogSyncWithSchedule(ctx, tx, sourceID, now, weeklyDue, schedule.ManualPending)
+}
+
+// dispatchCatalogSyncWithSchedule creates the sync row first and advances the
+// schedule only after the row exists. A lost race to another full generation
+// commits nothing, so the daily boundary stays due for the next tick.
+func (s *Server) dispatchCatalogSyncWithSchedule(ctx context.Context, tx *sqlutil.BoundedTx, sourceID int64, now time.Time, weeklyDue, manualPending bool) error {
+	syncID, err := enqueueCatalogSyncTx(ctx, tx.Tx, sourceID, false)
+	if err != nil {
+		if errors.Is(err, errCatalogIndexRunning) {
+			return tx.Commit()
+		}
+		return err
+	}
+	if syncID == 0 {
+		// An existing sync owns the source; keep the boundaries for its finish.
+		return tx.Commit()
+	}
 	if err = advanceCatalogScheduleTx(ctx, tx.Tx, sourceID, "daily", now); err != nil {
 		return err
 	}
-	if schedule.ManualPending {
+	if manualPending {
 		if err = clearCatalogManualPendingTx(ctx, tx.Tx, sourceID); err != nil {
 			return err
 		}
@@ -328,7 +359,7 @@ func (s *Server) dispatchCatalogUpdate(ctx context.Context, sourceID int64, now 
 			return err
 		}
 	}
-	return s.dispatchCatalogSync(ctx, tx, sourceID)
+	return s.commitCatalogSyncDispatch(ctx, tx, syncID, sourceID)
 }
 
 // dispatchCatalogSync creates the directory-first writer for an existing

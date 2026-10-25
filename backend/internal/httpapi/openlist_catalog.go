@@ -336,10 +336,13 @@ func persistOpenListEntryTx(ctx context.Context, tx *sql.Tx, sourceID any, root,
 }
 
 func persistOpenListFileTx(ctx context.Context, tx *sql.Tx, entryID int64, file openlist.File) error {
-	_, err := tx.ExecContext(ctx, `INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes)
-		VALUES(?,?,?,?,?) ON CONFLICT(catalog_entry_id,relative_path) DO UPDATE SET
-		title=excluded.title,kind=excluded.kind,size_bytes=excluded.size_bytes`,
-		entryID, file.Path, file.Title, file.Kind, file.Size)
+	// A manual snapshot is the card's current published file set, so it carries
+	// the same generation as the entry. Admission compares the two; leaving the
+	// default zero here would make a refreshed card look fileless.
+	_, err := tx.ExecContext(ctx, `INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes,observed_generation)
+		VALUES(?,?,?,?,?,(SELECT last_seen_generation FROM source_catalog_entry WHERE id=?)) ON CONFLICT(catalog_entry_id,relative_path) DO UPDATE SET
+		title=excluded.title,kind=excluded.kind,size_bytes=excluded.size_bytes,observed_generation=excluded.observed_generation`,
+		entryID, file.Path, file.Title, file.Kind, file.Size, entryID)
 	return err
 }
 
@@ -391,17 +394,17 @@ func (s *Server) getSourceCatalogEntry(w http.ResponseWriter, r *http.Request) {
 		writeUpstreamError(w, err)
 		return
 	}
-	// A metadata-only parent can exist as catalog provenance with sidecars but
-	// no playable audio. Hide that parent and any card outside the admission
-	// bounds; zero-file entries remain readable because work matching and shared
-	// identities use them as synthetic rows.
-	if entry.SourceID != 0 {
+	// A retained missing record is provenance with personal state: its source
+	// confirmed the absence, so it has no current published file set to judge.
+	// Every other source-backed card, including a metadata-only parent, must
+	// pass the same admission rule as browse and tracks.
+	if catalogEntryAdmissionRequired(entry) {
 		admission, err := catalogPublishedEntryAdmission(r.Context(), s.db, entry.ID)
 		if err != nil {
 			writeError(w, err)
 			return
 		}
-		if admission.Files > 0 && !admission.Admitted() {
+		if !admission.Admitted() {
 			writeCatalogEntryNotAvailable(w, admission)
 			return
 		}

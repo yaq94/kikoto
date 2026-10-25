@@ -434,6 +434,116 @@ func TestCatalogScheduleRunningSyncDefersFullAndKeepsDue(t *testing.T) {
 	}
 }
 
+// A running full that crosses the weekly boundary is registered as the pending
+// run. Its own success then advances the weekly boundary; a second full must not
+// be queued on the next tick.
+func TestCatalogScheduleRunningFullRegistersPendingRun(t *testing.T) {
+	tree := newCatalogSyncTestTree()
+	tree.set("/", catalogSyncTestEntry{Name: "Partition A", IsDir: true, Modified: "p1"})
+	tree.set("/Partition A", catalogSyncTestEntry{Name: "Work 001", IsDir: true, Modified: "w1"})
+	tree.set("/Partition A/Work 001", catalogSyncTestEntry{Name: "01.mp3", Size: 100, Modified: "f1"})
+	f := newCatalogSyncFixture(t, tree)
+	now := shanghaiTestTime(2030, time.January, 6, 3, 0)
+	f.server.catalogNow = func() time.Time { return now }
+	// Start a full and leave it queued instead of draining it.
+	f.request(t, http.MethodPost, "/catalog/index", `{}`, http.StatusAccepted)
+	var runID int64
+	if err := f.server.db.QueryRow(`SELECT workflow_run_id FROM source_catalog_scan WHERE file_source_id=?`, f.sourceID(t)).Scan(&runID); err != nil {
+		t.Fatal(err)
+	}
+	setCatalogScheduleTestState(t, f, catalogScheduleState{Daily: now.Unix(), Weekly: now.Unix()})
+
+	dispatchCatalog(t, f)
+	state := readCatalogSchedule(t, f)
+	if !state.ResumeFull {
+		t.Fatal("weekly boundary during a running full was not remembered")
+	}
+	if !state.PendingFullRunID.Valid || state.PendingFullRunID.Int64 != runID {
+		t.Fatalf("pending full run = %+v, want the running generation %d", state.PendingFullRunID, runID)
+	}
+	if state.Daily != now.Unix() || state.Weekly != now.Unix() {
+		t.Fatalf("running full advanced the schedule: %+v", state)
+	}
+	if jobs := countQueuedFullJobs(t, f); jobs != 1 {
+		t.Fatalf("running full produced %d jobs, want only the existing one", jobs)
+	}
+	dispatchCatalog(t, f)
+	if jobs := countQueuedFullJobs(t, f); jobs != 1 {
+		t.Fatalf("second tick queued %d full jobs, want no duplicate", jobs)
+	}
+}
+
+// The daily boundary must stay due when the sync cannot be created because a
+// full generation already holds the lease. Advancing first would lose the day
+// and leave no task behind.
+func TestCatalogScheduleDailyDueWaitsForSyncCreation(t *testing.T) {
+	tree := newCatalogSyncTestTree()
+	tree.set("/", catalogSyncTestEntry{Name: "Partition A", IsDir: true, Modified: "p1"})
+	tree.set("/Partition A", catalogSyncTestEntry{Name: "Work 001", IsDir: true, Modified: "w1"})
+	tree.set("/Partition A/Work 001", catalogSyncTestEntry{Name: "01.mp3", Size: 100, Modified: "f1"})
+	f := newCatalogSyncFixture(t, tree)
+	now := shanghaiTestTime(2030, time.January, 2, 3, 0)
+	f.server.catalogNow = func() time.Time { return now }
+	if p := f.runFullScan(t, ""); p["status"] != "complete" {
+		t.Fatalf("full scan did not complete: %#v", p)
+	}
+	// A queued full that is not this completed generation makes the dispatcher
+	// take the daily sync branch and fail its enqueue with errCatalogIndexRunning.
+	if _, err := f.server.db.Exec(`UPDATE workflow_run SET status='queued' WHERE id=(
+		SELECT workflow_run_id FROM source_catalog_scan WHERE file_source_id=?)`, f.sourceID(t)); err != nil {
+		t.Fatal(err)
+	}
+	daily := now.Unix()
+	weekly := now.Add(72 * time.Hour).Unix()
+	setCatalogScheduleTestState(t, f, catalogScheduleState{Daily: daily, Weekly: weekly})
+
+	dispatchCatalog(t, f)
+	state := readCatalogSchedule(t, f)
+	if state.Daily != daily {
+		t.Fatalf("daily due moved without a created task: %+v", state)
+	}
+	if state.Weekly != weekly {
+		t.Fatalf("daily race changed the weekly boundary: %+v", state)
+	}
+	if runs := countCatalogSyncRuns(t, f); runs != 0 {
+		t.Fatalf("daily race created %d sync runs, want none", runs)
+	}
+}
+
+// Advancing the weekly boundary also clears a stale deferral reason; leaving the
+// reason behind with deferred_until=0 describes a pause that is no longer real.
+func TestCatalogScheduleWeeklyAdvanceClearsDeferral(t *testing.T) {
+	db := openMigratedTestDB(t)
+	metadataReviewExec(t, db, `INSERT INTO file_source(id,code,display_name,source_type) VALUES(74,'weekly-deferral','Weekly deferral','openlist');
+		INSERT INTO source_catalog_schedule(file_source_id,daily_due_at,weekly_due_at,deferred_until,deferred_reason)
+		VALUES(74,1,1,9999999999,'low_disk')`)
+	now := shanghaiTestTime(2030, time.January, 6, 3, 0)
+	tx, err := db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = advanceCatalogScheduleTx(context.Background(), tx, 74, "weekly", now); err != nil {
+		_ = tx.Rollback()
+		t.Fatal(err)
+	}
+	if err = tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	var state catalogScheduleState
+	var manual, resume int
+	if err = db.QueryRow(`SELECT daily_due_at,weekly_due_at,deferred_until,deferred_reason,manual_pending,resume_full_pending,pending_full_run_id
+		FROM source_catalog_schedule WHERE file_source_id=74`).
+		Scan(&state.Daily, &state.Weekly, &state.Deferred, &state.DeferredReason, &manual, &resume, &state.PendingFullRunID); err != nil {
+		t.Fatal(err)
+	}
+	if state.Deferred != 0 || state.DeferredReason != "" {
+		t.Fatalf("weekly advance left deferral %d/%q", state.Deferred, state.DeferredReason)
+	}
+	if state.Weekly != nextCatalogWeeklyDue(now).Unix() {
+		t.Fatalf("weekly due = %d, want %d", state.Weekly, nextCatalogWeeklyDue(now).Unix())
+	}
+}
+
 // A resource hold writes only deferred_until. The deferred source stays quiet
 // until the deadline, then catches up exactly once.
 func TestCatalogScheduleDeferredCatchesUpOnce(t *testing.T) {

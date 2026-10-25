@@ -43,6 +43,17 @@ func (s *Server) prepareCatalogPlayback(w http.ResponseWriter, r *http.Request) 
 		writeUpstreamError(w, err)
 		return
 	}
+	if catalogEntryAdmissionRequired(entry) {
+		admission, admissionErr := catalogPublishedEntryAdmission(r.Context(), s.db, entry.ID)
+		if admissionErr != nil {
+			writeError(w, admissionErr)
+			return
+		}
+		if !admission.Admitted() {
+			writeCatalogEntryNotAvailable(w, admission)
+			return
+		}
+	}
 	if entry.WorkID == nil {
 		writeAPIError(w, 409, "work_not_registered", "register this work before saving playback progress", false)
 		return

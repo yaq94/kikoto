@@ -121,6 +121,12 @@ func (s *Server) getWorkCatalogDirectories(w http.ResponseWriter, r *http.Reques
 		writeWorkReadError(w, err)
 		return
 	}
+	// A directory tab is an entry point to the same card as browse and playback.
+	// Judge each source-backed card by its current published file set; a retained
+	// missing record stays visible for its personal state. The Kikoeru presence
+	// arm below has no catalog file rows and is not part of this gate.
+	pendingDirectory := catalogEntryPendingSQL("entry")
+	admittedDirectory := catalogEntryAdmittedSQL("entry")
 	rows, err := s.db.QueryContext(r.Context(), `WITH family AS (
 		SELECT peer.work_id FROM shared_work_identity AS own
 		JOIN shared_work_identity AS peer ON peer.identity_work_id=own.identity_work_id
@@ -137,6 +143,8 @@ func (s *Server) getWorkCatalogDirectories(w http.ResponseWriter, r *http.Reques
 	WHERE entry.relocated_to_id IS NULL AND (source.source_type='openlist' OR entry.file_source_id IS NULL)
 		AND (entry.work_id IN (SELECT work_id FROM family) OR (entry.work_id IS NULL AND entry.primary_code<>'' AND
 		(entry.primary_code=? OR entry.primary_code IN (SELECT alias.primary_code FROM work_code_alias AS alias JOIN logical_work AS logical ON logical.id=alias.logical_work_id WHERE logical.canonical_work_id=?))))
+		AND `+pendingDirectory+`
+		AND (entry.file_source_id IS NULL OR entry.availability_status='missing' OR `+admittedDirectory+`)
 	UNION ALL
 	SELECT 0,presence.file_source_id,COALESCE(source.display_name,''),COALESCE(json_extract(presence.raw_json,'$.title'),''),
 		COALESCE(presence.remote_code,''),COALESCE(source.enabled,0),presence.work_id,presence.availability,

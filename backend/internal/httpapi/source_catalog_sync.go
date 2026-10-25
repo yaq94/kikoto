@@ -45,6 +45,10 @@ type catalogSyncRunState struct {
 	Requests         int
 	Force            bool
 	Note             string
+	// DeferralReason is the resource pause that stopped this run, kept apart
+	// from Note so appended diagnostics cannot turn a low-disk pause into an
+	// unknown disk state.
+	DeferralReason string
 }
 
 type catalogSyncDirectoryState struct {
@@ -222,7 +226,7 @@ func (s *Server) executeCatalogIncrementalSync(ctx context.Context, runID, sourc
 		settle := context.WithoutCancel(ctx)
 		_ = s.finishCatalogSyncRun(settle, runID, status, state)
 		if !deferredUntil.IsZero() {
-			_ = setCatalogScheduleDeferredTx(settle, s.db, sourceID, deferredUntil, catalogDeferralReason(state.Note))
+			_ = setCatalogScheduleDeferredTx(settle, s.db, sourceID, deferredUntil, state.DeferralReason)
 		}
 		// A sync never creates a full generation itself: the full entry point
 		// refuses while a sync holds the lease. When the weekly boundary came
@@ -240,6 +244,7 @@ func (s *Server) executeCatalogIncrementalSync(ctx context.Context, runID, sourc
 	if reason, _ := s.pauseCatalogSync(ctx, options); reason != "" {
 		state.Status = "partial"
 		state.Note = appendCatalogSyncNote(state.Note, reason)
+		state.DeferralReason = catalogDeferralReason(reason)
 		deferredUntil = catalogDeferralDeadline(s.catalogTime())
 		return nil
 	}
@@ -298,6 +303,7 @@ func (s *Server) executeCatalogIncrementalSync(ctx context.Context, runID, sourc
 			s.recordCatalogPhase(context.WithoutCancel(ctx), lease.WorkflowRunID, "scan", scanStarted)
 			state.Status = "partial"
 			state.Note = appendCatalogSyncNote(state.Note, reason)
+			state.DeferralReason = catalogDeferralReason(reason)
 			deferredUntil = catalogDeferralDeadline(s.catalogTime())
 			return nil
 		}
@@ -451,14 +457,14 @@ func catalogDeferralDeadline(now time.Time) time.Time {
 	return now.Add(time.Hour)
 }
 
-// catalogDeferralReason maps the pause vocabulary to the persisted schedule
-// reason. A note can carry several appended diagnostics, so only an exact
-// resource pause is persisted; anything else is an unknown disk state.
-func catalogDeferralReason(note string) string {
-	switch note {
-	case "low_disk_space":
+// catalogDeferralReason maps one pause token to the persisted schedule reason.
+// It is given the pause itself, never a note that may carry other diagnostics;
+// a prefix keeps the mapping stable if a caller adds detail after the token.
+func catalogDeferralReason(pause string) string {
+	switch {
+	case strings.HasPrefix(pause, "low_disk_space"):
 		return "low_disk"
-	case "maintenance":
+	case strings.HasPrefix(pause, "maintenance"):
 		return "maintenance_hold"
 	default:
 		return "disk_unknown"

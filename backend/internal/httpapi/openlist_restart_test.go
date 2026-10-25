@@ -107,7 +107,9 @@ func TestOpenListUpgradeRetainsReferencesFavoritesPlaybackAndReviewsAcrossRestar
 			t.Fatalf("favorites lost: %#v", favorites)
 		}
 		if boot == 0 {
-			metadataReviewExec(t, db, `INSERT INTO source_catalog_entry(id,file_source_id,root_path,title) VALUES(1,7,'/Example Unnumbered','Example Unnumbered')`)
+			metadataReviewExec(t, db, `INSERT INTO source_catalog_entry(id,file_source_id,root_path,title) VALUES(1,7,'/Example Unnumbered','Example Unnumbered');
+				INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes)
+				VALUES(1,'track.mp3','track.mp3','audio',100)`)
 			var saved workUserStateResponse
 			workReferenceRequest(t, app, admin, http.MethodPatch, "/api/source-catalog/1/user-state", `{"rating":0,"note":"Example catalog note"}`, 200, &saved)
 			workID = saved.WorkID

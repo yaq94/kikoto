@@ -17,6 +17,17 @@ func (s *Server) streamSourceCatalogMedia(w http.ResponseWriter, r *http.Request
 		writeUpstreamError(w, err)
 		return
 	}
+	if catalogEntryAdmissionRequired(entry) {
+		admission, admissionErr := catalogPublishedEntryAdmission(r.Context(), s.db, entry.ID)
+		if admissionErr != nil {
+			writeError(w, admissionErr)
+			return
+		}
+		if !admission.Admitted() {
+			writeCatalogEntryNotAvailable(w, admission)
+			return
+		}
+	}
 	relative := r.URL.Query().Get("path")
 	id = entry.ID
 	// The supplied path must be an exact previously listed audio file. Display

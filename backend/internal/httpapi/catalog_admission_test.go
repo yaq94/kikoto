@@ -408,11 +408,7 @@ func TestCatalogAdmissionSeriesFiltersEveryMember(t *testing.T) {
 	request.SetPathValue("id", "2")
 	response = httptest.NewRecorder()
 	server.getCatalogSeries(response, request)
-	var refused catalogSeriesView
-	if err := json.Unmarshal(response.Body.Bytes(), &refused); err != nil {
-		t.Fatal(err)
-	}
-	if len(refused.Episodes) != 0 {
-		t.Fatalf("series without a qualified member exposed %+v", refused.Episodes)
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("series without a qualified member status = %d body=%s", response.Code, response.Body.String())
 	}
 }

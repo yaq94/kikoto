@@ -17,6 +17,8 @@ func TestCatalogDirectoriesListBothOpenListAndKikoeru(t *testing.T) {
 			(42,'example_kikoeru','Example Kikoeru','kikoeru_compatible',1);
 		INSERT INTO source_catalog_entry(id,file_source_id,root_path,primary_code,title,work_id)
 			VALUES(410,41,'/Example/RJ00000061','RJ00000061','Example Work',41);
+		INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes)
+			VALUES(410,'track.mp3','track.mp3','audio',100);
 		INSERT INTO work_source_presence(work_id,file_source_id,presence_type,remote_id,remote_code,availability,raw_json)
 			VALUES(41,42,'source','7701','RJ00000061','available','{"title":"Example Work"}');
 	`); err != nil {
@@ -49,6 +51,9 @@ func TestCatalogDirectoriesFollowSharedIdentity(t *testing.T) {
 		INSERT INTO source_catalog_entry(id,file_source_id,root_path,primary_code,title,work_id) VALUES
 			(510,51,'/Example/RJ00000062','RJ00000062','Example Left',51),
 			(511,51,'/Example/RJ00000063','RJ00000063','Example Right',52);
+		INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes) VALUES
+			(510,'left.mp3','left.mp3','audio',100),
+			(511,'right.mp3','right.mp3','audio',100);
 		INSERT INTO shared_association(id,operation,status,version,fingerprint,snapshot_json)
 			VALUES(51,'link','completed','v1','example','{}');
 		INSERT INTO shared_identity_member(work_id,identity_work_id,operation_id) VALUES(51,51,51),(52,51,51);
@@ -77,6 +82,9 @@ func TestCatalogDirectoriesIncludeUnregisteredNumberedEntry(t *testing.T) {
 		INSERT INTO source_catalog_entry(id,file_source_id,root_path,primary_code,title,work_id) VALUES
 			(610,61,'/Example/RJ00000064','RJ00000064','Example Work',61),
 			(611,62,'/Example/RJ00000064','RJ00000064','Example Work',NULL);
+		INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes) VALUES
+			(610,'track.mp3','track.mp3','audio',100),
+			(611,'track.mp3','track.mp3','audio',100);
 	`); err != nil {
 		t.Fatal(err)
 	}

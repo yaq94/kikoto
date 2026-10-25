@@ -23,7 +23,9 @@ func TestSourceCatalogReviewUsesCurrentEntryAfterConcurrentRename(t *testing.T) 
 		(11,'RJ00000011','Old work'),
 		(42,'RJ00000042','Current work');
 		INSERT INTO source_catalog_entry(id,file_source_id,root_path,primary_code,title)
-		VALUES(1,7,'/Example','RJ00000011','Example');`)
+		VALUES(1,7,'/Example','RJ00000011','Example');
+		INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes)
+		VALUES(1,'track.mp3','track.mp3','audio',100);`)
 	server := NewServer(db, config.Config{Mode: config.ModeProduction, RootUsername: "synthetic-user", CacheRoot: t.TempDir(), DataRoot: t.TempDir()})
 	defer func() { _ = server.Shutdown(context.Background()) }()
 	createTestAdministrator(t, server, "synthetic-user", "synthetic-password")

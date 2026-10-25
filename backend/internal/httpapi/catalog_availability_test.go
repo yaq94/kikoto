@@ -37,7 +37,9 @@ func TestCatalogDirectoryListingChecksUnknownAndStaleTabs(t *testing.T) {
 		INSERT INTO source_catalog_entry(id,file_source_id,root_path,primary_code,title,work_id,availability_status,status_checked_at,updated_at) VALUES
 		(1,1,'/Example/One','RJ00000000','Example One',1,'available',NULL,datetime('now','-2 days')),
 		(2,1,'/Example/Two','RJ00000000','Example Two',1,'available',datetime('now','-2 days'),datetime('now','-2 days'));
-		INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes) VALUES(2,'old.wav','Old track','audio',100);`); err != nil {
+		INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes) VALUES
+			(1,'initial.wav','Initial track','audio',100),
+			(2,'old.wav','Old track','audio',100);`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := f.server.db.Exec("INSERT INTO file_source_endpoint(file_source_id,api_url,base_url) VALUES(1,?,?)", upstream.URL, upstream.URL); err != nil {

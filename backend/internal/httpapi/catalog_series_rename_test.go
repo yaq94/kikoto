@@ -109,10 +109,9 @@ func TestCatalogSeriesOmitsEntriesWithoutASource(t *testing.T) {
 	if _, err := f.server.db.Exec(`DELETE FROM file_source WHERE id=(SELECT file_source_id FROM source_catalog_entry WHERE id=?)`, entryID); err != nil {
 		t.Fatal(err)
 	}
-	view := reviewRequest(t, f.handler, f.cookie, http.MethodGet, "/api/catalog-series/"+strconv.FormatInt(seriesID, 10), "", 200)
-	if episodes := view["episodes"].([]any); len(episodes) != 0 {
-		t.Fatalf("series kept source-less members: %#v", episodes)
-	}
+	// Every member lost its source, so the series has no visible member and is
+	// no longer a resource. Its retained cards stay addressable individually.
+	reviewRequest(t, f.handler, f.cookie, http.MethodGet, "/api/catalog-series/"+strconv.FormatInt(seriesID, 10), "", 404)
 	detail := reviewRequest(t, f.handler, f.cookie, http.MethodGet, "/api/source-catalog/"+strconv.FormatInt(entryID, 10), "", 200)
 	if detail["status"] != "missing" {
 		t.Fatalf("retained card status=%v, want missing", detail["status"])

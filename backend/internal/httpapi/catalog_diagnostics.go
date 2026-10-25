@@ -2,6 +2,8 @@ package httpapi
 
 import (
 	"net/http"
+
+	"github.com/yexca/kikoto/backend/internal/catalogadmission"
 )
 
 // catalogDiagnostics answers the operator questions that the progress payload
@@ -40,10 +42,14 @@ func (s *Server) catalogDiagnostics(w http.ResponseWriter, r *http.Request) {
 	}
 	// A card over the admission ceiling is one the publisher refuses. Counting
 	// it here is what makes "published 41,824" explainable when 643 cards hold
-	// half of all file rows.
+	// half of all file rows. The threshold and the file set are the same ones
+	// the publisher applies: the requested source, folder rows excluded.
 	if err = s.db.QueryRowContext(r.Context(), `SELECT count(*) FROM (
-		SELECT catalog_entry_id FROM source_catalog_file GROUP BY catalog_entry_id HAVING count(*)>5000
-	)`).Scan(&t.oversizeCards); err != nil {
+		SELECT f.catalog_entry_id FROM source_catalog_file f
+		JOIN source_catalog_entry e ON e.id=f.catalog_entry_id
+		WHERE e.file_source_id=? AND f.kind<>'folder'
+		GROUP BY f.catalog_entry_id HAVING count(*)>?
+	)`, sourceID, catalogadmission.ProbeFiles).Scan(&t.oversizeCards); err != nil {
 		writeError(w, err)
 		return
 	}

@@ -26,7 +26,9 @@ func TestCatalogSeriesKeepsMissingEpisodesAccessible(t *testing.T) {
 			(2,7,'/Episode B','Episode B');
 		INSERT INTO catalog_series(id,title) VALUES(1,'Example series');
 		INSERT INTO catalog_series_member(series_id,catalog_entry_id,position,evidence)
-			VALUES(1,1,1,'manual'),(1,2,2,'manual');`)
+			VALUES(1,1,1,'manual'),(1,2,2,'manual');
+		INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes) VALUES
+			(1,'a.mp3','A','audio',1),(2,'b.mp3','B','audio',1);`)
 
 	type expectedEpisode struct {
 		id     int64
@@ -88,7 +90,9 @@ func TestCatalogSeriesFollowsRelocatedEpisodeToItsSuccessor(t *testing.T) {
 		UPDATE source_catalog_entry SET file_source_id=NULL, relocated_to_id=3, title='Renamed B' WHERE id=2;
 		INSERT INTO catalog_series(id,title) VALUES(1,'Example series');
 		INSERT INTO catalog_series_member(series_id,catalog_entry_id,position,evidence)
-			VALUES(1,1,1,'manual'),(1,2,2,'manual');`)
+				VALUES(1,1,1,'manual'),(1,2,2,'manual');
+			INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes) VALUES
+				(1,'a.mp3','A','audio',1),(3,'b.mp3','B','audio',1);`)
 
 	var view catalogSeriesView
 	workReferenceRequest(t, app, cookie, "GET", "/api/catalog-series/1", "", 200, &view)

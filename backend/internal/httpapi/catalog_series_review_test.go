@@ -85,6 +85,9 @@ func TestCatalogSeriesPersonalReviewsRestartAndExistingSourceRelations(t *testin
 			if _, err = db.Exec(`INSERT INTO source_catalog_entry(id,file_source_id,root_path,title,work_id) VALUES(3,8,'/Alternative A','Alternative A',?)`, identities[1]); err != nil {
 				t.Fatal(err)
 			}
+			if _, err = db.Exec(`INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes) VALUES(3,'track.mp3','Track A copy','audio',128)`); err != nil {
+				t.Fatal(err)
+			}
 			for _, change := range []struct {
 				patch  string
 				rating any
