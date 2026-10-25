@@ -78,9 +78,9 @@ lookups by parent, entry and episode root. It also creates
 complete staged split between `pending` and `published`. Both source and entry
 references cascade; `catalog_series_member` retains its restrictive entry
 reference, so episode compensation removes pending-only membership explicitly
-before deleting an entry. Its snapshot is `compat/096_dev.sql`; with `102` at
+before deleting an entry. Its snapshot is `compat/096_dev.sql`; with `103` at
 the chain head, `cd backend && go run ./cmd/schema-baseline -migrations
-./migrations -version-file ../VERSION` now writes `compat/102_dev.sql`.
+./migrations -version-file ../VERSION` now writes `compat/103_dev.sql`.
 The numbered migration does not alter 095 or reconstruct an existing database
 from a baseline. See [Catalog series](catalog-series.md) for the staging,
 activation and recovery semantics.
@@ -167,6 +167,18 @@ enum, copies the single row, and recreates the four title/description reset
 triggers that reference it. It also creates
 `translation_prefill_failure_source` on `(config_key, source_hash)` so the
 bounded retry cleanup can use a prefix instead of scanning the failure table.
+
+Schema 103 is `103_translation_short_scan_index.sql`. It creates
+`idx_content_translation_short_scan` on
+`(language, entity_kind, field, id, origin, config_key, translated_text)` and
+drops `idx_content_translation_short_current` and
+`idx_content_translation_short` from 099. The 099 short index placed `origin`
+and `config_key` before `id`, so a keyset page over one language/kind/field
+range built a temporary b-tree for the whole range. The 103 order keeps `id`
+next to the range prefix, while `origin`, `config_key` and `translated_text`
+stay in the covering tail: an ordered page is an index read and the
+complete-set count needs no table lookup. The two dropped indexes served only
+the short path, so keeping them would add write cost to every prefill insert.
 
 ## Fresh Installs And Upgrades
 
@@ -376,18 +388,19 @@ matches the backup.
 | v0.8.0 | `059` | `059_v0.8.0.sql` |
 | v0.8.1, v0.8.2 | `066` | `066_v0.8.1.sql` |
 | v0.8.3 | `068` | `068_v0.8.3.sql` |
-| development build (unreleased) | `102` | Development baseline only; `compat/102_dev.sql` |
+| development build (unreleased) | `103` | Development baseline only; `compat/103_dev.sql` |
 
 `096_catalog_episode_pending.sql` through
-`102_translation_prefill_status.sql` are committed; `103` is the next numbered
-migration and must not be created out of sequence. `compat/102_dev.sql` is the
-current development baseline; there is no separate `compat/101_dev.sql`.
+`103_translation_short_scan_index.sql` are committed; `104` is the next
+numbered migration and must not be created out of sequence. `compat/103_dev.sql`
+is the current development baseline; `compat/102_dev.sql` remains the 102
+baseline, and there is no separate `compat/101_dev.sql`.
 
 Per-release upgrade steps are in the [release notes](../history/index.md).
 
 ## Kikoto-next Schema Additions
 
-Migrations `069` through `102` extend the source catalog, shared associations,
+Migrations `069` through `103` extend the source catalog, shared associations,
 personal transfer, and the recoverable index. Pending release notes and upgrade
 steps are in
 [Unreleased](../history/unreleased.md).
@@ -428,6 +441,7 @@ steps are in
 | `100_work_parent.sql` | `work.parent_work_id` and `idx_work_parent_work` | Unambiguous series membership fills the parent; missing or conflicting evidence stays null |
 | `101_work_parent_backfill_report.sql` | `work_parent_backfill_report` and an idempotent parent backfill | Unresolved parents are queryable by reason; a repeated run reports the same rows |
 | `102_translation_prefill_status.sql` | Rebuild `translation_prefill_state` with `failed`; index the failure table by `(config_key, source_hash)` | The cursor row survives the rebuild; triggers are recreated, and bounded failure cleanup uses the index |
+| `103_translation_short_scan_index.sql` | Replace the 099 short-query indexes with `idx_content_translation_short_scan` | An ordered short page reads the index in keyset order; the complete-set count needs no table lookup |
 
 The Release To Schema Map above lists every numbered file. `069` rebuilds `work`
 and `logical_work` to relax code uniqueness and creates the catalog entry and
@@ -476,17 +490,18 @@ pending episode mapping and publication state; `097` rebuilds the display cache
 to add its source foreign key and remove unreachable rows. `098` adds the
 persisted schedule; `099` adds the translation config key and prefill cursor;
 `100` adds the work parent; `101` adds the backfill report; `102` rebuilds the
-prefill state to allow `failed` and indexes the failure table.
+prefill state to allow `failed` and indexes the failure table; `103` replaces
+the two 099 short-query indexes with one keyset-ordered covering index.
 
-The `084` through `102` changes retain existing rows. `087`, `097` and `102`
+The `084` through `103` changes retain existing rows. `087`, `097` and `102`
 rebuild tables; `087` copies every entry column and recreates its indexes,
 triggers and view, `097` copies only display-cache rows with a live source and
 recreates both cache indexes, and `102` copies the single prefill-state row and
-recreates its reset triggers. `085`, `088`, `090`, `091` and `092` add tables or
-columns with defaults, `093` adds an index, `094` adds one column default and
-`095` adds a rebuildable cache table. Startup refuses a database newer than the
-binary before running a handler. Rolling back any of these schemas requires a
-database snapshot, not a reverse migration; see
+recreates its reset triggers. `103` only replaces indexes. `085`, `088`, `090`,
+`091` and `092` add tables or columns with defaults, `093` adds an index, `094`
+adds one column default and `095` adds a rebuildable cache table. Startup
+refuses a database newer than the binary before running a handler. Rolling back
+any of these schemas requires a database snapshot, not a reverse migration; see
 [Release rollback](release-rollback.md).
 
 `077` does not change entry identity. It lets a generation remove stale file

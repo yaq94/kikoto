@@ -5,9 +5,9 @@
 
 ## 当前状态
 
-**当前部署：待本轮重新核实。** 历史部署 `2bae5db9`、镜像 `kikoto:next-2bae5db9`、schema 83 与 Full CI run `39496305624` 只作历史记录；集成分支 `codex/kikoto-catalog-remediation` 的 `bc880d91` 尚未部署。生产 schema、镜像、备份和回滚前提必须写入 24 的候选账本后才能作为发布证据。
+**当前部署：待本轮重新核实。** 历史部署 `2bae5db9`、镜像 `kikoto:next-2bae5db9`、schema 83 与 Full CI run `39496305624` 只作历史记录；集成分支 `codex/kikoto-catalog-remediation` 的 `e750b11d` 尚未部署。生产 schema、镜像、备份和回滚前提必须写入 24 的候选账本后才能作为发布证据。
 
-**集成状态（2026-10-26 复核）：** 集成分支 `codex/kikoto-catalog-remediation` 已推进到 `bc880d91`，本 worktree 合并该快照。迁移头 `102`：`101_work_parent_backfill_report.sql` 增加父级回填报告表并幂等重跑回填，`102_translation_prefill_status.sql` 为 prefill 增加 `failed` 状态并给失败表补 `(config_key, source_hash)` 索引；`compat/102_dev.sql` 已生成。20 的 098 状态机、系列准入与 publication 事务内删 mapping 已合入，仍有准入入口、零可见成员 404、due 推进顺序、诊断与性能残余；21 的 099/102、严格语言搜索与共享短查询生成器已合入，远程短查询已带 D-16 准入，仍有短查询 keyset `after` 续扫、D-16 join 的真实规模证据、`failed` 终态、真实规模基准与真实链复验；22 的 100 与 `work.parent_work_id` 已合入，导出格式已裁决回到 v2 + 可选 `parent`，代码与用户页由 22 子代理收口；23 只剩文档收口；24 未开始。
+**集成状态（2026-10-26 复核）：** 集成分支 `codex/kikoto-catalog-remediation` 已推进到 `e750b11d`（merge issue21）。迁移头 `103`：`101_work_parent_backfill_report.sql` 增加父级回填报告表并幂等重跑回填，`102_translation_prefill_status.sql` 为 prefill 增加 `failed` 状态并给失败表补 `(config_key, source_hash)` 索引，`103_translation_short_scan_index.sql` 用 `idx_content_translation_short_scan` 替换 099 的两个短查询索引；`compat/103_dev.sql` 已生成，`compat/102_dev.sql` 保留为 102 基线。`migration_chain_103_test.go` 覆盖新装到 103、68→103、84→103、重复启动幂等与 `foreign_key_check` 0 行。20 的 098 状态机、系列准入与 publication 事务内删 mapping 已合入；其余准入入口、零可见成员 404、零文件与旧 generation 集合统一、due 推进顺序、诊断过滤与 plan 断言已在 `codex/kikoto-issue20-admission`（`602afdc0`）实现，待集成验证。21 的 099/102、严格语言搜索、共享短查询生成器与 `failed` 终态（`a2a84617`）已合入；本机 45.6 万行基准中卡片页达标，完整集合 p95 313.119–520.704 ms 未达标，D-16 join 未纳入。22 的 100、`work.parent_work_id`、v2 + 可选 `parent` 与 `parent_alias_not_imported` 已合入，当前候选未完整重跑。23 进入文档收口；24 未开始。
 
 **审查快照：** 审查时文档基线 `6122b7bf`；代码审查基线 `301e6c63`。`6b4a02ec`（096 与系列暂存）、`728651a6`（v2 可选 `parent`）、`47df9c11`（wall-clock/partial 调度）均已并入当前分支，但仍需在当前候选上重新验收；不要把它们当作已签收的外部交付。历史 run 53 为 partial，不能当作完整覆盖。2026-10-25 的逐项审查见 [audit-20261025-review.md](audit-20261025-review.md)。
 
@@ -19,10 +19,10 @@
 
 | 工单 | 责任 | Implementation | 完成所需证据 |
 | --- | --- | --- | --- |
-| [20 持续目录增量、固定调度与准入回归](issues/20-catalog-sync-and-admission.md) | partial 变化发现、固定调度、D-16 跨层边界 | in-progress | H/R、失败重试与恢复已有本地证据；仍缺单卡评价／播放／媒体流／目录标签准入、零可见成员 404、零文件与旧 generation 集合统一、目录优先 sync 的 due 推进顺序、诊断 `Probe*` 过滤、真实 plan 断言、42k p95 |
-| [21 有效译文语料与严格语言搜索](issues/21-translation-corpus-and-search.md) | 有效语料、覆盖、严格搜索、短查询 | in-progress | 099/102、严格语言搜索与共享短查询生成器已合入，远程短查询已带 D-16 准入；仍缺短查询 keyset `after` 续扫、D-16 join 的目标规模证据、`failed` 终态写入、真实 456k 语料基准、编号/标题等值与短查询 p95 证据、真实迁移链重跑 |
-| [22 个人备份父级归属](issues/22-personal-transfer-parent-identity.md) | 空库单集与父系列恢复 | in-progress | 100 与 `parent_work_id` 已合入；格式已裁决为 v2 + 可选 `parent`，代码、用户页与多父级/权限测试待 22 子代理收口 |
-| [23 保留与仓库规范](issues/23-retention-and-repository-contracts.md) | 清理保护、迁移链、模型文档、证据脱敏 | in-progress | 合成 dry-run、保留回归、095–102、文档与敏感检查；当前候选复验未完成 |
+| [20 持续目录增量、固定调度与准入回归](issues/20-catalog-sync-and-admission.md) | partial 变化发现、固定调度、D-16 跨层边界 | in-progress | H/R、失败重试与恢复已有本地证据；单卡评价／播放／媒体流／目录标签准入、零可见成员 404、零文件与旧 generation 集合统一、due 推进顺序、诊断过滤与 plan 断言已在 `codex/kikoto-issue20-admission` 实现，待集成验证；42k p95 未采集 |
+| [21 有效译文语料与严格语言搜索](issues/21-translation-corpus-and-search.md) | 有效语料、覆盖、严格搜索、短查询 | in-progress | 099/102、103、严格语言搜索、共享短查询生成器与 `failed` 终态已合入；卡片页 p95 达标，完整集合 p95 313.119–520.704 ms 未达标；仍缺 keyset `after` 续扫、D-16 join 的目标规模证据、目标硬件基准与当前候选真实迁移链重跑 |
+| [22 个人备份父级归属](issues/22-personal-transfer-parent-identity.md) | 空库单集与父系列恢复 | in-progress | 100 与 `parent_work_id` 已合入；格式为 v2 + 可选 `parent`，`parent_alias_not_imported` 已实现并有测试；缺父级登记权限 403 测试与当前候选完整重跑 |
+| [23 保留与仓库规范](issues/23-retention-and-repository-contracts.md) | 清理保护、迁移链、模型文档、证据脱敏 | in-progress | 合成 dry-run、保留回归、095–103、文档与敏感检查；当前候选复验未完成 |
 | [24 同候选集成与发布证据](issues/24-release-candidate-evidence.md) | 全部修复、双轴审查、部署验收 | pending | 候选账本模板、同一 SHA 的 Full CI、迁移恢复、组合负载、LIVE、生产终态 |
 
 17 不依赖 20–24；24 依赖 17–23。以上新票不覆盖旧 evidence 文件，原 01–19 的需求与主责继续有效。任何 `resolved` 都必须满足当前产物定义。
@@ -39,9 +39,9 @@
 
 ## 迁移协调
 
-- 当前已跟踪最高迁移为 `102_translation_prefill_status.sql`（`0c945b3e`），`101_work_parent_backfill_report.sql` 与 `102_translation_prefill_status.sql` 已提交，`compat/102_dev.sql` 已生成；下一个编号为 103。
+- 当前已跟踪最高迁移为 `103_translation_short_scan_index.sql`（`6f39e888`），`101_work_parent_backfill_report.sql`、`102_translation_prefill_status.sql` 与 `103_translation_short_scan_index.sql` 已提交，`compat/103_dev.sql` 已生成；下一个编号为 104。
 - 096 已被系列暂存占用，不得把其他 DDL 塞入 096。
-- 编号：097 为固定的 095 表重建槽位；098 为目录调度；099 为译文语料契约；100 为 work 父级；101 为父级回填报告与幂等回填；102 为 prefill `failed` 状态与失败表 `(config_key, source_hash)` 索引。任何编号变化必须同步迁移头、compat 文件和测试常量。
+- 编号：097 为固定的 095 表重建槽位；098 为目录调度；099 为译文语料契约；100 为 work 父级；101 为父级回填报告与幂等回填；102 为 prefill `failed` 状态与失败表 `(config_key, source_hash)` 索引；103 为短查询扫描索引。任何编号变化必须同步迁移头、compat 文件和测试常量。
 - 095 曾在 `25f96c22` 首次加入（无外键），后在 `5defaa1c` 改为带 `ON DELETE CASCADE`；两个文件 SHA-256 不同。已执行旧 095 的数据库会触发 checksum 门禁，必须在 097 前提供兼容路径。是否存在旧 095 数据库仍待核实。
 - 新装、旧库升级、重复启动、并发启动和 compat 基线必须由 24 在同一 SHA 复验。
 

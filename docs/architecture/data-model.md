@@ -612,11 +612,18 @@ language and current configuration; an `origin` search reads the original
 source index. Release codes and other structured identifiers remain searchable
 regardless of display language. Three-character and longer text queries use the
 trigram index. One- and two-character queries page over the complete effective
-set with the `(language, entity_kind, field, id, translated_text)` index and
-`instr`; they must not stop at a fixed newest-row window. If the measured p95
-exceeds 100 ms at the target corpus size, a short-term n-gram index or an
-equivalent indexed structure is required rather than accepting an unbounded
-scan.
+set with `idx_content_translation_short_scan` and `instr`; they must not stop at
+a fixed newest-row window. Migration 103 creates that index on
+`(language, entity_kind, field, id, origin, config_key, translated_text)` and
+drops the 099 `idx_content_translation_short` and
+`idx_content_translation_short_current`. The 099 order put `origin` and
+`config_key` before `id`, which forced a temporary b-tree for a keyset page over
+one language/kind/field range. The 103 order keeps `id` next to the range prefix
+and leaves the current-row predicate and text in the covering tail, so an
+ordered page is an index read and the complete-set count needs no table lookup.
+If the measured p95 exceeds 100 ms at the target corpus size, a short-term
+n-gram index or an equivalent indexed structure is required rather than
+accepting an unbounded scan.
 
 Display-language text search covers `title` for entries and series, and
 `title` plus `description` for works; `tag` and `directory` translations are
@@ -640,9 +647,13 @@ The configuration-key, persistent title/description, strict display-language
 search and complete short-query behavior above is the current contract:
 `translationPersistentCorpusSQL` keeps current corpus rows out of the eviction
 pool, and one- and two-character searches walk the complete effective set
-through `idx_content_translation_short_current` instead of a newest-row window.
-The local 45.6 万行 benchmark is recorded with the issue 21 evidence; the
-production-scale measurement belongs to ticket 24.
+through `idx_content_translation_short_scan` instead of a newest-row window.
+The local 45.6 万行 benchmark (114,000 entities × 4 languages, not the target
+hardware) measured card-page short queries at p95 0.575–1.506 ms, but the
+complete-set short query at p95 313.119–520.704 ms. The card-page target is met;
+the complete-set target of 100 ms is not. That run did not include the D-16
+admission join. The target-hardware measurement and the admission join at that
+corpus size remain open in ticket 21 and ticket 24.
 
 ## File Availability
 

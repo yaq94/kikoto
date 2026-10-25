@@ -204,21 +204,41 @@ release code or another structured identifier remains searchable regardless of
 display language. `origin` searches the original source index and never reads
 `content_translation`; target-language text searches never merge original-title
 FTS hits as a fallback. One- and two-character queries use the complete
-effective set. Migration 099 keeps the required `(language, entity_kind, field,
-id, translated_text)` index and adds `idx_content_translation_short_current`
-with `origin` and `config_key`, so the current-row predicate stays covered.
-The short query uses `LIKE` on the covered column; SQLite's ASCII
-case-insensitive comparison replaces a `lower()` call per candidate row. The
-45.6 万行 `translation-bench` run measured p95 49.45 ms for the short query and
-29.07 ms for the three-character FTS query.
+effective set. Migration 099 added `idx_content_translation_short` and
+`idx_content_translation_short_current`; migration 103 replaces both with
+`idx_content_translation_short_scan` on
+`(language, entity_kind, field, id, origin, config_key, translated_text)`. The
+099 order placed `origin` and `config_key` before `id`, so an ordered page over
+one language/kind/field range needed a temporary b-tree. The 103 order keeps
+`id` adjacent to the range prefix and still covers the current-row predicate
+and the text. The short query matches the covered column with `instr()`, so a
+candidate row needs no per-row `lower()` call or table lookup.
+
+The 45.6 万行 `translation-bench` run (114,000 entities × 4 languages, local
+machine, not the target hardware) measured:
+
+| Query | p95 |
+| --- | --- |
+| Card-page short query, `limit=200` | en 1.094 ms, zh-Hans 0.575 ms, ja 1.316 ms, ko 1.506 ms |
+| Complete-set short query, `limit=0` (used for the total) | en 313.119 ms, zh-Hans 317.013 ms, ja 520.704 ms, ko 478.139 ms |
+| Target-language title exact match | 1.58–2.505 ms |
+| FTS (three characters and longer) | 0.573–1.506 ms |
+| Numbered exact match | below timer resolution (0.00 ms, max 0.53 ms) |
+
+The card-page query meets the 100 ms target. The complete-set short query does
+not: all four languages exceed 100 ms, with ja at 520.704 ms. This run did not
+include the D-16 admission join, so it does not by itself prove the target
+corpus behavior. The database measured 425.6 MB (`dbBytes` 446,291,968), the
+FTS index 35.9 MB, and 404.5 MB after `VACUUM`; insert time was 131–147 s and
+the WAL peak 23.3 MB.
 
 The `config_key` migration, persistent title/description rows, strict
-display-language search and complete short-query behavior are implemented:
+display-language search and complete short-query coverage are implemented:
 `translationPersistentCorpusSQL` excludes current corpus rows from eviction,
-`idx_content_translation_short_current` serves the keyset walk, and the short
-query no longer uses a newest-row window. The 45.6 万行 benchmark numbers above
-come from the local `translation-bench` run; the production-scale measurement
-belongs to ticket 24.
+`idx_content_translation_short_scan` serves the keyset walk, and the short query
+no longer uses a newest-row window. The 45.6 万行 numbers above come from the
+local `translation-bench` run on this machine; the target-hardware run and the
+admission join at that corpus size remain open in ticket 21 and ticket 24.
 
 Free space is read from the nearest existing parent before the data directory
 exists. Low space pauses new background generation (`paused_low_disk`) while
@@ -282,8 +302,8 @@ content failures retain the verified original text.
 
 HTTP and restart tests use production routes, real sessions and migrated SQLite:
 
-The real numbered chain currently ends at 102; 097 through 102 are committed
-and `compat/102_dev.sql` is generated. Local Go tests and
+The real numbered chain currently ends at 103; 097 through 103 are committed
+and `compat/103_dev.sql` is generated. Local Go tests and
 `cmd/translation-bench` still use `internal/migrationfixture`, which copies the
 packaged catalog and injects no-op placeholders only when a version is absent
 from the packaged chain. Those files are test fixtures only and are not

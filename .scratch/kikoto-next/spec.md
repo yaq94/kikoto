@@ -2,7 +2,7 @@
 
 **Status:** ready-for-agent
 **设计状态:** 已确认（Q31）；用户故事、验收要求与测试边界作为实施合同。
-**Implementation:** in-progress；01–19 的历史证据按对应产物保留。20–24 承接审查发现的目录、译文、个人恢复、保留与发布缺口；同一最终候选的 CI、真实覆盖与部署结果尚未闭环，见[执行记录](execution.md)。
+**Implementation:** in-progress；01–19 的历史证据按对应产物保留。20–24 承接审查发现的目录、译文、个人恢复、保留与发布缺口；当前迁移头为 103，20–23 为 in-progress、24 为 pending，同一最终候选的 CI、真实覆盖与部署结果尚未闭环，见[执行记录](execution.md)。
 **执行授权:** 用户已授权本规格全部功能实现、必要依赖安装、测试、数据库迁移、部署与回滚；进度及证据见[执行记录](execution.md)。
 **领域依据:** [GLOSSARY](../../GLOSSARY.md) · [作品身份与个人记录 ADR](../../docs/decisions/ADR-0004-work-identity-and-personal-state.md) · [整改一致性 ADR](../../docs/decisions/ADR-0006-catalog-remediation-and-translation-consistency.md)
 
@@ -251,5 +251,5 @@
 - 本规格继承已经确认的 Q1–Q31 决定与“少量浏览器纯功能测试、无真实浏览器视觉验证”边界；当前阶段按已授权的全范围实现、测试、迁移、部署与回滚推进。
 - 真实来源的访问证据按时间与路径分别记录：IAB 匿名网页可播放；程序 fs/get 在早期诊断中失败，后续声明 Kikoto 身份后取得两段真实媒体 Range（206×2 + sha256）。这些证据属于对应旧产物，当前候选仍需由 24 重新验证；详见 [07 证据](evidence/07-openlist.md#真实媒体-live-结果)。
 - Index 官方资料中的权重仓库为 IndexTeam/Index-Translate-35B-A3B-preview，公共客户端示例的 model 为 Index-Translate-35B-A3B；实际服务调用名由管理员配置。中文简体、英语、日语和韩语有官方条目，繁体路线按已确认转换方案验收。
-- 各项验收状态以[执行记录](execution.md)及对应票据为准。01–16 的历史本地证据按对应产物保留；17 为 in-progress，08、18、19 为 verified-local；20–24 尚未完成。仍待取得当前 HEAD 的 Full CI 终态，并在生产部署后复验真实媒体 Range/定位读取、真实索引覆盖、组合负载与迁移结果。
+- 各项验收状态以[执行记录](execution.md)及对应票据为准。01–16 的历史本地证据按对应产物保留；17、20–23 为 in-progress，08、18、19 为 verified-local，24 为 pending。仍待取得当前 HEAD 的 Full CI 终态，并在生产部署后复验真实媒体 Range/定位读取、真实索引覆盖、组合负载与迁移结果。
 - 参考：[OpenList 目录接口](https://github.com/OpenListTeam/OpenList/blob/main/server/handles/fsread.go)、[OpenList 搜索实现](https://github.com/OpenListTeam/OpenList/blob/main/internal/search/search.go)、[Index 模型卡](https://huggingface.co/IndexTeam/Index-Translate-35B-A3B-preview)、[Index 调用客户端](https://github.com/bilibili/Index-Translate/blob/main/inference/llm/call_api.py)、[Index 语言清单](https://arxiv.org/html/2609.40181)。

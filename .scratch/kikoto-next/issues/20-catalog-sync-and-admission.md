@@ -5,7 +5,7 @@
 **Blocked by:** [09：每日更新与已有扫描复用](09-daily-index-update.md)（08 为传递前置）。
 
 **Status:** ready-for-agent
-**Implementation:** in-progress；`531acdf4` 落地 098 `source_catalog_schedule` 与单事务派发状态机，`6cf4ee1c` 合入集成分支的 097。`app_setting` 的 `source_catalog_daily:`／`source_catalog_full:` 只在 098 迁移内读取。当前实现：deferred 保留原 due 并在到期后重查资源条件；`pending_full_run_id` 绑定 resume full，只有该 run 成功才推进 weekly 并清标记；partial/failed/cancelled 走维护同步；`force` 在 failed／partial／cancelled 之后创建新的观测 generation。仍缺单卡评价、播放、媒体流、作品目录标签的完整准入，系列零可见成员 404，零文件与旧 generation 集合统一，目录优先 sync 的 due 推进顺序，诊断 `Probe*` 过滤，真实执行计划断言与 42k p95。证据见下方“实现与证据”。
+**Implementation:** in-progress；`531acdf4` 落地 098 `source_catalog_schedule` 与单事务派发状态机，`6cf4ee1c` 合入集成分支的 097。`app_setting` 的 `source_catalog_daily:`／`source_catalog_full:` 只在 098 迁移内读取。当前实现：deferred 保留原 due 并在到期后重查资源条件；`pending_full_run_id` 绑定 resume full，只有该 run 成功才推进 weekly 并清标记；partial/failed/cancelled 走维护同步；`force` 在 failed／partial／cancelled 之后创建新的观测 generation。单卡评价、播放准备、媒体流、作品目录标签的完整准入，系列零可见成员 404，零文件与旧 generation 集合统一，目录优先 sync 的 due 推进顺序，诊断 `Probe*` 按来源过滤，以及可失败的真实 plan 断言已在分支 `codex/kikoto-issue20-admission`（`602afdc0`）实现，待集成验证；42k p95 仍未采集。
 
 **依据:** [正式规格](../spec.md)、[整改计划](../review-remediation-plan.md)、[ADR-0006](../../../docs/decisions/ADR-0006-catalog-remediation-and-translation-consistency.md)、`kikoto-remediation-addendum-20261021.md` 的 D-16/D-22/D-25。
 
@@ -100,14 +100,14 @@ CREATE INDEX source_catalog_schedule_due
 - [x] 低空间或维护 hold 只设置一次 `deferred_until`／`deferred_reason`；到期后重新检查条件，条件未解除时继续延后，不能误跑 full。`TestCatalogScheduleDeferredCatchesUpOnce` 与低空间测试断言原因和一次追赶；维护 hold 复用 `TestCatalogSyncPausesForMaintenanceAndRetriesAfterTheHold`。
 - [x] queued full 不会被 `resume_full_pending` 重复创建；`resume_full_pending` 只在 full 终态 succeeded 后清零并推进 weekly due，failed/cancelled 保留待重试。`TestCatalogScheduleResumeFullPendingWinsAndClears`、`TestCatalogScheduleFailedResumeFullRetriesWithoutMovingWeekly`。
 - [x] sync 运行中的手动刷新记一次 `manual_pending` 并在结束后执行一次；`force` 在 failed／partial／cancelled 后创建新 generation；同一来源不产生 full 与 sync 重叠写。`TestCatalogScheduleRunningSyncDefersFullAndKeepsDue`、`TestManualFullIndexQueuesWhileIncrementalSyncRuns`、`TestIncrementalSyncRefusesWhileFullGenerationRuns`。
-- [ ] D-16 的 0/1/4/5 audio、2000/2001 nonAudio、5000/5001 files 在入队／发布／API 三层一致；系列成员逐条判定。发布、浏览、tracks、单卡详情已接入；个人评价、播放准备、媒体流与作品目录标签尚未接入，只能记为“部分入口已接入”，不能勾选整项。`TestCatalogAdmissionPublishingPublishesEveryCardWithAudio`、`TestCatalogAdmissionAPIShowsEveryCardWithAudio`、`TestCatalogAdmissionSeriesFiltersEveryMember`。
-- [ ] 单卡个人评价写入、播放准备、媒体流与作品目录标签使用同一完整准入。`openlist_review.go` 仍只拒绝 `Files > 0 && Audio == 0`；`catalog_playback.go`、`openlist_playback.go`、`catalog_directory.go` 没有准入或待发布门禁。四个入口均保持未完成。
-- [ ] 系列没有任何可见成员时详情返回 404，而不是 200 加空列表。`getCatalogSeries` 目前仍 `writeJSON(w, 200, view)`；`TestCatalogAdmissionSeriesFiltersEveryMember` 只断言 `Episodes` 为空、没有断言状态码，需同步改写为 404。
-- [ ] 零文件卡与旧 generation 残留行按同一集合判定。单卡详情在 `Files == 0` 时直接放行；`catalogPublishedEntryAdmission` 只按 `catalog_entry_id` 计数，未限定当前 generation，也未排除 folder；系列详情的 `emptyMember` 旁路还会让零文件成员进入详情。必须与发布侧统一，或把例外同时写进列表、详情与 tracks。
-- [ ] daily 任务创建成功后才推进 `daily_due_at`。full 分支已先入队、确认非 `Existing` 后再推进；目录优先 sync 分支仍在 `dispatchCatalogSync` 之前推进 daily，若 enqueue 因 `errCatalogIndexRunning` 落败就直接 commit，会留下“due 已走、sync 未建”的空档。
-- [ ] 诊断接口使用 `catalogadmission.ProbeFiles` 并按来源过滤。`catalog_diagnostics.go:44-46` 仍硬编码 `>5000` 且不带 `file_source_id`。
-- [ ] 运行中的 full 遇 weekly 到期不应无条件置 `resume_full_pending`；普通 full 没有 `pending_full_run_id`，成功后会在下一轮再建一个 full。
-- [ ] 性能计划断言真实执行计划。现有 `strings.Contains(plan, "SCAN source_catalog_file")` 匹配不到实际出现的 `SCAN ff USING INDEX source_catalog_file_parent`，等于空断言。
+- [ ] D-16 的 0/1/4/5 audio、2000/2001 nonAudio、5000/5001 files 在入队／发布／API 三层一致；系列成员逐条判定。发布、浏览、tracks、单卡详情已接入；个人评价、播放准备、媒体流与作品目录标签的准入已在 `codex/kikoto-issue20-admission`（`602afdc0`）实现，待集成验证。`TestCatalogAdmissionPublishingPublishesEveryCardWithAudio`、`TestCatalogAdmissionAPIShowsEveryCardWithAudio`、`TestCatalogAdmissionSeriesFiltersEveryMember`。
+- [ ] 单卡个人评价写入、播放准备、媒体流与作品目录标签使用同一完整准入。分支 `codex/kikoto-issue20-admission`（`602afdc0`）已让 `openlist_review.go`、`catalog_playback.go`、`openlist_playback.go`、`catalog_directory.go` 调用 `catalogEntryAdmissionRequired` 与 `catalogPublishedEntryAdmission`，并保留 `missing` 卡片可读；待集成验证。
+- [ ] 系列没有任何可见成员时详情返回 404，而不是 200 加空列表。分支 `codex/kikoto-issue20-admission`（`602afdc0`）已在 `getCatalogSeries` 对空 `Episodes` 返回 404 `not_found`；待集成验证。
+- [ ] 零文件卡与旧 generation 残留行按同一集合判定。分支 `codex/kikoto-issue20-admission`（`602afdc0`）已把 `catalogEntryAdmittedSQL` 与 `catalogPublishedEntryAdmission` 限定为 `observed_generation=last_seen_generation` 且排除 `kind='folder'`，并移除系列详情的零文件旁路；待集成验证。
+- [ ] daily 任务创建成功后才推进 `daily_due_at`。分支 `codex/kikoto-issue20-admission`（`602afdc0`）已把目录优先 sync 改为先 `enqueueCatalogSyncTx` 建行，成功后才 `advanceCatalogScheduleTx`；`errCatalogIndexRunning` 或已有 sync 时不推进 due；待集成验证。
+- [ ] 诊断接口使用 `catalogadmission.ProbeFiles` 并按来源过滤。分支 `codex/kikoto-issue20-admission`（`602afdc0`）已改为按 `file_source_id` 且 `kind<>'folder'` 计数，阈值取自 `catalogadmission.ProbeFiles`；待集成验证。
+- [ ] 运行中的 full 遇 weekly 到期不应无条件置 `resume_full_pending`；普通 full 没有 `pending_full_run_id`，成功后会在下一轮再建一个 full。分支 `codex/kikoto-issue20-admission`（`602afdc0`）已在 full 运行时把当前 generation 写入 `pending_full_run_id`；待集成验证。
+- [ ] 性能计划断言真实执行计划。`f9cf1a55` 已把断言改为可失败（`catalog_plan_assert_test.go`），该提交已在集成分支；仍待当前候选复验。
 - [ ] 42k 卡浏览与 5,001 文件卡拒绝路径的 p95 证据（2 vCPU／2 GiB、warm、≥20 样本，浏览 p95 ≤ 300 ms、p99 ≤ 800 ms）；超限先落地 `source_catalog_entry_admission` 再复测；不得以全表扫描换取正确性。本 worktree 未在目标硬件执行 42k 基准，保持未勾选。
 - [x] 096 激活期间系列详情/成员 tracks 不可见，publication 切换后才可见；系列详情与列表使用同一 D-16 成员过滤。`TestCatalogSeriesHidesPendingPublicationUntilItIsPublished`、`TestCatalogAdmissionSeriesFiltersEveryMember`。
 - [x] 不重复实现 `134f7c90` 的规则；如发现其实现缺口，先报告再最小修正。本票只把常量接入 SQL 并补系列门禁。
@@ -120,6 +120,7 @@ CREATE INDEX source_catalog_schedule_due
 - 调度：`source_catalog_schedule.go` 提供行生命周期与 due 计算；`source_catalog_daily.go` 在 `beginTxWithDatabaseBusyRetry` 中完成资源重查、resume 优先、manual 消费、单任务创建与同事务 due 推进。`source_catalog_schedule_test.go` 覆盖边界、同时到期、跨日追赶、deferred、resume 成功/失败、manual、disabled/enable、维护同步、父 listing 不完整。
 - D-16：`catalogadmission.Probe*` 是唯一常量源；`catalogEntryAdmittedSQL`、发布计数和单卡 API 都由它生成。系列列表、详情和成员 tracks 对每个成员独立过滤，计数只取该成员 `source_catalog_file`。
 - 096：系列详情在 pending publication 期间隐藏成员；publication 翻为 `published` 后同一查询可见。映射清理与发布状态同事务，`published` 是不可回退边界，注入清理失败后公开文件保持不变。
+- 准入收口：`codex/kikoto-issue20-admission` 的 `602afdc0` 让个人评价、播放准备、媒体流与作品目录标签复用同一准入，系列空详情返回 404，准入计数限定当前 generation 并排除 folder，sync 先建行再推进 due，诊断按来源过滤，plan 断言可失败。该分支尚未并入集成分支，测试结果待集成验证。
 - 验证命令与结果记录在交付报告；42k 性能证据未在本 worktree 采集，保持未勾选。
 
 ## 派发边界（裁决 2026-10-25）
