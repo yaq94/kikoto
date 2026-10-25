@@ -216,11 +216,127 @@ Then confirm:
    and the parent report does not contain rows for works that already have a
    parent.
 
-No rollback helper is packaged in this repository. Run the manual procedure
-above; keep the snapshot directory, checksum and previous image reference in the
-access-controlled deployment record.
+The repository packages [rollback-kikoto.sh](../../scripts/rollback-kikoto.sh)
+for the restore procedure above. The manual commands remain the reference for a
+host that cannot run the helper. Keep the snapshot directory, checksum and
+previous image reference in the access-controlled deployment record.
 
 Restoring only `kikoto.db` does not revert Fetch staging, backup, or trash
 directories under `/data`. Review unmatched transaction directories as
 described in [Database](../operations/database.md#backups) instead of deleting
 them.
+
+## 仓库内可执行入口
+
+The release candidate uses three repository scripts. Each one fails closed:
+missing prerequisites and unexpected responses produce a nonzero exit status
+rather than a partial pass.
+
+### `scripts/mixed-load.mjs`
+
+Runs concurrent browse, target-language search, media Range, personal review
+and translation-coverage requests against a running instance. It uses only the
+Node standard library and prints one JSON summary with per-category counts,
+p50/p95 latency, status counts, unexpected statuses, timeouts and validation
+errors.
+
+```sh
+KIKOTO_LOAD_BASE_URL=https://kikoto.example \
+KIKOTO_LOAD_COOKIE='session=...' \
+node scripts/mixed-load.mjs
+```
+
+Required environment:
+
+- `KIKOTO_LOAD_BASE_URL`: HTTP or HTTPS origin, without a path.
+- `KIKOTO_LOAD_COOKIE`: `Cookie` header value for an authenticated session.
+
+Optional environment:
+
+- `KIKOTO_LOAD_SECONDS`: load duration in seconds, default `60`.
+- `KIKOTO_LOAD_CONCURRENCY`: concurrent workers, default `8`, range `1` to
+  `128`.
+- `KIKOTO_LOAD_WORK_ID`: work id to exercise. Without it, the script selects
+  one of the first library works that exposes a playable audio or video stream.
+
+The session needs library read access, `favorites:write` for the personal
+review, and `sources:write` for the translation coverage endpoint. The script
+writes a rating and a generated note to the selected work, reads them back, and
+restores the original values at exit. It needs a library with at least one
+playable media item. It does not hard-code a host, port, work id or credential.
+
+Exit codes: `0` all requests matched and the final state was restored; `1`
+unexpected status, timeout, malformed response or failed restore; `2` missing or
+invalid environment, including a base URL with a path; `130` interrupted by
+`SIGINT` or `SIGTERM`.
+
+### `scripts/production-smoke.mjs`
+
+Runs the HTTP smoke flow used by `make production-smoke` against a locally
+built production image:
+
+```sh
+node scripts/production-smoke.mjs kikoto:ci
+node scripts/production-smoke.mjs kikoto:ci --browser
+```
+
+The image must exist locally. The script starts an isolated container on a
+loopback port, creates deterministic media fixtures, completes first-run setup,
+scans the local library and logs in. At the end of the authenticated flow it
+checks translation coverage (`GET /api/settings/translation/prefill`), writes
+the current translation settings back unchanged with
+`PATCH /api/settings/translation`, lists catalogue sources
+(`GET /api/library-sources`), searches the scanned work by code and with
+`lang=zh-cn`, and round-trips a personal rating and note through
+`PATCH /api/works/{id}/user-state` and `GET /api/works/{id}`. It restores the
+previous review and logs out before the optional browser check.
+
+Prerequisites: Docker, a locally built image, enough temporary disk for the
+fixtures, and the image's bundled `ffmpeg`. Exit codes: `0` all assertions
+passed; `1` a setup step, assertion, request or container operation failed.
+
+### `scripts/rollback-kikoto.sh`
+
+Restores a normalized backup over a Compose deployment. Run it from the
+deployment directory, or point `KIKOTO_DEPLOY_DIR` at that directory:
+
+```sh
+scripts/rollback-kikoto.sh \
+  --backup-dir rollbacks/schema-101 \
+  --image ghcr.io/example/kikoto@sha256:... \
+  --expected-schema 101 \
+  --timeout 600
+```
+
+Required arguments:
+
+- `--backup-dir DIR`: directory containing `kikoto.db`, `.env`,
+  `docker-compose.yml` and `SHA256SUMS`.
+- `--image TAG`: image to start after the files are restored. It must already
+  exist locally.
+- `--expected-schema N`: expected `schema_state.current_version`.
+
+Optional arguments:
+
+- `--timeout SECONDS`: health-check timeout, default `600`.
+
+The script reads `KIKOTO_DEPLOY_DIR` (default: current directory),
+`KIKOTO_CONFIG_DIR` (default: `KIKOTO_DEPLOY_DIR/config`), `KIKOTO_DB_PATH`,
+`KIKOTO_ENV_FILE` and `KIKOTO_COMPOSE_FILE`. The default health target is
+`KIKOTO_HEALTH_SCHEME` (default `http`), `KIKOTO_HEALTH_HOST` (default
+`127.0.0.1`) and `KIKOTO_HEALTH_PORT` (default `7655`); set
+`KIKOTO_HEALTH_URL` to override the whole URL. Set `KIKOTO_COMPOSE_SERVICE` to
+recreate one service instead of every service in the Compose file. It requires
+`docker compose` (or `docker-compose`), `curl`, `sqlite3` and either
+`sha256sum` or `shasum`.
+
+The script verifies the manifest and that it covers all three files, stops the
+Compose service, keeps a copy of the current files under
+`rollback-previous-<UTC>-<pid>`, moves the old database aside, restores the backup,
+starts the requested image, waits for `/health` to return HTTP 200, and checks
+`schema_state`, `PRAGMA quick_check` and `PRAGMA foreign_key_check`. A failure
+prints the completed steps and exits nonzero; the old database and safety copy
+remain on disk for inspection.
+
+Exit codes: `0` restore and verification passed; `1` any validation, Docker,
+health or SQLite check failed; `2` missing, unknown or invalid arguments.
