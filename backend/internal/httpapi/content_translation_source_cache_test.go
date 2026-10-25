@@ -229,14 +229,13 @@ func TestContentTranslationSourceFieldCacheDoesNotStoreFailedOutput(t *testing.T
 func TestTranslationRetentionCountsSourceFieldCacheAndKeepsNativeRows(t *testing.T) {
 	server := openContentTranslationTestServer(t)
 	ctx := context.Background()
-	if _, err := server.db.Exec(`INSERT INTO file_source(id,code,display_name,source_type) VALUES(1,'example_remote','Example Remote','openlist')`); err != nil {
-		t.Fatal(err)
-	}
+	cfg := translation.Config{Limits: translation.Limits{CacheBytes: 80}, Model: "m"}
+	configKey := translation.ConfigKey(cfg)
 	nativeText := strings.Repeat("作", 40)
 	seedCurrentTranslationEntry(t, server.db, 2, "content source text 01")
 	if _, err := server.saveContentTranslations(ctx, []contentTranslationRow{
 		{CacheKey: "native-1", EntityKind: "entry", EntityID: 1, Field: "title", Language: "ja", SourceText: nativeText, TranslatedText: nativeText, Origin: "native"},
-		{CacheKey: "content-model", EntityKind: "entry", EntityID: 2, Field: "title", Language: "zh-Hans", SourceText: "content source text 01", TranslatedText: "content target text 01", Origin: "model", Model: "m", TemplateVersion: translation.TemplateVersion},
+		{CacheKey: "content-model", EntityKind: "entry", EntityID: 2, Field: "title", Language: "zh-Hans", SourceText: "content source text 01", TranslatedText: "content target text 01", Origin: "model", ConfigKey: configKey, Model: "m", TemplateVersion: translation.TemplateVersion},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -256,7 +255,7 @@ func TestTranslationRetentionCountsSourceFieldCacheAndKeepsNativeRows(t *testing
 	}
 	// The live content row is corpus. Only the three rebuildable source rows
 	// compete for this 80-byte budget, which keeps two of them.
-	if err := server.pruneContentTranslations(ctx, translation.Config{Limits: translation.Limits{CacheBytes: 80}, Model: "m"}); err != nil {
+	if err := server.pruneContentTranslations(ctx, cfg); err != nil {
 		t.Fatal(err)
 	}
 	var modelRows, nativeRows, sourceBytes int64
