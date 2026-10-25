@@ -19,14 +19,14 @@
 - 明确列出 20–23 的提交；`6b4a02ec`（含 096）已在候选基线内，只记 SHA，不重复计为外部交付；不包含未审阅工作区文件。
 - 候选账本按 [24-candidate-ledger.md](../evidence/24-candidate-ledger.md) 的字段填写，逐条命令附退出码与证据路径。
 - 每个提交记录：工单、AC 子项、命令、退出状态、证据路径、是否受环境限制。
-- 历史 run 53、旧 schema（83/84/95）、旧镜像和旧 CI 只作为历史记录，不能关闭当前候选。
+- 历史 run 53、旧 schema（83/84/95–101；102 为当前迁移头）、旧镜像和旧 CI 只作为历史记录，不能关闭当前候选；候选账本必须记录 102 的实际迁移结果。
 
 ## 发布门禁
 
 - [ ] Standards 与 Spec 双轴审查闭环；发现项有提交或明确未修复理由。
 - [ ] 同一 SHA 的 Full CI、类型检查、构建、H/R/F/U 与必要 race 证据。Full CI 只在 `main` push 与 `workflow_dispatch` 触发，因此候选分支必须显式 dispatch 该 SHA，不能等 push 自动触发。
 - [ ] 原始 AC-14 的系列证据、单集格式副本、Bonus/轨道容器和成员上限回归在当前 SHA 通过；未提交的系列修复或测试不能计入。
-- [ ] 迁移链：新装、既有库升级、旧 095 变体（若存在）和恢复；095–100 连续、`compat/099_dev.sql` 与 `compat/100_dev.sql` 与迁移后 schema 一致；`PRAGMA foreign_key_check` 0 行。
+- [ ] 迁移链：新装、既有库升级、旧 095 变体（若存在）和恢复；095–102 连续、`compat/102_dev.sql` 与迁移后 schema 一致；`PRAGMA foreign_key_check` 0 行。
 - [ ] 备份、恢复和可执行回滚路径演练；记录镜像、schema、数据库快照和回滚触发条件。仓库不含 `rollback-kikoto.sh`，演练按 `docs/development/release-rollback.md` 的手工步骤执行，并至少在隔离目录完成一次快照恢复与 `foreign_key_check`。
 - [ ] 生产 Compose 没有 healthcheck，`docker compose ps` 只要求 `running`，以 `/health` 200 作为门禁；若补 healthcheck，需同步 `deploy/compose` 与回滚文档。
 - [ ] 组合负载：播放中扫描、翻译、浏览、评价，音轨／队列／进度保持；低空间暂停与恢复。需要可重跑脚本（`scripts/mixed-load.mjs` 或等价 Go 入口），不接受只有历史人工观测。

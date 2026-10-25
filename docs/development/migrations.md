@@ -78,9 +78,9 @@ lookups by parent, entry and episode root. It also creates
 complete staged split between `pending` and `published`. Both source and entry
 references cascade; `catalog_series_member` retains its restrictive entry
 reference, so episode compensation removes pending-only membership explicitly
-before deleting an entry. Its snapshot is `compat/096_dev.sql`; with `097` at
+before deleting an entry. Its snapshot is `compat/096_dev.sql`; with `102` at
 the chain head, `cd backend && go run ./cmd/schema-baseline -migrations
-./migrations -version-file ../VERSION` now writes `compat/097_dev.sql`.
+./migrations -version-file ../VERSION` now writes `compat/102_dev.sql`.
 The numbered migration does not alter 095 or reconstruct an existing database
 from a baseline. See [Catalog series](catalog-series.md) for the staging,
 activation and recovery semantics.
@@ -150,9 +150,23 @@ restrictive reference to `work(id)`, and `idx_work_parent_work`. The backfill
 writes only when the series and the member's entry both have a registered work,
 the entry belongs to one series, and the episode work resolves to exactly one
 registered series work. Missing or contradictory evidence stays null for
-review. The branch that introduces this migration may arrive before 097–099;
-integration applies it after those migrations and generates the development
-baseline for the final chain head.
+review.
+
+Schema 101 is `101_work_parent_backfill_report.sql`. It creates
+`work_parent_backfill_report`, one row per work whose parent evidence is
+missing, contradictory or has more than one candidate, then repeats the
+unambiguous backfill. The update is idempotent: it only fills rows whose
+`parent_work_id` is still null, and a row that now has a parent disappears from
+the report. The report keeps the reason and detail queryable instead of leaving
+the decision only in a startup log.
+
+Schema 102 is `102_translation_prefill_status.sql`. SQLite cannot alter a
+`CHECK` constraint in place, so the migration rebuilds
+`translation_prefill_state` with the same columns plus `failed` in the status
+enum, copies the single row, and recreates the four title/description reset
+triggers that reference it. It also creates
+`translation_prefill_failure_source` on `(config_key, source_hash)` so the
+bounded retry cleanup can use a prefix instead of scanning the failure table.
 
 ## Fresh Installs And Upgrades
 
@@ -362,19 +376,18 @@ matches the backup.
 | v0.8.0 | `059` | `059_v0.8.0.sql` |
 | v0.8.1, v0.8.2 | `066` | `066_v0.8.1.sql` |
 | v0.8.3 | `068` | `068_v0.8.3.sql` |
-| development build (unreleased) | `100` | Development baseline only; `compat/100_dev.sql` |
+| development build (unreleased) | `102` | Development baseline only; `compat/102_dev.sql` |
 
-`096_catalog_episode_pending.sql`, `097_source_field_translation_foreign_key.sql`,
-`098_catalog_schedule.sql`, `099_translation_corpus_config.sql` and
-`100_work_parent.sql` are committed; `101` is the next numbered migration and
-must not be created out of sequence. Each migration has a matching
-`compat/NNN_dev.sql` baseline.
+`096_catalog_episode_pending.sql` through
+`102_translation_prefill_status.sql` are committed; `103` is the next numbered
+migration and must not be created out of sequence. `compat/102_dev.sql` is the
+current development baseline; there is no separate `compat/101_dev.sql`.
 
 Per-release upgrade steps are in the [release notes](../history/index.md).
 
 ## Kikoto-next Schema Additions
 
-Migrations `069` through `100` extend the source catalog, shared associations,
+Migrations `069` through `102` extend the source catalog, shared associations,
 personal transfer, and the recoverable index. Pending release notes and upgrade
 steps are in
 [Unreleased](../history/unreleased.md).
@@ -410,6 +423,11 @@ steps are in
 | `095_source_field_translation_cache.sql` | `source_field_translation` for remote titles, tags and directory display names | Model output is rebuildable display cache outside search; every write participates in the soft translation budget |
 | `096_catalog_episode_pending.sql` | Pending episode publication and one publication-state row per source/parent | A failed or interrupted episode publication stays out of public reads until the complete split is switched to `published`; pending mappings are reused after restart |
 | `097_source_field_translation_foreign_key.sql` | Rebuild `source_field_translation` with a cascading source reference | Invalid source ids are discarded as unreachable cache; the rebuilt table has the frozen 095 columns and indexes |
+| `098_catalog_schedule.sql` | `source_catalog_schedule`, one due row per OpenList source | A running task keeps its due and pending bits; a deferred source rechecks resources after the deadline |
+| `099_translation_corpus_config.sql` | `content_translation.config_key`, the current-corpus index, and prefill cursor columns | Historical model rows stay readable but no longer satisfy current coverage; the cursor resumes from `(kind, field, id, language)` |
+| `100_work_parent.sql` | `work.parent_work_id` and `idx_work_parent_work` | Unambiguous series membership fills the parent; missing or conflicting evidence stays null |
+| `101_work_parent_backfill_report.sql` | `work_parent_backfill_report` and an idempotent parent backfill | Unresolved parents are queryable by reason; a repeated run reports the same rows |
+| `102_translation_prefill_status.sql` | Rebuild `translation_prefill_state` with `failed`; index the failure table by `(config_key, source_hash)` | The cursor row survives the rebuild; triggers are recreated, and bounded failure cleanup uses the index |
 
 The Release To Schema Map above lists every numbered file. `069` rebuilds `work`
 and `logical_work` to relax code uniqueness and creates the catalog entry and
@@ -455,12 +473,16 @@ stores the durable translation corpus, its FTS5 index and the prefill cursor.
 `093` adds one covering index; `094` adds one text column with an empty default;
 `095` adds an independent display-cache table and two indexes; `096` adds the
 pending episode mapping and publication state; `097` rebuilds the display cache
-to add its source foreign key and remove unreachable rows.
+to add its source foreign key and remove unreachable rows. `098` adds the
+persisted schedule; `099` adds the translation config key and prefill cursor;
+`100` adds the work parent; `101` adds the backfill report; `102` rebuilds the
+prefill state to allow `failed` and indexes the failure table.
 
-The `084` through `098` changes retain existing rows. `087` and `097` rebuild
-tables; `087` copies every entry column and recreates its indexes, triggers and
-view, while `097` copies only display-cache rows with a live source and
-recreates both cache indexes. `085`, `088`, `090`, `091` and `092` add tables or
+The `084` through `102` changes retain existing rows. `087`, `097` and `102`
+rebuild tables; `087` copies every entry column and recreates its indexes,
+triggers and view, `097` copies only display-cache rows with a live source and
+recreates both cache indexes, and `102` copies the single prefill-state row and
+recreates its reset triggers. `085`, `088`, `090`, `091` and `092` add tables or
 columns with defaults, `093` adds an index, `094` adds one column default and
 `095` adds a rebuildable cache table. Startup refuses a database newer than the
 binary before running a handler. Rolling back any of these schemas requires a
