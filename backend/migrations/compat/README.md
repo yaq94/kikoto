@@ -24,6 +24,6 @@ kikoto admin preflight-095 --database "$KIKOTO_DB_PATH" --backup-dir "$KIKOTO_DB
 Regenerate this baseline from the numbered chain:
 
 ```sh
-cd backend/migrations
-go run ../cmd/schema-baseline -migrations . -version-file ../../VERSION
+cd backend
+go run ./cmd/schema-baseline -migrations ./migrations -version-file ../VERSION
 ```

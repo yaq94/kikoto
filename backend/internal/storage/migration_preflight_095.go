@@ -140,6 +140,9 @@ func PreflightLegacyMigration095(ctx context.Context, db *sql.DB, backupDir stri
 			err,
 		)
 	}
+	if err := ensureNoLegacy095StagingObject(ctx, db); err != nil {
+		return Legacy095PreflightResult{}, err
+	}
 	expected := sourceFieldTranslationSchemaDefinition(false)
 	if err := compareSourceFieldTranslationSchema(expected, actual); err != nil {
 		return Legacy095PreflightResult{}, fmt.Errorf(
@@ -213,6 +216,9 @@ func PreflightLegacyMigration095(ctx context.Context, db *sql.DB, backupDir stri
 	actual, err = readSourceFieldTranslationSchema(ctx, tx)
 	if err != nil {
 		return Legacy095PreflightResult{}, fmt.Errorf("legacy 095 preflight: reinspect %s: %w", sourceFieldTranslationName, err)
+	}
+	if err := ensureNoLegacy095StagingObject(ctx, tx); err != nil {
+		return Legacy095PreflightResult{}, err
 	}
 	if err := compareSourceFieldTranslationSchema(expected, actual); err != nil {
 		return Legacy095PreflightResult{}, fmt.Errorf(
@@ -303,6 +309,31 @@ func readLegacy095Ledger(ctx context.Context, queryer schemaQueryer) (legacy095L
 		return legacy095Ledger{}, fmt.Errorf("legacy 095 preflight: inspect migration ledger: %w", err)
 	}
 	if columns != 3 {
+		var hasFilename int
+		if err := queryer.QueryRowContext(ctx, `
+			SELECT COUNT(*)
+			FROM pragma_table_info('schema_migration')
+			WHERE name = 'filename'
+		`).Scan(&hasFilename); err != nil {
+			return legacy095Ledger{}, fmt.Errorf("legacy 095 preflight: inspect migration ledger: %w", err)
+		}
+		if hasFilename == 0 {
+			return legacy095Ledger{}, nil
+		}
+		var legacyRows int
+		if err := queryer.QueryRowContext(ctx, `
+			SELECT COUNT(*)
+			FROM schema_migration
+			WHERE filename = ?
+		`, legacyMigration095Filename).Scan(&legacyRows); err != nil {
+			return legacy095Ledger{}, fmt.Errorf("legacy 095 preflight: inspect migration ledger: %w", err)
+		}
+		if legacyRows > 0 {
+			return legacy095Ledger{}, fmt.Errorf(
+				"legacy 095 preflight rejected: migration ledger records %s without version and checksum columns",
+				legacyMigration095Filename,
+			)
+		}
 		return legacy095Ledger{}, nil
 	}
 	rows, err := queryer.QueryContext(ctx, `
@@ -338,6 +369,15 @@ func readLegacy095Ledger(ctx context.Context, queryer schemaQueryer) (legacy095L
 	}
 	if err := rows.Err(); err != nil {
 		return legacy095Ledger{}, fmt.Errorf("legacy 095 preflight: read migration ledger: %w", err)
+	}
+	// A 095 row without a checksum would otherwise be adopted from the packaged
+	// catalog without proving the live table shape. Checksums predate 095, so
+	// this row is not a pre-checksum ledger and must match one frozen revision.
+	if count == 1 && ledger.checksum == "" {
+		return legacy095Ledger{}, fmt.Errorf(
+			"legacy 095 preflight rejected: %s has no recorded checksum; restore the ledger or a backup",
+			legacyMigration095Filename,
+		)
 	}
 	return ledger, nil
 }
@@ -525,6 +565,24 @@ func readSourceFieldTranslationSchema(ctx context.Context, queryer schemaQueryer
 		return sourceFieldTranslationSchema{}, err
 	}
 	return schema, nil
+}
+
+// 097 creates source_field_translation_rebuilt and renames it in the same
+// transaction. A surviving staging table means an earlier attempt did not roll
+// back cleanly, so the database is not the exact legacy shape.
+func ensureNoLegacy095StagingObject(ctx context.Context, queryer schemaQueryer) error {
+	var count int
+	if err := queryer.QueryRowContext(ctx, `
+		SELECT COUNT(*)
+		FROM sqlite_schema
+		WHERE name = 'source_field_translation_rebuilt'
+	`).Scan(&count); err != nil {
+		return fmt.Errorf("legacy 095 preflight: inspect staging object: %w", err)
+	}
+	if count != 0 {
+		return errors.New("legacy 095 preflight rejected: source_field_translation_rebuilt exists; a previous 097 attempt did not roll back cleanly")
+	}
+	return nil
 }
 
 func sourceFieldTranslationFingerprint(schema sourceFieldTranslationSchema) string {
