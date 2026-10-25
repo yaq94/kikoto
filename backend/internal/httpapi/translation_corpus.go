@@ -251,23 +251,34 @@ type translationCorpusItem struct {
 type translationCorpusLanguageCoverage struct {
 	Language string
 	Rows     int64
-	Missing  int64
-	Stale    int64
-	Failed   int64
-	Retry    int64
+	// Native and Model count current rows by origin. An item normally has one
+	// current row, but a native row can coexist with an earlier model row while
+	// the corpus transitions, so Native+Model may exceed Rows.
+	Native  int64
+	Model   int64
+	Missing int64
+	Stale   int64
+	Failed  int64
+	Retry   int64
 }
 
 type translationCorpusCoverage struct {
 	Total     int64
 	Languages map[string]translationCorpusLanguageCoverage
-	Missing   int64
-	Stale     int64
-	Failed    int64
-	Retry     int64
+	// Native and Model aggregate every reported language, including the
+	// native-only zh-Hant projection.
+	Native  int64
+	Model   int64
+	Missing int64
+	Stale   int64
+	Failed  int64
+	Retry   int64
 }
 
 func (c translationCorpusCoverage) complete() bool {
-	return c.Missing == 0 && c.Stale == 0 && c.Failed == 0 && c.Retry == 0
+	// An empty corpus is not evidence that translation finished. Without this
+	// guard a fresh installation would report complete before any card exists.
+	return c.Total > 0 && c.Missing == 0 && c.Stale == 0 && c.Failed == 0 && c.Retry == 0
 }
 
 // translationCurrentRowSQL accepts a native row or a model row produced by the
@@ -324,12 +335,30 @@ func (s *Server) translationCorpusCoverageFor(ctx context.Context, cfg translati
 	for _, language := range translationModelLanguages {
 		item := translationCorpusLanguageCoverage{Language: language}
 		current := translationCurrentRowSQL("ct", language)
-		rowsQuery := corpus + ` SELECT count(*) FROM corpus c WHERE EXISTS(
-			SELECT 1 FROM content_translation ct
-			WHERE ct.entity_kind=c.entity_kind AND ct.entity_id=c.entity_id
-			  AND ct.field=c.field AND ct.language=? AND ct.source_text=c.source_text
-			  AND ` + current + `)`
-		if err := s.db.QueryRowContext(ctx, rowsQuery, language, configKey).Scan(&item.Rows); err != nil {
+		// One scan returns the covered item count and the current native/model
+		// row counts. Counting them in separate statements would scan the same
+		// corpus three times. Rows counts items; a native and a model row can
+		// coexist for one item, so Native+Model may exceed Rows.
+		rowsQuery := corpus + `, current AS MATERIALIZED (
+				SELECT c.entity_kind,c.entity_id,c.field,ct.origin
+				FROM corpus c
+				JOIN content_translation ct
+				  ON ct.entity_kind=c.entity_kind AND ct.entity_id=c.entity_id
+				 AND ct.field=c.field AND ct.language=? AND ct.source_text=c.source_text
+				 AND ` + current + `
+			),
+			items AS MATERIALIZED (
+				SELECT DISTINCT entity_kind,entity_id,field FROM current
+			)
+			SELECT
+				(SELECT count(*) FROM items),
+				(SELECT count(*) FROM current WHERE origin='native'),
+				(SELECT count(*) FROM current WHERE origin='model')`
+		rowsArgs := []any{language}
+		if language != translation.SourceHant {
+			rowsArgs = append(rowsArgs, configKey)
+		}
+		if err := s.db.QueryRowContext(ctx, rowsQuery, rowsArgs...).Scan(&item.Rows, &item.Native, &item.Model); err != nil {
 			return coverage, fmt.Errorf("count %s coverage: %w", language, err)
 		}
 		staleCondition, staleArgs := translationStaleConditionSQL(language, configKey)
@@ -362,24 +391,41 @@ func (s *Server) translationCorpusCoverageFor(ctx context.Context, cfg translati
 		// missing, so rows+stale+failed+missing adds up to the total.
 		item.Missing = max64(coverage.Total-item.Rows-item.Stale-item.Failed, 0)
 		coverage.Languages[language] = item
+		coverage.Native += item.Native
+		coverage.Model += item.Model
 		coverage.Missing += item.Missing
 		coverage.Stale += item.Stale
 		coverage.Failed += item.Failed
 		coverage.Retry += item.Retry
 	}
-	// zh-Hant is native-only and a display projection. It is reported, but a
-	// missing native Traditional title does not block completion: zh-tw reads
-	// the current zh-Hans row and converts it locally.
+	// zh-Hant is a native-only display projection. A missing native Traditional
+	// title is visible in this language's Missing/Rows counts but is not added to
+	// the global Missing total, so it does not block completion: zh-tw reads the
+	// current zh-Hans row and converts it locally.
 	hant := translationCorpusLanguageCoverage{Language: translation.SourceHant}
-	hantQuery := corpus + ` SELECT count(*) FROM corpus c WHERE EXISTS(
-		SELECT 1 FROM content_translation ct
-		WHERE ct.entity_kind=c.entity_kind AND ct.entity_id=c.entity_id
-		  AND ct.field=c.field AND ct.language=? AND ct.source_text=c.source_text
-		  AND ct.origin='native')`
-	if err := s.db.QueryRowContext(ctx, hantQuery, translation.SourceHant).Scan(&hant.Rows); err != nil {
+	current := translationCurrentRowSQL("ct", translation.SourceHant)
+	hantQuery := corpus + `, current AS MATERIALIZED (
+			SELECT c.entity_kind,c.entity_id,c.field,ct.origin
+			FROM corpus c
+			JOIN content_translation ct
+			  ON ct.entity_kind=c.entity_kind AND ct.entity_id=c.entity_id
+			 AND ct.field=c.field AND ct.language=? AND ct.source_text=c.source_text
+			 AND ` + current + `
+		),
+		items AS MATERIALIZED (
+			SELECT DISTINCT entity_kind,entity_id,field FROM current
+		)
+		SELECT
+			(SELECT count(*) FROM items),
+			(SELECT count(*) FROM current WHERE origin='native'),
+			(SELECT count(*) FROM current WHERE origin='model')`
+	if err := s.db.QueryRowContext(ctx, hantQuery, translation.SourceHant).Scan(&hant.Rows, &hant.Native, &hant.Model); err != nil {
 		return coverage, fmt.Errorf("count native Traditional coverage: %w", err)
 	}
+	hant.Missing = max64(coverage.Total-hant.Rows, 0)
 	coverage.Languages[translation.SourceHant] = hant
+	coverage.Native += hant.Native
+	coverage.Model += hant.Model
 	return coverage, nil
 }
 

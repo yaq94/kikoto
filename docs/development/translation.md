@@ -29,9 +29,10 @@ Administrator routes require `sources:write`:
   session. Every single, batch and trial response carries the same `version`;
   the browser stores it with the row and deletes a row whose version differs.
 - `GET /api/settings/translation/prefill` returns the durable prefill cursor,
-  per-language coverage, the night-window flag, the recent rate and the last
-  error. `POST` the same route with `{"status":"running"|"paused"}` pauses or
-  resumes the pass.
+  per-language coverage (`rows`, `native`, `model`, `missing`, `stale`,
+  `failed`, `retry`), the night-window flag, the recent rate and the last error.
+  `POST` the same route with `{"status":"running"|"paused"}` pauses or resumes
+  the pass.
 - `POST /api/content-translations/batch` accepts a display `language` and up to
   200 items, each with a client `key` and the same selector as the single
   endpoint, including `code`. Every item reports its own `status` and `code`;
@@ -185,10 +186,14 @@ before queueing model calls. A failed item is stored in
 time; `NULL` next retry means no attempt is scheduled. The attempt budget
 survives a restart, and changed source text starts a new hash instead of
 inheriting the old failure. `complete` is written only when the effective corpus
-has no missing, stale, failed or retry item. `zh-tw` is a display projection and
-is not a separate prefill queue; native `zh-Hant` rows are reported, but a
-missing one does not block completion because the `zh-Hans` projection still
-serves the reader.
+has at least one item and no missing, stale, failed or retry item. A scan that
+reaches its end with no continuable new item, no due retry and an exhausted
+failure writes `failed`; that status is not terminal and the next due retry or
+new item still resumes the same worker. `zh-tw` is a display projection and is
+not a separate prefill queue; native `zh-Hant` rows are reported with their own
+`rows`, `native`, `model` and `missing` counts, but a missing one is excluded
+from the global missing total and does not block completion because the
+`zh-Hans` projection still serves the reader.
 
 Display-language search applies only to text clauses and covers `title` for
 entries and series, plus `title` and `description` for works; `tag` and
