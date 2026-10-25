@@ -56,7 +56,8 @@ func run() error {
 			}
 			return storage.PreserveLegacyWorkflows(ctx, db, fromVersion)
 		},
-		Development: cfg.IsDevelopment(),
+		PreflightBackupDir: cfg.DatabaseBackupDir,
+		Development:        cfg.IsDevelopment(),
 	}); err != nil {
 		return fmt.Errorf("run migrations: %w", err)
 	}

@@ -82,6 +82,65 @@ before deleting an entry. Run `go generate ./migrations` to produce
 an existing database from a baseline. See [Catalog series](catalog-series.md)
 for the staging, activation and recovery semantics.
 
+Schema 097 is `097_source_field_translation_foreign_key.sql`. It rebuilds
+`source_field_translation` with `source_id` referencing `file_source(id) ON
+DELETE CASCADE`, copies rows whose source still exists, drops unreachable
+cache rows, and recreates both indexes. The migration runner performs
+`PRAGMA foreign_key_check` before committing. The numbered migration does not
+change the translation code or bypass a checksum gate; the one-time preflight
+below only normalizes the historical 095 ledger row before the ordinary
+validator runs.
+
+The file has no conditional branch. A database that reaches `097` runs the
+same rebuild whether it was newly installed through the numbered chain,
+already recorded the frozen 095 checksum, or was normalized from the legacy
+checksum first.
+
+### Legacy 095 Checksum Preflight
+
+Migration `095_source_field_translation_cache.sql` was applied from two
+pre-release revisions before it was frozen. Both revisions used the same
+columns and indexes:
+
+| Revision | `source_id` definition | SHA-256 |
+| --- | --- | --- |
+| `25f96c22` | no foreign key | `70933dd47790fe1f15e49818fe7a5fc394e3f87258c1001a50a3b75d5a370efe` |
+| `5defaa1c` | `REFERENCES file_source(id) ON DELETE CASCADE` | `5ff08c11d8012cced81bc0887fdd87d857d94b0a57b6d185f992cf573f7b07e4` |
+
+The frozen current `095` checksum is the `5defaa1c` value. A database that
+already recorded that value needs no preflight. Only the older
+`70933dd4...` ledger value is conditional on the exact no-foreign-key table
+shape.
+
+Startup runs the preflight before the migration validator reads
+`schema_migration`. It compares `PRAGMA table_xinfo`, `index_list`,
+`index_xinfo`, `foreign_key_list`, and the table's trigger list with the
+historical fingerprint. Column order and definitions, all indexes including
+SQLite's unique autoindex, triggers, and foreign-key actions must match
+exactly. An extra column, missing column, extra or missing index, unexpected
+trigger, different foreign key, missing table, or a changed ledger row stops
+startup with the expected and actual fingerprints. There is no general
+"ignore checksum" option.
+
+For a matching database the preflight writes a verified pre-migration snapshot
+beside the other database backups, then updates only that ledger checksum in a
+transaction. It writes a JSON audit record containing the old and new
+checksums, historical schema fingerprint and details, UTC execution time,
+backup path, and result. Startup then continues through `096` and `097`.
+
+An instance that cannot start can run the same operation offline without
+migrating:
+
+```sh
+kikoto admin preflight-095 --database "$KIKOTO_DB_PATH" --backup-dir "$KIKOTO_DB_BACKUP_DIR"
+```
+
+The command prints `Legacy 095 checksum is already current; no change.` when
+the ledger already holds the frozen checksum, and `No legacy 095 checksum
+requires normalization; no change.` when the database has no legacy 095 row.
+It refuses a mismatched schema without changing the ledger. Back up the file
+before running any maintenance command.
+
 ## Fresh Installs And Upgrades
 
 The single-row `schema_state` table records the current schema version, the
@@ -274,13 +333,13 @@ matches the backup.
 | v0.8.0 | `059` | `059_v0.8.0.sql` |
 | v0.8.1, v0.8.2 | `066` | `066_v0.8.1.sql` |
 | v0.8.3 | `068` | `068_v0.8.3.sql` |
-| development build (unreleased) | `095` | Development baseline only; `compat/095_dev.sql` |
+| development build (unreleased) | `097` | Development baseline only; `compat/097_dev.sql` |
 
 Per-release upgrade steps are in the [release notes](../history/index.md).
 
 ## Kikoto-next Schema Additions
 
-Migrations `069` through `095` extend the source catalog, shared associations,
+Migrations `069` through `097` extend the source catalog, shared associations,
 personal transfer, and the recoverable index. Pending release notes and upgrade
 steps are in [Unreleased](../history/unreleased.md).
 
@@ -313,6 +372,8 @@ steps are in [Unreleased](../history/unreleased.md).
 | `093_source_catalog_partition_index.sql` | `source_catalog_directory_partition` on `(file_source_id, generation, partition_path)` | The progress endpoint groups and counts partitions from the index instead of building a temporary b-tree |
 | `094_source_catalog_file_root.sql` | `source_catalog_file.source_root` | A folded format copy keeps the directory its files live in; an empty value keeps the card-wide base |
 | `095_source_field_translation_cache.sql` | `source_field_translation` for remote titles, tags and directory display names | Model output is rebuildable display cache outside search; every write participates in the soft translation budget |
+| `096_catalog_episode_pending.sql` | Pending episode roots and publication state | Incomplete staged splits remain recoverable and are not published |
+| `097_source_field_translation_foreign_key.sql` | Rebuild `source_field_translation` with a cascading source reference | Invalid source ids are discarded as unreachable cache; the rebuilt table has the frozen 095 columns and indexes |
 
 The Release To Schema Map above lists every numbered file. `069` rebuilds `work`
 and `logical_work` to relax code uniqueness and creates the catalog entry and
@@ -356,18 +417,19 @@ existing database still contains duplicates. `090` records per-phase catalog
 timings. `091` keeps damaged source names in a separate fix-list table. `092`
 stores the translation corpus, its FTS5 index and the prefill cursor.
 `093` adds one covering index; `094` adds one text column with an empty default;
-`095` adds an independent display-cache table and two indexes. None changes an
-existing catalog or personal row, and an older binary that never reads them
-still runs every other query.
+`095` adds an independent display-cache table and two indexes; `096` adds the
+pending episode mapping and publication state; `097` rebuilds the display cache
+to add its source foreign key and remove unreachable rows.
 
-The `084` through `095` changes retain existing rows. `087` is the only table
-rebuild; it copies every entry column and then recreates the indexes, triggers
-and view. `085`, `088`, `090`, `091` and `092` add tables or columns with
-defaults, `093` adds an index, `094` adds one column default and `095` adds a
-rebuildable cache table, so an older binary that never reads them still reads
-every other table. Startup refuses a database newer than the binary before running a
-handler. Rolling back any of these schemas requires a database snapshot, not a
-reverse migration; see [Release rollback](release-rollback.md).
+The `084` through `097` changes retain existing rows. `087` and `097` rebuild
+tables; `087` copies every entry column and recreates its indexes, triggers and
+view, while `097` copies only display-cache rows with a live source and
+recreates both cache indexes. `085`, `088`, `090`, `091` and `092` add tables or
+columns with defaults, `093` adds an index, `094` adds one column default and
+`095` adds a rebuildable cache table. Startup refuses a database newer than the
+binary before running a handler. Rolling back any of these schemas requires a
+database snapshot, not a reverse migration; see
+[Release rollback](release-rollback.md).
 
 `077` does not change entry identity. It lets a generation remove stale file
 rows left by an older generation without touching an entry that the current
