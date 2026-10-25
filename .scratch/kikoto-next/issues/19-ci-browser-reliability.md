@@ -1,5 +1,7 @@
 # 19：既有浏览器测试可靠性
 
+**What to build:** 修复既有 Playwright 套件中目录骨架、收藏与移动封面触摸三类不稳定用例，使同一断言在重复运行时稳定通过，并保留原有的非视觉回归保护。
+
 **Status:** ready-for-agent
 **Implementation:** verified-local；本地实现与 F 已验收；最终候选的 Full CI 及生产部署验收由 24 汇总，不能用旧 SHA 的 run 关闭。
 
