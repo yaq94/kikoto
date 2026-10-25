@@ -2,7 +2,7 @@
 
 **What to build:** 持久译文只对当前有效语料提供正确性；覆盖进度、失败恢复、目标语言搜索与短查询均使用一致定义。严格目标语言搜索不得混入原文；`origin` 才查询原文。编号和精确代码查询不受显示语言过滤。
 
-**Blocked by:** [03：简繁转换与受保护名称保持](03-traditional-chinese-conversion.md)（02 为传递前置）。
+**Blocked by:** [03：简繁转换与受保护名称保持](03-traditional-chinese-conversion.md)（02 为传递前置）；[07](07-openlist-first-playable-slice.md)（entry 实体）；[08](08-recoverable-full-source-index.md)（有效集合与准入）；[20](20-catalog-sync-and-admission.md)（098 迁移）。
 
 **Status:** ready-for-agent
 **Implementation:** in-progress；已有 `25f96c22`、`5defaa1c` 等译文缓存提交和主会话 `6dee3087` 有界写入修复，但严格搜索、有效覆盖和预算保留尚未闭环。
@@ -15,11 +15,11 @@
 
 ## 数据模型与迁移
 
-在 096 提交后使用计划编号 099（097 是 095 重建，098 是目录调度；迁移运行器拒绝跳号，实测 `expected version 097, found 099`）。21 的 099 只能在前两项已提交并存在后落地；不得为提前测试翻译而临时复制 099 到其他编号。
+本票迁移编号固定为 099，位于已提交的 097 与 20 的 098 之后（迁移运行器拒绝跳号）。099 只能在 097、098 均已提交后落地；不得为提前测试临时改号或复制到其他编号。
 
 - `content_translation` 增加 `config_key TEXT NOT NULL DEFAULT ''`；索引 `(language, entity_kind, field, config_key, entity_id)`，并为短查询增加覆盖索引 `(language, entity_kind, field, id, translated_text)`。
 - `translation_prefill_state` 增加 `config_key TEXT NOT NULL DEFAULT ''`、`cursor_kind TEXT NOT NULL DEFAULT 'entry'`、`cursor_field TEXT NOT NULL DEFAULT 'title'`、`cursor_language TEXT NOT NULL DEFAULT ''`、`cursor_id INTEGER NOT NULL DEFAULT 0`；保留 `status`、`last_error`、`updated_at`。游标顺序固定为 `(kind, field, id, language)`。失败不是“跳过”：先把失败行写入持久 retry 表，再推进游标；失败行由独立 retry 队列按 `next_retry_at` 重试，不能因为游标继续而丢失该语言，也不能因为一个永久失败把整个扫描停在同一实体。
-- 新增 `translation_prefill_failure(entity_kind, entity_id, field, language, config_key, source_hash, attempts, next_retry_at, last_error, PRIMARY KEY(entity_kind, entity_id, field, language, config_key, source_hash))`，失败计数持久化；原文变化后旧失败行不能压住新文本，必须按 `source_hash` 重新尝试。
+- 新增 `translation_prefill_failure(entity_kind, entity_id, field, language, config_key, source_hash, attempts, next_retry_at, last_error, PRIMARY KEY(entity_kind, entity_id, field, language, config_key, source_hash))`；`next_retry_at` 用 `NULL` 表示未调度，失败计数持久化；原文变化后旧失败行不能压住新文本，必须按 `source_hash` 重新尝试。
 - 失败表按 `(config_key, source_hash)` 清理：成功写入当前行时删除同实体／字段／语言的旧失败键；实体退役、原文变化或配置切换后删除不再匹配的失败行；后台按 `next_retry_at` 分批处理并设置行数上限，不能让失败表随历史文本无限增长。
 - `config_key` 只覆盖影响模型输出的配置：model、base URL、template version、disableThinking；不包含 API key、并发、超时或预算。
 - 旧 model 行没有 `config_key` 时视为 stale；迁移不猜测旧 endpoint／reasoning，若 `model` 与 `template_version` 与当前一致，只列为兼容候选，不直接进入严格搜索。
@@ -45,7 +45,7 @@
 - series：标题非空、至少两个成员、至少一个成员可准入；series 的 work 不作为普通 work 重复加入；可搜索字段为 `title`。
 - work：标题或简介非空的本地作品；排除作为 `catalog_series.work_id` 的系列 work，避免重复；可搜索字段为 `title`、`description`。
 
-prefill 必须按 `entity_kind × field` 枚举：entry 的 title、series 的 title、work 的 title／description。原生目标语言内容写 `origin='native'`；已有 `work_title_language`、来源提供的目标语言标题或目标语言简介优先写 native 行，不重复调用模型。`zh-tw` 从 `zh-Hans` 派生，原生 `zh-Hant` 计入；`tag`、`directory` 仍按需翻译，不进入搜索语料和预填覆盖。
+prefill 必须按 `entity_kind × field` 枚举：entry 的 title、series 的 title、work 的 title／description。`source_catalog_entry` 没有 description 列，OpenList listing 也不提供简介，本票不得新增该列或伪造该字段。原生目标语言内容写 `origin='native'`；已有 `work_title_language`、来源提供的目标语言标题或目标语言简介优先写 native 行，不重复调用模型。`zh-tw` 从 `zh-Hans` 派生，原生 `zh-Hant` 计入；`tag`、`directory` 仍按需翻译，不进入搜索语料和预填覆盖。
 
 覆盖按 `entity_kind × field × language` 统计 total、covered、missing、stale、failed、native、model。当前行必须满足：`origin='native'` 或 `config_key=当前 config_key`；`source_text` 等于当前实体的当前字段文本；实体仍有效。
 
@@ -93,4 +93,4 @@ prefill 必须按 `entity_kind × field` 枚举：entry 的 title、series 的 t
 
 ## Comments
 
-主会话已提交 `6dee3087` 的有界写入修复；21 在其 SHA 之后整合，不直接修改对方未提交的 `content_translation_*`、`openlist_catalog.go`。`docs/development/translation.md` 必须从“durable corpus”与“model cache oldest-first”自相矛盾的表述改为上表规则。ADR-0006 明确 `Amends ADR-0007`。
+主会话已提交 `6dee3087` 的有界写入修复；21 在其 SHA 之后整合，不直接修改对方未提交的 `content_translation_*`、`openlist_catalog.go`。`docs/development/translation.md` 的目标段与现状段必须分开写清，不能把尚未实现的行为写成当前事实；代码注释中的 oldest-first 淘汰与证据 23 对 5 万行窗口的认可都要按上表规则改写。ADR-0006 明确 `Amends ADR-0007`。

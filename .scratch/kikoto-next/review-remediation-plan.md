@@ -15,7 +15,7 @@
 ## 0. 已核实的裁决
 
 1. **D-16 已实现，但需要收口。** `134f7c90` 已加入三条阈值；`catalogadmission/admission.go` 顶部旧注释仍写“Probe bounds 不决定准入”，且 SQL 过滤分支仍硬编码 5001/2001/5。20 号票只做跨层边界、系列成员语义、性能和回归，不重复实现规则。
-2. **严格目标语言搜索尚未实现。** 远程 `openlist_catalog.go` 仍把原文 FTS 命中并入显示语言结果，`content_translation_search_test.go` 还把该行为写成断言；本地 `library/query.go` 和远程短查询都仍有每语言最新 50,000 行的固定窗口。
+2. **严格目标语言搜索尚未实现。** 远程 `openlist_catalog.go` 仍把原文 FTS 命中并入显示语言结果，`content_translation_search_test.go` 还把该行为写成断言；本地 `library/query.go` 仍有每语言最新 50,000 行的固定窗口；远程短查询没有该窗口，但对原文标题与文件名做无界 `instr` 扫描并混入原文结果。
 3. **持久语料仍被预算淘汰。** `content_translation_retention.go` 会删除 model 行，包括当前搜索所需的标题；`translation_prefill.go` 的覆盖率只按语言统计历史行，不能证明当前有效条目、原文、模型和模板已覆盖。prefill 目前只枚举 entry，不枚举 series 与 work。
 4. **空库单集父级在审查基线上未恢复；主仓库后续实现仍未闭环。** `transfer_plan.go` 原来对未知 episode 只报告 `relationships_not_imported`，随后 `transfer_import.go` 创建独立 work。主仓库 `728651a6` 已加入 v2 可选 `parent`，但它通过合成 `source_catalog_entry`／`catalog_series_member` 恢复，而系列详情查询会过滤 `file_source_id IS NULL` 的成员；因此“系列卡能列出恢复的单集”仍无证据。该实现与下面 7.1 的 `work.parent_work_id` 合同也不一致，不能视为 22 完成。
 5. **ADR 与迁移治理有缺陷。** 曾有两个 ADR 共用 0005；来源字段缓存 ADR 已重编号为 0007 并补入索引。095 在首次提交后被修改过；096 已由 `6b4a02ec` 提交，迁移头当前为 96，097 必须成为下一个连续编号。
@@ -24,7 +24,7 @@
 
 ## 1. 验收责任模型
 
-每个 AC 只有一个原始主责票；整改票只声明具体子项，24 只负责同一候选的发布证据。这样既保留 01–19 的历史合同，也避免 20–24 用一个过宽的“主责”取代原票。
+每个 AC 有一个或多个原始主责票，按场景分担；全部主责票通过才算该 AC 完整。整改票只声明具体子项，24 只负责同一候选的发布证据。这样既保留 01–19 的历史合同，也避免 20–24 用一个过宽的“主责”取代原票。
 
 | 工单 | 原始主责或整改子项 | 不替代 |
 | --- | --- | --- |

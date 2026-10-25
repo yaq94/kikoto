@@ -5,7 +5,7 @@
 **Blocked by:** [09：每日更新与已有扫描复用](09-daily-index-update.md)（08 为传递前置）。
 
 **Status:** ready-for-agent
-**Implementation:** in-progress；主仓库 `47df9c11` 已提交 wall-clock 和 partial probe 修复，并在最新 SHA 通过专项调度测试；但该实现仍以 `app_setting` 保存 due，尚未落地本票的 `source_catalog_schedule`、`manual_pending` 和 `deferred_reason`。必须按行为验收决定保留简化实现还是补齐表；审查 worktree 的未提交调度代码已实测失败（`no such column: run_setting.value_json`），不能作为当前产物，也不能搬入主分支。
+**Implementation:** in-progress；`47df9c11` 已提交 wall-clock 与 partial probe 修复并通过专项测试。现状：due 存在 `app_setting`，没有 `source_catalog_schedule`，也没有 `manual_pending`、`deferred_until`、`resume_full_pending`、`pending_full_run_id`；weekly 在 full 入队时推进（不是成功后），派发只比较 daily due；force 只作用于 full generation。本票按下列行为验收落地 098 与状态机，不以 `app_setting` 简化实现替代。
 
 **依据:** [正式规格](../spec.md)、[整改计划](../review-remediation-plan.md)、[ADR-0006](../../../docs/decisions/ADR-0006-catalog-remediation-and-translation-consistency.md)、`kikoto-remediation-addendum-20261021.md` 的 D-16/D-22/D-25。
 
@@ -41,7 +41,7 @@ CREATE INDEX source_catalog_schedule_due
   ON source_catalog_schedule(deferred_until, daily_due_at, weekly_due_at);
 ```
 
-旧的 `source_catalog_daily:`、`source_catalog_daily_run:`、`source_catalog_full:` setting 只用于迁移读取，迁移后不再参与判定。禁止在 due SQL 中混用 `setting` 与 `run_setting`。
+098 落地前，`source_catalog_daily:` 与 `source_catalog_full:` 是当前活存储；098 迁移只读取它们一次，迁移后不再参与判定。禁止在 due SQL 中混用 `setting` 与 `run_setting`。
 
 迁移初始化只处理 `file_source.enabled=1 AND source_type='openlist'` 的来源，每个来源恰好一行：
 
@@ -73,13 +73,13 @@ CREATE INDEX source_catalog_schedule_due
 
 ## force 增量
 
-`force` 只表示重新探测所有目录，不表示创建 full。当前 `executeCatalogIncrementalSync` 在 sync lease 前/中调用 `enqueueSourceCatalogIndex` 会因 running sync 返回 `errCatalogSyncRunning`；删除该路径，改为在 sync 结束时写 `resume_full_pending`，由调度器串行处理。sync 自身不得调用会检查 running sync 的完整入口。
+`force` 只表示重新探测所有目录，不表示创建 full。当前没有 force sync 用户入口；`POST /api/remote-sources/{id}/catalog/index` 的 `force` 作用于 full generation，且在 sync 运行时返回 409 `catalog_sync_running`。本票新增 force sync 入口（或在同一入口区分 full 与目录重探），sync 结束需要 full 时写 `resume_full_pending` 由调度器串行处理；sync 自身不得调用会检查 running sync 的完整入口。
 
 ## D-16 三层一致
 
 - 阈值：`audio == 0` 拒绝；`files > 5000` 拒绝；`nonAudio > 2000 && audio < 5` 拒绝。等于阈值允许。
 - 适用范围：每个来源目录／卡片根；系列卡片不聚合文件数。系列中每个成员条目分别判定；未通过成员不进入系列卡或详情，不影响同系列其他合格成员；系列至少有一个合格成员才显示。
-- 系列列表、系列详情和成员 tracks 入口都必须应用同一成员准入；不能只在列表外层 `EXISTS` 一个合格成员而把不合格成员继续列进详情。
+- 系列列表、系列详情和成员 tracks 入口都必须应用同一成员准入；不能只在列表外层 `EXISTS` 一个合格成员而把不合格成员继续列进详情。成员 tracks 已具备 pending 与准入门禁，本票补回归断言即可；系列详情两者都缺，必须补。
 - `catalogadmission.Decision` 是唯一规则源；`catalogEntryAdmittedSQL`、发布事务和单卡 API 的计数必须由同一组常量生成，不得硬编码 5001/2001/5。
 - 修正 `admission.go` 顶部“Probe bounds 不决定准入”的旧注释。
 - 旧测试中“大附属文件卡允许发布”的断言改为拒绝；正常多轨、音频附带字幕／压缩包仍允许。
@@ -99,7 +99,7 @@ CREATE INDEX source_catalog_schedule_due
 - [ ] queued full 不会被 `resume_full_pending` 重复创建；`resume_full_pending` 只在 full 终态 succeeded 后清零并推进 weekly due，failed/cancelled 保留待重试。
 - [ ] force sync 不再触发 `errCatalogSyncRunning`；同一来源不产生 full 与 sync 重叠写；手动请求与同一轮已到期任务只执行一次。
 - [ ] D-16 的 0/1/4/5 audio、2000/2001 nonAudio、5000/5001 files 在入队／发布／API 三层一致；系列成员逐条判定。
-- [ ] 42k 卡浏览与 5,001 文件卡拒绝路径的 p95 证据；不得以全表扫描换取正确性。
+- [ ] 42k 卡浏览与 5,001 文件卡拒绝路径的 p95 证据（2 vCPU／2 GiB、warm、≥20 样本，浏览 p95 ≤ 300 ms、p99 ≤ 800 ms）；超限先落地 `source_catalog_entry_admission` 再复测；不得以全表扫描换取正确性。
 - [ ] 096 激活期间系列详情/成员 tracks 不可见，publication 切换后才可见；系列详情与列表使用同一 D-16 成员过滤。
 - [ ] 不重复实现 `134f7c90` 的规则；如发现其实现缺口，先报告再最小修正。
 

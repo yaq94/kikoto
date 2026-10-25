@@ -25,13 +25,13 @@
 
 ## 迁移 095/096/097–100
 
-- 095 冻结：记录 `25f96c22` 首次加入（无外键）和 `5defaa1c` 修改（`ON DELETE CASCADE`）的事实与两个 SHA-256；当前文件不再改写。
+- 095 冻结：`25f96c22` 首次加入（无外键，canonical checksum `70933dd47790fe1f15e49818fe7a5fc394e3f87258c1001a50a3b75d5a370efe`），`5defaa1c` 改为 `ON DELETE CASCADE`（canonical checksum `5ff08c11d8012cced81bc0887fdd87d857d94b0a57b6d185f992cf573f7b07e4`，与当前文件一致）；当前文件不再改写。
 - 096 已由 `6b4a02ec` 提交：`096_catalog_episode_pending.sql`、`compat/096_dev.sql` 和系列暂存实现均已在主分支；不得把其他变更塞进 096。
 - 097 作为固定的 095 修复槽位（始终存在，统一执行重建）：
   - 097 始终存在，不能取消或跳号。097 不再按“是否有旧 095”分叉：无论旧表还是当前表，都执行同一套重建 `source_field_translation`（新表带外键、复制合法 `source_id` 行、丢弃孤儿缓存、重建索引），用统一路径保持 `095 → 096 → 097 → 098 → 099 → 100` 连续，并让新装、当前 095 和旧 095 三种数据库都实际覆盖重建代码。
   - 若存在旧 095，其 ledger checksum 与当前 095 不同，`migration.go` 会在到达 097 前拒绝启动。097 只负责结构，不能修复这个门禁；必须在 `prepareMigrationState`／`validateAndAdoptHistory` 之前、`MigrateFSWithOptions` 之前提供一次性 preflight，不能挂在现有 `BeforeUpgrade` 里（它已经在 checksum 校验之后）。preflight 自身先创建数据库备份，再只对精确匹配旧 095 表结构指纹的数据库把该 ledger 行的 checksum 规范化为当前 095 checksum；不匹配、部分匹配或存在额外对象时拒绝启动。
   - 禁止增加通用的“忽略 checksum”开关。preflight 必须记录旧 checksum、新 checksum、旧 schema 指纹、执行时间、数据库备份路径和结果；同时提供离线等价命令，供无法启动的实例使用。097 只负责结构重建，不负责绕过门禁。
-- 097 之后连续分配：098 目录调度、099 译文语料契约、100 work 父级；任何编号变化必须同步迁移头、`compat/096_dev.sql` 和测试常量。
+- 097 已由 `ec624bd3` 提交（含 `compat/097_dev.sql`）。097 之后连续分配：098 目录调度、099 译文语料契约、100 work 父级；任何编号变化必须同步迁移头、对应 `compat/0NN_dev.sql` 和测试常量。
 - 不得修改已发布迁移来“修复”旧环境。
 
 ## 文档与证据
@@ -49,7 +49,7 @@
 
 - [ ] source-only alias、work-backed alias、stale apply、个人评价保留均有 H 回归。
 - [ ] 合成 dry-run 不含生产路径、记录标识或作品编号。
-- [ ] 095 历史、096 已提交、097 固定重建槽位和旧库升级测试有明确证据；不修改已发布迁移。
+- [ ] 095 历史、096 已提交、097 已提交（`ec624bd3`）、旧库升级测试有明确证据；不修改已发布迁移。
 - [ ] 旧 095 的 checksum 兼容在 `prepareMigrationState` 之前完成；有旧库、无旧库、指纹不匹配三条路径均有测试，且不存在通用 checksum 绕过。
 - [ ] 097 始终存在并保持编号连续；新装、当前 095 和旧 095 三种数据库都执行同一套重建，且 `foreign_key_check` 0 行。
 - [ ] 数据模型、翻译文档、回滚说明、迁移文档、测试夹具和历史叙述修正。
