@@ -19,7 +19,7 @@
 
 | 工单 | 责任 | Implementation | 完成所需证据 |
 | --- | --- | --- | --- |
-| [20 持续目录增量、固定调度与准入回归](issues/20-catalog-sync-and-admission.md) | partial 变化发现、固定调度、D-16 跨层边界 | in-progress | H/R、失败重试、恢复已验收；仍缺单卡评价／播放／媒体流／目录标签准入、零可见成员 404、真实 plan 断言、42k p95 |
+| [20 持续目录增量、固定调度与准入回归](issues/20-catalog-sync-and-admission.md) | partial 变化发现、固定调度、D-16 跨层边界 | in-progress | H/R、失败重试、恢复已验收；仍缺单卡评价／播放／媒体流／目录标签准入、零可见成员 404、计数集合统一、due 推进顺序、真实 plan 断言、42k p95 |
 | [21 有效译文语料与严格语言搜索](issues/21-translation-corpus-and-search.md) | 有效语料、覆盖、严格搜索、短查询 | in-progress | H/R/F、当前有效集合、短查询 keyset 与 D-16 join、`failed` 状态、可复现基准 |
 | [22 个人备份父级归属](issues/22-personal-transfer-parent-identity.md) | 空库单集与父系列恢复 | in-progress | H/R、重复导入、冲突、多父级、隔离；备份格式需回到已确认的 v2 + 可选 parent |
 | [23 保留与仓库规范](issues/23-retention-and-repository-contracts.md) | 清理保护、迁移链、模型文档、证据脱敏 | in-progress | 合成 dry-run、保留回归、095–100、文档与敏感检查 |

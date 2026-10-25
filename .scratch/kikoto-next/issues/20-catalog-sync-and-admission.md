@@ -103,6 +103,10 @@ CREATE INDEX source_catalog_schedule_due
 - [ ] D-16 的 0/1/4/5 audio、2000/2001 nonAudio、5000/5001 files 在入队／发布／API 三层一致；系列成员逐条判定。发布、浏览、tracks、单卡详情已一致；个人评价、播放准备、媒体流与作品目录标签尚未接入，不能勾选整项。`TestCatalogAdmissionPublishingPublishesEveryCardWithAudio`、`TestCatalogAdmissionAPIShowsEveryCardWithAudio`、`TestCatalogAdmissionSeriesFiltersEveryMember`。
 - [ ] 单卡个人评价写入、播放准备、媒体流与作品目录标签使用同一完整准入。`openlist_review.go` 仍是 `Files > 0 && Audio == 0`；`catalog_playback.go`、`openlist_playback.go`、`catalog_directory.go` 没有准入或待发布门禁。
 - [ ] 系列没有任何可见成员时详情返回 404，而不是 200 加空列表。现有 `TestCatalogAdmissionSeriesFiltersEveryMember` 只断言 `Episodes` 为空、没有断言状态码，需同步改写为 404。
+- [ ] 零文件卡与旧 generation 残留行按同一集合判定。单卡详情在 `Files == 0` 时直接放行；`catalogPublishedEntryAdmission` 只按 `catalog_entry_id` 计数，未限定当前 generation，也未排除 folder；系列详情的 `emptyMember` 旁路还会让零文件成员进入详情。必须与发布侧统一，或把例外同时写进列表、详情与 tracks。
+- [ ] daily 任务创建成功后才推进 `daily_due_at`。当前 `source_catalog_daily.go:304-331` 先推进 due 再入队，遇到 `errCatalogIndexRunning` 会留下“due 已走、任务未建”的空档。
+- [ ] 诊断接口使用 `catalogadmission.ProbeFiles` 并按来源过滤。`catalog_diagnostics.go:44-46` 仍硬编码 `>5000` 且不带 `file_source_id`。
+- [ ] 运行中的 full 遇 weekly 到期不应无条件置 `resume_full_pending`；普通 full 没有 `pending_full_run_id`，成功后会在下一轮再建一个 full。
 - [ ] 性能计划断言真实执行计划。现有 `strings.Contains(plan, "SCAN source_catalog_file")` 匹配不到实际出现的 `SCAN ff USING INDEX source_catalog_file_parent`，等于空断言。
 - [ ] 42k 卡浏览与 5,001 文件卡拒绝路径的 p95 证据（2 vCPU／2 GiB、warm、≥20 样本，浏览 p95 ≤ 300 ms、p99 ≤ 800 ms）；超限先落地 `source_catalog_entry_admission` 再复测；不得以全表扫描换取正确性。本 worktree 未在目标硬件执行 42k 基准，保持未勾选。
 - [x] 096 激活期间系列详情/成员 tracks 不可见，publication 切换后才可见；系列详情与列表使用同一 D-16 成员过滤。`TestCatalogSeriesHidesPendingPublicationUntilItIsPublished`、`TestCatalogAdmissionSeriesFiltersEveryMember`。

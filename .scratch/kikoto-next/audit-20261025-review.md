@@ -237,3 +237,81 @@
 两个会话同时编辑 `.scratch/kikoto-next/*` 与 `docs/*`，本次审查期间 HEAD 已从 `1ad475ee`
 推进到 `60951b10`，其中 22 的实现与迁移 100 是在审查中途合入的。
 建议指定单一写入者维护状态文档，另一会话只提交代码与测试，避免同一段落被反复覆盖。
+
+---
+
+## 八、补审：工单 20 的代码级缺陷（`1ad475ee` 复核）
+
+以下条目在首轮汇总后补入，均已在代码中定位。
+
+### P1
+
+1. **单卡详情对零文件卡绕过了 `audio == 0`。**
+   `openlist_catalog.go:398-407` 的条件是 `entry.SourceID != 0` 且 `admission.Files > 0`，
+   零文件卡因此不进入判定；同时 `catalogPublishedEntryAdmission` 只按
+   `catalog_entry_id` 数 `source_catalog_file`，没有限定当前 generation，也没有排除
+   `kind='folder'`。发布侧按当前 generation 的 observation 计数，两侧集合不同。
+   建议两侧统一按“当前发布文件集合”计数，并明确零文件卡的例外语义（保留为 provenance
+   或直接拒绝），不能靠 `Files > 0` 隐式放行。
+
+2. **系列成员允许零文件卡绕过准入。**
+   `catalog_series.go:87,90,112-114` 的 `emptyMember` / `emptySuccessor` 让没有文件的成员
+   直接进入详情，而 tracks 对同一成员返回 404。建议删除旁路，或把零文件例外同时写进
+   tracks 与列表，避免详情可点、播放 404。
+
+3. **daily due 在 sync 创建前推进。**
+   `source_catalog_daily.go:304-331` 先 `advanceCatalogScheduleTx(..., "daily")`，再
+   `dispatchCatalogSync`；后者遇到 `errCatalogIndexRunning` 直接 commit
+   （`:336-347`）。结果是“due 已前进但没有创建任务”，该来源要等到下一个 03:00。
+   建议先入队成功、再在同一事务推进 due；竞争失败时回滚 due。
+
+4. **诊断接口硬编码阈值且不按来源过滤。**
+   `catalog_diagnostics.go:44-46` 用 `HAVING count(*)>5000`，且
+   `FROM source_catalog_file` 没有 `file_source_id` 条件。多来源部署下会把其他来源的
+   卡片算进当前来源，阈值也无法随 `catalogadmission.ProbeFiles` 变化。建议改用常量并
+   按 `catalog_entry_id IN (SELECT id FROM source_catalog_entry WHERE file_source_id=?)`
+   限定。
+
+### P2
+
+5. **运行中的 full 遇 weekly 到期也会置 `resume_full_pending`。**
+   `source_catalog_daily.go:144-152` 对 `fullRunning || syncRunning` 统一置位；
+   普通 full 没有绑定 `pending_full_run_id`，成功后下一轮会再建一个 full。
+   建议只对 sync 置位，或把运行中的 full 登记为 pending run。
+
+6. **低空间原因依赖整段 note 精确匹配。**
+   `catalog_sync.go:457-465` 的 `catalogDeferralReason` 在 note 叠加其他错误时会把
+   `low_disk` 记成 `disk_unknown`。建议使用独立字段或前缀判断。
+
+7. **weekly 推进不清 `deferred_reason`。**
+   `source_catalog_schedule.go:170-174` 只清 pending 位；`deferred_until=0` 而 reason
+   残留时状态不一致。建议一并清空。
+
+8. **`deleteCatalogEpisodeMappings` 已无调用者且吞错。**
+   `catalog_episode_staging_maintenance.go:108-138` 失败只 log 后 return，剩余批次不清理。
+   既然 publication 事务已负责删除 mapping，应删除该死代码，或改为返回 error 并保留
+   `published` 守卫。
+
+9. **096 回归只覆盖发布事务之前的清理失败。**
+   `catalog_episode_staging_test.go:445-453` 注入点在 publication 之前；没有在
+   `finalizeCatalogEpisodeRoots` 的同事务 DELETE 上注入失败。建议补一条，断言 entry 与
+   file 都不变。
+
+10. **性能断言部分失效。**
+    `openlist_catalog_perf_test.go:86,338` 的 `SCAN source_catalog_file` 匹配不到
+    实际 plan 的 `SCAN ff USING INDEX source_catalog_file_parent`；同测试另有
+    `SEARCH e ...` 断言，所以不是全空，但“文件表未被扫描”这层保护无效。建议断言
+    `SCAN ff`／`SCAN (subquery` 或固定 EXPLAIN 行。
+
+11. **没有 42k 浏览 p95 证据。**
+    `browse_performance_test.go:49-61` 只种 400 works；发布尾测是 opt-in。需在
+    2 vCPU / 2 GiB 上跑 42,624 卡并记录 p95 / p99。
+
+### 已确认无偏差
+
+- `catalogEntryAdmittedSQL` 已使用 `catalogadmission.Probe*`，`admission.go` 顶部注释
+  已与 `Decision` 一致。
+- 096 的已发布文件保护成立：`catalog_episode_staging.go:145-160,211-213,527-530`
+  先清 mapping 再翻状态、同事务删除；对应测试通过。
+- 098 的 `min(daily, weekly)`、manual 消费、re-enable 重置、deferred 到期重查其余分支
+  与工单一致。
