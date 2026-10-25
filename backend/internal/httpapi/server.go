@@ -109,7 +109,6 @@ type Server struct {
 	translationPrefillMu           sync.Mutex
 	translationRetentionWrites     atomic.Int64
 	translationPrefillWrites       []time.Time
-	translationPrefillFailures     map[int64]int
 	catalogDiskSpace               func(string) (diskSpaceSnapshot, error)
 	catalogNow                     func() time.Time
 	workMatchingMu                 sync.Mutex
@@ -151,7 +150,6 @@ func NewServer(db *sql.DB, cfg config.Config) *Server {
 		catalogSidecarCooldown:         newCatalogSidecarSourceCooldown(),
 		catalogAvailabilityQueued:      map[int64]struct{}{},
 		catalogAvailabilityQueue:       make(chan int64, catalogAvailabilityQueueLimit),
-		translationPrefillFailures:     map[int64]int{},
 	}
 	server.proxyConfig = &proxyConfigStore{load: server.loadProxyConfig}
 	server.metadataTransport = newMetadataTransport(dlsiteEndpoints, func(ctx context.Context) (proxyRoute, error) {

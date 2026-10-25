@@ -1,14 +1,13 @@
 package storage
 
 import (
-	"path/filepath"
 	"testing"
 )
 
 // Migration 042 keeps only the latest circle snapshots and stops rewrites of
 // unchanged rows from advancing the recommendation revision.
 func TestSnapshotProjectionMigrationPrunesCircleSnapshotsAndIgnoresNoOpUpdates(t *testing.T) {
-	sourceDir := filepath.Join("..", "..", "migrations")
+	sourceDir := testMigrationDir(t)
 	db := openMigrationManagerDB(t)
 	if err := Migrate(db, copyNumberedMigrationsThrough(t, sourceDir, 41)); err != nil {
 		t.Fatal(err)

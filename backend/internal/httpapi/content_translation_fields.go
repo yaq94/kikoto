@@ -63,6 +63,11 @@ func (s *Server) loadTranslationField(ctx context.Context, in contentTranslation
 			}
 			return field, nil
 		}
+		if in.Field == "description" {
+			// source_catalog_entry has no description column, and an OpenList
+			// listing does not publish one. The field cannot exist here.
+			return readableTranslationField{}, errFieldAbsent
+		}
 		if in.Field == "directory" {
 			files, err := s.loadSourceCatalogFiles(ctx, entry.ID)
 			if err != nil {

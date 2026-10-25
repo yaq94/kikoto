@@ -3,6 +3,8 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -35,13 +37,19 @@ func seedPrefillCard(t *testing.T, s *Server, id int64, title string) {
 	if _, err := s.db.Exec(`INSERT INTO source_catalog_entry(id,file_source_id,root_path,title,availability_status) VALUES(?,1,?,?,'available')`, id, "/"+title, title); err != nil {
 		t.Fatal(err)
 	}
+	// D-16 admission requires at least one audio file. Without it the card is
+	// not part of the effective corpus, so prefill would correctly do nothing.
+	if _, err := s.db.Exec(`INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes)
+		VALUES(?,'01.mp3','01.mp3','audio',1)`, id); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func readPrefillState(t *testing.T, s *Server) (int64, string, string) {
 	t.Helper()
 	var cursor int64
 	var status, lastError string
-	if err := s.db.QueryRow(`SELECT cursor_entry_id,status,last_error FROM translation_prefill_state WHERE id=1`).Scan(&cursor, &status, &lastError); err != nil {
+	if err := s.db.QueryRow(`SELECT cursor_id,status,last_error FROM translation_prefill_state WHERE id=1`).Scan(&cursor, &status, &lastError); err != nil {
 		t.Fatal(err)
 	}
 	return cursor, status, lastError
@@ -122,8 +130,8 @@ func TestTranslationPrefillPausesOnLowDiskAndResumesWhenSpaceReturns(t *testing.
 		t.Fatal(err)
 	}
 	_, status, lastError = readPrefillState(t, s)
-	if status != "running" || lastError != "" {
-		t.Fatalf("resumed state = %q/%q, want running with no error", status, lastError)
+	if status != "complete" || lastError != "" {
+		t.Fatalf("resumed state = %q/%q, want complete with no error", status, lastError)
 	}
 	if calls.Load() == 0 {
 		t.Fatal("translation did not resume after free space returned")
@@ -148,26 +156,46 @@ func TestTranslationPrefillRetriesFailedEntryBeforeAdvancingCursor(t *testing.T)
 		t.Fatal(err)
 	}
 	cursor, status, lastError := readPrefillState(t, s)
-	if cursor != 0 || status != "running" {
-		t.Fatalf("after failure state = cursor %d status %q, want 0/running", cursor, status)
+	// A failure is persisted before the cursor moves on. Holding the scan at
+	// the failed entity would block every later entity behind one bad call.
+	if cursor == 0 || status != "running" {
+		t.Fatalf("after failure state = cursor %d status %q, want an advanced cursor and running", cursor, status)
 	}
 	if !strings.Contains(lastError, "no translation") {
 		t.Fatalf("last_error = %q, want the model failure reason", lastError)
+	}
+	var failedRows int
+	if err := s.db.QueryRow(`SELECT count(*) FROM translation_prefill_failure`).Scan(&failedRows); err != nil {
+		t.Fatal(err)
+	}
+	if failedRows != 3 {
+		t.Fatalf("persisted failures = %d, want one per model language", failedRows)
+	}
+	// The persisted retry has a backoff. Make it due without changing the
+	// attempt count; a restart must retry the same three language rows.
+	if _, err := s.db.Exec(`UPDATE translation_prefill_failure SET next_retry_at=datetime('now','-1 minute')`); err != nil {
+		t.Fatal(err)
 	}
 
 	if _, err := s.runTranslationPrefillBatch(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	cursor, status, lastError = readPrefillState(t, s)
-	if cursor != 1 || status != "running" || lastError != "" {
-		t.Fatalf("after retry state = cursor %d status %q last_error %q, want 1/running/empty", cursor, status, lastError)
+	_, status, lastError = readPrefillState(t, s)
+	if status != "running" || lastError != "" {
+		t.Fatalf("after retry status = %q last_error %q, want running/empty", status, lastError)
 	}
 	if calls.Load() != 6 {
 		t.Fatalf("model calls = %d, want three failed then three retried", calls.Load())
 	}
+	if err := s.db.QueryRow(`SELECT count(*) FROM translation_prefill_failure`).Scan(&failedRows); err != nil {
+		t.Fatal(err)
+	}
+	if failedRows != 0 {
+		t.Fatalf("retry left %d failure rows after success", failedRows)
+	}
 }
 
-func TestTranslationPrefillSkipsEntryAfterThreeConsecutiveFailures(t *testing.T) {
+func TestTranslationPrefillKeepsPersistentFailureAfterThreeAttempts(t *testing.T) {
 	var calls atomic.Int32
 	model := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
@@ -178,44 +206,125 @@ func TestTranslationPrefillSkipsEntryAfterThreeConsecutiveFailures(t *testing.T)
 	seedPrefillCard(t, s, 1, "Example title")
 	configurePrefillModel(t, host, admin, model.URL)
 
-	var cursor int64
-	var status, lastError string
 	for attempt := 1; attempt <= 3; attempt++ {
 		if _, err := s.runTranslationPrefillBatch(context.Background()); err != nil {
 			t.Fatalf("attempt %d: %v", attempt, err)
 		}
-		cursor, status, lastError = readPrefillState(t, s)
+		_, status, lastError := readPrefillState(t, s)
 		if status != "running" {
 			t.Fatalf("attempt %d status = %q, want running", attempt, status)
 		}
-		if attempt < 3 {
-			if cursor != 0 {
-				t.Fatalf("attempt %d cursor = %d, want the failing entry retried", attempt, cursor)
-			}
-			continue
-		}
-		if cursor != 1 {
-			t.Fatalf("third failure cursor = %d, want entry skipped", cursor)
-		}
-		if !strings.Contains(lastError, "skipped 1 entries after 3 failures") || !strings.Contains(lastError, "1") {
-			t.Fatalf("last_error = %q, want skipped count and id", lastError)
+		if !strings.Contains(lastError, "no translation") {
+			t.Fatalf("attempt %d last_error = %q, want the upstream failure", attempt, lastError)
 		}
 		if len(lastError) > 300 {
 			t.Fatalf("last_error length = %d, want at most 300", len(lastError))
+		}
+		if attempt < 3 {
+			// The third attempt exhausts the budget and must stay unscheduled.
+			if _, err := s.db.Exec(`UPDATE translation_prefill_failure SET next_retry_at=datetime('now','-1 minute')`); err != nil {
+				t.Fatal(err)
+			}
 		}
 	}
 	if calls.Load() != 9 {
 		t.Fatalf("model calls = %d, want three languages on each of three batches", calls.Load())
 	}
 
-	// Reaching the end of the scan must not turn skipped entries into a
-	// complete corpus. The cursor returns to the first missing entry.
+	// A terminal failure stays in the table and is never treated as skipped or
+	// covered. Reaching the end of the scan cannot make the corpus complete.
 	if _, err := s.runTranslationPrefillBatch(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	cursor, status, lastError = readPrefillState(t, s)
-	if status == "complete" || cursor != 0 || !strings.Contains(lastError, "coverage incomplete") {
-		t.Fatalf("after scan end = cursor %d status %q last_error %q, want 0/running/incomplete", cursor, status, lastError)
+	_, status, lastError := readPrefillState(t, s)
+	if status == "complete" || lastError == "" {
+		t.Fatalf("after scan end = status %q last_error %q, want running with a failure", status, lastError)
+	}
+	var failed int
+	if err := s.db.QueryRow(`SELECT count(*) FROM translation_prefill_failure WHERE attempts>=3`).Scan(&failed); err != nil {
+		t.Fatal(err)
+	}
+	if failed != 3 {
+		t.Fatalf("terminal failures = %d, want three language rows", failed)
+	}
+	// A terminal failure is not scheduled. NULL is the contract for "no retry
+	// planned", and the due queue must not pick it up again.
+	var unscheduled int
+	if err := s.db.QueryRow(`SELECT count(*) FROM translation_prefill_failure
+		WHERE attempts>=3 AND next_retry_at IS NULL`).Scan(&unscheduled); err != nil {
+		t.Fatal(err)
+	}
+	if unscheduled != 3 {
+		t.Fatalf("terminal failures with NULL next_retry_at = %d, want 3", unscheduled)
+	}
+	due, err := s.dueTranslationPrefillFailures(context.Background(), mustTranslationConfig(t, s), 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(due) != 0 {
+		t.Fatalf("terminal failures were scheduled again: %#v", due)
+	}
+}
+
+func mustTranslationConfig(t *testing.T, s *Server) translation.Config {
+	t.Helper()
+	cfg, err := translation.NewStore(s.db).Load(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return cfg
+}
+
+// The cursor is (kind, field, id, language). One entity must receive every
+// model language before the scan advances, and a batch boundary must not repeat
+// an item or skip the next one.
+func TestTranslationPrefillCursorCoversEverySlotAndLanguage(t *testing.T) {
+	var calls atomic.Int32
+	model := successfulPrefillModel(t, &calls)
+	defer model.Close()
+	s, host, admin, _ := translationHTTPFixture(t)
+	configurePrefillModel(t, host, admin, model.URL)
+	const entries = 14
+	for id := int64(1); id <= entries; id++ {
+		seedPrefillCard(t, s, id, fmt.Sprintf("Example title %d", id))
+	}
+	// 14 entries x 4 languages = 56 items, so the first 50-item batch stops in
+	// the middle of the entry slot and the second resumes there.
+	batches := 0
+	for batches < 6 {
+		more, err := s.runTranslationPrefillBatch(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		batches++
+		if !more {
+			break
+		}
+	}
+	_, status, lastError := readPrefillState(t, s)
+	if status != "complete" || lastError != "" {
+		t.Fatalf("prefill did not complete: status %q last_error %q", status, lastError)
+	}
+	var rows int
+	if err := s.db.QueryRow(`SELECT count(*) FROM content_translation
+		WHERE entity_kind='entry' AND field='title'`).Scan(&rows); err != nil {
+		t.Fatal(err)
+	}
+	if rows != entries*4 {
+		t.Fatalf("entry title rows = %d, want %d", rows, entries*4)
+	}
+	// English is native, so only three model calls per entry.
+	if calls.Load() != entries*3 {
+		t.Fatalf("model calls = %d, want %d", calls.Load(), entries*3)
+	}
+	var duplicates int
+	if err := s.db.QueryRow(`SELECT count(*) FROM (
+		SELECT entity_kind,entity_id,field,language,source_text,count(*) AS n
+		FROM content_translation GROUP BY entity_kind,entity_id,field,language,source_text HAVING n>1)`).Scan(&duplicates); err != nil {
+		t.Fatal(err)
+	}
+	if duplicates != 0 {
+		t.Fatalf("cursor repeated %d corpus items", duplicates)
 	}
 }
 
@@ -251,6 +360,7 @@ func TestTranslationPrefillCoverageExcludesRetiredAndHistoricalRows(t *testing.T
 	for _, language := range []string{"en", "zh-Hans", "ja", "ko"} {
 		insertTranslatedContent(t, s.db, "entry", 1, "title", language, "当前标题", "Current title", "model")
 	}
+	insertTranslatedContent(t, s.db, "entry", 1, "title", "zh-Hant", "当前标题", "當前標題", "native")
 	// Historical source text for a live entry.
 	insertTranslatedContent(t, s.db, "entry", 1, "title", "zh-Hans", "旧标题", "旧译文", "model")
 	// Retired entry still has a row.
@@ -286,30 +396,32 @@ func TestTranslationPrefillCoverageDropsOnModelChange(t *testing.T) {
 	for _, language := range []string{"en", "zh-Hans", "ja", "ko"} {
 		insertTranslatedContent(t, s.db, "entry", 1, "title", language, "当前标题", "Old translation", "model")
 	}
-	if _, err := s.db.Exec(`UPDATE content_translation SET model='old-model', template_version=?`, translation.TemplateVersion); err != nil {
+	// Keep the model name but move the rows to a different config key. The
+	// current key covers base URL and reasoning too, so a model-only edit is not
+	// the only way a row becomes stale.
+	if _, err := s.db.Exec(`UPDATE content_translation SET config_key='legacy'`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.db.Exec(`UPDATE translation_prefill_state SET status='complete' WHERE id=1`); err != nil {
 		t.Fatal(err)
 	}
-	translationRequest(t, host, admin, "PATCH", "/api/settings/translation", `{"model":"new-model"}`, 200)
+	translationRequest(t, host, admin, "PATCH", "/api/settings/translation", `{"disableThinking":false}`, 200)
 
 	view := translationRequest(t, host, admin, "GET", "/api/settings/translation/prefill", "", 200)
 	if view["status"] == "complete" {
 		t.Fatalf("model change left complete coverage: %#v", view)
 	}
 	languages := prefillLanguageRows(t, view)
-	if item := languages["zh-Hans"]; item == nil || item["rows"] != float64(0) || item["missing"] != float64(1) {
-		t.Fatalf("zh-Hans after model change = %#v, want 0 rows and one missing", item)
+	if item := languages["zh-Hans"]; item == nil || item["rows"] != float64(0) || item["stale"] != float64(1) {
+		t.Fatalf("zh-Hans after model change = %#v, want 0 rows and one stale", item)
 	}
 }
 
 func TestTranslationPrefillPublishedEntryRollsCursorBack(t *testing.T) {
 	db := openMigratedTestDB(t)
-	if _, err := db.Exec(`UPDATE translation_prefill_state SET cursor_entry_id=10,status='complete' WHERE id=1`); err != nil {
+	if _, err := db.Exec(`UPDATE translation_prefill_state SET cursor_id=10,status='complete' WHERE id=1`); err != nil {
 		t.Fatal(err)
 	}
-	s := &Server{db: db, translationPrefillFailures: map[int64]int{7: 3, 20: 2, 99: 1}}
 	tx, err := db.Begin()
 	if err != nil {
 		t.Fatal(err)
@@ -321,17 +433,16 @@ func TestTranslationPrefillPublishedEntryRollsCursorBack(t *testing.T) {
 	if err = tx.Commit(); err != nil {
 		t.Fatal(err)
 	}
-	s.clearTranslationPrefillFailures([]int64{20, 7})
+	if _, err := db.Exec(`DELETE FROM translation_prefill_failure WHERE entity_kind='entry' AND entity_id IN (20,7)`); err != nil {
+		t.Fatal(err)
+	}
 	var cursor int64
 	var status string
-	if err := db.QueryRow(`SELECT cursor_entry_id,status FROM translation_prefill_state WHERE id=1`).Scan(&cursor, &status); err != nil {
+	if err := db.QueryRow(`SELECT cursor_id,status FROM translation_prefill_state WHERE id=1`).Scan(&cursor, &status); err != nil {
 		t.Fatal(err)
 	}
 	if cursor != 6 || status != "running" {
 		t.Fatalf("published rollback = cursor %d status %q, want 6/running", cursor, status)
-	}
-	if s.translationPrefillFailureCount(7) != 0 || s.translationPrefillFailureCount(20) != 0 || s.translationPrefillFailureCount(99) != 1 {
-		t.Fatal("published entries did not get a fresh retry budget")
 	}
 }
 
@@ -425,5 +536,60 @@ func TestTranslationPrefillLoadsProtectedNamesOncePerEntry(t *testing.T) {
 	}
 	if loads != 1 {
 		t.Fatalf("protected-name loads = %d, want once for all languages of one entry", loads)
+	}
+}
+
+// A changed source text starts a fresh retry budget. The old failure row is
+// keyed by the old hash and must not suppress the new item.
+func TestTranslationPrefillSourceChangeClearsOldFailureHash(t *testing.T) {
+	s, host, admin, _ := translationHTTPFixture(t)
+	seedPrefillCard(t, s, 1, "First title")
+	configurePrefillModel(t, host, admin, "http://127.0.0.1:1")
+	cfg, err := translation.NewStore(s.db).Load(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	item := translationCorpusItem{Language: "zh-Hans", EntityKind: "entry", EntityID: 1, Field: "title", SourceText: "First title"}
+	if _, err := s.recordTranslationPrefillFailure(context.Background(), item, translation.ConfigKey(cfg), errors.New("upstream unavailable")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`UPDATE source_catalog_entry SET title='Second title' WHERE id=1`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`UPDATE translation_prefill_state SET status='running' WHERE id=1`); err != nil {
+		t.Fatal(err)
+	}
+	// The trigger deletes failures by entity/field, but a stale hash can also
+	// survive an interrupted trigger or a restored backup. Verify the due query
+	// itself rejects a hash that no longer matches the effective text.
+	item.SourceText = "Second title"
+	if _, err := s.recordTranslationPrefillFailure(context.Background(), item, translation.ConfigKey(cfg), errors.New("second failure")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`INSERT INTO translation_prefill_failure(
+		entity_kind,entity_id,field,language,config_key,source_hash,attempts,next_retry_at,last_error)
+		VALUES('entry',1,'title','zh-Hans',?,?,1,datetime('now','-1 minute'),'old text')`,
+		translation.ConfigKey(cfg), translationSourceHash("First title")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`UPDATE translation_prefill_failure SET next_retry_at=datetime('now','-1 minute')`); err != nil {
+		t.Fatal(err)
+	}
+	due, err := s.dueTranslationPrefillFailures(context.Background(), cfg, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, candidate := range due {
+		if candidate.SourceText != "Second title" {
+			t.Fatalf("due failure used stale source text: %#v", candidate)
+		}
+	}
+	var stale int
+	if err := s.db.QueryRow(`SELECT count(*) FROM translation_prefill_failure WHERE source_hash=?`,
+		translationSourceHash("First title")).Scan(&stale); err != nil {
+		t.Fatal(err)
+	}
+	if stale != 0 {
+		t.Fatalf("stale hash row survived: %d", stale)
 	}
 }

@@ -45,3 +45,11 @@ func DisplaySearchTargets(display, query string) ([]DisplaySearchTarget, bool) {
 		return nil, false
 	}
 }
+
+// LikeContainsPattern turns a literal needle into an escaped SQLite LIKE
+// pattern. SQLite's LIKE is case-insensitive for ASCII, matching the previous
+// lower() comparison, and it avoids a function call per candidate row.
+func LikeContainsPattern(needle string) string {
+	replacer := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
+	return "%" + replacer.Replace(needle) + "%"
+}

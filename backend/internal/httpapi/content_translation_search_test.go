@@ -17,14 +17,15 @@ import (
 func insertTranslatedContent(t *testing.T, db *sql.DB, kind string, id int64, field, language, sourceText, text, origin string) {
 	t.Helper()
 	key := fmt.Sprintf("%s|%d|%s|%s|%s|%s", kind, id, field, language, origin, text)
-	model, template := "", ""
+	model, template, configKey := "", "", ""
 	if origin == "model" {
 		model = translation.DefaultModel
 		template = translation.TemplateVersion
+		configKey = translation.ConfigKey(translation.Config{Model: translation.DefaultModel, DisableThinking: true})
 	}
 	if _, err := db.Exec(`INSERT INTO content_translation(
-		cache_key, entity_kind, entity_id, field, language, source_text, translated_text, origin, model, template_version)
-		VALUES(?,?,?,?,?,?,?,?,?,?)`, key, kind, id, field, language, sourceText, text, origin, model, template); err != nil {
+		cache_key, entity_kind, entity_id, field, language, source_text, translated_text, origin, config_key, model, template_version)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?)`, key, kind, id, field, language, sourceText, text, origin, configKey, model, template); err != nil {
 		t.Fatalf("insert translation %s/%d/%s: %v", kind, id, language, err)
 	}
 }
@@ -91,6 +92,51 @@ func TestContentTranslationSearchRemoteStrictTargetLanguage(t *testing.T) {
 	fts := requestRemoteWorks(t, db, "q="+url.QueryEscape("雨夜的故事")+"&lang=zh-cn&pageSize=24")
 	if fts.Total != 1 || len(fts.Works) != 1 || fts.Works[0].CatalogEntryID != 1 {
 		t.Fatalf("zh-cn fts = %d %v, want entry 1: %#v", fts.Total, remoteWorkIDs(fts), fts)
+	}
+}
+
+// A display language must not fall back to the original title, and a release
+// code stays searchable even when the card has no target-language row.
+func TestContentTranslationSearchRemoteStrictTextAndLanguageIndependentCode(t *testing.T) {
+	db := openMigratedTestDB(t)
+	seedCatalogPlanSource(t, db)
+	insertCatalogPlanEntry(t, db, 1, "Original Only Title", "RJ00000001")
+	insertCatalogPlanAudio(t, db, 1, "01.mp3", "rain")
+	insertCatalogPlanEntry(t, db, 2, "Translated Title", "")
+	insertCatalogPlanAudio(t, db, 2, "01.mp3", "rain")
+	insertTranslatedContent(t, db, "entry", 2, "title", "zh-Hans", "Translated Title", "中文标题", "model")
+
+	for _, query := range []string{"Original Only", "Original"} {
+		response := requestRemoteWorks(t, db, "q="+url.QueryEscape(query)+"&lang=zh-cn&pageSize=24")
+		if response.Total != 0 {
+			t.Fatalf("%q leaked the original title into zh-cn: %v", query, remoteWorkIDs(response))
+		}
+	}
+	code := requestRemoteWorks(t, db, "q=RJ00000001&lang=zh-cn&pageSize=24")
+	if code.Total != 1 || len(code.Works) != 1 || code.Works[0].CatalogEntryID != 1 {
+		t.Fatalf("code search in zh-cn = %d %v, want entry 1", code.Total, remoteWorkIDs(code))
+	}
+}
+
+// An entry has no description column. A model row for one cannot make a card
+// match, and a description request against a catalog entry is invalid input.
+func TestContentTranslationSearchRemoteEntryHasNoDescription(t *testing.T) {
+	db := openMigratedTestDB(t)
+	seedCatalogPlanSource(t, db)
+	insertCatalogPlanEntry(t, db, 1, "Original Title", "")
+	insertCatalogPlanAudio(t, db, 1, "01.mp3", "rain")
+	insertTranslatedContent(t, db, "entry", 1, "description", "zh-Hans", "A quiet night", "安静的夜晚", "model")
+
+	response := requestRemoteWorks(t, db, "q="+url.QueryEscape("安静")+"&lang=zh-cn&pageSize=24")
+	if response.Total != 0 {
+		t.Fatalf("entry description row leaked into search: %v", remoteWorkIDs(response))
+	}
+	s, host, listener, _ := translationHTTPFixture(t)
+	seedPrefillCard(t, s, 1, "Original Title")
+	result := translationRequest(t, host, listener, "POST", "/api/content-translations",
+		`{"catalogEntryId":1,"field":"description","text":"A quiet night","language":"zh-cn"}`, 400)
+	if result["code"] != "translation_invalid_input" {
+		t.Fatalf("entry description request = %#v, want invalid input", result)
 	}
 }
 
@@ -293,6 +339,39 @@ func TestContentTranslationSearchLibraryIgnoresHistoricalRows(t *testing.T) {
 	}
 }
 
+// Local Library search follows the same contract as the remote catalog:
+// description is searchable, origin never reads translations, and a release
+// code remains language-independent.
+func TestContentTranslationSearchLibraryStrictTextDescriptionAndCode(t *testing.T) {
+	db := openMigratedTestDB(t)
+	original, err := db.Exec(`INSERT INTO work (primary_code,title,description)
+		VALUES ('RJ00000061','Original Only Title','A quiet night')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	originalID, _ := original.LastInsertId()
+	translated, err := db.Exec(`INSERT INTO work (primary_code,title,description)
+		VALUES ('RJ00000062','Translated Title','Translated description')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	translatedID, _ := translated.LastInsertId()
+	insertTranslatedContent(t, db, "work", translatedID, "title", "zh-Hans", "Translated Title", "中文标题", "model")
+	insertTranslatedContent(t, db, "work", translatedID, "description", "zh-Hans", "Translated description", "中文简介", "model")
+
+	if leaked := requestLibraryWorks(t, db, "q="+url.QueryEscape("Original Only")+"&lang=zh-cn"); leaked.Total != 0 {
+		t.Fatalf("original title leaked into zh-cn: %#v", leaked.Works)
+	}
+	description := requestLibraryWorks(t, db, "q="+url.QueryEscape("中文简介")+"&lang=zh-cn")
+	if description.Total != 1 || len(description.Works) != 1 || description.Works[0].ID != translatedID {
+		t.Fatalf("translated description search = %d %#v", description.Total, description.Works)
+	}
+	code := requestLibraryWorks(t, db, "q=RJ00000061&lang=zh-cn")
+	if code.Total != 1 || len(code.Works) != 1 || code.Works[0].ID != originalID {
+		t.Fatalf("code search in zh-cn = %d %#v", code.Total, code.Works)
+	}
+}
+
 // An exact translated title outranks a substring hit even when the tie-break
 // order (id DESC) would place it second.
 func TestContentTranslationSearchRemoteExactFirst(t *testing.T) {
@@ -333,9 +412,9 @@ func TestContentTranslationSearchRemoteExactRankUsesEffectiveRows(t *testing.T) 
 		insertTranslatedContent(t, db, "entry", id, "title", "zh-Hans", titles[id], "夜雨物语", "model")
 	}
 	if _, err := db.Exec(`INSERT INTO content_translation(
-		cache_key,entity_kind,entity_id,field,language,source_text,translated_text,origin,model,template_version)
-		VALUES('rank-old-model','entry',3,'title','zh-Hans','Substring three','夜雨','model','old-model',?),
-		      ('rank-old-source','entry',4,'title','zh-Hans','Old source','夜雨','model',?,?)`,
+		cache_key,entity_kind,entity_id,field,language,source_text,translated_text,origin,config_key,model,template_version)
+		VALUES('rank-old-model','entry',3,'title','zh-Hans','Substring three','夜雨','model','old-key','old-model',?),
+		      ('rank-old-source','entry',4,'title','zh-Hans','Old source','夜雨','model','old-key',?,?)`,
 		translation.TemplateVersion, translation.DefaultModel, translation.TemplateVersion); err != nil {
 		t.Fatal(err)
 	}
@@ -364,11 +443,9 @@ func TestContentTranslationSearchRemoteDoesNotTruncateLargeMatchSet(t *testing.T
 		INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes)
 		SELECT i,'01.mp3','01.mp3','audio',1 FROM n;
 		WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<5001)
-		INSERT INTO content_translation(cache_key,entity_kind,entity_id,field,language,source_text,translated_text,origin)
-		SELECT 'limit-'||i,'entry',i,'title','zh-Hans','Original '||i,'作品'||i,'model' FROM n`); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.Exec(`UPDATE content_translation SET model=?, template_version=? WHERE origin='model'`,
+		INSERT INTO content_translation(cache_key,entity_kind,entity_id,field,language,source_text,translated_text,origin,config_key,model,template_version)
+		SELECT 'limit-'||i,'entry',i,'title','zh-Hans','Original '||i,'作品'||i,'model',?,?,? FROM n`,
+		translation.ConfigKey(translation.Config{Model: translation.DefaultModel, DisableThinking: true}),
 		translation.DefaultModel, translation.TemplateVersion); err != nil {
 		t.Fatal(err)
 	}
@@ -394,11 +471,9 @@ func TestContentTranslationSearchRemoteShortQueryCoversRowsBeyondFiftyThousand(t
 		INSERT INTO content_translation(cache_key,entity_kind,entity_id,field,language,source_text,translated_text,origin)
 		SELECT 'short-marker','entry',1,'title','zh-Hans','甲乙丙','甲乙丙','native';
 		WITH RECURSIVE n(i) AS (SELECT 2 UNION ALL SELECT i+1 FROM n WHERE i<50001)
-		INSERT INTO content_translation(cache_key,entity_kind,entity_id,field,language,source_text,translated_text,origin)
-		SELECT 'short-filler-'||i,'entry',i,'title','zh-Hans','Original '||i,'作品'||i,'model' FROM n`); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.Exec(`UPDATE content_translation SET model=?, template_version=? WHERE origin='model'`,
+		INSERT INTO content_translation(cache_key,entity_kind,entity_id,field,language,source_text,translated_text,origin,config_key,model,template_version)
+		SELECT 'short-filler-'||i,'entry',i,'title','zh-Hans','Original '||i,'作品'||i,'model',?,?,? FROM n`,
+		translation.ConfigKey(translation.Config{Model: translation.DefaultModel, DisableThinking: true}),
 		translation.DefaultModel, translation.TemplateVersion); err != nil {
 		t.Fatal(err)
 	}

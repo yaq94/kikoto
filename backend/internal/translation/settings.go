@@ -4,9 +4,12 @@ package translation
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"strconv"
 	"strings"
 
 	"github.com/yexca/kikoto/backend/internal/outbound"
@@ -79,6 +82,20 @@ type Patch struct {
 type Store struct{ db *sql.DB }
 
 func NewStore(db *sql.DB) *Store { return &Store{db: db} }
+
+// ConfigKey identifies the output-shaping translation configuration. It
+// deliberately excludes credentials and resource limits: changing those must
+// not invalidate a corpus row or split the prefill cursor.
+func ConfigKey(cfg Config) string {
+	payload := strings.Join([]string{
+		cfg.Model,
+		cfg.BaseURL,
+		TemplateVersion,
+		strconv.FormatBool(cfg.DisableThinking),
+	}, "|")
+	sum := sha256.Sum256([]byte(payload))
+	return hex.EncodeToString(sum[:])
+}
 
 type queryer interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row

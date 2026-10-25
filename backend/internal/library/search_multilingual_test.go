@@ -3,10 +3,10 @@ package library
 import (
 	"context"
 	"database/sql"
-	"path/filepath"
 	"reflect"
 	"testing"
 
+	"github.com/yexca/kikoto/backend/internal/migrationfixture"
 	"github.com/yexca/kikoto/backend/internal/storage"
 	"github.com/yexca/kikoto/backend/internal/testfixture"
 )
@@ -49,7 +49,7 @@ func searchGenre(t *testing.T, db *sql.DB, workID int64, genreID int64, names ma
 }
 
 func TestSearchFindsOwnVariantTitleAfterPriorityProjection(t *testing.T) {
-	db := openSearchTestDB(t, "../../migrations")
+	db := openSearchTestDB(t, "")
 	// The priority projection rewrote the canonical title into another language.
 	canonical := insertSearchWork(t, db, 10, "Projected simplified title")
 	translated := insertSearchWork(t, db, 11, "Projected simplified title")
@@ -66,7 +66,7 @@ func TestSearchFindsOwnVariantTitleAfterPriorityProjection(t *testing.T) {
 }
 
 func TestSearchExpandsDLsiteGenreIDsAcrossLanguages(t *testing.T) {
-	db := openSearchTestDB(t, "../../migrations")
+	db := openSearchTestDB(t, "")
 	girl := insertSearchWork(t, db, 12, "Example One")
 	healing := insertSearchWork(t, db, 13, "Example Two")
 	tagSearchWork(t, db, girl, "少女")
@@ -90,7 +90,7 @@ func TestSearchExpandsDLsiteGenreIDsAcrossLanguages(t *testing.T) {
 }
 
 func TestSearchRanksExactMatchesAheadOfPartialMatches(t *testing.T) {
-	db := openSearchTestDB(t, "../../migrations")
+	db := openSearchTestDB(t, "")
 	older := insertSearchWork(t, db, 15, "Example One")
 	exact := insertSearchWork(t, db, 16, "Example Two")
 	insertSearchWork(t, db, 17, "Girl Next Door")
@@ -129,8 +129,7 @@ func TestSearchRanksExactMatchesAheadOfPartialMatches(t *testing.T) {
 }
 
 func TestMultilingualSearchMigrationsIndexExistingWorks(t *testing.T) {
-	migrationDir := filepath.Join("..", "..", "migrations")
-	db := openSearchTestDB(t, migrationsBefore(t, migrationDir, "046_work_search_variant_title.sql"))
+	db := openSearchTestDB(t, migrationsBefore(t, "", "046_work_search_variant_title.sql"))
 	projected := insertSearchWork(t, db, 18, "Projected title")
 	legacy := insertSearchWork(t, db, 19, "Legacy Example")
 	logicalID := searchEditionFamily(t, db, []int{18}, projected)
@@ -145,7 +144,7 @@ func TestMultilingualSearchMigrationsIndexExistingWorks(t *testing.T) {
 	snapshot(projected, 18, "en-us", "2000-01-02 00:00:00", `{"product":{"genres":[{"id":206,"name":"Girl","name_base":"少女"},{"id":"9","name":"Text id"}]}}`)
 	snapshot(legacy, 19, "", "2000-01-01 00:00:00", `{"genres":[{"id":56,"name":"癒し","name_base":"癒し"}]}`)
 
-	if err := storage.Migrate(db, migrationDir); err != nil {
+	if err := storage.MigrateFS(db, migrationfixture.MustFS(t), "test"); err != nil {
 		t.Fatal(err)
 	}
 	store := NewStore(db)

@@ -1,6 +1,7 @@
 // Command translation-bench measures the persistent translation store at
-// several corpus sizes. It creates a disposable database, applies the real
-// migration chain and the real queries, and reports timings plus file sizes.
+// several corpus sizes. It creates a disposable database, applies the packaged
+// catalog with test-only 097/098 placeholders while those branches are
+// unmerged, runs the real queries, and reports timings plus file sizes.
 //
 //	go run ./cmd/translation-bench --rows 8000,32000 --runs 20
 package main
@@ -16,8 +17,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/yexca/kikoto/backend/internal/migrationfixture"
 	"github.com/yexca/kikoto/backend/internal/storage"
-	"github.com/yexca/kikoto/backend/migrations"
+	"github.com/yexca/kikoto/backend/internal/translation"
 	_ "modernc.org/sqlite"
 )
 
@@ -25,11 +27,16 @@ import (
 // language per entity is what production will hold.
 var benchLanguages = []string{"en", "zh-Hans", "ja", "ko"}
 
+var benchConfigKey = translation.ConfigKey(translation.Config{Model: "bench", DisableThinking: true})
+
 type queryResult struct {
 	MedianMS float64 `json:"medianMs"`
 	P95MS    float64 `json:"p95Ms"`
 	MaxMS    float64 `json:"maxMs"`
 	Rows     int     `json:"rows"`
+	// Runs is the number of measured executions. A zero duration means the
+	// query completed below the microsecond timer, not that it was skipped.
+	Runs int `json:"runs"`
 }
 
 type sizeReport struct {
@@ -43,6 +50,8 @@ type sizeReport struct {
 	Exact         queryResult `json:"exact"`
 	FTS           queryResult `json:"fts"`
 	Short         queryResult `json:"short"`
+	ShortNoLower  queryResult `json:"shortNoLower"`
+	ShortLike     queryResult `json:"shortLike"`
 	ShortPlan     []string    `json:"shortPlan"`
 }
 
@@ -68,9 +77,9 @@ func main() {
 			os.Exit(1)
 		}
 		reports = append(reports, report)
-		fmt.Printf("rows=%-7d insert=%.1fs db=%.1fMB fts=%.1fMB vacuum=%.1fMB exact p95=%.2fms fts p95=%.2fms short p95=%.2fms\n",
+		fmt.Printf("rows=%-7d insert=%.1fs db=%.1fMB fts=%.1fMB vacuum=%.1fMB exact p95=%.2fms fts p95=%.2fms short p95=%.2fms short-no-lower p95=%.2fms short-like p95=%.2fms\n",
 			size, report.InsertSeconds, mb(report.DBBytes), mb(report.FTSBytes), mb(report.AfterVacuum),
-			report.Exact.P95MS, report.FTS.P95MS, report.Short.P95MS)
+			report.Exact.P95MS, report.FTS.P95MS, report.Short.P95MS, report.ShortNoLower.P95MS, report.ShortLike.P95MS)
 	}
 	if *out != "" {
 		data, _ := json.MarshalIndent(reports, "", "  ")
@@ -96,7 +105,14 @@ func measure(rows, runs int) (sizeReport, error) {
 	}
 	defer func() { _ = db.Close() }()
 	db.SetMaxOpenConns(1)
-	if err = storage.MigrateFS(db, migrations.Files, "bench"); err != nil {
+	// 097/098 are owned by unmerged branches. The bench uses the same
+	// self-contained test catalog as the HTTP tests, so 099 is exercised
+	// without changing its production number or writing a fake compat file.
+	files, err := migrationfixture.FS()
+	if err != nil {
+		return sizeReport{}, err
+	}
+	if err = storage.MigrateFS(db, files, "bench"); err != nil {
 		return sizeReport{}, err
 	}
 	report := sizeReport{Rows: rows}
@@ -146,7 +162,13 @@ func measure(rows, runs int) (sizeReport, error) {
 	report.Short = timeQuery(runs, func() (int, error) {
 		return countShort(db, firstRunes(sampleTitle, 2))
 	})
-	report.ShortPlan = explainPlan(db, shortSearchSQL, "zh-Hans", "entry", firstRunes(sampleTitle, 2))
+	report.ShortNoLower = timeQuery(runs, func() (int, error) {
+		return countShortNoLower(db, firstRunes(sampleTitle, 2))
+	})
+	report.ShortLike = timeQuery(runs, func() (int, error) {
+		return countShortLike(db, firstRunes(sampleTitle, 2))
+	})
+	report.ShortPlan = explainPlan(db, shortSearchSQL, "zh-Hans", "entry", benchConfigKey, "%"+firstRunes(sampleTitle, 2)+"%")
 	if _, err = db.Exec("VACUUM"); err != nil {
 		return report, err
 	}
@@ -163,8 +185,8 @@ func insertBatch(db *sql.DB, begin, end int) error {
 	}
 	defer func() { _ = tx.Rollback() }()
 	statement, err := tx.Prepare(`INSERT INTO content_translation
-		(cache_key,entity_kind,entity_id,field,language,source_text,translated_text,origin,model,template_version)
-		VALUES(?,?,?,?,?,?,?,?,?,?)`)
+		(cache_key,entity_kind,entity_id,field,language,source_text,translated_text,origin,config_key,model,template_version)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?)`)
 	if err != nil {
 		return err
 	}
@@ -173,7 +195,7 @@ func insertBatch(db *sql.DB, begin, end int) error {
 		title := syntheticTitle(index)
 		key := fmt.Sprintf("%064x", index+1)
 		language := benchLanguages[(index/3)%len(benchLanguages)]
-		if _, err = statement.Exec(key, "entry", index/3+1, "title", language, title, title, "model", "bench", "index-user-v1"); err != nil {
+		if _, err = statement.Exec(key, "entry", index/3+1, "title", language, title, title, "model", benchConfigKey, "bench", "index-user-v1"); err != nil {
 			return err
 		}
 	}
@@ -226,23 +248,36 @@ func countFTS(db *sql.DB, term string) (int, error) {
 	return count, err
 }
 
-const shortSearchSQL = `SELECT count(*) FROM (
-	WITH RECURSIVE segments(start_id,max_id) AS (
-		SELECT 0,COALESCE(MAX(id),0) FROM content_translation
-		WHERE language=? AND entity_kind=?
-		UNION ALL
-		SELECT start_id+4096,max_id FROM segments WHERE start_id+4096<=max_id
-	)
-	SELECT ct.entity_id FROM segments seg
-	CROSS JOIN content_translation ct
-	  ON ct.id>seg.start_id AND ct.id<=seg.start_id+4096 AND ct.id<=seg.max_id
-	WHERE ct.language=? AND ct.entity_kind=? AND ct.field='title'
-	  AND instr(lower(ct.translated_text),lower(?))>0
-)`
+const shortSearchSQL = `SELECT count(*) FROM content_translation ct INDEXED BY idx_content_translation_short_current
+	WHERE ct.language=? AND ct.entity_kind=? AND ct.field IN ('title','description')
+	  AND (ct.origin='native' OR (ct.origin='model' AND ct.config_key=?))
+	  AND ct.translated_text LIKE ? ESCAPE '\'`
+
+const shortSearchNoLowerSQL = `SELECT count(*) FROM content_translation ct INDEXED BY idx_content_translation_short_current
+	WHERE ct.language=? AND ct.entity_kind=? AND ct.field IN ('title','description')
+	  AND (ct.origin='native' OR (ct.origin='model' AND ct.config_key=?))
+	  AND instr(ct.translated_text,?)>0`
 
 func countShort(db *sql.DB, term string) (int, error) {
 	var count int
-	err := db.QueryRow(shortSearchSQL, "zh-Hans", "entry", "zh-Hans", "entry", term).Scan(&count)
+	err := db.QueryRow(shortSearchSQL, "zh-Hans", "entry", benchConfigKey, "%"+term+"%").Scan(&count)
+	return count, err
+}
+
+func countShortNoLower(db *sql.DB, term string) (int, error) {
+	var count int
+	err := db.QueryRow(shortSearchNoLowerSQL, "zh-Hans", "entry", benchConfigKey, term).Scan(&count)
+	return count, err
+}
+
+const shortSearchLikeSQL = `SELECT count(*) FROM content_translation ct INDEXED BY idx_content_translation_short_current
+	WHERE ct.language=? AND ct.entity_kind=? AND ct.field IN ('title','description')
+	  AND (ct.origin='native' OR (ct.origin='model' AND ct.config_key=?))
+	  AND ct.translated_text LIKE ?`
+
+func countShortLike(db *sql.DB, term string) (int, error) {
+	var count int
+	err := db.QueryRow(shortSearchLikeSQL, "zh-Hans", "entry", benchConfigKey, "%"+term+"%").Scan(&count)
 	return count, err
 }
 
@@ -282,6 +317,7 @@ func timeQuery(runs int, fn func() (int, error)) queryResult {
 		P95MS:    samples[min(len(samples)-1, int(float64(len(samples))*0.95))],
 		MaxMS:    samples[len(samples)-1],
 		Rows:     rows,
+		Runs:     runs,
 	}
 }
 

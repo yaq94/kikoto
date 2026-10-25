@@ -3,12 +3,12 @@ package library
 import (
 	"context"
 	"database/sql"
-	"os"
 	"path/filepath"
 	"reflect"
 	"testing"
 	"time"
 
+	"github.com/yexca/kikoto/backend/internal/migrationfixture"
 	"github.com/yexca/kikoto/backend/internal/storage"
 	"github.com/yexca/kikoto/backend/internal/testfixture"
 )
@@ -22,34 +22,23 @@ func openSearchTestDB(t *testing.T, migrationDir string) *sql.DB {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	if err := storage.Migrate(db, migrationDir); err != nil {
+	// An empty migrationDir means the complete local test catalog. A staged
+	// previous-schema directory still uses the directory API.
+	if migrationDir == "" {
+		if err := storage.MigrateFS(db, migrationfixture.MustFS(t), "test"); err != nil {
+			t.Fatal(err)
+		}
+	} else if err := storage.Migrate(db, migrationDir); err != nil {
 		t.Fatal(err)
 	}
 	return db
 }
 
-// migrationsBefore copies the numbered migrations that sort before filename
-// into a temporary directory, so a test can build the previous schema.
+// migrationsBefore materializes the test catalog up to filename, so a test can
+// build the previous schema without a gap in the authored 097/098 chain.
 func migrationsBefore(t *testing.T, migrationDir string, filename string) string {
 	t.Helper()
-	previousDir := t.TempDir()
-	entries, err := os.ReadDir(migrationDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, entry := range entries {
-		if entry.IsDir() || entry.Name() >= filename {
-			continue
-		}
-		contents, err := os.ReadFile(filepath.Join(migrationDir, entry.Name()))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(previousDir, entry.Name()), contents, 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	return previousDir
+	return migrationfixture.DirBefore(t, filename)
 }
 
 func execSearchFixture(t *testing.T, db *sql.DB, query string, args ...any) int64 {
@@ -71,7 +60,7 @@ func insertSearchWork(t *testing.T, db *sql.DB, ordinal int, title string) int64
 }
 
 func TestSearchIndexesEveryTitleLanguageAndTracksScopedResets(t *testing.T) {
-	db := openSearchTestDB(t, "../../migrations")
+	db := openSearchTestDB(t, "")
 	id := insertSearchWork(t, db, 0, "【简体中文版】Example display title")
 	execSearchFixture(t, db, `INSERT INTO work_manual_override(work_id,field_name,language,value_json) VALUES (?,'title','ja-jp','"Example Japanese manual"'),(?,'title','ko-kr','"Example Korean manual"')`, id, id)
 	store := NewStore(db)
@@ -126,7 +115,7 @@ func assertSearchCodes(t *testing.T, store *Store, userID int64, query string, o
 }
 
 func TestSearchMatchesWildcardAndSyntaxCharactersLiterally(t *testing.T) {
-	db := openSearchTestDB(t, "../../migrations")
+	db := openSearchTestDB(t, "")
 	insertSearchWork(t, db, 0, "Example 100% Voice")
 	insertSearchWork(t, db, 1, "Example 1000 Voice")
 	insertSearchWork(t, db, 2, "Example a_b")
@@ -149,7 +138,7 @@ func TestSearchMatchesWildcardAndSyntaxCharactersLiterally(t *testing.T) {
 }
 
 func TestSearchFoldsWidthCaseAndKana(t *testing.T) {
-	db := openSearchTestDB(t, "../../migrations")
+	db := openSearchTestDB(t, "")
 	userID := execSearchFixture(t, db, `INSERT INTO user_account (username, display_name, role) VALUES ('synthetic-user', 'Example User', 'user')`)
 	whisper := insertSearchWork(t, db, 4, "ささやきボイス")
 	other := insertSearchWork(t, db, 5, "Other Work")
@@ -178,7 +167,7 @@ func TestSearchFoldsWidthCaseAndKana(t *testing.T) {
 }
 
 func TestSearchIndexFollowsMetadataChangesAcrossEditionFamily(t *testing.T) {
-	db := openSearchTestDB(t, "../../migrations")
+	db := openSearchTestDB(t, "")
 	canonical := insertSearchWork(t, db, 6, "Canonical Example")
 	translated := insertSearchWork(t, db, 7, "Translated Example")
 	logicalID := execSearchFixture(t, db, `INSERT INTO logical_work (canonical_work_id, canonical_code) VALUES (?, ?)`, canonical, testfixture.WorkCode(testfixture.PrefixRJ, 6))
@@ -210,12 +199,11 @@ func TestSearchIndexFollowsMetadataChangesAcrossEditionFamily(t *testing.T) {
 }
 
 func TestSearchIndexMigrationIndexesExistingWorks(t *testing.T) {
-	migrationDir := filepath.Join("..", "..", "migrations")
-	db := openSearchTestDB(t, migrationsBefore(t, migrationDir, searchIndexMigration))
+	db := openSearchTestDB(t, migrationsBefore(t, "", searchIndexMigration))
 	workID := insertSearchWork(t, db, 8, "Existing Example")
 	tagSearchWork(t, db, workID, "癒し")
 
-	if err := storage.Migrate(db, migrationDir); err != nil {
+	if err := storage.MigrateFS(db, migrationfixture.MustFS(t), "test"); err != nil {
 		t.Fatal(err)
 	}
 	store := NewStore(db)
@@ -234,7 +222,7 @@ func TestSearchIndexMigrationIndexesExistingWorks(t *testing.T) {
 }
 
 func TestSearchLeavesLongQueueToBackgroundWorker(t *testing.T) {
-	db := openSearchTestDB(t, "../../migrations")
+	db := openSearchTestDB(t, "")
 	backlog := searchIndexInlineLimit + 1
 	ordinals := make([]int, 0, backlog)
 	for ordinal := range backlog {
@@ -282,7 +270,7 @@ func TestSearchLeavesLongQueueToBackgroundWorker(t *testing.T) {
 // A leading "-" excludes on the circle and voice actor fields exactly as it does
 // on tags, and a quoted phrase is one needle rather than independent words.
 func TestSearchExcludesCirclesAndVoicesAndKeepsQuotedPhrasesWhole(t *testing.T) {
-	db := openSearchTestDB(t, "../../migrations")
+	db := openSearchTestDB(t, "")
 	credited := insertSearchWork(t, db, 6, "Example calm night")
 	other := insertSearchWork(t, db, 7, "Example night calm")
 	personID := execSearchFixture(t, db, `INSERT INTO person (display_name) VALUES ('Example Voice')`)

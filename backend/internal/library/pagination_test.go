@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/yexca/kikoto/backend/internal/migrationfixture"
 	"github.com/yexca/kikoto/backend/internal/storage"
 	"github.com/yexca/kikoto/backend/internal/testfixture"
 )
@@ -116,7 +117,7 @@ func seedPaginationLibrary(t testing.TB, count, tracks, snapshotBytes int) (*Sto
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	if err := storage.Migrate(db, "../../migrations"); err != nil {
+	if err := storage.MigrateFS(db, migrationfixture.MustFS(t), "test"); err != nil {
 		t.Fatal(err)
 	}
 	tx, err := db.Begin()
@@ -226,7 +227,7 @@ func TestListPagePlacesMissingSortValuesLast(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	if err := storage.Migrate(db, "../../migrations"); err != nil {
+	if err := storage.MigrateFS(db, migrationfixture.MustFS(t), "test"); err != nil {
 		t.Fatal(err)
 	}
 	for ordinal, row := range []struct {

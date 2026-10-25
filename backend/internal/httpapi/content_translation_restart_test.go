@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/yexca/kikoto/backend/internal/config"
+	"github.com/yexca/kikoto/backend/internal/migrationfixture"
 	"github.com/yexca/kikoto/backend/internal/storage"
 	"github.com/yexca/kikoto/backend/internal/translation"
 )
@@ -35,7 +36,7 @@ func TestContentTranslationCorpusAndIndependentPreferencesSurviveRestart(t *test
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := storage.Migrate(db, filepath.Join("..", "..", "migrations")); err != nil {
+		if err := storage.MigrateFS(db, migrationfixture.MustFS(t), "test"); err != nil {
 			t.Fatal(err)
 		}
 		app = NewServer(db, config.Config{Mode: config.ModeProduction, RootUsername: "root", CacheRoot: filepath.Join(root, "cache")})
@@ -86,9 +87,10 @@ func TestContentTranslationCorpusAndIndependentPreferencesSurviveRestart(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := app.pruneContentTranslations(context.Background(), translation.Config{
-		Limits: translation.Limits{CacheBytes: 4096}, Model: translationCfg.Model,
-	}); err != nil {
+	// The title row is search corpus. A 4 KiB soft budget must report
+	// over_budget and keep the row, not evict it.
+	translationCfg.CacheBytes = 4096
+	if err := app.pruneContentTranslations(context.Background(), translationCfg); err != nil {
 		t.Fatalf("retention before restart: %v", err)
 	}
 	stop()

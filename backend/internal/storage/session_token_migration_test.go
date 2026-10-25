@@ -1,14 +1,13 @@
 package storage
 
 import (
-	"path/filepath"
 	"testing"
 )
 
 // Migration 040 removes sessions stored as plaintext tokens before lookups
 // switch to token digests, so no usable credential stays at rest.
 func TestMigrationRemovesPlaintextSessions(t *testing.T) {
-	sourceDir := filepath.Join("..", "..", "migrations")
+	sourceDir := testMigrationDir(t)
 	db := openMigrationManagerDB(t)
 	if err := Migrate(db, copyNumberedMigrationsThrough(t, sourceDir, 39)); err != nil {
 		t.Fatal(err)

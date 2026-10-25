@@ -17,6 +17,7 @@ import (
 	"github.com/yexca/kikoto/backend/internal/library"
 	"github.com/yexca/kikoto/backend/internal/openlist"
 	"github.com/yexca/kikoto/backend/internal/translation"
+	"github.com/yexca/kikoto/backend/internal/workcode"
 )
 
 const sourceTypeOpenList = "openlist"
@@ -751,6 +752,9 @@ func (s *Server) listOpenListWorks(w http.ResponseWriter, r *http.Request, sourc
 		pageSize = 24
 	}
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
+	// A release code or another exact identifier is language-independent. It
+	// must still find a card whose text has no target-language row.
+	codeQuery := q != "" && workcode.Valid(q)
 	var (
 		pageSQL   string
 		pageArgs  []any
@@ -760,14 +764,18 @@ func (s *Server) listOpenListWorks(w http.ResponseWriter, r *http.Request, sourc
 	// An empty query stays on the browse path: there is nothing to match, so
 	// the display language must not narrow the list.
 	targets, languagePath := library.DisplaySearchTargets(r.URL.Query().Get("lang"), q)
+	if codeQuery {
+		languagePath = false
+	}
 	if languagePath && q != "" {
 		cfg, cfgErr := translation.NewStore(s.db).Load(r.Context())
 		if cfgErr != nil {
 			writeError(w, cfgErr)
 			return
 		}
-		prefix, from, args := openListCatalogCardsQueryLocalized(source.ID, q, targets, cfg.Model, translation.TemplateVersion)
-		rank, rankArgs := openListTranslationExactRankSQL(targets, "language_cards", cfg.Model, translation.TemplateVersion)
+		configKey := translation.ConfigKey(cfg)
+		prefix, from, args := openListCatalogCardsQueryLocalized(source.ID, q, targets, configKey)
+		rank, rankArgs := openListTranslationExactRankSQL(targets, "language_cards", configKey)
 		alias := `(SELECT * ` + from + `) AS language_cards`
 		cards := prefix + `SELECT id,series_id,primary_code,title,work_id,updated_at,availability_status,has_audio,COUNT(*) OVER () AS total
 	FROM ` + alias + ` ORDER BY ` + rank + ` DESC, updated_at DESC,series_id DESC,id DESC LIMIT ? OFFSET ?`
@@ -836,21 +844,21 @@ func (s *Server) listOpenListWorks(w http.ResponseWriter, r *http.Request, sourc
 // search omits both the FTS CTE and the per-file instr predicates, so browsing
 // without a query never touches file titles.
 func openListCatalogCardsQuery(sourceID int64, query string) (string, string, []any) {
-	return openListCatalogCardsQueryFiltered(sourceID, query, nil, nil, nil, "", "")
+	return openListCatalogCardsQueryFiltered(sourceID, query, nil, nil, nil, "")
 }
 
 // openListCatalogCardsQueryLocalized restricts text search to the reader's
 // display-language corpus. It never falls back to the original title or
 // truncates a large translated match set.
-func openListCatalogCardsQueryLocalized(sourceID int64, query string, targets []library.DisplaySearchTarget, model, template string) (string, string, []any) {
-	return openListCatalogCardsQueryFiltered(sourceID, query, nil, nil, targets, model, template)
+func openListCatalogCardsQueryLocalized(sourceID int64, query string, targets []library.DisplaySearchTarget, configKey string) (string, string, []any) {
+	return openListCatalogCardsQueryFiltered(sourceID, query, nil, nil, targets, configKey)
 }
 
 func openListCatalogCardsQueryForEntries(sourceID int64, entryIDs []int64) (string, string, []any) {
-	return openListCatalogCardsQueryFiltered(sourceID, "", entryIDs, nil, nil, "", "")
+	return openListCatalogCardsQueryFiltered(sourceID, "", entryIDs, nil, nil, "")
 }
 
-func openListCatalogCardsQueryFiltered(sourceID int64, query string, entryIDs, seriesIDs []int64, localized []library.DisplaySearchTarget, translationModel, translationTemplate string) (string, string, []any) {
+func openListCatalogCardsQueryFiltered(sourceID int64, query string, entryIDs, seriesIDs []int64, localized []library.DisplaySearchTarget, configKey string) (string, string, []any) {
 	query = strings.TrimSpace(query)
 	prefix := ""
 	args := []any{}
@@ -895,7 +903,7 @@ func openListCatalogCardsQueryFiltered(sourceID int64, query string, entryIDs, s
 		if len(localized) > 0 {
 			// A display language searches only its own corpus. Original-title
 			// matches are not a fallback for a missing translation.
-			prefix, args = localizedCatalogSearchSQL(localized, sourceID, utf8.RuneCountInString(query) < 3, translationModel, translationTemplate)
+			prefix, args = localizedCatalogSearchSQL(localized, sourceID, utf8.RuneCountInString(query) < 3, configKey)
 			entrySearch = ` AND (e.id IN (SELECT catalog_entry_id FROM search_hits WHERE catalog_entry_id<>0)
 			OR EXISTS(SELECT 1 FROM search_hits sh JOIN catalog_series_member sm ON sm.series_id=sh.series_id WHERE sh.series_id<>0 AND sm.catalog_entry_id=e.id))`
 			seriesSearch = ` AND (s.id IN (SELECT series_id FROM search_hits WHERE series_id<>0)
@@ -962,10 +970,11 @@ func ftsPhrase(query string) string {
 const contentTranslationShortSegment = 4096
 
 // localizedCatalogSearchSQL builds the translated hit set for a display
-// language. Three or more characters use the trigram index. One- and
-// two-character needles cannot form a trigram, so they walk bounded id ranges
-// over the complete corpus for the requested language.
-func localizedCatalogSearchSQL(targets []library.DisplaySearchTarget, sourceID int64, short bool, model, template string) (string, []any) {
+// language. Entry and series titles are searchable; source_catalog_entry has
+// no description column. Three or more characters use the trigram index; one-
+// and two-character needles page over the complete effective set with the
+// covering short index.
+func localizedCatalogSearchSQL(targets []library.DisplaySearchTarget, sourceID int64, short bool, configKey string) (string, []any) {
 	if !short {
 		prefix := `WITH search_hits AS MATERIALIZED (`
 		args := []any{}
@@ -977,56 +986,64 @@ func localizedCatalogSearchSQL(targets []library.DisplaySearchTarget, sourceID i
 			prefix += `SELECT ct.entity_id AS catalog_entry_id,0 AS series_id FROM content_translation_search
 				JOIN content_translation ct ON ct.id=content_translation_search.rowid
 				JOIN source_catalog_entry e ON e.id=ct.entity_id
-				WHERE content_translation_search MATCH ? AND ct.entity_kind='entry' AND ct.field='title' AND ct.language=?
-				  AND e.file_source_id=? AND e.relocated_to_id IS NULL AND ct.source_text=e.title
-				  AND (ct.origin='native' OR (ct.origin='model' AND ct.model=? AND ct.template_version=?))
+				WHERE content_translation_search MATCH ? AND ct.entity_kind='entry'
+				  AND ct.field='title' AND ct.language=?
+				  AND e.file_source_id=? AND e.relocated_to_id IS NULL
+				  AND ct.source_text=e.title
+				  AND ` + translationCurrentRowSQL("ct", target.Language) + `
 				UNION ALL
 				SELECT 0 AS catalog_entry_id,ct.entity_id AS series_id FROM content_translation_search
 				JOIN content_translation ct ON ct.id=content_translation_search.rowid
 				JOIN catalog_series s ON s.id=ct.entity_id
 				WHERE content_translation_search MATCH ? AND ct.entity_kind='series' AND ct.field='title' AND ct.language=?
 				  AND s.source_id=? AND ct.source_text=s.title
-				  AND (ct.origin='native' OR (ct.origin='model' AND ct.model=? AND ct.template_version=?))`
-			args = append(args, phrase, target.Language, sourceID, model, template, phrase, target.Language, sourceID, model, template)
+				  AND ` + translationCurrentRowSQL("ct", target.Language)
+			args = append(args, phrase, target.Language, sourceID)
+			if target.Language != translation.SourceHant {
+				args = append(args, configKey)
+			}
+			args = append(args, phrase, target.Language, sourceID)
+			if target.Language != translation.SourceHant {
+				args = append(args, configKey)
+			}
 		}
 		return prefix + `) `, args
 	}
 
-	prefix := `WITH RECURSIVE `
+	prefix := `WITH search_hits AS MATERIALIZED (`
 	args := []any{}
-	for index, target := range targets {
-		if index > 0 {
-			prefix += `,`
-		}
-		prefix += fmt.Sprintf(`target_segments_%d(start_id,max_id) AS (
-			SELECT 0,COALESCE(MAX(id),0) FROM content_translation
-			WHERE language=? AND entity_kind IN ('entry','series')
-			UNION ALL
-			SELECT start_id+%d,max_id FROM target_segments_%d WHERE start_id+%d<=max_id
-		)`, index, contentTranslationShortSegment, index, contentTranslationShortSegment)
-		args = append(args, target.Language)
-	}
-	prefix += `, search_hits AS MATERIALIZED (`
 	for index, target := range targets {
 		if index > 0 {
 			prefix += ` UNION ALL `
 		}
-		prefix += fmt.Sprintf(`SELECT ct.entity_id AS catalog_entry_id,0 AS series_id FROM target_segments_%d seg
-			CROSS JOIN content_translation ct ON ct.id>seg.start_id AND ct.id<=seg.start_id+%d AND ct.id<=seg.max_id
+		prefix += `SELECT ct.entity_id AS catalog_entry_id,0 AS series_id
+				FROM content_translation ct INDEXED BY idx_content_translation_short_current
 			JOIN source_catalog_entry e ON e.id=ct.entity_id
-			WHERE ct.language=? AND ct.entity_kind='entry' AND ct.field='title'
-			  AND e.file_source_id=? AND e.relocated_to_id IS NULL AND ct.source_text=e.title
-			  AND (ct.origin='native' OR (ct.origin='model' AND ct.model=? AND ct.template_version=?))
-			  AND instr(lower(ct.translated_text),lower(?))>0
+				WHERE ct.language=? AND ct.entity_kind='entry' AND ct.field='title'
+			  AND e.file_source_id=? AND e.relocated_to_id IS NULL
+				  AND ct.source_text=e.title
+			  AND ` + translationCurrentRowSQL("ct", target.Language) + `
+				  AND ct.translated_text LIKE ? ESCAPE '\'
 			UNION ALL
-			SELECT 0 AS catalog_entry_id,ct.entity_id AS series_id FROM target_segments_%d seg
-			CROSS JOIN content_translation ct ON ct.id>seg.start_id AND ct.id<=seg.start_id+%d AND ct.id<=seg.max_id
+			SELECT 0 AS catalog_entry_id,ct.entity_id AS series_id
+				FROM content_translation ct INDEXED BY idx_content_translation_short_current
 			JOIN catalog_series s ON s.id=ct.entity_id
 			WHERE ct.language=? AND ct.entity_kind='series' AND ct.field='title'
 			  AND s.source_id=? AND ct.source_text=s.title
-			  AND (ct.origin='native' OR (ct.origin='model' AND ct.model=? AND ct.template_version=?))
-			  AND instr(lower(ct.translated_text),lower(?))>0`, index, contentTranslationShortSegment, index, contentTranslationShortSegment)
-		args = append(args, target.Language, sourceID, model, template, target.Query, target.Language, sourceID, model, template, target.Query)
+			  AND ` + translationCurrentRowSQL("ct", target.Language) + `
+				  AND ct.translated_text LIKE ? ESCAPE '\'`
+		args = append(args, target.Language)
+		args = append(args, sourceID)
+		if target.Language != translation.SourceHant {
+			args = append(args, configKey)
+		}
+		args = append(args, library.LikeContainsPattern(target.Query))
+		args = append(args, target.Language)
+		args = append(args, sourceID)
+		if target.Language != translation.SourceHant {
+			args = append(args, configKey)
+		}
+		args = append(args, library.LikeContainsPattern(target.Query))
 	}
 	return prefix + `) `, args
 }
@@ -1034,9 +1051,9 @@ func localizedCatalogSearchSQL(targets []library.DisplaySearchTarget, sourceID i
 // openListTranslationExactRankSQL marks a card whose translated title equals
 // the query, so exact hits sort ahead of substring hits. Ranking uses the same
 // effective-row definition as inclusion: current source text and current
-// model/template, with native rows exempt from the identity check. A series
-// card inherits an exact hit from any member entry.
-func openListTranslationExactRankSQL(targets []library.DisplaySearchTarget, cardAlias, model, template string) (string, []any) {
+// config key, with native rows exempt from the key. A series card inherits an
+// exact hit from any member entry.
+func openListTranslationExactRankSQL(targets []library.DisplaySearchTarget, cardAlias, configKey string) (string, []any) {
 	conditionFor := func(alias, sourceText string) (string, []any) {
 		pairs := []string{}
 		args := []any{}
@@ -1045,24 +1062,24 @@ func openListTranslationExactRankSQL(targets []library.DisplaySearchTarget, card
 			if query == "" {
 				continue
 			}
-			pairs = append(pairs, `(`+alias+`.language = ? AND `+alias+`.translated_text = ?)`)
+			pairs = append(pairs, `(`+alias+`.language = ? AND `+alias+`.translated_text = ? AND `+alias+`.field = 'title')`)
 			args = append(args, target.Language, target.Query)
 		}
 		if len(pairs) == 0 {
 			return "", nil
 		}
 		condition := "(" + strings.Join(pairs, " OR ") + ") AND " + alias + `.source_text=` + sourceText
-		if model != "" {
-			condition += ` AND (` + alias + `.origin='native' OR (` + alias + `.origin='model' AND ` + alias + `.model=? AND ` + alias + `.template_version=?))`
-			args = append(args, model, template)
+		if configKey != "" {
+			condition += ` AND (` + alias + `.origin='native' OR (` + alias + `.origin='model' AND ` + alias + `.config_key=?))`
+			args = append(args, configKey)
 		}
 		return condition, args
 	}
 
-	memberCondition, memberArgs := conditionFor("exact_hit", "(SELECT title FROM source_catalog_entry WHERE id=rank_member.catalog_entry_id)")
+	memberTitle, memberTitleArgs := conditionFor("exact_hit", "(SELECT title FROM source_catalog_entry WHERE id=rank_member.catalog_entry_id)")
 	seriesCondition, seriesArgs := conditionFor("series_hit", cardAlias+".title")
-	entryCondition, entryArgs := conditionFor("exact_hit", cardAlias+".title")
-	if memberCondition == "" || seriesCondition == "" || entryCondition == "" {
+	entryTitle, entryTitleArgs := conditionFor("exact_hit", cardAlias+".title")
+	if memberTitle == "" || seriesCondition == "" || entryTitle == "" {
 		return "0", nil
 	}
 	series := `(EXISTS (
@@ -1071,7 +1088,7 @@ func openListTranslationExactRankSQL(targets []library.DisplaySearchTarget, card
 			  AND EXISTS (
 				SELECT 1 FROM content_translation AS exact_hit INDEXED BY idx_content_translation_entity
 				WHERE exact_hit.entity_kind = 'entry' AND exact_hit.entity_id = rank_member.catalog_entry_id
-				  AND exact_hit.field = 'title' AND ` + memberCondition + `))
+				  AND ` + memberTitle + `))
 		  OR EXISTS (
 			SELECT 1 FROM content_translation AS series_hit INDEXED BY idx_content_translation_entity
 			WHERE series_hit.entity_kind = 'series' AND series_hit.entity_id = ` + cardAlias + `.series_id
@@ -1079,9 +1096,9 @@ func openListTranslationExactRankSQL(targets []library.DisplaySearchTarget, card
 	entry := `EXISTS (
 			SELECT 1 FROM content_translation AS exact_hit INDEXED BY idx_content_translation_entity
 			WHERE exact_hit.entity_kind = 'entry' AND exact_hit.entity_id = ` + cardAlias + `.id
-			  AND exact_hit.field = 'title' AND ` + entryCondition + `)`
-	rankArgs := append([]any{}, memberArgs...)
+			  AND ` + entryTitle + `)`
+	rankArgs := append([]any{}, memberTitleArgs...)
 	rankArgs = append(rankArgs, seriesArgs...)
-	rankArgs = append(rankArgs, entryArgs...)
+	rankArgs = append(rankArgs, entryTitleArgs...)
 	return `(CASE WHEN ` + cardAlias + `.series_id > 0 THEN ` + series + ` ELSE ` + entry + ` END)`, rankArgs
 }

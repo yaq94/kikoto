@@ -359,7 +359,7 @@ func TestOpenListCatalogLanguageSearchPlan(t *testing.T) {
 		t.Fatal(err)
 	}
 	prefix, from, args := openListCatalogCardsQueryForEntries(7, ids)
-	rank, rankArgs := openListTranslationExactRankSQL([]library.DisplaySearchTarget{{Language: "zh-Hans", Query: "作品1"}}, "language_cards", "", "")
+	rank, rankArgs := openListTranslationExactRankSQL([]library.DisplaySearchTarget{{Language: "zh-Hans", Query: "作品1"}}, "language_cards", "")
 	pageSQL := prefix + `language_cards AS MATERIALIZED (SELECT * ` + from + `)
 	SELECT id,series_id,primary_code,title,work_id,updated_at,availability_status,has_audio,(SELECT COUNT(*) FROM language_cards) AS total
 	FROM language_cards ORDER BY ` + rank + ` DESC, updated_at DESC,series_id DESC,id DESC LIMIT ? OFFSET ?`
@@ -400,14 +400,14 @@ func TestOpenListCatalogShortTranslationSearchPlan(t *testing.T) {
 	if !ok {
 		t.Fatal("zh-cn is not a display language")
 	}
-	prefix, from, args := openListCatalogCardsQueryLocalized(7, "夜", targets, "m", "v1")
+	prefix, from, args := openListCatalogCardsQueryLocalized(7, "夜", targets, "config-key")
 	plan := explainCatalogPlan(t, db, prefix+`SELECT count(*) `+from, args...)
 	t.Logf("short translated search plan:\n%s", plan)
 	if strings.Contains(plan, "SCAN content_translation\n") {
 		t.Fatalf("short translated search scans the whole table: %s", plan)
 	}
-	if !strings.Contains(plan, "idx_content_translation_language_id") {
-		t.Fatalf("short translated search does not use the language id index: %s", plan)
+	if !strings.Contains(plan, "idx_content_translation_short_current") {
+		t.Fatalf("short translated search does not use the short covering index: %s", plan)
 	}
 }
 

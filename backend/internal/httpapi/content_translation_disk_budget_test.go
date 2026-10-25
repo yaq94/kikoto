@@ -58,6 +58,8 @@ func TestContentTranslationRetentionMeasuresCachePages(t *testing.T) {
 func TestContentTranslationRetentionKeepsModelRowsWhenNativePagesDominate(t *testing.T) {
 	server := openContentTranslationTestServer(t)
 	ctx := context.Background()
+	cfg := translation.Config{Limits: translation.Limits{CacheBytes: 1 << 20}, Model: "m"}
+	configKey := translation.ConfigKey(cfg)
 	seedCurrentTranslationEntry(t, server.db, 999999, "model source")
 	if _, err := server.db.Exec(`WITH RECURSIVE n(i) AS (
 			SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<12000
@@ -68,13 +70,11 @@ func TestContentTranslationRetentionKeepsModelRowsWhenNativePagesDominate(t *tes
 		SELECT printf('native-%05d',i),'entry',i,'title','ja',
 			printf('native source %05d',i),printf('native target %05d',i),'native','','' FROM n;
 		INSERT INTO content_translation(
-			cache_key,entity_kind,entity_id,field,language,source_text,translated_text,origin,model,template_version
-			) VALUES('model-keep','entry',999999,'title','zh-Hans','model source','model target','model','m',?)`, translation.TemplateVersion); err != nil {
+			cache_key,entity_kind,entity_id,field,language,source_text,translated_text,origin,config_key,model,template_version
+			) VALUES('model-keep','entry',999999,'title','zh-Hans','model source','model target','model',?,'m',?)`, configKey, translation.TemplateVersion); err != nil {
 		t.Fatal(err)
 	}
-	if err := server.pruneContentTranslations(ctx, translation.Config{
-		Limits: translation.Limits{CacheBytes: 1 << 20}, Model: "m",
-	}); err != nil {
+	if err := server.pruneContentTranslations(ctx, cfg); err != nil {
 		t.Fatal(err)
 	}
 	var model, native int

@@ -42,8 +42,9 @@ func (s *Server) translateStoredContent(ctx context.Context, in contentTranslati
 	}
 
 	key := contentTranslationCacheKey(kind, entityID, entityKey, in.Field, target.modelLanguage, text, "model", cfg.Model, cfg.BaseURL, translation.TemplateVersion, cfg.DisableThinking)
+	configKey := translation.ConfigKey(cfg)
 	if rows, lookupErr := s.lookupContentTranslations(ctx, []string{key}); lookupErr == nil {
-		if row, ok := rows[key]; ok && row.Model == cfg.Model && row.TemplateVersion == translation.TemplateVersion {
+		if row, ok := rows[key]; ok && row.Origin == "model" && row.ConfigKey == configKey {
 			display, convertErr := displayText(row.TranslatedText, row.Language, target, field.Names)
 			if convertErr != nil {
 				return translatedContent{}, "", convertErr
@@ -64,7 +65,7 @@ func (s *Server) translateStoredContent(ctx context.Context, in contentTranslati
 	row := contentTranslationRow{
 		CacheKey: key, EntityKind: kind, EntityID: entityID, EntityKey: entityKey,
 		Field: in.Field, Language: target.modelLanguage, SourceText: text,
-		TranslatedText: translated, Origin: "model", Model: cfg.Model,
+		TranslatedText: translated, Origin: "model", ConfigKey: configKey, Model: cfg.Model,
 		TemplateVersion: translation.TemplateVersion,
 	}
 	cacheStatus, err := s.saveContentTranslations(ctx, []contentTranslationRow{row})

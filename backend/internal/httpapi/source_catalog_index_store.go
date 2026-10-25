@@ -1260,7 +1260,10 @@ func (s *Server) publishCatalogBatch(ctx context.Context, job workflowJobRecord,
 			return 0, err
 		}
 		published = len(items)
-		s.clearTranslationPrefillFailures(publishedIDs)
+		if len(publishedIDs) > 0 {
+			_, _ = s.db.ExecContext(ctx, `DELETE FROM translation_prefill_failure
+				WHERE entity_kind='entry' AND entity_id IN (`+sqlPlaceholders(len(publishedIDs))+`)`, int64Args(publishedIDs)...)
+		}
 		return published, nil
 	}
 	for _, p := range items {
@@ -1314,7 +1317,10 @@ func (s *Server) publishCatalogBatch(ctx context.Context, job workflowJobRecord,
 		return 0, err
 	}
 	published = len(items)
-	s.clearTranslationPrefillFailures(publishedIDs)
+	if len(publishedIDs) > 0 {
+		_, _ = s.db.ExecContext(ctx, `DELETE FROM translation_prefill_failure
+			WHERE entity_kind='entry' AND entity_id IN (`+sqlPlaceholders(len(publishedIDs))+`)`, int64Args(publishedIDs)...)
+	}
 	return published, nil
 }
 

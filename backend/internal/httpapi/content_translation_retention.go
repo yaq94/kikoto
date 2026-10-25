@@ -19,6 +19,11 @@ const (
 	// The cap still bounds one tick; the next tick continues if the budget is
 	// not reached.
 	contentTranslationRetentionBatches = 20
+	// translationPrefillFailureLimit bounds the retry table independently of
+	// the display-cache budget. Old hashes and retired entities are removed
+	// first; beyond this many rows the oldest are dropped so a stream of
+	// changed titles cannot grow the table without limit.
+	translationPrefillFailureLimit = 10000
 	// Below this budget SQLite's page granularity dominates the measurement (a
 	// single page is already larger than the configured value), so tests and
 	// deliberately tiny limits keep the historical text-byte meaning. Real
@@ -61,6 +66,44 @@ func (s *Server) pruneContentTranslations(ctx context.Context, cfg translation.C
 	return s.pruneTranslationCache(ctx, cfg, true)
 }
 
+// translationBudgetReport compares the rebuildable cache against the soft
+// budget and also reports when persistent title/description corpus alone
+// exceeds it. Persistent rows are never deleted, so exceeding the budget is a
+// signal rather than permission to sacrifice search.
+func (s *Server) translationBudgetReport(ctx context.Context, cfg translation.Config) (bool, int64, error) {
+	rows, logical, err := s.evictableTranslationStats(ctx, cfg)
+	if err != nil {
+		return false, 0, err
+	}
+	bytes := logical
+	if measured, ok := s.translationCacheDiskBytesFor(ctx, cfg); ok {
+		bytes = measured
+	}
+	persistent, err := s.persistentTranslationTextBytes(ctx, cfg)
+	if err != nil {
+		return false, 0, err
+	}
+	overRows := cfg.MaxEntries > 0 && rows > int64(cfg.MaxEntries)
+	overBytes := cfg.CacheBytes > 0 && (bytes+persistent > cfg.CacheBytes)
+	return overRows || overBytes, bytes, nil
+}
+
+// persistentTranslationTextBytes is the logical text footprint of current
+// title/description rows. It is the protected share that a cache measurement
+// cannot free; the operator still sees it in the soft-budget decision.
+func (s *Server) persistentTranslationTextBytes(ctx context.Context, cfg translation.Config) (int64, error) {
+	var bytes int64
+	err := s.db.QueryRowContext(ctx, `SELECT COALESCE(sum(
+			length(CAST(ct.source_text AS BLOB))+length(CAST(ct.translated_text AS BLOB))),0)
+		FROM content_translation ct
+		WHERE ct.origin='model' AND `+translationPersistentCorpusSQL("ct"),
+		translation.ConfigKey(cfg), translation.ConfigKey(cfg), translation.ConfigKey(cfg)).Scan(&bytes)
+	if err != nil {
+		return 0, fmt.Errorf("measure persistent translation corpus: %w", err)
+	}
+	return bytes, nil
+}
+
 // pruneTranslationCache is the shared implementation. A write-path pass only
 // enforces the budgets; the periodic pass also removes historical rows even
 // while the budgets are not exceeded.
@@ -81,18 +124,13 @@ func (s *Server) pruneTranslationCache(ctx context.Context, cfg translation.Conf
 			if err != nil {
 				return err
 			}
-			if historical+superseded == 0 {
+			failures, err := s.deleteStaleTranslationPrefillFailures(ctx, cfg, contentTranslationRetentionBatch)
+			if err != nil {
+				return err
+			}
+			if historical+superseded+failures == 0 {
 				break
 			}
-		}
-	}
-
-	// With no row-count budget, the measured page footprint decides whether the
-	// rebuildable cache needs a trim. Staying under the soft byte budget avoids
-	// scanning the whole corpus with the current-row predicate on every tick.
-	if cfg.MaxEntries <= 0 && cfg.CacheBytes > 0 {
-		if measured, ok := s.translationCacheDiskBytes(ctx); ok && measured <= cfg.CacheBytes {
-			return nil
 		}
 	}
 
@@ -124,7 +162,7 @@ func (s *Server) pruneTranslationCache(ctx context.Context, cfg translation.Conf
 		bytes := logicalBytes
 		measuredDisk := false
 		if measureDisk {
-			if measured, ok := s.translationCacheDiskBytes(ctx); ok {
+			if measured, ok := s.translationCacheDiskBytesFor(ctx, cfg); ok {
 				bytes = measured
 				measuredDisk = true
 			}
@@ -182,12 +220,72 @@ func (s *Server) pruneTranslationCache(ctx context.Context, cfg translation.Conf
 	return nil
 }
 
-// translationCacheDiskBytes measures the pages owned by the durable translation
-// cache. A small text row still occupies a B-tree page slot and index entries,
-// so counting only text bytes can grow the database well past the configured
-// limit. dbstat is optional in some SQLite builds; when it is unavailable the
-// caller falls back to the text budget rather than failing translation.
+// deleteStaleTranslationPrefillFailures removes retry rows that can no longer
+// become a current corpus row: another config key, a retired entity, changed
+// source text, or an id beyond the bounded retry table. It is called from the
+// low-frequency maintenance pass, never from a request path.
+func (s *Server) deleteStaleTranslationPrefillFailures(ctx context.Context, cfg translation.Config, limit int64) (int64, error) {
+	if limit <= 0 {
+		return 0, nil
+	}
+	configKey := translation.ConfigKey(cfg)
+	corpus := translationCorpusSQL()
+	result, err := s.db.ExecContext(ctx, `DELETE FROM translation_prefill_failure WHERE rowid IN (
+		SELECT f.rowid FROM translation_prefill_failure f
+		WHERE f.config_key<>?
+		   OR NOT EXISTS (
+			SELECT 1 FROM (`+corpus+`) c
+			WHERE c.entity_kind=f.entity_kind AND c.entity_id=f.entity_id
+			  AND c.field=f.field AND c.source_text IS NOT NULL
+			  AND `+translationSourceHashFunction+`(c.source_text)=f.source_hash)
+		LIMIT ?)`, configKey, limit)
+	if err != nil {
+		return 0, fmt.Errorf("delete stale prefill failures: %w", err)
+	}
+	deleted, err := result.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	if deleted > 0 {
+		return deleted, nil
+	}
+	// The table is bounded by rowid so a burst of changed titles cannot grow it
+	// without limit. This runs only after the correctness cleanup is exhausted.
+	var total int64
+	if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM translation_prefill_failure WHERE config_key=?`, configKey).Scan(&total); err != nil {
+		return 0, err
+	}
+	if total <= translationPrefillFailureLimit {
+		return 0, nil
+	}
+	remove := total - translationPrefillFailureLimit
+	if remove > limit {
+		remove = limit
+	}
+	result, err = s.db.ExecContext(ctx, `DELETE FROM translation_prefill_failure WHERE rowid IN (
+		SELECT rowid FROM translation_prefill_failure
+		WHERE config_key=?
+		ORDER BY rowid
+		LIMIT ?)`, configKey, remove)
+	if err != nil {
+		return 0, fmt.Errorf("trim prefill failures: %w", err)
+	}
+	return result.RowsAffected()
+}
+
+// translationCacheDiskBytes measures the pages owned by the rebuildable
+// translation cache. Persistent title/description rows are corpus, not cache:
+// their pages are attributed to the protected share and reported as
+// over_budget instead of being evicted.
 func (s *Server) translationCacheDiskBytes(ctx context.Context) (int64, bool) {
+	cfg, err := translation.NewStore(s.db).Load(ctx)
+	if err != nil {
+		return 0, false
+	}
+	return s.translationCacheDiskBytesFor(ctx, cfg)
+}
+
+func (s *Server) translationCacheDiskBytesFor(ctx context.Context, cfg translation.Config) (int64, bool) {
 	var contentPages, sourcePages sql.NullInt64
 	err := s.db.QueryRowContext(ctx, `SELECT
 		COALESCE(sum(CASE WHEN name='content_translation'
@@ -203,99 +301,59 @@ func (s *Server) translationCacheDiskBytes(ctx context.Context) (int64, bool) {
 	if err != nil {
 		return 0, false
 	}
-	// The content_translation table also stores authored native rows, which are
-	// not cache and are never evicted. Attribute its pages by model text share so
-	// a large native corpus cannot empty the model cache.
-	var totalText, modelText sql.NullInt64
+	// Only rebuildable rows are cache. A native row, or a current corpus row,
+	// contributes its page share to the protected side instead.
+	var cacheText, totalText int64
 	if err = s.db.QueryRowContext(ctx, `SELECT
-		COALESCE(sum(length(CAST(source_text AS BLOB))+length(CAST(translated_text AS BLOB))),0),
-		COALESCE(sum(CASE WHEN origin='model'
-			THEN length(CAST(source_text AS BLOB))+length(CAST(translated_text AS BLOB)) ELSE 0 END),0)
-		FROM content_translation`).Scan(&totalText, &modelText); err != nil {
+		COALESCE(sum(CASE WHEN origin='model' AND NOT `+translationPersistentCorpusSQL("ct")+`
+			THEN length(CAST(ct.source_text AS BLOB))+length(CAST(ct.translated_text AS BLOB)) ELSE 0 END),0),
+		COALESCE(sum(length(CAST(ct.source_text AS BLOB))+length(CAST(ct.translated_text AS BLOB))),0)
+		FROM content_translation ct`, translation.ConfigKey(cfg), translation.ConfigKey(cfg), translation.ConfigKey(cfg)).Scan(&cacheText, &totalText); err != nil {
 		return 0, false
 	}
 	modelContentPages := int64(0)
-	if totalText.Valid && totalText.Int64 > 0 {
-		modelContentPages = contentPages.Int64 * modelText.Int64 / totalText.Int64
-	} else if contentPages.Int64 > 0 {
-		var totalRows, modelRows int64
-		if err = s.db.QueryRowContext(ctx, `SELECT count(*),
-			COALESCE(sum(CASE WHEN origin='model' THEN 1 ELSE 0 END),0)
-			FROM content_translation`).Scan(&totalRows, &modelRows); err != nil {
-			return 0, false
-		}
-		if totalRows > 0 {
-			modelContentPages = contentPages.Int64 * modelRows / totalRows
-		}
+	if totalText > 0 {
+		modelContentPages = contentPages.Int64 * cacheText / totalText
 	}
 	return modelContentPages + sourcePages.Int64, true
 }
 
-// currentContentTranslationSQL matches rows that still answer a current lookup:
-// a live work or series, a live catalog title with its current text, or a live
-// entry's current directory. Only title rows carry the search corpus, but the
-// other fields are protected with their own current source so a browse does
-// not lose them.
-func currentContentTranslationSQL(alias string) string {
+// translationDisplayCacheCurrentSQL matches display-only rows that still
+// answer a browse: a tag belongs to a live entity and a directory still has
+// the same real path and title. Title/description rows are protected by the
+// corpus predicate instead.
+func translationDisplayCacheCurrentSQL(alias string) string {
 	return `(
-		(` + alias + `.entity_kind='work' AND EXISTS(
-			SELECT 1 FROM work current_work
-			WHERE current_work.id=` + alias + `.entity_id
-			  AND (` + alias + `.field<>'title' OR ` + alias + `.source_text=current_work.title)))
-		OR (` + alias + `.entity_kind='series' AND EXISTS(
-			SELECT 1 FROM catalog_series current_series
-			WHERE current_series.id=` + alias + `.entity_id
-			  AND (` + alias + `.field<>'title' OR ` + alias + `.source_text=current_series.title)))
-		OR (` + alias + `.entity_kind='entry' AND ` + alias + `.field='title' AND EXISTS(
-			SELECT 1 FROM source_catalog_entry current_entry
-			JOIN file_source current_source ON current_source.id=current_entry.file_source_id
-			WHERE current_entry.id=` + alias + `.entity_id
-			  AND current_entry.relocated_to_id IS NULL
-			  AND current_entry.availability_status='available'
-			  AND trim(current_entry.title)<>''
-			  AND current_source.enabled=1 AND current_source.source_type='openlist'
-			  AND ` + alias + `.source_text=current_entry.title
-			  AND (` + alias + `.origin='native'
-			    OR (` + alias + `.origin='model' AND ` + alias + `.model=? AND ` + alias + `.template_version=?))))
-		OR (` + alias + `.entity_kind='entry' AND ` + alias + `.field='directory' AND EXISTS(
-			SELECT 1 FROM source_catalog_entry current_entry
-			JOIN source_catalog_file current_file ON current_file.catalog_entry_id=current_entry.id
-			WHERE current_entry.id=` + alias + `.entity_id
-			  AND current_entry.relocated_to_id IS NULL
-			  AND current_file.relative_path=` + alias + `.entity_key
-			  AND current_file.title=` + alias + `.source_text))
-		OR (` + alias + `.entity_kind='entry' AND ` + alias + `.field NOT IN ('title','directory') AND EXISTS(
-			SELECT 1 FROM source_catalog_entry current_entry
-			WHERE current_entry.id=` + alias + `.entity_id AND current_entry.relocated_to_id IS NULL))
+		(` + alias + `.field='tag' AND (
+			(` + alias + `.entity_kind='entry' AND EXISTS(
+				SELECT 1 FROM source_catalog_entry e WHERE e.id=` + alias + `.entity_id AND e.relocated_to_id IS NULL))
+			OR (` + alias + `.entity_kind='series' AND EXISTS(
+				SELECT 1 FROM catalog_series s WHERE s.id=` + alias + `.entity_id))
+			OR (` + alias + `.entity_kind='work' AND EXISTS(
+				SELECT 1 FROM work w WHERE w.id=` + alias + `.entity_id))))
+		OR (` + alias + `.field='directory' AND EXISTS(
+			SELECT 1 FROM source_catalog_entry e
+			JOIN source_catalog_file f ON f.catalog_entry_id=e.id
+			WHERE e.id=` + alias + `.entity_id AND e.relocated_to_id IS NULL
+			  AND f.relative_path=` + alias + `.entity_key AND f.title=` + alias + `.source_text))
 	)`
 }
 
-// deleteHistoricalContentTranslations removes title model rows for retired
-// entities, changed source text, or an old model/template. One join pass covers
-// the three entity kinds; non-title fields are left to the budget pass because
-// their current source is not a single entity title.
+// deleteHistoricalContentTranslations removes superseded and retired model
+// rows: changed text, a stale config key, a retired entity or a directory
+// that no longer exists. Current title/description corpus rows and current
+// display cache are never selected.
 func (s *Server) deleteHistoricalContentTranslations(ctx context.Context, cfg translation.Config, limit int64) (int64, error) {
 	if limit <= 0 {
 		return 0, nil
 	}
+	configKey := translation.ConfigKey(cfg)
 	result, err := s.db.ExecContext(ctx, `DELETE FROM content_translation WHERE id IN (
 		SELECT ct.id FROM content_translation ct
-		LEFT JOIN source_catalog_entry e ON ct.entity_kind='entry' AND e.id=ct.entity_id
-		LEFT JOIN work w ON ct.entity_kind='work' AND w.id=ct.entity_id
-		LEFT JOIN catalog_series s ON ct.entity_kind='series' AND s.id=ct.entity_id
-		LEFT JOIN file_source src ON src.id=e.file_source_id
-		WHERE ct.origin='model' AND ct.field='title'
-		  AND (
-			(ct.entity_kind='entry' AND (
-				e.id IS NULL OR e.relocated_to_id IS NOT NULL OR e.availability_status<>'available'
-				OR src.id IS NULL OR src.enabled<>1 OR src.source_type<>'openlist'
-				OR ct.source_text<>e.title OR ct.model<>? OR ct.template_version<>?
-			))
-			OR (ct.entity_kind='work' AND (w.id IS NULL OR ct.source_text<>w.title OR ct.model<>? OR ct.template_version<>?))
-			OR (ct.entity_kind='series' AND (s.id IS NULL OR ct.source_text<>s.title OR ct.model<>? OR ct.template_version<>?))
-		  )
-		LIMIT ?)`, cfg.Model, translation.TemplateVersion, cfg.Model, translation.TemplateVersion,
-		cfg.Model, translation.TemplateVersion, limit)
+		WHERE ct.origin='model'
+		  AND NOT `+translationPersistentCorpusSQL("ct")+`
+		  AND NOT `+translationDisplayCacheCurrentSQL("ct")+`
+		LIMIT ?)`, configKey, configKey, configKey, limit)
 	if err != nil {
 		return 0, err
 	}
@@ -322,18 +380,20 @@ func (s *Server) deleteSupersededSourceTranslations(ctx context.Context, limit i
 	return result.RowsAffected()
 }
 
-// evictableTranslationStats counts only rows the budget may remove.
+// evictableTranslationStats counts only rows the budget may remove: display
+// cache, stale rows and retired rows. Current title/description corpus rows
+// are excluded, so a tight budget cannot delete search correctness.
 func (s *Server) evictableTranslationStats(ctx context.Context, cfg translation.Config) (int64, int64, error) {
 	var rows, logicalBytes int64
 	err := s.db.QueryRowContext(ctx, `SELECT count(*),COALESCE(sum(byte_count),0)
 		FROM (
 			SELECT length(CAST(ct.source_text AS BLOB))+length(CAST(ct.translated_text AS BLOB)) AS byte_count
 			FROM content_translation ct
-			WHERE ct.origin='model' AND NOT `+currentContentTranslationSQL("ct")+`
+			WHERE ct.origin='model' AND NOT `+translationPersistentCorpusSQL("ct")+`
 			UNION ALL
 			SELECT length(CAST(source_text AS BLOB))+length(CAST(translated_text AS BLOB)) AS byte_count
 			FROM source_field_translation
-		)`, cfg.Model, translation.TemplateVersion).Scan(&rows, &logicalBytes)
+		)`, translation.ConfigKey(cfg), translation.ConfigKey(cfg), translation.ConfigKey(cfg)).Scan(&rows, &logicalBytes)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -355,13 +415,13 @@ func (s *Server) deleteOldestTranslationRows(ctx context.Context, cfg translatio
 		SELECT kind,id FROM (
 			SELECT 'content' AS kind,ct.id,ct.updated_at
 			FROM content_translation ct
-			WHERE ct.origin='model' AND NOT `+currentContentTranslationSQL("ct")+`
+			WHERE ct.origin='model' AND NOT `+translationPersistentCorpusSQL("ct")+`
 			UNION ALL
 			SELECT 'source' AS kind,id,updated_at
 			FROM source_field_translation
 		)
 		ORDER BY updated_at,kind,id
-		LIMIT ?`, cfg.Model, translation.TemplateVersion, limit)
+		LIMIT ?`, translation.ConfigKey(cfg), translation.ConfigKey(cfg), translation.ConfigKey(cfg), limit)
 	if err != nil {
 		return 0, fmt.Errorf("select translation cache rows: %w", err)
 	}

@@ -11,9 +11,9 @@ import (
 	"testing"
 
 	"github.com/yexca/kikoto/backend/internal/buildinfo"
+	"github.com/yexca/kikoto/backend/internal/migrationfixture"
 	"github.com/yexca/kikoto/backend/internal/storage"
 	"github.com/yexca/kikoto/backend/internal/translation"
-	"github.com/yexca/kikoto/backend/migrations"
 )
 
 func openContentTranslationTestServer(t *testing.T) *Server {
@@ -22,7 +22,7 @@ func openContentTranslationTestServer(t *testing.T) *Server {
 	if err != nil {
 		t.Fatalf("open database: %v", err)
 	}
-	if err := storage.MigrateFS(db, migrations.Files, buildinfo.Version); err != nil {
+	if err := storage.MigrateFS(db, migrationfixture.MustFS(t), buildinfo.Version); err != nil {
 		_ = db.Close()
 		t.Fatalf("migrate: %v", err)
 	}
@@ -55,6 +55,10 @@ func TestContentTranslationStoreMigrationCreatesSchema(t *testing.T) {
 		"idx_content_translation_entity",
 		"idx_content_translation_language",
 		"idx_content_translation_language_id",
+		"idx_content_translation_effective",
+		"idx_content_translation_short",
+		"idx_content_translation_short_current",
+		"translation_prefill_failure_due",
 		"idx_source_field_translation_owner",
 		"idx_source_field_translation_updated",
 	} {
@@ -85,25 +89,75 @@ func TestContentTranslationStoreMigrationCreatesSchema(t *testing.T) {
 	if lastUsed != 0 {
 		t.Fatal("content_translation has a last_used_at column")
 	}
+	for _, column := range []string{"config_key"} {
+		var present int
+		if err := s.db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('content_translation') WHERE name=?`, column).Scan(&present); err != nil {
+			t.Fatal(err)
+		}
+		if present != 1 {
+			t.Fatalf("content_translation.%s is missing", column)
+		}
+	}
+	for _, column := range []string{"config_key", "cursor_language", "cursor_kind", "cursor_field", "cursor_id"} {
+		var present int
+		if err := s.db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('translation_prefill_state') WHERE name=?`, column).Scan(&present); err != nil {
+			t.Fatal(err)
+		}
+		if present != 1 {
+			t.Fatalf("translation_prefill_state.%s is missing", column)
+		}
+	}
+	var failureColumns int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('translation_prefill_failure')
+		WHERE name IN ('entity_kind','entity_id','field','language','config_key','source_hash','attempts','next_retry_at','last_error')`).Scan(&failureColumns); err != nil {
+		t.Fatal(err)
+	}
+	if failureColumns != 9 {
+		t.Fatalf("translation_prefill_failure columns = %d, want 9", failureColumns)
+	}
+	var retryNullable int
+	if err := s.db.QueryRow(`SELECT "notnull" FROM pragma_table_info('translation_prefill_failure')
+		WHERE name='next_retry_at'`).Scan(&retryNullable); err != nil {
+		t.Fatal(err)
+	}
+	if retryNullable != 0 {
+		t.Fatal("translation_prefill_failure.next_retry_at must accept NULL")
+	}
+	var entryDescription int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('source_catalog_entry') WHERE name='description'`).Scan(&entryDescription); err != nil {
+		t.Fatal(err)
+	}
+	if entryDescription != 0 {
+		t.Fatal("source_catalog_entry must not grow a description column")
+	}
+	var foreignKeyViolations int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM pragma_foreign_key_check`).Scan(&foreignKeyViolations); err != nil {
+		t.Fatal(err)
+	}
+	if foreignKeyViolations != 0 {
+		t.Fatalf("foreign key violations = %d", foreignKeyViolations)
+	}
 
-	var cursor, status string
-	if err := s.db.QueryRow(`SELECT cursor_entry_id, status FROM translation_prefill_state WHERE id = 1`).Scan(&cursor, &status); err != nil {
+	var cursor int64
+	var status string
+	if err := s.db.QueryRow(`SELECT cursor_id, status FROM translation_prefill_state WHERE id = 1`).Scan(&cursor, &status); err != nil {
 		t.Fatalf("prefill state row: %v", err)
 	}
-	if cursor != "0" || status != "idle" {
-		t.Fatalf("prefill state = (%s, %s), want (0, idle)", cursor, status)
+	if cursor != 0 || status != "idle" {
+		t.Fatalf("prefill state = (%d, %s), want (0, idle)", cursor, status)
 	}
 }
 
 func TestContentTranslationStoreFTSTriggersTrackChanges(t *testing.T) {
 	s := openContentTranslationTestServer(t)
 	ctx := context.Background()
+	configKey := translation.ConfigKey(translation.Config{Model: translation.DefaultModel, DisableThinking: true})
 	insert := func(id int64, kind, lang, text string) {
 		t.Helper()
 		if _, err := s.db.Exec(`
-			INSERT INTO content_translation(id, cache_key, entity_kind, entity_id, field, language, source_text, translated_text, origin)
-			VALUES(?,?,?,?, 'title', ?, ?, ?, 'model')`,
-			id, fmt.Sprintf("key-%d", id), kind, id, lang, text, text); err != nil {
+			INSERT INTO content_translation(id, cache_key, entity_kind, entity_id, field, language, source_text, translated_text, origin, config_key)
+			VALUES(?,?,?,?, 'title', ?, ?, ?, 'model', ?)`,
+			id, fmt.Sprintf("key-%d", id), kind, id, lang, text, text, configKey); err != nil {
 			t.Fatalf("insert %d: %v", id, err)
 		}
 	}
@@ -264,13 +318,23 @@ func TestContentTranslationStoreSaveIsIdempotent(t *testing.T) {
 func TestContentTranslationStoreSearchFiltersAndShortFallback(t *testing.T) {
 	s := openContentTranslationTestServer(t)
 	ctx := context.Background()
+	currentKey := translation.ConfigKey(translation.Config{Model: "gpt", DisableThinking: true})
 	rows := []contentTranslationRow{
-		{CacheKey: "a", EntityKind: "entry", EntityID: 10, Field: "title", Language: "zh-Hans", TranslatedText: "深海少女的告白", Origin: "model"},
-		{CacheKey: "b", EntityKind: "entry", EntityID: 11, Field: "title", Language: "zh-Hans", TranslatedText: "深海少女的告白 第二季", Origin: "model"},
+		{CacheKey: "a", EntityKind: "entry", EntityID: 10, Field: "title", Language: "zh-Hans", TranslatedText: "深海少女的告白", Origin: "model", ConfigKey: currentKey, Model: "gpt", TemplateVersion: translation.TemplateVersion},
+		{CacheKey: "b", EntityKind: "entry", EntityID: 11, Field: "title", Language: "zh-Hans", TranslatedText: "深海少女的告白 第二季", Origin: "model", ConfigKey: currentKey, Model: "gpt", TemplateVersion: translation.TemplateVersion},
 		{CacheKey: "c", EntityKind: "entry", EntityID: 12, Field: "title", Language: "ja", TranslatedText: "深海少女の告白", Origin: "native"},
-		{CacheKey: "d", EntityKind: "work", EntityID: 13, Field: "title", Language: "zh-Hans", TranslatedText: "深海少女的告白", Origin: "model"},
+		{CacheKey: "d", EntityKind: "work", EntityID: 13, Field: "title", Language: "zh-Hans", TranslatedText: "深海少女的告白", Origin: "model", ConfigKey: currentKey, Model: "gpt", TemplateVersion: translation.TemplateVersion},
+		// A model row from another output-shaping configuration is stale and
+		// must not answer a strict search even though the text matches.
+		{CacheKey: "e", EntityKind: "entry", EntityID: 14, Field: "title", Language: "zh-Hans", TranslatedText: "深海少女的旧配置", Origin: "model", ConfigKey: "legacy", Model: "gpt", TemplateVersion: translation.TemplateVersion},
 	}
 	if _, err := s.saveContentTranslations(ctx, rows); err != nil {
+		t.Fatal(err)
+	}
+	// translatedEntityIDs reads the current config key. Save accepted the
+	// explicit row keys, so configure the same output-shaping identity.
+	if _, err := s.db.Exec(`INSERT INTO app_setting(key,value_json) VALUES('translation_service',?)
+		ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json`, `{"model":"gpt","disableThinking":true}`); err != nil {
 		t.Fatal(err)
 	}
 	for _, query := range []string{"深海少女", "深海"} {
@@ -308,8 +372,8 @@ func TestContentTranslationStoreSearchFiltersAndShortFallback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if count != 3 {
-		t.Fatalf("zh-Hans count = %d, want 3", count)
+	if count != 4 {
+		t.Fatalf("zh-Hans historical row count = %d, want 4 (including the stale row)", count)
 	}
 }
 
@@ -361,26 +425,27 @@ func joinIDs(ids []int64) string {
 func TestContentTranslationShortQueryCoversFullCorpus(t *testing.T) {
 	s := openContentTranslationTestServer(t)
 	ctx := context.Background()
+	configKey := translation.ConfigKey(translation.Config{Model: translation.DefaultModel, DisableThinking: true})
 	tx, err := s.db.Begin()
 	if err != nil {
 		t.Fatal(err)
 	}
 	stmt, err := tx.Prepare(`INSERT INTO content_translation(
-		cache_key, entity_kind, entity_id, field, language, source_text, translated_text, origin)
-		VALUES(?, 'entry', ?, 'title', 'zh-Hans', ?, ?, 'model')`)
+		cache_key, entity_kind, entity_id, field, language, source_text, translated_text, origin, config_key)
+		VALUES(?, 'entry', ?, 'title', 'zh-Hans', ?, ?, 'model', ?)`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := stmt.Exec("oldest", 1, "远古标记", "远古标记"); err != nil {
+	if _, err := stmt.Exec("oldest", 1, "远古标记", "远古标记", configKey); err != nil {
 		t.Fatal(err)
 	}
 	for i := 2; i <= 50000; i++ {
-		if _, err := stmt.Exec(fmt.Sprintf("filler-%d", i), i, "", ""); err != nil {
+		if _, err := stmt.Exec(fmt.Sprintf("filler-%d", i), i, "", "", configKey); err != nil {
 			t.Fatal(err)
 		}
 	}
 	newest := int64(50001)
-	if _, err := stmt.Exec("newest", newest, "近古标记", "近古标记"); err != nil {
+	if _, err := stmt.Exec("newest", newest, "近古标记", "近古标记", configKey); err != nil {
 		t.Fatal(err)
 	}
 	if err := stmt.Close(); err != nil {
@@ -406,6 +471,13 @@ func TestContentTranslationShortQueryCoversFullCorpus(t *testing.T) {
 	} else if len(ids) != 1 || ids[0] != int64(newest) {
 		t.Fatalf("short query missed the newest row: %v", ids)
 	}
+	// The result limit is a result cap, not a scan cap: the oldest marker is
+	// still reachable when the caller asks for more than the newest page.
+	if ids, err := s.translatedEntityIDs(ctx, "zh-Hans", "entry", "标记", 50000); err != nil {
+		t.Fatal(err)
+	} else if len(ids) != 2 || ids[0] != 1 || ids[1] != newest {
+		t.Fatalf("full-set keyset result = %v, want both markers", ids)
+	}
 }
 
 func seedCurrentTranslationEntry(t *testing.T, db *sql.DB, id int64, title string) {
@@ -418,6 +490,10 @@ func seedCurrentTranslationEntry(t *testing.T, db *sql.DB, id int64, title strin
 		VALUES(?,1,?,?,'available')`, id, fmt.Sprintf("/retention/%d", id), title); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := db.Exec(`INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes)
+		VALUES(?,'01.mp3','01.mp3','audio',1)`, id); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // The soft budgets never remove rows that still answer current search: a live
@@ -425,18 +501,20 @@ func seedCurrentTranslationEntry(t *testing.T, db *sql.DB, id int64, title strin
 func TestContentTranslationRetentionKeepsCurrentCorpusOverBudget(t *testing.T) {
 	server := openContentTranslationTestServer(t)
 	ctx := context.Background()
+	cfg := translation.Config{Limits: translation.Limits{MaxEntries: 3, CacheBytes: 1 << 30}, Model: "m"}
+	configKey := translation.ConfigKey(cfg)
 	rows := []contentTranslationRow{
 		{CacheKey: "native-1", EntityKind: "entry", EntityID: 1, Field: "title", Language: "ja", SourceText: "native", TranslatedText: "native", Origin: "native"},
 	}
 	for i := int64(1); i <= 5; i++ {
 		title := fmt.Sprintf("当前标题%d", i)
 		seedCurrentTranslationEntry(t, server.db, i, title)
-		rows = append(rows, contentTranslationRow{CacheKey: fmt.Sprintf("model-%d", i), EntityKind: "entry", EntityID: i, Field: "title", Language: "zh-Hans", SourceText: title, TranslatedText: "译文", Origin: "model", Model: "m", TemplateVersion: translation.TemplateVersion})
+		rows = append(rows, contentTranslationRow{CacheKey: fmt.Sprintf("model-%d", i), EntityKind: "entry", EntityID: i, Field: "title", Language: "zh-Hans", SourceText: title, TranslatedText: "译文", Origin: "model", ConfigKey: configKey, Model: "m", TemplateVersion: translation.TemplateVersion})
 	}
 	if _, err := server.saveContentTranslations(ctx, rows); err != nil {
 		t.Fatal(err)
 	}
-	if err := server.pruneContentTranslations(ctx, translation.Config{Limits: translation.Limits{MaxEntries: 3, CacheBytes: 1 << 30}, Model: "m"}); err != nil {
+	if err := server.pruneContentTranslations(ctx, cfg); err != nil {
 		t.Fatal(err)
 	}
 	var model, native int
@@ -449,7 +527,7 @@ func TestContentTranslationRetentionKeepsCurrentCorpusOverBudget(t *testing.T) {
 
 	// A historical row for the same entity is neither current nor protected.
 	if _, err := server.saveContentTranslations(ctx, []contentTranslationRow{
-		{CacheKey: "model-old", EntityKind: "entry", EntityID: 5, Field: "title", Language: "en", SourceText: "旧标题", TranslatedText: "旧译文", Origin: "model", Model: "old", TemplateVersion: "old"},
+		{CacheKey: "model-old", EntityKind: "entry", EntityID: 5, Field: "title", Language: "en", SourceText: "旧标题", TranslatedText: "旧译文", Origin: "model", ConfigKey: "old", Model: "old", TemplateVersion: "old"},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -465,6 +543,8 @@ func TestContentTranslationRetentionKeepsCurrentCorpusOverBudget(t *testing.T) {
 func TestContentTranslationRetentionKeepsCurrentCorpusUnderByteBudget(t *testing.T) {
 	server := openContentTranslationTestServer(t)
 	ctx := context.Background()
+	cfg := translation.Config{Limits: translation.Limits{CacheBytes: 48}, Model: "m"}
+	configKey := translation.ConfigKey(cfg)
 	rows := []contentTranslationRow{
 		{CacheKey: "native-big", EntityKind: "entry", EntityID: 1, Field: "title", Language: "ja", SourceText: "作者原文", TranslatedText: "作者原文", Origin: "native"},
 	}
@@ -474,13 +554,13 @@ func TestContentTranslationRetentionKeepsCurrentCorpusUnderByteBudget(t *testing
 		rows = append(rows, contentTranslationRow{
 			CacheKey: fmt.Sprintf("model-%d", i), EntityKind: "entry", EntityID: i,
 			Field: "title", Language: "zh-Hans", SourceText: title, TranslatedText: "深海少女的告白", Origin: "model",
-			Model: "m", TemplateVersion: translation.TemplateVersion,
+			ConfigKey: configKey, Model: "m", TemplateVersion: translation.TemplateVersion,
 		})
 	}
 	if _, err := server.saveContentTranslations(ctx, rows); err != nil {
 		t.Fatal(err)
 	}
-	if err := server.pruneContentTranslations(ctx, translation.Config{Limits: translation.Limits{CacheBytes: 48}, Model: "m"}); err != nil {
+	if err := server.pruneContentTranslations(ctx, cfg); err != nil {
 		t.Fatal(err)
 	}
 	var model, native int64
@@ -492,6 +572,13 @@ func TestContentTranslationRetentionKeepsCurrentCorpusUnderByteBudget(t *testing
 	if model != 3 || native != 1 {
 		t.Fatalf("after byte trim model=%d native=%d, want 3/1 (current rows survive)", model, native)
 	}
+	overBudget, _, err := server.translationBudgetReport(ctx, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !overBudget {
+		t.Fatal("persistent corpus over a tiny soft budget must report over_budget")
+	}
 }
 
 // Work and series title rows are current only while their source text equals
@@ -499,21 +586,27 @@ func TestContentTranslationRetentionKeepsCurrentCorpusUnderByteBudget(t *testing
 func TestContentTranslationRetentionChecksCurrentWorkAndSeriesText(t *testing.T) {
 	server := openContentTranslationTestServer(t)
 	ctx := context.Background()
+	cfg := translation.Config{Limits: translation.Limits{CacheBytes: 1 << 30}, Model: "m"}
+	configKey := translation.ConfigKey(cfg)
 	if _, err := server.db.Exec(`
 		INSERT INTO work(id,primary_code,title) VALUES(1,'RJ00000001','Current Work Title');
-		INSERT INTO catalog_series(id,title) VALUES(1,'Current Series Title');`); err != nil {
+		INSERT INTO file_source(id,code,display_name,source_type,enabled) VALUES(1,'series-source','Series Source','openlist',1);
+		INSERT INTO source_catalog_entry(id,file_source_id,root_path,title,availability_status) VALUES(1,1,'/one','Episode One','available'),(2,1,'/two','Episode Two','available');
+		INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes) VALUES(1,'01.mp3','01.mp3','audio',1),(2,'01.mp3','01.mp3','audio',1);
+		INSERT INTO catalog_series(id,title) VALUES(1,'Current Series Title');
+		INSERT INTO catalog_series_member(series_id,catalog_entry_id,position,evidence) VALUES(1,1,1,'manual'),(1,2,2,'manual');`); err != nil {
 		t.Fatal(err)
 	}
 	rows := []contentTranslationRow{
-		{CacheKey: "work-old", EntityKind: "work", EntityID: 1, Field: "title", Language: "zh-Hans", SourceText: "Old Work Title", TranslatedText: "旧作品译文", Origin: "model", Model: "m", TemplateVersion: translation.TemplateVersion},
-		{CacheKey: "work-current", EntityKind: "work", EntityID: 1, Field: "title", Language: "zh-Hans", SourceText: "Current Work Title", TranslatedText: "当前作品译文", Origin: "model", Model: "m", TemplateVersion: translation.TemplateVersion},
-		{CacheKey: "series-old", EntityKind: "series", EntityID: 1, Field: "title", Language: "zh-Hans", SourceText: "Old Series Title", TranslatedText: "旧系列译文", Origin: "model", Model: "m", TemplateVersion: translation.TemplateVersion},
-		{CacheKey: "series-current", EntityKind: "series", EntityID: 1, Field: "title", Language: "zh-Hans", SourceText: "Current Series Title", TranslatedText: "当前系列译文", Origin: "model", Model: "m", TemplateVersion: translation.TemplateVersion},
+		{CacheKey: "work-old", EntityKind: "work", EntityID: 1, Field: "title", Language: "zh-Hans", SourceText: "Old Work Title", TranslatedText: "旧作品译文", Origin: "model", ConfigKey: configKey, Model: "m", TemplateVersion: translation.TemplateVersion},
+		{CacheKey: "work-current", EntityKind: "work", EntityID: 1, Field: "title", Language: "zh-Hans", SourceText: "Current Work Title", TranslatedText: "当前作品译文", Origin: "model", ConfigKey: configKey, Model: "m", TemplateVersion: translation.TemplateVersion},
+		{CacheKey: "series-old", EntityKind: "series", EntityID: 1, Field: "title", Language: "zh-Hans", SourceText: "Old Series Title", TranslatedText: "旧系列译文", Origin: "model", ConfigKey: configKey, Model: "m", TemplateVersion: translation.TemplateVersion},
+		{CacheKey: "series-current", EntityKind: "series", EntityID: 1, Field: "title", Language: "zh-Hans", SourceText: "Current Series Title", TranslatedText: "当前系列译文", Origin: "model", ConfigKey: configKey, Model: "m", TemplateVersion: translation.TemplateVersion},
 	}
 	if _, err := server.saveContentTranslations(ctx, rows); err != nil {
 		t.Fatal(err)
 	}
-	if err := server.pruneContentTranslations(ctx, translation.Config{Limits: translation.Limits{CacheBytes: 1 << 30}, Model: "m"}); err != nil {
+	if err := server.pruneContentTranslations(ctx, cfg); err != nil {
 		t.Fatal(err)
 	}
 	var workCurrent, seriesCurrent, old int

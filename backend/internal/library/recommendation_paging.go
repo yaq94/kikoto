@@ -19,7 +19,7 @@ func recommendationMembershipFor(snapshot RecommendationSessionSnapshot, options
 	where, args := listOptionsWhere(options)
 	exact, exactArgs := searchExactRankSQL(options.Query)
 	if translatedRank, translatedArgs := translatedExactRankSQL(options.Language, options.Query,
-		TranslationIdentity{Model: options.TranslationModel, Template: options.TranslationTemplate}); translatedRank != "" {
+		TranslationIdentity{ConfigKey: options.TranslationConfigKey}); translatedRank != "" {
 		exact, exactArgs = translatedRank, translatedArgs
 	}
 	if exact == "" {

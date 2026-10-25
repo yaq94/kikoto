@@ -1,16 +1,14 @@
 package storage
 
 import (
-	"path/filepath"
 	"testing"
 
 	"github.com/yexca/kikoto/backend/internal/testfixture"
-	"github.com/yexca/kikoto/backend/migrations"
 )
 
 func TestLanguageTitleMigrationPreservesTitleOverridesAndSearchTriggers(t *testing.T) {
 	db := openMigrationManagerDB(t)
-	if err := Migrate(db, copyNumberedMigrationsThrough(t, filepath.Join("..", "..", "migrations"), 52)); err != nil {
+	if err := Migrate(db, copyNumberedMigrationsThrough(t, testMigrationDir(t), 52)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.Exec("INSERT INTO work(primary_code,title) VALUES (?,'Example Work')", testfixture.WorkCode(testfixture.PrefixRJ, 0)); err != nil {
@@ -22,7 +20,7 @@ func TestLanguageTitleMigrationPreservesTitleOverridesAndSearchTriggers(t *testi
  SELECT id,'cover','{}','synthetic-cover.png' FROM work;`); err != nil {
 		t.Fatal(err)
 	}
-	if err := MigrateFS(db, migrations.Files, "test"); err != nil {
+	if err := MigrateFS(db, mustMigrationFixtureFS(t), "test"); err != nil {
 		t.Fatal(err)
 	}
 	var title, language, created, updated, asset string
