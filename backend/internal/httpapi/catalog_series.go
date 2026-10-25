@@ -76,13 +76,14 @@ func (s *Server) getCatalogSeries(w http.ResponseWriter, r *http.Request) {
 		writeCatalogGroupingError(w, err)
 		return
 	}
-	// A series is a view over its members, not a resource of its own. Every
-	// member is admitted separately: an over-limit or still-staged episode
-	// disappears from the detail without hiding its qualified siblings. A
-	// retained missing record stays readable because it carries personal state
-	// rather than a currently published file set. A source-backed zero-file
-	// member has no exception: the detail, list and tracks routes all judge the
-	// same published file set.
+	// The series detail composes member rows; the series row itself keeps an
+	// optional work identity that carries personal review state (see
+	// catalog_series_review.go). Every member is admitted separately: an
+	// over-limit or still-staged episode disappears from the detail without
+	// hiding its qualified siblings. A retained missing record stays readable
+	// because it carries personal state rather than a currently published file
+	// set. A source-backed zero-file member has no exception: the detail, list
+	// and tracks routes all judge the same published file set.
 	pendingMember := catalogEntryPendingSQL("e")
 	admittedMember := catalogEntryAdmittedSQL("e")
 	pendingSuccessor := catalogEntryPendingSQL("successor")
