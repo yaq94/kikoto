@@ -669,11 +669,15 @@ func TestCatalogSyncPausesForMaintenanceAndRetriesAfterTheHold(t *testing.T) {
 		t.Fatalf("held sync probed the tree %d times", tree.dirsHits["/"])
 	}
 	var deferred int64
-	if err := f.server.db.QueryRow(`SELECT deferred_until FROM source_catalog_schedule WHERE file_source_id=?`, f.sourceID(t)).Scan(&deferred); err != nil {
+	var reason string
+	if err := f.server.db.QueryRow(`SELECT deferred_until,deferred_reason FROM source_catalog_schedule WHERE file_source_id=?`, f.sourceID(t)).Scan(&deferred, &reason); err != nil {
 		t.Fatal(err)
 	}
-	if remaining := deferred - time.Now().Unix(); remaining < 4*60 || remaining > 6*60 {
-		t.Fatalf("deferral in %d seconds, want the hold end", remaining)
+	if remaining := deferred - time.Now().Unix(); remaining < 50*60 || remaining > 70*60 {
+		t.Fatalf("deferral in %d seconds, want about an hour", remaining)
+	}
+	if reason != "maintenance_hold" {
+		t.Fatalf("deferral reason=%q, want maintenance_hold", reason)
 	}
 }
 
@@ -697,11 +701,15 @@ func TestCatalogSyncPausesOnLowDiskAndDoesNotSpendRequests(t *testing.T) {
 		t.Fatalf("low-disk sync spent %d requests on %d probes", state.Requests, state.DirsProbed)
 	}
 	var deferred int64
-	if err := f.server.db.QueryRow(`SELECT deferred_until FROM source_catalog_schedule WHERE file_source_id=?`, f.sourceID(t)).Scan(&deferred); err != nil {
+	var reason string
+	if err := f.server.db.QueryRow(`SELECT deferred_until,deferred_reason FROM source_catalog_schedule WHERE file_source_id=?`, f.sourceID(t)).Scan(&deferred, &reason); err != nil {
 		t.Fatal(err)
 	}
 	if remaining := deferred - time.Now().Unix(); remaining < 50*60 || remaining > 70*60 {
 		t.Fatalf("deferral in %d seconds, want about an hour", remaining)
+	}
+	if reason != "low_disk" {
+		t.Fatalf("deferral reason=%q, want low_disk", reason)
 	}
 }
 

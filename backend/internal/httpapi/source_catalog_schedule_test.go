@@ -467,8 +467,8 @@ func TestCatalogScheduleDeferredCatchesUpOnce(t *testing.T) {
 		t.Fatalf("deferred recovery produced %d sync runs, want 1", runs)
 	}
 	state = readCatalogSchedule(t, f)
-	if state.Deferred != 0 {
-		t.Fatalf("recovery left deferred_until=%d", state.Deferred)
+	if state.Deferred != 0 || state.DeferredReason != "" {
+		t.Fatalf("recovery left deferral %d/%q", state.Deferred, state.DeferredReason)
 	}
 	dispatchCatalog(t, f)
 	if runs := countCatalogSyncRuns(t, f); runs != 1 {

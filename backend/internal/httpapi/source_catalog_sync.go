@@ -237,10 +237,10 @@ func (s *Server) executeCatalogIncrementalSync(ctx context.Context, runID, sourc
 	}
 	// A hold or a low disk is checked before the first request, so a paused
 	// sync costs nothing and leaves every checkpoint untouched.
-	if reason, until := s.pauseCatalogSync(ctx, options); reason != "" {
+	if reason, _ := s.pauseCatalogSync(ctx, options); reason != "" {
 		state.Status = "partial"
 		state.Note = appendCatalogSyncNote(state.Note, reason)
-		deferredUntil = catalogDeferralDeadline(s.catalogTime(), reason, until)
+		deferredUntil = catalogDeferralDeadline(s.catalogTime())
 		return nil
 	}
 	source, err := s.catalogIndexSource(ctx, sourceID)
@@ -294,11 +294,11 @@ func (s *Server) executeCatalogIncrementalSync(ctx context.Context, runID, sourc
 		}
 		// The hold and the disk floor are re-checked between directory batches,
 		// so a long probe pass stops where the committed checkpoint ends.
-		if reason, until := s.pauseCatalogSync(ctx, options); reason != "" {
+		if reason, _ := s.pauseCatalogSync(ctx, options); reason != "" {
 			s.recordCatalogPhase(context.WithoutCancel(ctx), lease.WorkflowRunID, "scan", scanStarted)
 			state.Status = "partial"
 			state.Note = appendCatalogSyncNote(state.Note, reason)
-			deferredUntil = catalogDeferralDeadline(s.catalogTime(), reason, until)
+			deferredUntil = catalogDeferralDeadline(s.catalogTime())
 			return nil
 		}
 		probes, queryErr := s.pendingCatalogSyncProbes(ctx, sourceID, generation, runID, catalogSyncBatch)
@@ -444,14 +444,10 @@ func (s *Server) pauseCatalogSync(ctx context.Context, options catalogIndexOptio
 	return "", time.Time{}
 }
 
-// catalogDeferralDeadline is the single resource-hold deadline. A low disk and
-// an unknown disk state retry after one hour; a deployment hold waits for its
-// own end. The returned instant is always in the future, so a hold that ended
-// while the run stopped cannot write a deferral that has already expired.
-func catalogDeferralDeadline(now time.Time, reason string, until time.Time) time.Time {
-	if reason == "maintenance" && until.After(now) {
-		return until
-	}
+// catalogDeferralDeadline is the single resource-hold deadline. A low disk, an
+// unknown disk state and a deployment hold all defer the whole schedule by one
+// hour; dispatch re-checks the actual condition when the deadline expires.
+func catalogDeferralDeadline(now time.Time) time.Time {
 	return now.Add(time.Hour)
 }
 

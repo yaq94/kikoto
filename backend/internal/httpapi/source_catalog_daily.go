@@ -237,6 +237,13 @@ func (s *Server) dispatchCatalogUpdate(ctx context.Context, sourceID int64, now 
 		if err = setCatalogPendingFullRunTx(ctx, tx.Tx, sourceID, queued.RunID); err != nil {
 			return err
 		}
+		// The full crawl covers a manual refresh requested in the same round;
+		// consuming it here prevents a second writer after the full finishes.
+		if schedule.ManualPending {
+			if err = clearCatalogManualPendingTx(ctx, tx.Tx, sourceID); err != nil {
+				return err
+			}
+		}
 		return tx.Commit()
 	}
 
@@ -375,16 +382,12 @@ func (s *Server) dispatchCatalogManual(ctx context.Context, tx *sqlutil.BoundedT
 // catalogResourceBlock evaluates the shared resource policy inside the
 // dispatch transaction. The returned deadline is always in the future.
 func (s *Server) catalogResourceBlock(ctx context.Context, tx *sql.Tx, options catalogIndexOptions, now time.Time) (string, time.Time, bool, error) {
-	held, holdUntil, err := catalogMaintenanceActiveTx(ctx, tx, now)
+	held, _, err := catalogMaintenanceActiveTx(ctx, tx, now)
 	if err != nil {
 		return "", time.Time{}, false, err
 	}
 	if held {
-		until := now.Add(time.Hour)
-		if holdUntil.After(now) {
-			until = holdUntil
-		}
-		return "maintenance_hold", until, true, nil
+		return "maintenance_hold", now.Add(time.Hour), true, nil
 	}
 	switch reason := s.catalogIndexDiskPause(options); reason {
 	case "low_disk_space":
