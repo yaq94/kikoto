@@ -83,9 +83,7 @@ func TestOpenListCatalogBrowseSinglePassPlan(t *testing.T) {
 	pageSQL := prefix + `SELECT id,series_id,primary_code,title,work_id,updated_at,availability_status,has_audio,COUNT(*) OVER () AS total ` + from + ` ORDER BY updated_at DESC,series_id DESC,id DESC LIMIT ? OFFSET ?`
 	plan := explainCatalogPlan(t, db, pageSQL, append(args, 2, 0)...)
 	t.Logf("empty browse plan:\n%s", plan)
-	if strings.Contains(plan, "SCAN source_catalog_file") {
-		t.Fatalf("browse scans source_catalog_file: %s", plan)
-	}
+	assertNoCatalogFileTableScan(t, plan)
 	if strings.Count(plan, "SEARCH e USING INDEX source_catalog_entry_live_root") != 1 {
 		t.Fatalf("browse does not read the entry source exactly once: %s", plan)
 	}
@@ -163,9 +161,7 @@ func TestOpenListCatalogSearchFTSCoverage(t *testing.T) {
 	searchSQL := prefix + `SELECT id,series_id,COUNT(*) OVER () AS total ` + from + ` ORDER BY updated_at DESC,series_id DESC,id DESC LIMIT 24 OFFSET 0`
 	plan := explainCatalogPlan(t, db, searchSQL, args...)
 	t.Logf("search plan:\n%s", plan)
-	if strings.Contains(plan, "SCAN source_catalog_file") {
-		t.Fatalf("search scans source_catalog_file: %s", plan)
-	}
+	assertNoCatalogFileTableScan(t, plan)
 	if !strings.Contains(plan, "VIRTUAL TABLE") {
 		t.Fatalf("search does not use the FTS table: %s", plan)
 	}
@@ -335,9 +331,7 @@ func TestOpenListCatalogTracksLargeCardSummary(t *testing.T) {
 	plan := explainCatalogPlan(t, db, `SELECT relative_path,title,kind,size_bytes,modified_at,observed_generation
 		FROM source_catalog_file WHERE catalog_entry_id=? AND parent_path=? ORDER BY relative_path LIMIT ?`, 62, "", 201)
 	t.Logf("track level plan:\n%s", plan)
-	if strings.Contains(plan, "SCAN source_catalog_file") {
-		t.Fatalf("track level scans the card: %s", plan)
-	}
+	assertNoCatalogFileTableScan(t, plan)
 }
 
 // A display-language page joins the card source to a translated hit set. The
@@ -365,9 +359,7 @@ func TestOpenListCatalogLanguageSearchPlan(t *testing.T) {
 	FROM language_cards ORDER BY ` + rank + ` DESC, updated_at DESC,series_id DESC,id DESC LIMIT ? OFFSET ?`
 	plan := explainCatalogPlan(t, db, pageSQL, append(append([]any{}, args...), append(rankArgs, 2, 0)...)...)
 	t.Logf("language search plan:\n%s", plan)
-	if strings.Contains(plan, "SCAN source_catalog_file") {
-		t.Fatalf("language search scans source_catalog_file: %s", plan)
-	}
+	assertNoCatalogFileTableScan(t, plan)
 	if strings.Contains(plan, "source_catalog_entry_live_root") {
 		t.Fatalf("language search re-enters the live-root index instead of probing matched ids: %s", plan)
 	}
