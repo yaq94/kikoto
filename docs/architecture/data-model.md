@@ -1051,6 +1051,37 @@ is an index on `source_catalog_file(catalog_entry_id, title)`: file-title
 search tests one candidate at a time, and the covered entry id lets the lookup
 answer from the index instead of reading the table row.
 
+### Catalog schedule state
+
+`source_catalog_schedule` (migration
+[`098_catalog_schedule.sql`](../../backend/migrations/098_catalog_schedule.sql))
+holds one row per OpenList source: `daily_due_at`, `weekly_due_at`,
+`deferred_until`, `deferred_reason`, `manual_pending`, `resume_full_pending`
+and `pending_full_run_id`. Both boundaries are wall-clock epochs in
+Asia/Shanghai — the next 03:00 and the next Sunday 03:00 — so a long or missed
+scan cannot move them. The table replaces the pre-098
+`source_catalog_daily:<id>` and `source_catalog_full:<id>` settings, which the
+migration reads once and no runtime query uses afterwards. A disabled source
+keeps its row but is skipped; re-enabling resets both boundaries.
+
+A resource hold or low disk writes only `deferred_until=now+1h` and
+`deferred_reason`; boundaries, pending bits and checkpoints stay, so recovery
+catches up once. `resume_full_pending` records that a weekly full is owed. It
+clears and advances `weekly_due_at` only when the run in
+`pending_full_run_id` reaches `succeeded`; a failed or cancelled run keeps the
+marker so the next tick creates one replacement. One source never runs a full
+generation and a directory sync at the same time.
+
+### Catalog episode publication
+
+`source_catalog_episode_pending` maps a staged episode root to its entry, and
+`source_catalog_episode_publication` holds one `pending`/`published` row per
+source and parent. A staged entry has no public `file_source_id`, so public
+reads must exclude it through the shared pending predicate until the parent row
+is `published`. Publishing deletes the pending mappings in the same transaction
+as the visibility switch, which keeps a later staging pass from treating live
+files as staged. See [Catalog series](../development/catalog-series.md).
+
 ## Related Docs
 
 - [Core boundaries](core-boundaries.md)
