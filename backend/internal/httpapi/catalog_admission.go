@@ -273,6 +273,19 @@ func catalogEntryAdmissionRequired(entry catalogEntry) bool {
 	return entry.SourceID != 0 && entry.Status != "missing"
 }
 
+// catalogEntryHasAudioSQL answers whether a card can play anything, using the
+// same stored counts the admission filter reads. A browse page evaluates this
+// for every candidate, so the live file probe would add one index lookup per
+// card; the stored row answers it from the primary key. A card without a
+// current stored row falls back to the file set.
+func catalogEntryHasAudioSQL(alias string) string {
+	return fmt.Sprintf(`COALESCE(
+		(SELECT admission.audio>0 FROM source_catalog_entry_admission admission
+		 WHERE admission.catalog_entry_id=%[1]s.id AND admission.generation=%[1]s.last_seen_generation),
+		EXISTS(SELECT 1 FROM source_catalog_file f WHERE f.catalog_entry_id=%[1]s.id
+			AND f.kind='audio' AND f.observed_generation=%[1]s.last_seen_generation))`, alias)
+}
+
 // refreshCatalogEntryAdmissionTx rewrites the stored counts for one card from
 // its current published file set. It runs inside the publish transaction, after
 // the card's files are written, so a committed card always carries counts that

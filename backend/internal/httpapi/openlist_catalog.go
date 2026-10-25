@@ -941,11 +941,36 @@ func openListCatalogCardsQueryFiltered(sourceID int64, query string, entryIDs, s
 			seriesArgs = []any{query, query, query, query}
 		}
 	}
-	from := `FROM (SELECT candidates.*,ROW_NUMBER() OVER (PARTITION BY CASE WHEN work_id IS NOT NULL THEN 'work:' || (SELECT identity_work_id FROM shared_work_identity WHERE work_id=candidates.work_id) WHEN series_id>0 THEN 'series:' || series_id ELSE 'catalog:' || id END ORDER BY series_id,id) AS identity_rank FROM (
+	// Browsing a whole source and reading a bounded search need different dedup
+	// shapes. Only a card that belongs to a work can collide with another card,
+	// and only through a shared identity; every other card's own id already
+	// makes it unique. Ranking that small set keeps the dedup off the tens of
+	// thousands of unregistered cards. A search has already narrowed the
+	// candidate set, so it keeps the single-pass rank that probes matched ids by
+	// rowid instead of re-entering the live-root index.
+	entryDedup := ""
+	rankSuffix := ""
+	if !searched {
+		workRank := `work_rank AS (
+			SELECT ranked.id,ROW_NUMBER() OVER (PARTITION BY COALESCE(identity.identity_work_id,ranked.work_id) ORDER BY ranked.id) AS rank
+			FROM (SELECT id,work_id FROM source_catalog_entry
+				WHERE file_source_id=? AND relocated_to_id IS NULL AND work_id IS NOT NULL) AS ranked
+			LEFT JOIN shared_work_identity identity ON identity.work_id=ranked.work_id
+		) `
+		if strings.HasPrefix(prefix, "WITH ") {
+			prefix += ", " + workRank
+		} else {
+			prefix = "WITH " + workRank
+		}
+		args = append(args, sourceID)
+		entryDedup = ` AND (e.work_id IS NULL OR e.id IN (SELECT id FROM work_rank WHERE rank=1))`
+	}
+	arms := `(
 		SELECT e.id,0 AS series_id,e.primary_code,e.title,e.work_id,e.updated_at,e.availability_status,
-			EXISTS(SELECT 1 FROM source_catalog_file f WHERE f.catalog_entry_id=e.id AND f.kind='audio') AS has_audio FROM ` + entrySource + `
+			` + catalogEntryHasAudioSQL("e") + ` AS has_audio FROM ` + entrySource + `
 		WHERE e.file_source_id=? AND e.relocated_to_id IS NULL AND NOT EXISTS(SELECT 1 FROM catalog_series_member m WHERE m.catalog_entry_id=e.id AND (SELECT COUNT(*) FROM catalog_series_member sibling WHERE sibling.series_id=m.series_id)>=2)
 			AND ` + catalogEntryAdmittedSQL("e") + entrySearch + `
+			` + entryDedup + `
 		UNION ALL
 		SELECT 0,s.id,'',s.title,s.work_id,s.created_at,CASE WHEN EXISTS(
 			SELECT 1 FROM catalog_series_member mm JOIN source_catalog_entry ee ON ee.id=mm.catalog_entry_id
@@ -959,7 +984,13 @@ func openListCatalogCardsQueryFiltered(sourceID int64, query string, entryIDs, s
 		WHERE (SELECT COUNT(*) FROM catalog_series_member all_members WHERE all_members.series_id=s.id)>=2` + seriesScope + `
 		AND EXISTS(SELECT 1 FROM catalog_series_member m CROSS JOIN source_catalog_entry e ON e.rowid=m.catalog_entry_id
 		WHERE m.series_id=s.id AND e.file_source_id=? AND e.relocated_to_id IS NULL AND ` + catalogEntryAdmittedSQL("e") + seriesSearch + `)
-	) AS candidates) AS cards WHERE identity_rank=1`
+	)`
+	if searched {
+		rankSuffix = `FROM (SELECT candidates.*,ROW_NUMBER() OVER (PARTITION BY CASE WHEN work_id IS NOT NULL THEN 'work:' || (SELECT identity_work_id FROM shared_work_identity WHERE work_id=candidates.work_id) WHEN series_id>0 THEN 'series:' || series_id ELSE 'catalog:' || id END ORDER BY series_id,id) AS identity_rank FROM ` + arms + ` AS candidates) AS cards WHERE identity_rank=1`
+	} else {
+		rankSuffix = `FROM ` + arms + ` AS cards`
+	}
+	from := rankSuffix
 	args = append(args, sourceID)
 	args = append(args, entryArgs...)
 	args = append(args, sourceID)
