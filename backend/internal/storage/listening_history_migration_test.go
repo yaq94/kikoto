@@ -43,7 +43,7 @@ func TestListeningMigrationPreservesExistingPlayEventsWithoutInventedDuration(t 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = Migrate(db, migrationDir); err != nil {
+	if err = Migrate(db, completeMigrationDir(t)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = db.Exec(`DELETE FROM recommendation_event`); err != nil {
@@ -57,7 +57,7 @@ func TestListeningMigrationPreservesExistingPlayEventsWithoutInventedDuration(t 
 	if count != 1 || work != 1 || seconds != 0 {
 		t.Fatalf("backfill = count %d, work %d, seconds %v", count, work, seconds)
 	}
-	if err = Migrate(db, migrationDir); err != nil {
+	if err = Migrate(db, completeMigrationDir(t)); err != nil {
 		t.Fatal(err)
 	}
 	if err = db.QueryRow(`SELECT SUM(listen_count) FROM user_listening_day`).Scan(&count); err != nil || count != 1 {

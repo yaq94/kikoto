@@ -75,7 +75,7 @@ func TestOpenListUpgradeRetainsReferencesFavoritesPlaybackAndReviewsAcrossRestar
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err = storage.MigrateFS(db, migrations.Files, buildinfo.Version); err != nil {
+		if err = storage.MigrateFS(db, completeMigrationFS(t), buildinfo.Version); err != nil {
 			t.Fatal(err)
 		}
 		server := NewServer(db, cfg)

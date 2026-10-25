@@ -60,6 +60,7 @@ type ImportResult struct {
 
 type importPlan struct {
 	preview              ImportPreview
+	version              int
 	works                map[string]int64
 	matches              map[string]identityMatch
 	reviewConflicts      map[int64]bool
@@ -69,7 +70,11 @@ type importPlan struct {
 	blocked              map[string]bool
 	identities           map[string]int64
 	reviews              map[int64]TransferReview
-	parents              map[string]identityMatch
+	parents              map[string]transferParent
+	seriesRefs           map[string]string
+	seriesTitles         map[string]string
+	parentClaims         map[string]string
+	newParents           map[string]bool
 	requiresRegistration bool
 }
 
@@ -168,21 +173,9 @@ func (s Store) ImportWithRegistration(ctx context.Context, user int64, b Backup,
 		}
 		result.Tags++
 	}
-	// Establish each explicit parent before importing members. A series review
-	// later in the same backup then resolves to this exact work instead of
-	// registering a second series identity.
-	for _, w := range b.Works {
-		if w.Identity == nil || w.Identity.Kind != "episode" || w.Identity.Parent == nil || plan.blocked[w.key()] {
-			continue
-		}
-		parentMatch, err := ensureTransferParentSeries(ctx, tx, w.Identity.Parent)
-		if err != nil {
-			return result, err
-		}
-		plan.parents[w.key()] = parentMatch
-	}
 	appliedReviews := map[int64]TransferReview{}
-	for _, w := range b.Works {
+	for _, index := range transferWorkImportOrder(b) {
+		w := b.Works[index]
 		id := plan.works[w.key()]
 		if plan.blocked[w.key()] {
 			result.SkippedWorks++
@@ -200,11 +193,7 @@ func (s Store) ImportWithRegistration(ctx context.Context, user int64, b Backup,
 		}
 		if id == 0 && w.Identity != nil {
 			m := plan.matches[w.key()]
-			if w.Identity.Kind == "episode" && w.Identity.Parent != nil && m.catalog == 0 {
-				id, err = registerEpisodeTransferWork(ctx, tx, w, w.Identity.Parent, plan.parents[w.key()])
-			} else {
-				id, err = registerTransferIdentityWork(ctx, tx, w, m)
-			}
+			id, err = registerTransferIdentityWork(ctx, tx, w, m)
 			if err != nil {
 				return result, err
 			}
@@ -223,9 +212,31 @@ func (s Store) ImportWithRegistration(ctx context.Context, user int64, b Backup,
 			plan.reviews[id] = TransferReview{Rating: w.Rating, Note: w.Note}
 		}
 		if w.Identity != nil && w.Identity.Kind == "episode" && w.Identity.Parent != nil {
-			if err = ensureEpisodeMembership(ctx, tx, w, id, plan.matches[w.key()], w.Identity.Parent, plan.parents[w.key()]); err != nil {
+			planned := plan.parents[w.key()]
+			// A top-level series in the same backup is registered before its
+			// episodes. Reuse that exact work instead of creating the minimal
+			// parent a second time.
+			if planned.workID == 0 && planned.key != "" {
+				planned.workID = plan.works[planned.key]
+			}
+			parent, problem, err := ensureParent(ctx, tx, planned, w.Identity.Parent)
+			if err != nil {
 				return result, err
 			}
+			if problem != "" {
+				return result, ErrConflict
+			}
+			if parent.workID == 0 {
+				return result, ErrConflict
+			}
+			problem, err = ensureEpisodeParent(ctx, tx, id, parent.workID)
+			if err != nil {
+				return result, err
+			}
+			if problem != "" {
+				return result, ErrConflict
+			}
+			plan.parents[w.key()] = parent
 		}
 		if w.Identity != nil {
 			if err = saveTransferReferences(ctx, tx, id, w.Identity); err != nil {
@@ -288,6 +299,26 @@ func (s Store) ImportWithRegistration(ctx context.Context, user int64, b Backup,
 		return result, err
 	}
 	return result, tx.Commit()
+}
+
+// Series works are established before episodes so a parent review in the same
+// backup always lands on the work the episode points at.
+func transferWorkImportOrder(b Backup) []int {
+	order := make([]int, 0, len(b.Works))
+	for _, predicate := range []func(*BackupWork) bool{
+		func(w *BackupWork) bool { return w.Identity != nil && w.Identity.Kind == "series" },
+		func(w *BackupWork) bool {
+			return w.Identity != nil && w.Identity.Kind != "series" && w.Identity.Kind != "episode"
+		},
+		func(w *BackupWork) bool { return w.Identity == nil || w.Identity.Kind == "episode" },
+	} {
+		for i := range b.Works {
+			if predicate(&b.Works[i]) {
+				order = append(order, i)
+			}
+		}
+	}
+	return order
 }
 
 func importTag(ctx context.Context, tx *sql.Tx, user int64, tag BackupTag, overwrite bool) (int64, error) {

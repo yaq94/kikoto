@@ -15,7 +15,6 @@ import (
 	"github.com/yexca/kikoto/backend/internal/config"
 	"github.com/yexca/kikoto/backend/internal/kikoeru"
 	"github.com/yexca/kikoto/backend/internal/storage"
-	"github.com/yexca/kikoto/backend/migrations"
 )
 
 func reviewRequest(t *testing.T, handler http.Handler, cookie *http.Cookie, method, path, body string, status int) map[string]any {
@@ -287,7 +286,7 @@ func TestPersonalReviewSurvivesApplicationRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = db.Close() }()
-	if err := storage.MigrateFS(db, migrations.Files, buildinfo.Version); err != nil {
+	if err := storage.MigrateFS(db, completeMigrationFS(t), buildinfo.Version); err != nil {
 		t.Fatal(err)
 	}
 	restarted := httptest.NewServer(NewServer(db, cfg).Routes())

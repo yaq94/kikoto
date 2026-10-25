@@ -10,7 +10,6 @@ import (
 	"github.com/yexca/kikoto/backend/internal/buildinfo"
 	"github.com/yexca/kikoto/backend/internal/config"
 	"github.com/yexca/kikoto/backend/internal/storage"
-	"github.com/yexca/kikoto/backend/migrations"
 )
 
 func TestSharedAssociationRestartStaleReviewsAndPlaybackIsolation(t *testing.T) {
@@ -23,7 +22,7 @@ func TestSharedAssociationRestartStaleReviewsAndPlaybackIsolation(t *testing.T) 
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err = storage.MigrateFS(db, migrations.Files, buildinfo.Version); err != nil {
+		if err = storage.MigrateFS(db, completeMigrationFS(t), buildinfo.Version); err != nil {
 			t.Fatal(err)
 		}
 		s := NewServer(db, cfg)

@@ -45,7 +45,7 @@ func TestLegacy095PreflightNormalizesExactHistoricalDatabase(t *testing.T) {
 	}
 	backupDir := filepath.Join(root, "backups")
 
-	if err := MigrateFSWithOptions(db, migrations.Files, "test", MigrateOptions{PreflightBackupDir: backupDir}); err != nil {
+	if err := MigrateFSWithOptions(db, completeMigrationFS(t), "test", MigrateOptions{PreflightBackupDir: backupDir}); err != nil {
 		t.Fatalf("upgrade legacy 095 database: %v", err)
 	}
 
@@ -133,7 +133,7 @@ func TestLegacy095PreflightNormalizesExactHistoricalDatabase(t *testing.T) {
 	}
 
 	// A restart sees the normalized checksum and does no preflight work.
-	if err := MigrateFSWithOptions(db, migrations.Files, "test-restart", MigrateOptions{PreflightBackupDir: backupDir}); err != nil {
+	if err := MigrateFSWithOptions(db, completeMigrationFS(t), "test-restart", MigrateOptions{PreflightBackupDir: backupDir}); err != nil {
 		t.Fatalf("restart after normalization: %v", err)
 	}
 	if got := len(legacy095AuditFiles(t, backupDir)); got != 1 {
@@ -225,7 +225,7 @@ func TestLegacy095PreflightRejectsSchemaMismatch(t *testing.T) {
 			testCase.mutate(t, db)
 			backupDir := filepath.Join(root, "backups")
 
-			err := MigrateFSWithOptions(db, migrations.Files, "test", MigrateOptions{PreflightBackupDir: backupDir})
+			err := MigrateFSWithOptions(db, completeMigrationFS(t), "test", MigrateOptions{PreflightBackupDir: backupDir})
 			if err == nil || !strings.Contains(err.Error(), testCase.want) {
 				t.Fatalf("migration error = %v, want %q refusal", err, testCase.want)
 			}
@@ -267,7 +267,7 @@ func TestLegacy095PreflightDoesNotBypassUnknownChecksums(t *testing.T) {
 		t.Fatal(err)
 	}
 	backupDir := filepath.Join(root, "backups")
-	err := MigrateFSWithOptions(db, migrations.Files, "test", MigrateOptions{PreflightBackupDir: backupDir})
+	err := MigrateFSWithOptions(db, completeMigrationFS(t), "test", MigrateOptions{PreflightBackupDir: backupDir})
 	if err == nil || !strings.Contains(err.Error(), "checksum") || !strings.Contains(err.Error(), legacyMigration095Filename) {
 		t.Fatalf("migration error = %v, want the ordinary checksum refusal", err)
 	}
@@ -293,7 +293,7 @@ func TestLegacy095PreflightRejectsMissingChecksum(t *testing.T) {
 		t.Fatal(err)
 	}
 	backupDir := filepath.Join(root, "backups")
-	err := MigrateFSWithOptions(db, migrations.Files, "test", MigrateOptions{PreflightBackupDir: backupDir})
+	err := MigrateFSWithOptions(db, completeMigrationFS(t), "test", MigrateOptions{PreflightBackupDir: backupDir})
 	if err == nil || !strings.Contains(err.Error(), "has no recorded checksum") {
 		t.Fatalf("migration error = %v, want the missing-checksum refusal", err)
 	}
@@ -325,7 +325,7 @@ func TestLegacy095PreflightRejectsLedgerWithoutChecksumColumn(t *testing.T) {
 		t.Fatal(err)
 	}
 	backupDir := filepath.Join(root, "backups")
-	err := MigrateFSWithOptions(db, migrations.Files, "test", MigrateOptions{PreflightBackupDir: backupDir})
+	err := MigrateFSWithOptions(db, completeMigrationFS(t), "test", MigrateOptions{PreflightBackupDir: backupDir})
 	if err == nil || !strings.Contains(err.Error(), "without version and checksum columns") {
 		t.Fatalf("migration error = %v, want the incomplete-ledger refusal", err)
 	}
@@ -345,7 +345,7 @@ func TestLegacy095PreflightRunsBeforeLedgerValidation(t *testing.T) {
 	}
 	backupDir := filepath.Join(root, "backups")
 
-	err := MigrateFSWithOptions(db, migrations.Files, "test", MigrateOptions{PreflightBackupDir: backupDir})
+	err := MigrateFSWithOptions(db, completeMigrationFS(t), "test", MigrateOptions{PreflightBackupDir: backupDir})
 	if err == nil || !strings.Contains(err.Error(), "gap") {
 		t.Fatalf("migration error = %v, want the ledger gap refusal", err)
 	}
@@ -379,7 +379,7 @@ func TestMigration097LeavesCurrentAndEarlierDatabasesCompatible(t *testing.T) {
 			t.Fatal(err)
 		}
 		backupDir := filepath.Join(t.TempDir(), "backups")
-		if err := MigrateFSWithOptions(db, migrations.Files, "test", MigrateOptions{PreflightBackupDir: backupDir}); err != nil {
+		if err := MigrateFSWithOptions(db, completeMigrationFS(t), "test", MigrateOptions{PreflightBackupDir: backupDir}); err != nil {
 			t.Fatalf("upgrade current 095 database: %v", err)
 		}
 		assertCurrentSourceFieldTranslationSchema(t, db)
@@ -408,7 +408,7 @@ func TestMigration097LeavesCurrentAndEarlierDatabasesCompatible(t *testing.T) {
 		if audits := legacy095AuditFiles(t, backupDir); len(audits) != 0 {
 			t.Fatalf("current 095 database triggered legacy preflight: %v", audits)
 		}
-		if err := MigrateFSWithOptions(db, migrations.Files, "test-restart", MigrateOptions{PreflightBackupDir: backupDir}); err != nil {
+		if err := MigrateFSWithOptions(db, completeMigrationFS(t), "test-restart", MigrateOptions{PreflightBackupDir: backupDir}); err != nil {
 			t.Fatalf("restart after the 097 rebuild: %v", err)
 		}
 		assertCurrentSourceFieldTranslationSchema(t, db)
@@ -421,7 +421,7 @@ func TestMigration097LeavesCurrentAndEarlierDatabasesCompatible(t *testing.T) {
 			t.Fatalf("create 084 database: %v", err)
 		}
 		backupDir := filepath.Join(t.TempDir(), "backups")
-		if err := MigrateFSWithOptions(db, migrations.Files, "test", MigrateOptions{PreflightBackupDir: backupDir}); err != nil {
+		if err := MigrateFSWithOptions(db, completeMigrationFS(t), "test", MigrateOptions{PreflightBackupDir: backupDir}); err != nil {
 			t.Fatalf("upgrade 084 database: %v", err)
 		}
 		var current int
@@ -437,7 +437,7 @@ func TestMigration097LeavesCurrentAndEarlierDatabasesCompatible(t *testing.T) {
 		if audits := legacy095AuditFiles(t, backupDir); len(audits) != 0 {
 			t.Fatalf("084 upgrade triggered legacy preflight: %v", audits)
 		}
-		if err := MigrateFSWithOptions(db, migrations.Files, "test-restart", MigrateOptions{PreflightBackupDir: backupDir}); err != nil {
+		if err := MigrateFSWithOptions(db, completeMigrationFS(t), "test-restart", MigrateOptions{PreflightBackupDir: backupDir}); err != nil {
 			t.Fatalf("restart after the 084 upgrade: %v", err)
 		}
 		assertCurrentSourceFieldTranslationSchema(t, db)
@@ -447,7 +447,7 @@ func TestMigration097LeavesCurrentAndEarlierDatabasesCompatible(t *testing.T) {
 
 func TestMigration097FreshInstallIntegrity(t *testing.T) {
 	db := openMigrationManagerDB(t)
-	if err := MigrateFS(db, migrations.Files, "test"); err != nil {
+	if err := MigrateFS(db, completeMigrationFS(t), "test"); err != nil {
 		t.Fatalf("fresh install: %v", err)
 	}
 	assertCurrentSourceFieldTranslationSchema(t, db)

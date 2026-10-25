@@ -27,7 +27,7 @@ func (s Store) Export(ctx context.Context, user int64) ([]byte, error) {
 		return nil, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	b := Backup{Format: "kikoto-user-data", Version: 2, ExportedAt: time.Now().UTC().Format(time.RFC3339), Works: []BackupWork{}, Tags: []BackupTag{}, Playlists: []BackupPlaylist{}}
+	b := Backup{Format: "kikoto-user-data", Version: 3, ExportedAt: time.Now().UTC().Format(time.RFC3339), Works: []BackupWork{}, Tags: []BackupTag{}, Playlists: []BackupPlaylist{}}
 	// Stop while reading, before many large notes can accumulate in memory.
 	// JSON framing and escaping are checked against the exact budget below.
 	textBudget := MaxTransferBytes
@@ -70,8 +70,12 @@ func (s Store) Export(ctx context.Context, user int64) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	exportedWorks := make(map[int64]bool, len(workIndex))
+	for id := range workIndex {
+		exportedWorks[id] = true
+	}
 	for id, index := range workIndex {
-		identity, err := exportIdentity(ctx, tx, id)
+		identity, err := exportIdentity(ctx, tx, id, true, exportedWorks)
 		if err != nil {
 			return nil, err
 		}
@@ -82,7 +86,10 @@ func (s Store) Export(ctx context.Context, user int64) ([]byte, error) {
 			return nil, err
 		}
 		if identity.Parent != nil {
-			if err = reserveText(identity.Parent.Ref, identity.Parent.Title, identity.Parent.EntryRef, identity.Parent.Evidence); err != nil {
+			if err = reserveText(identity.Parent.Ref, identity.Parent.Title); err != nil {
+				return nil, err
+			}
+			if err = reserveText(identity.Parent.References...); err != nil {
 				return nil, err
 			}
 		}
@@ -163,7 +170,7 @@ func (s Store) Export(ctx context.Context, user int64) ([]byte, error) {
 		return nil, err
 	}
 	for work, mediaWork := range mediaIdentities {
-		identity, err := exportIdentity(ctx, tx, mediaWork)
+		identity, err := exportIdentity(ctx, tx, mediaWork, false, nil)
 		if err != nil {
 			return nil, err
 		}

@@ -11,7 +11,6 @@ import (
 	"testing"
 
 	"github.com/yexca/kikoto/backend/internal/buildinfo"
-	"github.com/yexca/kikoto/backend/internal/migrationfixture"
 	"github.com/yexca/kikoto/backend/internal/storage"
 	"github.com/yexca/kikoto/backend/internal/translation"
 )
@@ -22,7 +21,7 @@ func openContentTranslationTestServer(t *testing.T) *Server {
 	if err != nil {
 		t.Fatalf("open database: %v", err)
 	}
-	if err := storage.MigrateFS(db, migrationfixture.MustFS(t), buildinfo.Version); err != nil {
+	if err := storage.MigrateFS(db, completeMigrationFS(t), buildinfo.Version); err != nil {
 		_ = db.Close()
 		t.Fatalf("migrate: %v", err)
 	}

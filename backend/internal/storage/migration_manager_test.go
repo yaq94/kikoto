@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -17,7 +18,7 @@ import (
 
 var numberedMigrationFilePattern = regexp.MustCompile(`^[0-9]{3}_[a-z0-9][a-z0-9_]*\.sql$`)
 
-const latestNumberedMigrationVersion = 99
+const latestNumberedMigrationVersion = 100
 
 // testMigrationDir is the self-contained test catalog: the packaged chain plus
 // no-op 097/098 integration placeholders. Production Migrate still reads
@@ -127,7 +128,7 @@ func TestMigrateUpgradesExistingDatabaseThroughNumberedChain(t *testing.T) {
 	if before != latestNumberedMigrationVersion-1 {
 		t.Fatalf("existing migration history count = %d, want %d", before, latestNumberedMigrationVersion-1)
 	}
-	if err := Migrate(db, sourceDir); err != nil {
+	if err := Migrate(db, completeMigrationDir(t)); err != nil {
 		t.Fatalf("upgrade existing database: %v", err)
 	}
 	var after int
@@ -251,7 +252,7 @@ func TestMigrateUpgradesRetiredBaselineLedger(t *testing.T) {
 				t.Fatalf("create schema version %03d database: %v", testCase.previousVersion, err)
 			}
 			replaceMigrationHistoryWithRetiredBaseline(t, db, testCase.baseline)
-			if err := Migrate(db, sourceDir); err != nil {
+			if err := Migrate(db, completeMigrationDir(t)); err != nil {
 				t.Fatalf("upgrade retired baseline ledger: %v", err)
 			}
 
@@ -271,11 +272,11 @@ func TestMigrateUpgradesRetiredBaselineLedger(t *testing.T) {
 			if err := rows.Err(); err != nil {
 				t.Fatal(err)
 			}
-			wantHistory := testCase.wantHistory + numberedMigrationSuffix(t, sourceDir, 62)
+			wantHistory := testCase.wantHistory + numberedMigrationSuffix(t, completeMigrationDir(t), 62)
 			if got := strings.Join(filenames, ","); got != wantHistory {
 				t.Fatalf("upgraded migration history = %q, want %q", got, wantHistory)
 			}
-			if err := MigrateFSWithOptions(db, os.DirFS(sourceDir), "test", MigrateOptions{Development: true}); err != nil {
+			if err := MigrateFSWithOptions(db, completeMigrationFS(t), "test", MigrateOptions{Development: true}); err != nil {
 				t.Fatalf("restart retired baseline ledger in development mode: %v", err)
 			}
 		})
@@ -337,8 +338,8 @@ func TestMigrateAdoptsLegacyMigrationLedger(t *testing.T) {
 
 func TestMigrateBaselineMatchesCompleteIncrementalChain(t *testing.T) {
 	migrationDir := testMigrationDir(t)
-	if got := latestNumberedMigrationFilename(t, migrationDir); got != "099_translation_corpus_config.sql" {
-		t.Fatalf("latest migration = %q, want the translation corpus config migration", got)
+	if got := latestNumberedMigrationFilename(t, migrationDir); got != "100_work_parent.sql" {
+		t.Fatalf("latest migration = %q, want the work parent migration", got)
 	}
 	incrementalDir := copyNumberedMigrations(t, migrationDir)
 
@@ -360,7 +361,7 @@ func TestMigrateBaselineMatchesCompleteIncrementalChain(t *testing.T) {
 	} {
 		t.Run(mode.name, func(t *testing.T) {
 			baseline := openMigrationManagerDB(t)
-			if err := MigrateFSWithOptions(baseline, os.DirFS(migrationDir), "test", MigrateOptions{Development: mode.development}); err != nil {
+			if err := MigrateFSWithOptions(baseline, completeMigrationFS(t), "test", MigrateOptions{Development: mode.development}); err != nil {
 				t.Fatalf("baseline Migrate() error = %v", err)
 			}
 			assertCatalogEpisodePendingSchema(t, baseline)
@@ -784,6 +785,7 @@ func copyNumberedMigrationsThrough(t *testing.T, sourceDir string, version int) 
 	if err != nil {
 		t.Fatal(err)
 	}
+	found := map[int]bool{}
 	for _, entry := range entries {
 		if entry.IsDir() || !numberedMigrationFilePattern.MatchString(entry.Name()) || entry.Name()[:3] > fmt.Sprintf("%03d", version) {
 			continue
@@ -793,6 +795,20 @@ func copyNumberedMigrationsThrough(t *testing.T, sourceDir string, version int) 
 			t.Fatal(err)
 		}
 		if err := os.WriteFile(filepath.Join(destination, entry.Name()), contents, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		number, _ := strconv.Atoi(entry.Name()[:3])
+		found[number] = true
+	}
+	// A feature branch can add a migration before its intermediate numbers
+	// exist. The production loader requires a contiguous chain, so tests fill
+	// only those gaps with an empty step. A complete chain is unchanged.
+	for number := 1; number <= version; number++ {
+		if found[number] {
+			continue
+		}
+		name := fmt.Sprintf("%03d_test_gap.sql", number)
+		if err := os.WriteFile(filepath.Join(destination, name), []byte("-- test-only contiguous-chain placeholder\nSELECT 1;\n"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -1058,7 +1074,7 @@ func TestCatalogSearchMigrationBackfillsExistingRows(t *testing.T) {
 		INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes) VALUES(1,'Disc/legacy.mp3','Legacy Track','audio',10);`); err != nil {
 		t.Fatalf("seed schema 084: %v", err)
 	}
-	if err := Migrate(db, sourceDir); err != nil {
+	if err := Migrate(db, completeMigrationDir(t)); err != nil {
 		t.Fatalf("upgrade to 085: %v", err)
 	}
 	var documents int

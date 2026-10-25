@@ -20,7 +20,7 @@ func TestMigrationRemovesPlaintextSessions(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := Migrate(db, sourceDir); err != nil {
+	if err := Migrate(db, completeMigrationDir(t)); err != nil {
 		t.Fatal(err)
 	}
 	var sessions, accounts int

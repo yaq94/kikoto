@@ -14,7 +14,7 @@ import (
 	"github.com/yexca/kikoto/backend/internal/config"
 	"github.com/yexca/kikoto/backend/internal/personal"
 	"github.com/yexca/kikoto/backend/internal/storage"
-	"github.com/yexca/kikoto/backend/migrations"
+	"github.com/yexca/kikoto/backend/internal/testfixture"
 )
 
 func openTransferApplication(t *testing.T, root string, first bool) (*sql.DB, *httptest.Server, *http.Cookie, *http.Cookie, func()) {
@@ -23,7 +23,11 @@ func openTransferApplication(t *testing.T, root string, first bool) (*sql.DB, *h
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = storage.MigrateFS(db, migrations.Files, buildinfo.Version); err != nil {
+	migrationDir, err := testfixture.MigrationDir(filepath.Join("..", "..", "migrations"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = storage.MigrateFS(db, os.DirFS(migrationDir), buildinfo.Version); err != nil {
 		t.Fatal(err)
 	}
 	cfg := config.Config{Mode: config.ModeProduction, RootUsername: "synthetic-user", DataRoot: filepath.Join(root, "data"), CacheRoot: filepath.Join(root, "cache")}
@@ -177,9 +181,10 @@ func TestPersonalTransferRestoresKnownUnregisteredCatalogSeriesAndEpisodeAcrossR
 		t.Fatal(err)
 	}
 	rating4, rating5, rating3 := 4, 5, 3
-	backup := personal.Backup{Format: "kikoto-user-data", Version: 2, Works: []personal.BackupWork{
+	backup := personal.Backup{Format: "kikoto-user-data", Version: 3, Works: []personal.BackupWork{
 		{Identity: &personal.BackupIdentity{Ref: standaloneRef, Kind: "work", Title: "Numberless Work"}, ListeningStatus: "finished", Rating: &rating4, Note: "Standalone note"},
-		{Identity: &personal.BackupIdentity{Ref: episodeRef, Kind: "episode", Title: "Episode One"}, ListeningStatus: "listening", Rating: &rating5, Note: "Episode note"},
+		{Identity: &personal.BackupIdentity{Ref: episodeRef, Kind: "episode", Title: "Episode One",
+			Parent: &personal.BackupIdentity{Ref: seriesRef, Kind: "series", Title: "Numberless Series"}}, ListeningStatus: "listening", Rating: &rating5, Note: "Episode note"},
 		{Identity: &personal.BackupIdentity{Ref: seriesRef, Kind: "series", Title: "Numberless Series"}, ListeningStatus: "paused", Rating: &rating3, Note: "Series note"},
 	}}
 	body := mustJSON(map[string]any{"format": "kikoto", "data": backup, "conflict": "keep"})

@@ -17,7 +17,6 @@ import (
 	"github.com/yexca/kikoto/backend/internal/config"
 	"github.com/yexca/kikoto/backend/internal/storage"
 	"github.com/yexca/kikoto/backend/internal/storagepool"
-	"github.com/yexca/kikoto/backend/migrations"
 )
 
 // The v0.6.1 tag contains numbered migrations through 034 and the 034
@@ -81,7 +80,7 @@ func reopenMigrationServer(t *testing.T, databasePath, dataRoot string) (*sql.DB
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	if err := storage.MigrateFS(db, migrations.Files, buildinfo.Version); err != nil {
+	if err := storage.MigrateFS(db, completeMigrationFS(t), buildinfo.Version); err != nil {
 		t.Fatal(err)
 	}
 	server := NewServer(db, config.Config{DataRoot: dataRoot, LocalScanDepth: 2})
@@ -214,7 +213,7 @@ func TestV061DatabaseBootsIntoPoolMigrationWithLegacyWorkflowReview(t *testing.T
 	}
 	t.Cleanup(func() { _ = db.Close() })
 	called := false
-	if err := storage.MigrateFSWithOptions(db, migrations.Files, buildinfo.Version, storage.MigrateOptions{
+	if err := storage.MigrateFSWithOptions(db, completeMigrationFS(t), buildinfo.Version, storage.MigrateOptions{
 		BeforeUpgrade: func(from, to int) error {
 			called = true
 			if from != 34 || to <= from {

@@ -40,7 +40,7 @@ func TestTranslationConfigurationAndTrialSurviveApplicationRestart(t *testing.T)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := storage.Migrate(db, filepath.Join("..", "..", "migrations")); err != nil {
+		if err := storage.Migrate(db, completeMigrationDir(t)); err != nil {
 			t.Fatal(err)
 		}
 		server = NewServer(db, config.Config{Mode: config.ModeProduction, RootUsername: "root"})

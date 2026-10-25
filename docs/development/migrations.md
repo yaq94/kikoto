@@ -145,6 +145,15 @@ requires normalization; no change.` when the database has no legacy 095 row.
 It refuses a mismatched schema without changing the ledger. Back up the file
 before running any maintenance command.
 
+Schema 100 is `100_work_parent.sql`. It adds `work.parent_work_id`, a nullable
+restrictive reference to `work(id)`, and `idx_work_parent_work`. The backfill
+writes only when the series and the member's entry both have a registered work,
+the entry belongs to one series, and the episode work resolves to exactly one
+registered series work. Missing or contradictory evidence stays null for
+review. The branch that introduces this migration may arrive before 097–099;
+integration applies it after those migrations and generates the development
+baseline for the final chain head.
+
 ## Fresh Installs And Upgrades
 
 The single-row `schema_state` table records the current schema version, the

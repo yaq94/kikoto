@@ -3,7 +3,11 @@ import { describe, expect, it, vi } from "vitest";
 
 import "@/i18n";
 import type { CatalogSeriesEpisode } from "@/lib/api";
-import { CatalogSeriesEpisodeItem, openCatalogSeriesEpisode } from "./CatalogSeriesDetail";
+import {
+  CatalogSeriesEpisodeItem,
+  catalogSeriesEpisodeIntent,
+  openCatalogSeriesEpisode,
+} from "./CatalogSeriesDetail";
 
 vi.mock("@/app/workDetailNavigation", () => ({ openWorkDetail: vi.fn() }));
 
@@ -43,10 +47,34 @@ describe("CatalogSeriesEpisodeItem", () => {
     vi.mocked(openWorkDetail).mockClear();
     vi.mocked(openWorkDetail).mockReturnValue(true);
 
-    expect(openCatalogSeriesEpisode(17, "Example series", missingEpisode.catalogEntryId)).toBe(true);
+    expect(openCatalogSeriesEpisode(17, "Example series", missingEpisode)).toBe(true);
     expect(openWorkDetail).toHaveBeenCalledWith(
       { kind: "catalog", catalogEntryId: missingEpisode.catalogEntryId },
       { returnTo: "/catalog-series/17", returnLabel: "Example series" },
     );
+  });
+
+  it("opens a personal-only episode by work instead of an empty catalog entry", () => {
+    vi.mocked(openWorkDetail).mockClear();
+    vi.mocked(openWorkDetail).mockReturnValue(true);
+    const personalOnly: CatalogSeriesEpisode = {
+      ...missingEpisode,
+      catalogEntryId: 0,
+      sourceId: 0,
+      sourceName: "",
+      status: "available",
+      workId: 42,
+    };
+    expect(catalogSeriesEpisodeIntent(personalOnly)).toEqual({
+      kind: "known",
+      canonicalCode: "42",
+      view: "local",
+    });
+    expect(openCatalogSeriesEpisode(17, "Example series", personalOnly)).toBe(true);
+    expect(openWorkDetail).toHaveBeenCalledWith(
+      { kind: "known", canonicalCode: "42", view: "local" },
+      { returnTo: "/catalog-series/17", returnLabel: "Example series" },
+    );
+    expect(catalogSeriesEpisodeIntent({ ...personalOnly, workId: null })).toBeNull();
   });
 });

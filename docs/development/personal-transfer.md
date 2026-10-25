@@ -25,10 +25,14 @@ the episode is blocked with `parent_conflict`/`parent_cycle`; it is not restored
 as a standalone work. A version 2 file whose episode has no parent field keeps
 its legacy behaviour and reports that the parent was not restored.
 
-Version 2 list items use `workRef` to select a work in the same document.
+An episode parent is exported even when the series has no personal review, so an
+episode review never loses its evaluation parent. Parent aliases resolve as that
+same series and never become episode references.
+
+Version 3 list items use `workRef` to select a work in the same document.
 Progress carries `mediaIdentity` for its exact edition and retains title,
 track/disc numbers and position. The importer requires an unambiguous media
-match. `personal_transfer_progress` retains unmatched version 2 resume data for
+match. `personal_transfer_progress` retains unmatched incoming resume data for
 re-export without creating media. An actual playback cursor takes precedence
 over retained import progress. No source or media request runs during transfer.
 
@@ -45,13 +49,26 @@ The importer keeps the evaluation level: a catalog episode must not become a
 standalone work or series, and a series reference cannot become a work. On an
 episode import that carries `parent` it writes `work.parent_work_id`, sets the episode's primary
 `personal_transfer_ref.object_kind` to `episode`, and creates or reuses a
-`catalog_series` row for an otherwise unknown parent. A personal-only series
-has no `catalog_series_member` because there is no `source_catalog_entry`; the
-series endpoint lists its children through `work.parent_work_id` and returns
-`catalogEntryId=0`. It never downloads media, starts a media workflow,
-reconstructs shared associations or invents source membership. Unknown source
-references are retained as transfer aliases and reported as having no source
-connection.
+`catalog_series` row for an otherwise unknown parent. `catalog_series.work_id`
+names the series' own evaluation work. An explicit `parent` reuses a registered
+parent work, registers the work of a known catalog series, or creates a minimal
+series work plus a `catalog_series` row with null `source_id` and `source_key`.
+A new series row receives a random `s:` reference; a free backup reference
+replaces it, the same series reuses it, and any other owner is a
+`parent_conflict`. Parent resolution never matches from a title or path and
+never changes an existing membership. A version 3 episode without a valid
+parent is reported as `parent_required` or `parent_conflict`; a parent chain
+that loops is `parent_cycle`. Those entries are blocked and no episode work is
+registered, while other records still import. A version 2 episode has no parent
+field, so it keeps the previous independent restoration and reports
+`relationships_not_imported`; that report is never used for a version 3 parent.
+
+A personal-only series has no `catalog_series_member` because there is no
+`source_catalog_entry`. The series endpoint lists its children through
+`work.parent_work_id` and returns `catalogEntryId=0`. The importer never
+downloads media, starts a media workflow, reconstructs shared associations or
+invents source membership. Unknown source references are retained as transfer
+aliases and reported as having no source connection.
 
 Review planning groups exact references through `shared_work_identity`.
 Different nonempty incoming values block the whole evaluation group, including
@@ -61,9 +78,14 @@ retain their exact work references. Splitting a shared association keeps those
 references independently importable. Every query and write of personal state
 uses the authenticated user; import JSON cannot select an account.
 
+An episode restored into a library without source membership is listed by its
+series detail through `work.parent_work_id`. A source-backed episode of the same
+work wins when both representations exist, so the detail never duplicates one
+episode.
+
 Preview and result `issues` expose the involved reference, a stable reason and,
 for review conflicts, only the caller's current and incoming fields. Safe
 records can import alongside unresolved records. A list with an unresolved
-version 2 reference remains unchanged. Imports commit atomically; repeated
+reference remains unchanged. Imports commit atomically; repeated
 listening totals merge by maximum. Existing transfer byte and collection limits
 remain enforced, with at most 100 additional references per object.

@@ -23,7 +23,11 @@ func testStore(t *testing.T) Store {
 	}
 	db.SetMaxOpenConns(1)
 	t.Cleanup(func() { _ = db.Close() })
-	if err = storage.Migrate(db, filepath.Join("..", "..", "migrations")); err != nil {
+	migrationDir, err := testfixture.MigrationDir(filepath.Join("..", "..", "migrations"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = storage.Migrate(db, migrationDir); err != nil {
 		t.Fatal(err)
 	}
 	execFixture(t, db, `INSERT INTO user_account (id,username,display_name,role) VALUES (1,'synthetic-user','Example User','user'),(2,'synthetic-other','Example Other','user')`)
@@ -375,7 +379,7 @@ func TestKikoeruStatusesAndStrictImportValidation(t *testing.T) {
 		}
 	}
 	for _, raw := range []string{
-		`{"format":"kikoto-user-data","version":3,"works":[]}`,
+		`{"format":"kikoto-user-data","version":4,"works":[]}`,
 		`{"format":"kikoto-user-data","version":1,"credentials":"synthetic-token"}`,
 		`{"format":"kikoto-user-data","version":1,"works":[{"primaryCode":"RJ00000000","listeningStatus":"invalid"}]}`,
 		`{"format":"kikoto-user-data","version":1} {}`,

@@ -8,8 +8,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/yexca/kikoto/backend/internal/migrationfixture"
 	"github.com/yexca/kikoto/backend/internal/storage"
+	"github.com/yexca/kikoto/backend/internal/testfixture"
 )
 
 // Build the real packaged schema once, then give every test its own writable
@@ -26,11 +26,12 @@ var migratedTestDatabaseImage = sync.OnceValues(func() ([]byte, error) {
 		return nil, err
 	}
 	defer func() { _ = db.Close() }()
-	files, err := migrationfixture.FS()
+	migrationDir, err := testfixture.MigrationDir(filepath.Join("..", "..", "migrations"))
 	if err != nil {
 		return nil, err
 	}
-	if err := storage.MigrateFS(db, files, "test"); err != nil {
+	defer func() { _ = os.RemoveAll(migrationDir) }()
+	if err := storage.Migrate(db, migrationDir); err != nil {
 		return nil, err
 	}
 	// Tests start from a configured standard library, like an instance that
@@ -117,11 +118,7 @@ func TestMigratedTestDatabasesRemainIsolated(t *testing.T) {
 	}
 	// Startup must still accept the copied ledger and schema as an already
 	// migrated installation. Migration-chain tests continue to build their own DBs.
-	migrationFiles, err := migrationfixture.FS()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := storage.MigrateFS(second, migrationFiles, "test"); err != nil {
+	if err := storage.Migrate(second, completeMigrationDir(t)); err != nil {
 		t.Fatalf("copied migration state is invalid: %v", err)
 	}
 }

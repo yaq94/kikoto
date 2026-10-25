@@ -20,7 +20,7 @@ func TestLanguageTitleMigrationPreservesTitleOverridesAndSearchTriggers(t *testi
  SELECT id,'cover','{}','synthetic-cover.png' FROM work;`); err != nil {
 		t.Fatal(err)
 	}
-	if err := MigrateFS(db, mustMigrationFixtureFS(t), "test"); err != nil {
+	if err := MigrateFS(db, completeMigrationFS(t), "test"); err != nil {
 		t.Fatal(err)
 	}
 	var title, language, created, updated, asset string

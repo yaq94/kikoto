@@ -13,7 +13,6 @@ import (
 	"testing"
 
 	"github.com/yexca/kikoto/backend/internal/config"
-	"github.com/yexca/kikoto/backend/internal/migrationfixture"
 	"github.com/yexca/kikoto/backend/internal/storage"
 	"github.com/yexca/kikoto/backend/internal/translation"
 )
@@ -36,7 +35,7 @@ func TestContentTranslationCorpusAndIndependentPreferencesSurviveRestart(t *test
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := storage.MigrateFS(db, migrationfixture.MustFS(t), "test"); err != nil {
+		if err := storage.Migrate(db, completeMigrationDir(t)); err != nil {
 			t.Fatal(err)
 		}
 		app = NewServer(db, config.Config{Mode: config.ModeProduction, RootUsername: "root", CacheRoot: filepath.Join(root, "cache")})
