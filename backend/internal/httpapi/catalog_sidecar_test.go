@@ -845,7 +845,9 @@ func TestWorkMatchingSidecarCreditsAssociateNumberlessCatalog(t *testing.T) {
 	metadataReviewExec(t, db, `INSERT INTO file_source(id,code,display_name,source_type) VALUES(7,'example_remote_a','Example Remote A','openlist');
 	INSERT INTO file_source_endpoint(file_source_id,api_url,base_url) VALUES(7,'https://source.example.invalid','https://source.example.invalid');
 	INSERT INTO source_catalog_entry(id,file_source_id,root_path,title,sidecar_json) VALUES(1,7,'/Example Work','Example Work','{"sidecars":[{"relativePath":"readme.txt","size":12,"voiceActors":["Example Voice"],"circles":[],"fetchedAt":"2026-01-01T00:00:00Z"}]}');
-	INSERT INTO source_catalog_entry(id,file_source_id,root_path,title,sidecar_json) VALUES(2,7,'/Example Work Copy','Example Work','{"sidecars":[{"relativePath":"readme.txt","size":12,"voiceActors":["Example Voice"],"circles":[],"fetchedAt":"2026-01-01T00:00:00Z"}]}');`)
+	INSERT INTO source_catalog_entry(id,file_source_id,root_path,title,sidecar_json) VALUES(2,7,'/Example Work Copy','Example Work','{"sidecars":[{"relativePath":"readme.txt","size":12,"voiceActors":["Example Voice"],"circles":[],"fetchedAt":"2026-01-01T00:00:00Z"}]}');
+	INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes) VALUES
+		(1,'01.mp3','01.mp3','audio',1024),(2,'01.mp3','01.mp3','audio',1024);`)
 	app := httptest.NewServer(s.Routes())
 	defer app.Close()
 	cookie := workReferenceLogin(t, app, "synthetic-editor")

@@ -234,6 +234,8 @@ func TestAuditPersonalTransferSeriesViewDeduplicatesSourceAndParentEpisode(t *te
 		INSERT INTO file_source_endpoint(file_source_id,api_url,base_url) VALUES(7,'https://source.example.invalid','https://source.example.invalid');
 		INSERT INTO work(id,primary_code,title) VALUES(401,'','Example Series'),(402,'','Example Episode');
 		INSERT INTO source_catalog_entry(id,file_source_id,root_path,title,work_id) VALUES(101,7,'/Example Episode','Example Episode',402);
+		INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes) VALUES
+			(101,'01.mp3','01.mp3','audio',1024);
 		INSERT INTO catalog_series(id,title,work_id) VALUES(201,'Example Series',401);
 		INSERT INTO catalog_series_member(series_id,catalog_entry_id,position,evidence) VALUES(201,101,1,'directory');
 		UPDATE work SET parent_work_id=401 WHERE id=402;`)

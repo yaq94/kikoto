@@ -64,6 +64,8 @@ func TestPersonalFieldGETResponsesUsePrivateNoStore(t *testing.T) {
 			(10,'RJ00000000','Example Remote Work'),
 			(11,'','Example Catalog A'),
 			(12,'','Example Catalog B'),
+			(13,'','Example Episode A'),
+			(14,'','Example Episode B'),
 			(20,'','Example Series');
 		INSERT INTO file_source(id,code,display_name,source_type) VALUES
 			(1,'example_remote','Example Remote','kikoeru_compatible'),
@@ -71,11 +73,16 @@ func TestPersonalFieldGETResponsesUsePrivateNoStore(t *testing.T) {
 		INSERT INTO file_source_endpoint(file_source_id,base_url,api_url) VALUES(1,'https://source.example.invalid','`+remote.URL+`');
 		INSERT INTO source_catalog_entry(id,file_source_id,root_path,title,work_id) VALUES
 			(1,7,'/Catalog A','Example Catalog A',11),
-			(2,7,'/Catalog B','Example Catalog B',12);
+			(2,7,'/Catalog B','Example Catalog B',12),
+			(3,7,'/Episode A','Example Episode A',13),
+			(4,7,'/Episode B','Example Episode B',14);
 		INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes) VALUES
 			(1,'track.mp3','track.mp3','audio',100),
-			(2,'track.mp3','track.mp3','audio',100);
-		INSERT INTO catalog_series(id,title,work_id) VALUES(1,'Example Series',20);`)
+			(2,'track.mp3','track.mp3','audio',100),
+			(3,'track.mp3','track.mp3','audio',100),
+			(4,'track.mp3','track.mp3','audio',100);
+		INSERT INTO catalog_series(id,title,work_id) VALUES(1,'Example Series',20);
+		INSERT INTO catalog_series_member(series_id,catalog_entry_id,position,evidence) VALUES(1,3,1,'manual'),(1,4,2,'manual');`)
 
 	app := httptest.NewServer(s.Routes())
 	defer app.Close()

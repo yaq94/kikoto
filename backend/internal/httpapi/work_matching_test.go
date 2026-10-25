@@ -138,7 +138,8 @@ func TestWorkMatchingNumberedCatalogUsesExistingCodeBeforeTitleCandidates(t *tes
 	metadataReviewExec(t, db, `INSERT INTO work(id,primary_code,title) VALUES(11,'RJ00000000','Example Work'),(12,'','Example Other');
 	INSERT INTO file_source(id,code,display_name,source_type) VALUES(7,'example_remote_a','Example Remote A','openlist');
 	INSERT INTO file_source_endpoint(file_source_id,api_url,base_url) VALUES(7,'https://source.example.invalid','https://source.example.invalid');
-	INSERT INTO source_catalog_entry(id,file_source_id,root_path,primary_code,title) VALUES(1,7,'/Example Other','RJ00000000','Example Other');`)
+	INSERT INTO source_catalog_entry(id,file_source_id,root_path,primary_code,title) VALUES(1,7,'/Example Other','RJ00000000','Example Other');
+	INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes) VALUES(1,'01.mp3','01.mp3','audio',1024);`)
 	app := httptest.NewServer(s.Routes())
 	defer app.Close()
 	cookie := workReferenceLogin(t, app, "synthetic-editor")
@@ -195,7 +196,9 @@ func TestWorkMatchingCatalogHashesAssociateWithoutInventingCodes(t *testing.T) {
 	createTestAdministrator(t, s, "synthetic-editor", "synthetic-password")
 	metadataReviewExec(t, db, `INSERT INTO file_source(id,code,display_name,source_type) VALUES(7,'example_remote_a','Example Remote A','openlist'),(8,'example_remote_b','Example Remote B','openlist');
 	INSERT INTO file_source_endpoint(file_source_id,api_url,base_url) VALUES(7,'https://a.example.invalid','https://a.example.invalid'),(8,'https://b.example.invalid','https://b.example.invalid');
-	INSERT INTO source_catalog_entry(id,file_source_id,root_path,title,content_fingerprint) VALUES(1,7,'/Example A','Example Work','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'),(2,8,'/Example B','Example Work','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');`)
+	INSERT INTO source_catalog_entry(id,file_source_id,root_path,title,content_fingerprint) VALUES(1,7,'/Example A','Example Work','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'),(2,8,'/Example B','Example Work','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
+	INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes) VALUES
+		(1,'01.mp3','01.mp3','audio',1024),(2,'01.mp3','01.mp3','audio',1024);`)
 	app := httptest.NewServer(s.Routes())
 	defer app.Close()
 	cookie := workReferenceLogin(t, app, "synthetic-editor")

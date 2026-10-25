@@ -22,7 +22,9 @@ func TestSharedAssociationWaitsForEachRecordOwner(t *testing.T) {
 	INSERT INTO work(id,primary_code,title) VALUES(11,'','Example work A'),(12,'RJ00000000','Example work B');
 	INSERT INTO logical_work(id,canonical_work_id,canonical_code) VALUES(101,11,'EXAMPLE-A'),(102,12,'RJ00000000');
 	INSERT INTO work_edition(work_id,logical_work_id,primary_code,edition_label,is_canonical) VALUES(11,101,'','Original',1),(12,102,'RJ00000000','Translated',1);
-	INSERT INTO source_catalog_entry(id,file_source_id,root_path,title,work_id) VALUES(1,7,'/Example A','Example A',11),(2,8,'/Example B','Example B',12);`)
+	INSERT INTO source_catalog_entry(id,file_source_id,root_path,title,work_id) VALUES(1,7,'/Example A','Example A',11),(2,8,'/Example B','Example B',12);
+	INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes) VALUES
+		(1,'01.mp3','01.mp3','audio',1024),(2,'01.mp3','01.mp3','audio',1024);`)
 	app := httptest.NewServer(s.Routes())
 	defer app.Close()
 	editor := workReferenceLogin(t, app, "synthetic-editor")

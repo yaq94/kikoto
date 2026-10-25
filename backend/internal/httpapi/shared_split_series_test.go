@@ -19,6 +19,8 @@ func TestSharedSplitSeriesKeepsEpisodeReviewsAndMembership(t *testing.T) {
 	INSERT INTO file_source_endpoint(file_source_id,api_url,base_url) VALUES(7,'https://source.example.invalid','https://source.example.invalid');
 	INSERT INTO catalog_series(id,title,work_id) VALUES(1,'Series A',21),(2,'Series B',22);
 	INSERT INTO source_catalog_entry(id,file_source_id,root_path,title,work_id) VALUES(1,7,'/A','Episode A',11),(2,7,'/B','Episode B',12);
+	INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes) VALUES
+		(1,'01.mp3','01.mp3','audio',1024),(2,'01.mp3','01.mp3','audio',1024);
 	INSERT INTO catalog_series_member(series_id,catalog_entry_id,position,evidence) VALUES(1,1,1,'manual'),(2,2,1,'manual');`)
 	app := httptest.NewServer(s.Routes())
 	defer app.Close()
@@ -78,6 +80,8 @@ func TestSharedSplitSeriesKeepsTwoEpisodesAndTheirPlaybackEditions(t *testing.T)
 	INSERT INTO catalog_series(id,title,work_id) VALUES(1,'Series A',21),(2,'Series B',22);
 	INSERT INTO source_catalog_entry(id,file_source_id,root_path,title,work_id) VALUES
 		(1,7,'/A','Episode A',11),(2,7,'/B','Episode B',12),(3,7,'/C','Episode C',13);
+	INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes) VALUES
+		(1,'01.mp3','01.mp3','audio',1024),(2,'01.mp3','01.mp3','audio',1024),(3,'01.mp3','01.mp3','audio',1024);
 	INSERT INTO catalog_series_member(series_id,catalog_entry_id,position,evidence) VALUES
 		(1,1,1,'manual'),(1,2,2,'manual'),(2,3,1,'manual');
 	INSERT INTO media_item(id,work_id,kind,title) VALUES(1,11,'audio','A track'),(2,12,'audio','B track'),(3,13,'audio','C track');
