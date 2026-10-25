@@ -18,7 +18,7 @@ import (
 
 var numberedMigrationFilePattern = regexp.MustCompile(`^[0-9]{3}_[a-z0-9][a-z0-9_]*\.sql$`)
 
-const latestNumberedMigrationVersion = 100
+const latestNumberedMigrationVersion = 102
 
 // testMigrationDir is the self-contained test catalog: the packaged chain plus
 // no-op 097/098 integration placeholders. Production Migrate still reads
@@ -338,8 +338,8 @@ func TestMigrateAdoptsLegacyMigrationLedger(t *testing.T) {
 
 func TestMigrateBaselineMatchesCompleteIncrementalChain(t *testing.T) {
 	migrationDir := testMigrationDir(t)
-	if got := latestNumberedMigrationFilename(t, migrationDir); got != "100_work_parent.sql" {
-		t.Fatalf("latest migration = %q, want the work parent migration", got)
+	if got := latestNumberedMigrationFilename(t, migrationDir); got != "102_translation_prefill_status.sql" {
+		t.Fatalf("latest migration = %q, want the latest numbered migration", got)
 	}
 	incrementalDir := copyNumberedMigrations(t, migrationDir)
 
