@@ -29,6 +29,8 @@ const (
 type translationPrefillLanguage struct {
 	Language string `json:"language"`
 	Rows     int64  `json:"rows"`
+	Native   int64  `json:"native"`
+	Model    int64  `json:"model"`
 	Missing  int64  `json:"missing"`
 	Stale    int64  `json:"stale"`
 	Failed   int64  `json:"failed"`
@@ -93,7 +95,7 @@ func (s *Server) translationPrefillStatus(ctx context.Context) (translationPrefi
 	for _, language := range append(append([]string{}, translationModelLanguages...), translation.SourceHant) {
 		item := coverage.Languages[language]
 		view.Languages = append(view.Languages, translationPrefillLanguage{
-			Language: language, Rows: item.Rows, Missing: item.Missing,
+			Language: language, Rows: item.Rows, Native: item.Native, Model: item.Model, Missing: item.Missing,
 			Stale: item.Stale, Failed: item.Failed, Retry: item.Retry,
 		})
 	}
@@ -314,46 +316,64 @@ func (s *Server) runTranslationPrefillBatch(ctx context.Context) (bool, error) {
 	} else if len(failures) > 0 {
 		message = prefillFailureMessage(failures)
 	}
-	if _, err = s.db.ExecContext(ctx, `UPDATE translation_prefill_state SET
-		cursor_language=?,cursor_kind=?,cursor_field=?,cursor_id=?,
-		config_key=?,status='running',last_error=?,updated_at=CURRENT_TIMESTAMP WHERE id=1`,
-		next.Language, next.Kind, next.Field, next.ID, configKey, message); err != nil {
-		return false, err
-	}
-	s.noteTranslationPrefillWrite(written)
-	if len(items) < pageLimit && len(retries) == 0 {
-		// The scan reached its end. Completion still depends on the effective
-		// coverage, not on the cursor position.
-		coverage, err := s.translationCorpusCoverageFor(ctx, cfg)
+	// A page shorter than the requested limit with no retry work means the scan
+	// reached its last effective item. Completion and failure are decided from
+	// the effective coverage, never from the cursor alone.
+	endOfScan := len(items) < pageLimit && len(retries) == 0
+	status := "running"
+	var coverage translationCorpusCoverage
+	// Only the end of the scan can settle the whole-corpus status. A full page
+	// mid-scan stays running because later ids may still need rows.
+	if endOfScan {
+		coverage, err = s.translationCorpusCoverageFor(ctx, cfg)
 		if err != nil {
 			return false, err
 		}
-		if coverage.complete() {
-			_, err = s.db.ExecContext(ctx, `UPDATE translation_prefill_state
-				SET status='complete',last_error='',updated_at=CURRENT_TIMESTAMP WHERE id=1`)
-			return false, err
+		switch {
+		case coverage.complete():
+			status, message = "complete", ""
+		case len(pending) == 0 && coverage.Failed > 0 && coverage.Missing == 0 && coverage.Stale == 0:
+			// This batch had no continuable new item and no due retry, while at
+			// least one item exhausted its attempt budget. Report failed so the
+			// operator sees the permanent gap instead of a worker that looks
+			// busy. The status is an observation, not a terminal state: the next
+			// due retry, newly published item or repaired source still runs
+			// through this path.
+			status, message = "failed", coverageMessage(coverage)
 		}
-		if coverage.Missing+coverage.Stale > 0 && len(items) == 0 {
-			// The cursor is past the end but rows below it are missing or stale
-			// without a title change trigger. Restart one scan so they are not
-			// stranded behind the end position.
-			if _, err = s.db.ExecContext(ctx, `UPDATE translation_prefill_state SET
-				cursor_language='',cursor_kind='entry',cursor_field='title',cursor_id=0,
-				updated_at=CURRENT_TIMESTAMP WHERE id=1`); err != nil {
-				return false, err
-			}
-		}
-		// Keep a concrete failure reason visible. Coverage is a summary, not a
-		// replacement for the upstream error the operator needs to act on.
-		if message == "" {
-			if _, err = s.db.ExecContext(ctx, `UPDATE translation_prefill_state
-				SET last_error=?,updated_at=CURRENT_TIMESTAMP WHERE id=1`, coverageMessage(coverage)); err != nil {
-				return false, err
-			}
-		}
+	}
+	if _, err = s.db.ExecContext(ctx, `UPDATE translation_prefill_state SET
+		cursor_language=?,cursor_kind=?,cursor_field=?,cursor_id=?,
+		config_key=?,status=?,last_error=?,updated_at=CURRENT_TIMESTAMP WHERE id=1`,
+		next.Language, next.Kind, next.Field, next.ID, configKey, status, message); err != nil {
+		return false, err
+	}
+	s.noteTranslationPrefillWrite(written)
+	if status == "complete" {
 		return false, nil
 	}
-	return len(items) == pageLimit || len(retries) > 0, runErr
+	if !endOfScan {
+		return len(items) == pageLimit || len(retries) > 0, runErr
+	}
+	if coverage.Missing+coverage.Stale > 0 && len(items) == 0 {
+		// The cursor is past the end but rows below it are missing or stale
+		// without a title change trigger. Restart one scan so they are not
+		// stranded behind the end position.
+		if _, err = s.db.ExecContext(ctx, `UPDATE translation_prefill_state SET
+			cursor_language='',cursor_kind='entry',cursor_field='title',cursor_id=0,
+			updated_at=CURRENT_TIMESTAMP WHERE id=1`); err != nil {
+			return false, err
+		}
+	}
+	// Keep a concrete failure reason visible. Coverage is a summary, not a
+	// replacement for the upstream error the operator needs to act on.
+	if message == "" && status != "failed" {
+		if _, err = s.db.ExecContext(ctx, `UPDATE translation_prefill_state
+			SET last_error=?,updated_at=CURRENT_TIMESTAMP WHERE id=1`, coverageMessage(coverage)); err != nil {
+			return false, err
+		}
+	}
+	return false, nil
 }
 
 func translationPrefillItemKey(item translationCorpusItem) string {

@@ -232,13 +232,14 @@ func TestTranslationPrefillKeepsPersistentFailureAfterThreeAttempts(t *testing.T
 	}
 
 	// A terminal failure stays in the table and is never treated as skipped or
-	// covered. Reaching the end of the scan cannot make the corpus complete.
+	// covered. Once the scan has no new item and no due retry, the worker
+	// reports failed instead of running.
 	if _, err := s.runTranslationPrefillBatch(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	_, status, lastError := readPrefillState(t, s)
-	if status == "complete" || lastError == "" {
-		t.Fatalf("after scan end = status %q last_error %q, want running with a failure", status, lastError)
+	if status != "failed" || lastError == "" {
+		t.Fatalf("after scan end = status %q last_error %q, want failed with a failure summary", status, lastError)
 	}
 	var failed int
 	if err := s.db.QueryRow(`SELECT count(*) FROM translation_prefill_failure WHERE attempts>=3`).Scan(&failed); err != nil {
@@ -263,6 +264,217 @@ func TestTranslationPrefillKeepsPersistentFailureAfterThreeAttempts(t *testing.T
 	}
 	if len(due) != 0 {
 		t.Fatalf("terminal failures were scheduled again: %#v", due)
+	}
+}
+
+func TestTranslationCorpusCoverageEmptyIsNotComplete(t *testing.T) {
+	s := NewServer(openMigratedTestDB(t), config.Config{})
+	cfg, err := translation.NewStore(s.db).Load(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	coverage, err := s.translationCorpusCoverageFor(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if coverage.Total != 0 {
+		t.Fatalf("empty corpus total = %d, want 0", coverage.Total)
+	}
+	if coverage.complete() {
+		t.Fatal("an empty corpus must not report complete coverage")
+	}
+}
+
+// One current native row and three current model rows are four covered items.
+// The language breakdown must expose which origin supplied each one.
+func TestTranslationPrefillCoverageCountsNativeAndModel(t *testing.T) {
+	var calls atomic.Int32
+	model := successfulPrefillModel(t, &calls)
+	defer model.Close()
+	s, host, admin, _ := translationHTTPFixture(t)
+	seedPrefillCard(t, s, 1, "Example title")
+	configurePrefillModel(t, host, admin, model.URL)
+
+	if _, err := s.runTranslationPrefillBatch(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	view := translationRequest(t, host, admin, "GET", "/api/settings/translation/prefill", "", 200)
+	languages := prefillLanguageRows(t, view)
+	en := languages["en"]
+	if en == nil || en["rows"] != float64(1) || en["native"] != float64(1) || en["model"] != float64(0) {
+		t.Fatalf("en coverage = %#v, want one native row", en)
+	}
+	for _, language := range []string{"zh-Hans", "ja", "ko"} {
+		item := languages[language]
+		if item == nil || item["rows"] != float64(1) || item["native"] != float64(0) || item["model"] != float64(1) {
+			t.Fatalf("%s coverage = %#v, want one model row", language, item)
+		}
+	}
+	coverage, err := s.translationCorpusCoverageFor(context.Background(), mustTranslationConfig(t, s))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if coverage.Native != 1 || coverage.Model != 3 {
+		t.Fatalf("coverage native/model = %d/%d, want 1/3", coverage.Native, coverage.Model)
+	}
+}
+
+// zh-Hant is a native-only display projection. A missing native Traditional
+// title is visible per language but must not block the model languages from
+// reaching complete.
+func TestTranslationPrefillCompletesWithoutNativeTraditional(t *testing.T) {
+	s, host, admin, _ := translationHTTPFixture(t)
+	seedPrefillCard(t, s, 1, "Example title")
+	insertTranslatedContent(t, s.db, "entry", 1, "title", "en", "Example title", "Example title", "native")
+	for _, language := range []string{"zh-Hans", "ja", "ko"} {
+		insertTranslatedContent(t, s.db, "entry", 1, "title", language, "Example title", "示例译文", "model")
+	}
+	if _, err := s.db.Exec(`UPDATE translation_prefill_state SET status='complete' WHERE id=1`); err != nil {
+		t.Fatal(err)
+	}
+
+	view := translationRequest(t, host, admin, "GET", "/api/settings/translation/prefill", "", 200)
+	if view["status"] != "complete" {
+		t.Fatalf("status = %v, want complete without a native Traditional row", view["status"])
+	}
+	languages := prefillLanguageRows(t, view)
+	hant := languages["zh-Hant"]
+	if hant == nil || hant["rows"] != float64(0) || hant["missing"] != float64(1) ||
+		hant["native"] != float64(0) || hant["model"] != float64(0) {
+		t.Fatalf("zh-Hant coverage = %#v, want zero rows and one visible missing item", hant)
+	}
+	// The native Traditional projection is visible per language, but its gap is
+	// not part of the global missing count that gates completion.
+	coverage, err := s.translationCorpusCoverageFor(context.Background(), mustTranslationConfig(t, s))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if coverage.Missing != 0 || coverage.complete() != true {
+		t.Fatalf("global coverage = missing %d complete %v, want 0/true", coverage.Missing, coverage.complete())
+	}
+}
+
+// Exhausted failures report failed once the scan has no new item and no due
+// retry. Filling the remaining rows returns the same worker to complete.
+func TestTranslationPrefillExhaustedFailureReportsFailedThenCompletes(t *testing.T) {
+	var calls atomic.Int32
+	model := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		_, _ = io.WriteString(w, `{"choices":[{"message":{"content":""},"finish_reason":"stop"}]}`)
+	}))
+	defer model.Close()
+	s, host, admin, _ := translationHTTPFixture(t)
+	seedPrefillCard(t, s, 1, "Example title")
+	configurePrefillModel(t, host, admin, model.URL)
+
+	for attempt := 1; attempt <= 3; attempt++ {
+		if _, err := s.runTranslationPrefillBatch(context.Background()); err != nil {
+			t.Fatalf("attempt %d: %v", attempt, err)
+		}
+		if attempt < 3 {
+			if _, err := s.db.Exec(`UPDATE translation_prefill_failure SET next_retry_at=datetime('now','-1 minute')`); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	// The fourth batch has no due retry: the three failures already spent their
+	// budget and the cursor is past the only entity.
+	if _, err := s.runTranslationPrefillBatch(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	_, status, lastError := readPrefillState(t, s)
+	if status != "failed" || !strings.Contains(lastError, "3 failed") {
+		t.Fatalf("exhausted state = %q/%q, want failed with a coverage summary", status, lastError)
+	}
+	view := translationRequest(t, host, admin, "GET", "/api/settings/translation/prefill", "", 200)
+	if view["status"] != "failed" {
+		t.Fatalf("status view = %v, want failed", view["status"])
+	}
+
+	cfg := mustTranslationConfig(t, s)
+	configKey := translation.ConfigKey(cfg)
+	for _, language := range []string{"zh-Hans", "ja", "ko"} {
+		key := contentTranslationCacheKey("entry", 1, "", "title", language, "Example title",
+			"model", cfg.Model, cfg.BaseURL, translation.TemplateVersion, cfg.DisableThinking)
+		row := contentTranslationRow{CacheKey: key, EntityKind: "entry", EntityID: 1, Field: "title",
+			Language: language, SourceText: "Example title", TranslatedText: "示例译文",
+			Origin: "model", ConfigKey: configKey, Model: cfg.Model, TemplateVersion: translation.TemplateVersion}
+		if cacheStatus, err := s.saveContentTranslations(context.Background(), []contentTranslationRow{row}); err != nil {
+			t.Fatal(err)
+		} else if cacheStatus != contentTranslationStored {
+			t.Fatalf("save %s row = %q, want stored", language, cacheStatus)
+		}
+	}
+
+	if _, err := s.runTranslationPrefillBatch(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	_, status, lastError = readPrefillState(t, s)
+	if status != "complete" || lastError != "" {
+		t.Fatalf("after filling coverage = %q/%q, want complete with no error", status, lastError)
+	}
+}
+
+// failed is an observation, not a terminal state. A due retry must still run
+// on the next batch even while exhausted failures keep the status failed.
+func TestTranslationPrefillFailedStateStillRunsDueRetry(t *testing.T) {
+	var calls atomic.Int32
+	var fail atomic.Bool
+	fail.Store(true)
+	model := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		if fail.Load() {
+			_, _ = io.WriteString(w, `{"choices":[{"message":{"content":""},"finish_reason":"stop"}]}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"choices":[{"message":{"content":"示例译文"},"finish_reason":"stop"}]}`)
+	}))
+	defer model.Close()
+	s, host, admin, _ := translationHTTPFixture(t)
+	seedPrefillCard(t, s, 1, "Example title")
+	configurePrefillModel(t, host, admin, model.URL)
+
+	for attempt := 1; attempt <= 3; attempt++ {
+		if _, err := s.runTranslationPrefillBatch(context.Background()); err != nil {
+			t.Fatalf("attempt %d: %v", attempt, err)
+		}
+		if attempt < 3 {
+			if _, err := s.db.Exec(`UPDATE translation_prefill_failure SET next_retry_at=datetime('now','-1 minute')`); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if _, err := s.runTranslationPrefillBatch(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, status, _ := readPrefillState(t, s); status != "failed" {
+		t.Fatalf("status before retry = %q, want failed", status)
+	}
+
+	fail.Store(false)
+	if _, err := s.db.Exec(`UPDATE translation_prefill_failure
+		SET attempts=1, next_retry_at=datetime('now','-1 minute')
+		WHERE language='zh-Hans'`); err != nil {
+		t.Fatal(err)
+	}
+	before := calls.Load()
+	if _, err := s.runTranslationPrefillBatch(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if calls.Load() != before+1 {
+		t.Fatalf("model calls after a due retry = %d, want %d", calls.Load(), before+1)
+	}
+	if _, status, _ := readPrefillState(t, s); status != "running" {
+		t.Fatalf("status after a due retry = %q, want running", status)
+	}
+	var rows int
+	if err := s.db.QueryRow(`SELECT count(*) FROM content_translation
+		WHERE entity_kind='entry' AND entity_id=1 AND field='title'
+		  AND language='zh-Hans' AND origin='model'`).Scan(&rows); err != nil {
+		t.Fatal(err)
+	}
+	if rows != 1 {
+		t.Fatalf("zh-Hans rows after a due retry = %d, want 1", rows)
 	}
 }
 
@@ -385,6 +597,9 @@ func TestTranslationPrefillCoverageExcludesRetiredAndHistoricalRows(t *testing.T
 		if item == nil || item["rows"] != float64(1) || item["missing"] != float64(0) {
 			t.Fatalf("%s coverage = %#v, want one row and no missing", language, item)
 		}
+	}
+	if hant := languages["zh-Hant"]; hant["native"] != float64(1) || hant["model"] != float64(0) {
+		t.Fatalf("zh-Hant origin split = %#v, want one native row", hant)
 	}
 }
 
