@@ -965,16 +965,11 @@ func ftsPhrase(query string) string {
 	return `"` + strings.ReplaceAll(query, `"`, `""`) + `"`
 }
 
-// contentTranslationShortSegment bounds one index range of a 1-2 character
-// translation scan. The recursive CTE walks the complete id space in these
-// chunks; the old newest-50,000 window silently lost older rows.
-const contentTranslationShortSegment = 4096
-
 // localizedCatalogSearchSQL builds the translated hit set for a display
 // language. Entry and series titles are searchable; source_catalog_entry has
-// no description column. Three or more characters use the trigram index; one-
-// and two-character needles page over the complete effective set with the
-// covering short index.
+// no description column. Three or more characters use the trigram index;
+// one- and two-character needles use the shared keyset generator so the
+// remote, local and benchmark paths cannot diverge again.
 func localizedCatalogSearchSQL(targets []library.DisplaySearchTarget, sourceID int64, short bool, configKey string) (string, []any) {
 	if !short {
 		prefix := `WITH search_hits AS MATERIALIZED (`
@@ -991,6 +986,7 @@ func localizedCatalogSearchSQL(targets []library.DisplaySearchTarget, sourceID i
 				  AND ct.field='title' AND ct.language=?
 				  AND e.file_source_id=? AND e.relocated_to_id IS NULL
 				  AND ct.source_text=e.title
+				  AND ` + catalogEntryAdmittedSQL("e") + `
 				  AND ` + translationCurrentRowSQL("ct", target.Language) + `
 				UNION ALL
 				SELECT 0 AS catalog_entry_id,ct.entity_id AS series_id FROM content_translation_search
@@ -998,6 +994,9 @@ func localizedCatalogSearchSQL(targets []library.DisplaySearchTarget, sourceID i
 				JOIN catalog_series s ON s.id=ct.entity_id
 				WHERE content_translation_search MATCH ? AND ct.entity_kind='series' AND ct.field='title' AND ct.language=?
 				  AND s.source_id=? AND ct.source_text=s.title
+				  AND (SELECT COUNT(*) FROM catalog_series_member sm WHERE sm.series_id=s.id)>=2
+				  AND EXISTS(SELECT 1 FROM catalog_series_member sm JOIN source_catalog_entry se ON se.id=sm.catalog_entry_id
+					WHERE sm.series_id=s.id AND se.relocated_to_id IS NULL AND ` + catalogEntryAdmittedSQL("se") + `)
 				  AND ` + translationCurrentRowSQL("ct", target.Language)
 			args = append(args, phrase, target.Language, sourceID)
 			if target.Language != translation.SourceHant {
@@ -1011,42 +1010,44 @@ func localizedCatalogSearchSQL(targets []library.DisplaySearchTarget, sourceID i
 		return prefix + `) `, args
 	}
 
-	prefix := `WITH search_hits AS MATERIALIZED (`
-	args := []any{}
-	for index, target := range targets {
-		if index > 0 {
-			prefix += ` UNION ALL `
-		}
-		prefix += `SELECT ct.entity_id AS catalog_entry_id,0 AS series_id
-				FROM content_translation ct INDEXED BY idx_content_translation_short_current
-			JOIN source_catalog_entry e ON e.id=ct.entity_id
-				WHERE ct.language=? AND ct.entity_kind='entry' AND ct.field='title'
-			  AND e.file_source_id=? AND e.relocated_to_id IS NULL
-				  AND ct.source_text=e.title
-			  AND ` + translationCurrentRowSQL("ct", target.Language) + `
-				  AND ct.translated_text LIKE ? ESCAPE '\'
-			UNION ALL
-			SELECT 0 AS catalog_entry_id,ct.entity_id AS series_id
-				FROM content_translation ct INDEXED BY idx_content_translation_short_current
-			JOIN catalog_series s ON s.id=ct.entity_id
-			WHERE ct.language=? AND ct.entity_kind='series' AND ct.field='title'
-			  AND s.source_id=? AND ct.source_text=s.title
-			  AND ` + translationCurrentRowSQL("ct", target.Language) + `
-				  AND ct.translated_text LIKE ? ESCAPE '\'`
-		args = append(args, target.Language)
-		args = append(args, sourceID)
-		if target.Language != translation.SourceHant {
-			args = append(args, configKey)
-		}
-		args = append(args, library.LikeContainsPattern(target.Query))
-		args = append(args, target.Language)
-		args = append(args, sourceID)
-		if target.Language != translation.SourceHant {
-			args = append(args, configKey)
-		}
-		args = append(args, library.LikeContainsPattern(target.Query))
+	// The admission predicate is part of the row scope, not an outer filter:
+	// a translated title for a card that cannot be shown must not consume the
+	// result budget.
+	arms := []library.ShortSearchArm{
+		{
+			EntityKind: "entry",
+			Fields:     []string{"title"},
+			ConfigKey:  configKey,
+			Scope: `EXISTS(SELECT 1 FROM source_catalog_entry e
+				WHERE e.id=ct.entity_id AND e.file_source_id=? AND e.relocated_to_id IS NULL
+				  AND ct.source_text=e.title AND ` + catalogEntryAdmittedSQL("e") + `)`,
+			ScopeArgs: []any{sourceID},
+		},
+		{
+			EntityKind: "series",
+			Fields:     []string{"title"},
+			ConfigKey:  configKey,
+			Scope: `EXISTS(SELECT 1 FROM catalog_series s
+				WHERE s.id=ct.entity_id AND s.source_id=? AND ct.source_text=s.title
+				  AND (SELECT COUNT(*) FROM catalog_series_member sm WHERE sm.series_id=s.id)>=2
+				  AND EXISTS(SELECT 1 FROM catalog_series_member sm JOIN source_catalog_entry se ON se.id=sm.catalog_entry_id
+					WHERE sm.series_id=s.id AND se.relocated_to_id IS NULL AND ` + catalogEntryAdmittedSQL("se") + `))`,
+			ScopeArgs: []any{sourceID},
+		},
 	}
-	return prefix + `) `, args
+	// The hit set is the complete effective set. Paging happens on the card
+	// query, so a cap here would silently truncate the reported total.
+	shortSQL, args := library.ShortTranslationSearchSQL(targets, arms, 0)
+	if shortSQL == "" {
+		return `WITH search_hits AS MATERIALIZED (SELECT -1 AS catalog_entry_id, -1 AS series_id WHERE 0) `, nil
+	}
+	prefix := `WITH short_hits AS MATERIALIZED (` + shortSQL + `),
+		search_hits AS MATERIALIZED (
+			SELECT entity_id AS catalog_entry_id,0 AS series_id FROM short_hits WHERE entity_kind='entry'
+			UNION ALL
+			SELECT 0 AS catalog_entry_id,entity_id AS series_id FROM short_hits WHERE entity_kind='series'
+		) `
+	return prefix, args
 }
 
 // openListTranslationExactRankSQL marks a card whose translated title equals

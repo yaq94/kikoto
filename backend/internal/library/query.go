@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"fmt"
 	"regexp"
-	"strconv"
 	"strings"
 	"sync"
 	"unicode/utf8"
@@ -607,11 +606,6 @@ func SearchWhereForUser(queryText string, userID int64) (string, []any) {
 	return "(" + strings.Join(clauses, " AND ") + ")", args
 }
 
-// translationShortSegment bounds one index range of the 1-2 character
-// translation fallback. A trigram cannot answer those queries, so the
-// predicate walks the complete language corpus in bounded id ranges.
-const translationShortSegment = 4096
-
 // SearchWhereForUserInLanguage matches text clauses against stored work
 // translations instead of the source-title index. Unsupported or original
 // language values keep the existing behaviour.
@@ -652,8 +646,8 @@ func SearchWhereForUserInLanguage(queryText string, userID int64, language strin
 }
 
 // translatedTextClause matches a work by its translated title or description.
-// Three or more characters use the trigram index; shorter needles page over the
-// complete effective language/field set by (language, entity_kind, field, id).
+// Three or more characters use the trigram index; shorter needles use the
+// shared keyset generator over the complete effective language/field set.
 func translatedTextClause(display, needle string, identity TranslationIdentity) (string, []any) {
 	targets, ok := DisplaySearchTargets(display, needle)
 	if !ok || needle == "" {
@@ -686,26 +680,20 @@ func translatedTextClause(display, needle string, identity TranslationIdentity) 
 			}
 			continue
 		}
-		for _, field := range []string{"title", "description"} {
-			branches = append(branches, `work.id IN (
-				WITH RECURSIVE segments(start_id,max_id) AS (
-					SELECT 0,COALESCE(MAX(id),0) FROM content_translation
-					WHERE entity_kind='work' AND field=? AND language=?
-					UNION ALL
-					SELECT start_id+`+strconv.Itoa(translationShortSegment)+`,max_id FROM segments
-					WHERE start_id+`+strconv.Itoa(translationShortSegment)+`<=max_id
-				)
-				SELECT ct.entity_id FROM segments seg
-				CROSS JOIN content_translation ct INDEXED BY idx_content_translation_short_current
-				  ON ct.id>seg.start_id AND ct.id<=seg.start_id+`+strconv.Itoa(translationShortSegment)+` AND ct.id<=seg.max_id
-				JOIN work current_work ON current_work.id=ct.entity_id
+		shortSQL, shortArgs := ShortTranslationSearchSQL([]DisplaySearchTarget{target}, []ShortSearchArm{{
+			EntityKind: "work",
+			Fields:     []string{"title", "description"},
+			ConfigKey:  identity.ConfigKey,
+			Scope: `EXISTS(SELECT 1 FROM work current_work
+				WHERE current_work.id=ct.entity_id
 				  AND (CASE WHEN ct.field='title' THEN ct.source_text=current_work.title
-				            ELSE ct.source_text=current_work.description END)
-				WHERE ct.entity_kind='work' AND ct.field=? AND ct.language=?
-				  AND ct.translated_text LIKE ? ESCAPE '\'`+translationIdentitySQL("ct", identity)+`)`)
-			args = append(args, field, target.Language, field, target.Language, LikeContainsPattern(query))
-			args = append(args, translationIdentityArgs(identity)...)
+				            ELSE ct.source_text=current_work.description END))`,
+		}}, 0)
+		if shortSQL == "" {
+			continue
 		}
+		branches = append(branches, `work.id IN (SELECT entity_id FROM (`+shortSQL+`))`)
+		args = append(args, shortArgs...)
 	}
 	if len(branches) == 0 {
 		return "", nil

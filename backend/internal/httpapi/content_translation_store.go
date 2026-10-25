@@ -215,9 +215,9 @@ func (s *Server) saveContentTranslations(ctx context.Context, rows []contentTran
 
 // translatedEntityIDs returns entities whose translated text contains the
 // query. Three or more characters go through the trigram index; shorter
-// queries page over the complete effective language/field set by keyset. It
-// is the debug/diagnostic path; library and catalog searches share the SQL
-// predicates in their own packages.
+// queries use the shared keyset generator over the complete effective
+// language/field set. It is the debug/diagnostic path; library and catalog
+// searches share the same generator.
 func (s *Server) translatedEntityIDs(ctx context.Context, language, entityKind, query string, limit int) ([]int64, error) {
 	query = strings.TrimSpace(query)
 	if query == "" || limit <= 0 {
@@ -254,7 +254,7 @@ func (s *Server) translatedEntityIDs(ctx context.Context, language, entityKind, 
 			-- early. The caller sorts cards; sorting here would read every match.
 			LIMIT ?`, args...)
 	} else {
-		return s.scanShortTranslationEntityIDs(ctx, language, entityKind, query, configKey, limit)
+		return s.shortTranslationEntityIDs(ctx, language, entityKind, query, configKey, limit)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("search translated content: %w", err)
@@ -274,66 +274,39 @@ func (s *Server) translatedEntityIDs(ctx context.Context, language, entityKind, 
 	return ids, nil
 }
 
-// scanShortTranslationEntityIDs walks the language's id index in bounded
-// segments. Each statement reads at most contentTranslationShortSegment rows;
-// the loop continues until the complete corpus has been inspected or the
-// caller's result limit is reached. Old and new rows are therefore equally
-// visible, without a fixed newest-window truncation.
-func (s *Server) scanShortTranslationEntityIDs(ctx context.Context, language, entityKind, query, configKey string, limit int) ([]int64, error) {
-	ids := make([]int64, 0, limit)
-	seen := make(map[int64]struct{}, limit)
-	after := int64(0)
-	for {
-		var batchMax sql.NullInt64
-		if err := s.db.QueryRowContext(ctx, `
-			SELECT MAX(id) FROM (
-				SELECT id FROM content_translation
-				WHERE language=? AND entity_kind=? AND id>?
-				ORDER BY id LIMIT ?
-			)`, language, entityKind, after, contentTranslationShortSegment).Scan(&batchMax); err != nil {
-			return nil, fmt.Errorf("scan translated content boundary: %w", err)
-		}
-		if !batchMax.Valid {
-			return ids, nil
-		}
-		current := translationCurrentRowSQL("ct", language)
-		args := []any{language, entityKind, after, batchMax.Int64}
-		if language != translation.SourceHant {
-			args = append(args, configKey)
-		}
-		args = append(args, library.LikeContainsPattern(query))
-		rows, err := s.db.QueryContext(ctx, `
-			SELECT ct.entity_id FROM content_translation ct INDEXED BY idx_content_translation_short_current
-			WHERE ct.language=? AND ct.entity_kind=? AND ct.id>? AND ct.id<=?
-			  AND `+current+`
-			  AND ct.translated_text LIKE ? ESCAPE '\'
-			ORDER BY ct.id`, args...)
-		if err != nil {
-			return nil, fmt.Errorf("search translated content: %w", err)
-		}
-		for rows.Next() {
-			var id int64
-			if err := rows.Scan(&id); err != nil {
-				rows.Close()
-				return nil, fmt.Errorf("search translated content: %w", err)
-			}
-			if _, ok := seen[id]; ok {
-				continue
-			}
-			seen[id] = struct{}{}
-			ids = append(ids, id)
-			if len(ids) >= limit {
-				rows.Close()
-				return ids, nil
-			}
-		}
-		if err := rows.Err(); err != nil {
-			rows.Close()
-			return nil, fmt.Errorf("search translated content: %w", err)
-		}
-		rows.Close()
-		after = batchMax.Int64
+// shortTranslationEntityIDs runs the shared 1-2 character generator. The
+// generator orders rows by (language, entity_kind, field, id) and caps the
+// returned ids, so the oldest and newest rows are equally reachable.
+func (s *Server) shortTranslationEntityIDs(ctx context.Context, language, entityKind, query, configKey string, limit int) ([]int64, error) {
+	fields := []string{"title"}
+	if entityKind != "entry" && entityKind != "series" {
+		fields = []string{"title", "description"}
 	}
+	sqlText, args := library.ShortTranslationSearchSQL(
+		[]library.DisplaySearchTarget{{Language: language, Query: query}},
+		[]library.ShortSearchArm{{EntityKind: entityKind, Fields: fields, ConfigKey: configKey}},
+		limit,
+	)
+	if sqlText == "" {
+		return nil, nil
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT entity_id FROM (`+sqlText+`) ORDER BY entity_id`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("search translated content: %w", err)
+	}
+	defer rows.Close()
+	ids := make([]int64, 0, limit)
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("search translated content: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("search translated content: %w", err)
+	}
+	return ids, nil
 }
 
 // countContentTranslations reports how many rows exist for a language; the

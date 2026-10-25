@@ -92,11 +92,10 @@ func TestContentTranslationSearchTraditionalBuildsTwoTargets(t *testing.T) {
 		t.Fatalf("second target = %#v, want zh-Hant/戀愛", targets[1])
 	}
 	where, args := SearchWhereForUserInLanguage("戀愛", 0, "zh-tw")
-	// Two target languages times two searchable fields (title and
-	// description), with four bindings per branch (field, language, query
-	// and the current-config predicate on title and description each).
-	if strings.Count(where, "work.id IN") != 4 || len(args) != 20 {
-		t.Fatalf("zh-tw predicate = %s args=%v; want four branches", where, args)
+	// One branch per target language covers both searchable fields through the
+	// shared generator, so the two targets cannot drift apart.
+	if strings.Count(where, "work.id IN") != 2 || len(args) != 10 {
+		t.Fatalf("zh-tw predicate = %s args=%v; want two branches", where, args)
 	}
 	if origin, _ := SearchWhereForUserInLanguage("戀愛", 0, "origin"); strings.Contains(origin, "content_translation") {
 		t.Fatalf("origin language touched translations: %s", origin)
