@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -167,7 +168,13 @@ func runTranslationWriteContention(t *testing.T, kind translationContentionPath,
 				t.Errorf("writer %d error = %v, want a lock or deadline error", result.index, result.err)
 			}
 		case kind == translationRawWriteControl:
-			if result.err != nil && !errors.Is(result.err, context.Canceled) && !sqlutil.IsBusy(result.err) {
+			// The control writers stay inside the driver's busy wait until the
+			// test cancels them. modernc/sqlite then reports "interrupted (9)"
+			// rather than context.Canceled, so the cancelled observation window
+			// is what decides: any error is acceptable once the writers were
+			// told to stop, and only an unrelated error is a failure.
+			if result.err != nil && !errors.Is(result.err, context.Canceled) &&
+				!sqlutil.IsBusy(result.err) && !isInterrupted(result.err) {
 				t.Errorf("raw writer %d: %v", result.index, result.err)
 			}
 		default:
@@ -183,6 +190,18 @@ func runTranslationWriteContention(t *testing.T, kind translationContentionPath,
 		}
 	}
 	verifyTranslationContentionRows(t, db, kind, holdPastBudget)
+}
+
+// isInterrupted reports the driver's own cancellation result. It is not a
+// database state, so it must not be folded into IsBusy, which callers use to
+// decide whether a retry is worthwhile.
+func isInterrupted(err error) bool {
+	for current := err; current != nil; current = errors.Unwrap(current) {
+		if strings.Contains(strings.ToLower(current.Error()), "interrupted") {
+			return true
+		}
+	}
+	return false
 }
 
 func collectTranslationContentionResults(t *testing.T, results <-chan translationContentionResult, timeout time.Duration) []translationContentionResult {
