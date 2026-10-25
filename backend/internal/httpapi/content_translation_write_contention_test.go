@@ -12,6 +12,7 @@ import (
 	"github.com/yexca/kikoto/backend/internal/sqlutil"
 	"github.com/yexca/kikoto/backend/internal/storage"
 	"github.com/yexca/kikoto/backend/internal/testfixture"
+	"github.com/yexca/kikoto/backend/internal/translation"
 )
 
 type translationContentionPath string
@@ -284,9 +285,9 @@ func seedTranslationContentionCache(t *testing.T, db *sql.DB) {
 		if _, err := tx.Exec(`INSERT INTO content_translation(
 			cache_key,entity_kind,entity_id,field,language,source_text,translated_text,
 			origin,model,template_version,updated_at)
-			VALUES(?, 'work', ?, 'title', 'en', 'Example Work', 'Example translation',
+				VALUES(?, 'entry', ?, 'title', 'en', 'Example Work', 'Example translation',
 			'model', 'test-model', 'v1', ?)`,
-			fmt.Sprintf("contention-retention-content-%02d", index), index+1, contentTime); err != nil {
+			fmt.Sprintf("contention-retention-content-%02d", index), 100000+index, contentTime); err != nil {
 			t.Fatalf("seed content cache row %d: %v", index, err)
 		}
 		sourceTime := fmt.Sprintf("2026-01-01 00:00:%02d", 2*index+1)
@@ -324,7 +325,7 @@ func writeTranslationForContention(ctx context.Context, db *sql.DB, kind transla
 		}})
 		return translationContentionResult{status: status, err: err}
 	case translationCacheEviction:
-		affected, err := server.deleteOldestTranslationRows(ctx, 1)
+		affected, err := server.deleteOldestTranslationRows(ctx, translation.Config{}, 1)
 		return translationContentionResult{affected: affected, err: err}
 	default:
 		return translationContentionResult{err: fmt.Errorf("unknown contention path %q", kind)}

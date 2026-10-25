@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted. Amends ADR-0007's source-field cache retention clause.
+Accepted. Amends ADR-0007's source-field cache retention clause and its
+statement that the `content_translation` schema stays unchanged.
 
 ## Context
 
@@ -20,5 +21,5 @@ Accepted. Amends ADR-0007's source-field cache retention clause.
 
 - 覆盖、调度和清理均须有可复核的实际状态，失败或资源暂停不显示为完整。
 - 翻译存储的容量控制通过有效集合清理、显式软告警及可重建缓存处理，不能以牺牲已承诺的搜索覆盖换取指标。
-- 095 已被修改过，已执行旧 095 的数据库必须在 096 之后通过 097 修复，并在迁移入口处理旧 checksum；096 已提交，097 是下一个连续编号。
+- 095 冻结为两个已发布指纹：`25f96c22` 无外键（`70933dd4…70efe`），`5defaa1c` 带级联删除（`5ff08c11…07e4`，与当前文件一致）。已执行旧 095 的数据库在迁移入口做一次性指纹校验并先备份，再由 097 统一重建。096、097、098 已提交；099 增加 `content_translation.config_key`，因此 ADR-0007 的“schema 不变”结论同时被修正。
 - 本决定补充 `ADR-0004`，并修正 `ADR-0007` 的来源字段缓存保留条款；不改变其用户隔离、本人确认、作品身份及不隐式下载媒体的约束。

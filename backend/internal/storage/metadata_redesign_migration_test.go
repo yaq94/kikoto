@@ -2,7 +2,6 @@ package storage
 
 import (
 	"encoding/json"
-	"path/filepath"
 	"testing"
 
 	"github.com/yexca/kikoto/backend/internal/testfixture"
@@ -10,7 +9,7 @@ import (
 
 func TestMetadataMigrationUnfreezesOnlyMatchingFamilyTitles(t *testing.T) {
 	db := openMigrationManagerDB(t)
-	dir := filepath.Join("..", "..", "migrations")
+	dir := testMigrationDir(t)
 	if err := Migrate(db, copyNumberedMigrationsThrough(t, dir, 47)); err != nil {
 		t.Fatal(err)
 	}

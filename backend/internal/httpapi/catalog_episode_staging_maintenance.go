@@ -101,10 +101,10 @@ func (s *Server) discardCatalogEpisodeOrphans(ctx context.Context, sourceID int6
 	return s.discardCatalogEpisodePendingRoots(ctx, sourceID, parent, orphans)
 }
 
-// deleteCatalogEpisodeMappings clears bookkeeping after the parent state row
-// has already published the split. Mappings are deleted in bounded batches;
-// leaving one behind is harmless because the published parent state no longer
-// treats it as hidden.
+// deleteCatalogEpisodeMappings clears bookkeeping for a split whose parent
+// state row has already published. Publishing deletes the same rows in its own
+// transaction; this bounded helper remains for repair callers that must clear a
+// legacy leftover without rewriting the published state.
 func (s *Server) deleteCatalogEpisodeMappings(ctx context.Context, sourceID int64, parent string, entryIDs []int64) {
 	for start := 0; start < len(entryIDs); start += catalogEpisodeWriteRows {
 		end := start + catalogEpisodeWriteRows

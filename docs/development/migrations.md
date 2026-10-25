@@ -362,20 +362,20 @@ matches the backup.
 | v0.8.0 | `059` | `059_v0.8.0.sql` |
 | v0.8.1, v0.8.2 | `066` | `066_v0.8.1.sql` |
 | v0.8.3 | `068` | `068_v0.8.3.sql` |
-| development build (unreleased) | `097` | Development baseline only; `compat/097_dev.sql` |
+| development build (unreleased) | `098` | Development baseline only; `compat/098_dev.sql` |
 
-The remediation plan adds `098` through `100` after the current tracked head.
-`096_catalog_episode_pending.sql` and `097_source_field_translation_foreign_key.sql`
-are committed; `098` is the next numbered migration and must not be created out
-of sequence.
+The remediation plan adds `099` and `100` after the current tracked head.
+`096_catalog_episode_pending.sql`, `097_source_field_translation_foreign_key.sql`
+and `098_catalog_schedule.sql` are committed; `099` is the next numbered
+migration and must not be created out of sequence.
 
 Per-release upgrade steps are in the [release notes](../history/index.md).
 
 ## Kikoto-next Schema Additions
 
-Migrations `069` through `097` extend the source catalog, shared associations,
+Migrations `069` through `098` extend the source catalog, shared associations,
 personal transfer, and the recoverable index; the remediation chain adds
-`098`–`100`. Pending release notes and upgrade steps are in
+`099`–`100`. Pending release notes and upgrade steps are in
 [Unreleased](../history/unreleased.md).
 
 | Migration | Change | Recovery and read behaviour |
@@ -456,7 +456,7 @@ stores the durable translation corpus, its FTS5 index and the prefill cursor.
 pending episode mapping and publication state; `097` rebuilds the display cache
 to add its source foreign key and remove unreachable rows.
 
-The `084` through `097` changes retain existing rows. `087` and `097` rebuild
+The `084` through `098` changes retain existing rows. `087` and `097` rebuild
 tables; `087` copies every entry column and recreates its indexes, triggers and
 view, while `097` copies only display-cache rows with a live source and
 recreates both cache indexes. `085`, `088`, `090`, `091` and `092` add tables or

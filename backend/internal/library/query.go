@@ -13,6 +13,7 @@ import (
 	"github.com/yexca/kikoto/backend/internal/agerating"
 	"github.com/yexca/kikoto/backend/internal/contentpolicy"
 	"github.com/yexca/kikoto/backend/internal/searchtext"
+	"github.com/yexca/kikoto/backend/internal/translation"
 )
 
 type Store struct {
@@ -58,6 +59,10 @@ type ListOptions struct {
 	// language matches only stored translations, with no fallback to source
 	// text.
 	Language string
+	// TranslationConfigKey selects the current model output for a
+	// display-language search. Empty values accept only native rows; a model
+	// row from another endpoint, model, template or reasoning switch is stale.
+	TranslationConfigKey string
 }
 
 type RawPage struct {
@@ -118,6 +123,13 @@ func (s *Store) ListPage(ctx context.Context, options ListOptions) (RawPage, err
 		options.PageSize = 24
 	}
 	s.PrepareSearch(ctx, options.Query)
+	if options.Language != "" && !strings.EqualFold(strings.TrimSpace(options.Language), "origin") && strings.TrimSpace(options.Query) != "" {
+		cfg, err := translation.NewStore(s.db).Load(ctx)
+		if err != nil {
+			return RawPage{}, err
+		}
+		options.TranslationConfigKey = translation.ConfigKey(cfg)
+	}
 	sortKey, _ := normalizeSort(options.Sort, options.Direction)
 	if sortKey == "recommend" {
 		if options.VisibilityPredicateSQL != "" {
@@ -134,7 +146,7 @@ func (s *Store) ListPage(ctx context.Context, options ListOptions) (RawPage, err
 	config := DefaultRecommendationConfig()
 	queryArgs := []any{}
 	searchRank, searchRankArgs := searchExactRankSQL(options.Query)
-	if translatedRank, translatedArgs := translatedExactRankSQL(options.Language, options.Query); translatedRank != "" {
+	if translatedRank, translatedArgs := translatedExactRankSQL(options.Language, options.Query, TranslationIdentity{ConfigKey: options.TranslationConfigKey}); translatedRank != "" {
 		// In a display language the visible title is the translated one, so an
 		// exact translated title outranks a substring hit.
 		searchRank, searchRankArgs = translatedRank, translatedArgs
@@ -443,7 +455,8 @@ func normalizeSort(sortKey string, direction string) (string, string) {
 }
 
 func listOptionsWhere(options ListOptions) (string, []any) {
-	where, args := listWhereInLanguage(options.Scope, options.Status, options.Query, options.UserID, options.DemoOnly, options.Language)
+	where, args := listWhereInLanguage(options.Scope, options.Status, options.Query, options.UserID, options.DemoOnly, options.Language,
+		TranslationIdentity{ConfigKey: options.TranslationConfigKey})
 	if options.VisibilityPredicateSQL != "" {
 		where += " AND (" + options.VisibilityPredicateSQL + ")"
 	}
@@ -453,13 +466,19 @@ func listOptionsWhere(options ListOptions) (string, []any) {
 var associationWorkQualifier = regexp.MustCompile(`\bwork\.`)
 
 func listWhere(scope string, status string, queryText string, userID int64, demoOnly bool) (string, []any) {
-	return listWhereInLanguage(scope, status, queryText, userID, demoOnly, "")
+	return listWhereInLanguage(scope, status, queryText, userID, demoOnly, "", TranslationIdentity{})
+}
+
+// TranslationIdentity is the output-shaping configuration key that produced a
+// searchable model row. Native rows are accepted regardless of it.
+type TranslationIdentity struct {
+	ConfigKey string
 }
 
 // listWhereInLanguage is listWhere with a display language. Only the text
 // clauses change: they read stored translations instead of the source index,
 // so a work without a translation in that language never matches.
-func listWhereInLanguage(scope string, status string, queryText string, userID int64, demoOnly bool, language string) (string, []any) {
+func listWhereInLanguage(scope string, status string, queryText string, userID int64, demoOnly bool, language string, identity TranslationIdentity) (string, []any) {
 	clauses := []string{"1 = 1"}
 	args := []any{}
 	switch scope {
@@ -487,7 +506,7 @@ func listWhereInLanguage(scope string, status string, queryText string, userID i
 		clauses = append(clauses, "COALESCE(user_work_state.listening_status, 'none') = ?")
 		args = append(args, status)
 	}
-	if searchWhere, searchArgs := SearchWhereForUserInLanguage(queryText, userID, language); searchWhere != "" {
+	if searchWhere, searchArgs := SearchWhereForUserInLanguage(queryText, userID, language, identity); searchWhere != "" {
 		clauses = append(clauses, searchWhere)
 		args = append(args, searchArgs...)
 	}
@@ -588,26 +607,30 @@ func SearchWhereForUser(queryText string, userID int64) (string, []any) {
 	return "(" + strings.Join(clauses, " AND ") + ")", args
 }
 
-// translationShortScanLimit bounds the 1-2 character translation fallback. A
-// trigram cannot answer those queries, so instr() walks only the newest rows of
-// the requested corpus language instead of every translated work.
-const translationShortScanLimit = 50000
+// translationShortSegment bounds one index range of the 1-2 character
+// translation fallback. A trigram cannot answer those queries, so the
+// predicate walks the complete language corpus in bounded id ranges.
+const translationShortSegment = 4096
 
 // SearchWhereForUserInLanguage matches text clauses against stored work
 // translations instead of the source-title index. Unsupported or original
 // language values keep the existing behaviour.
-func SearchWhereForUserInLanguage(queryText string, userID int64, language string) (string, []any) {
+func SearchWhereForUserInLanguage(queryText string, userID int64, language string, identities ...TranslationIdentity) (string, []any) {
 	if language == "" || strings.EqualFold(strings.TrimSpace(language), "origin") {
 		return SearchWhereForUser(queryText, userID)
 	}
 	if _, ok := DisplaySearchTargets(language, ""); !ok {
 		return SearchWhereForUser(queryText, userID)
 	}
+	identity := TranslationIdentity{}
+	if len(identities) > 0 {
+		identity = identities[0]
+	}
 	clauses := []string{}
 	args := []any{}
 	for _, clause := range ParseSearchClauses(queryText) {
 		if clause.Kind == "text" {
-			where, clauseArgs := translatedTextClause(language, strings.TrimSpace(clause.Value))
+			where, clauseArgs := translatedTextClause(language, strings.TrimSpace(clause.Value), identity)
 			if where == "" {
 				continue
 			}
@@ -628,10 +651,10 @@ func SearchWhereForUserInLanguage(queryText string, userID int64, language strin
 	return "(" + strings.Join(clauses, " AND ") + ")", args
 }
 
-// translatedTextClause matches a work by its translated title. Three or more
-// characters use the trigram index; shorter needles use a bounded window of the
-// newest rows of that language.
-func translatedTextClause(display, needle string) (string, []any) {
+// translatedTextClause matches a work by its translated title or description.
+// Three or more characters use the trigram index; shorter needles page over the
+// complete effective language/field set by (language, entity_kind, field, id).
+func translatedTextClause(display, needle string, identity TranslationIdentity) (string, []any) {
 	targets, ok := DisplaySearchTargets(display, needle)
 	if !ok || needle == "" {
 		return "", nil
@@ -644,27 +667,45 @@ func translatedTextClause(display, needle string) (string, []any) {
 			continue
 		}
 		if utf8.RuneCountInString(query) >= 3 {
-			branches = append(branches, `work.id IN (
-			SELECT translated.entity_id
-			FROM content_translation_search
-			JOIN content_translation AS translated ON translated.id = content_translation_search.rowid
-			WHERE content_translation_search MATCH ?
-			  AND translated.entity_kind = 'work'
-			  AND translated.field = 'title'
-			  AND translated.language = ?)`)
-			args = append(args, `"`+strings.ReplaceAll(query, `"`, `""`)+`"`, target.Language)
+			// The same trigram table covers titles and descriptions. A work
+			// matches when either current field contains the needle.
+			for _, field := range []string{"title", "description"} {
+				branches = append(branches, `work.id IN (
+				SELECT translated.entity_id
+				FROM content_translation_search
+				JOIN content_translation AS translated ON translated.id = content_translation_search.rowid
+					JOIN work AS current_work ON current_work.id = translated.entity_id
+					  AND (CASE WHEN translated.field='title' THEN translated.source_text=current_work.title
+					            ELSE translated.source_text=current_work.description END)
+				WHERE content_translation_search MATCH ?
+				  AND translated.entity_kind = 'work'
+				  AND translated.field = ?
+					  AND translated.language = ?`+translationIdentitySQL("translated", identity)+`)`)
+				args = append(args, `"`+strings.ReplaceAll(query, `"`, `""`)+`"`, field, target.Language)
+				args = append(args, translationIdentityArgs(identity)...)
+			}
 			continue
 		}
-		branches = append(branches, `work.id IN (
-			SELECT entity_id FROM (
-				SELECT entity_id, translated_text
-				FROM content_translation
-				WHERE entity_kind = 'work' AND field = 'title' AND language = ?
-				ORDER BY id DESC
-				LIMIT `+strconv.Itoa(translationShortScanLimit)+`
-			)
-			WHERE instr(lower(translated_text), lower(?)) > 0)`)
-		args = append(args, target.Language, query)
+		for _, field := range []string{"title", "description"} {
+			branches = append(branches, `work.id IN (
+				WITH RECURSIVE segments(start_id,max_id) AS (
+					SELECT 0,COALESCE(MAX(id),0) FROM content_translation
+					WHERE entity_kind='work' AND field=? AND language=?
+					UNION ALL
+					SELECT start_id+`+strconv.Itoa(translationShortSegment)+`,max_id FROM segments
+					WHERE start_id+`+strconv.Itoa(translationShortSegment)+`<=max_id
+				)
+				SELECT ct.entity_id FROM segments seg
+				CROSS JOIN content_translation ct INDEXED BY idx_content_translation_short_current
+				  ON ct.id>seg.start_id AND ct.id<=seg.start_id+`+strconv.Itoa(translationShortSegment)+` AND ct.id<=seg.max_id
+				JOIN work current_work ON current_work.id=ct.entity_id
+				  AND (CASE WHEN ct.field='title' THEN ct.source_text=current_work.title
+				            ELSE ct.source_text=current_work.description END)
+				WHERE ct.entity_kind='work' AND ct.field=? AND ct.language=?
+				  AND ct.translated_text LIKE ? ESCAPE '\'`+translationIdentitySQL("ct", identity)+`)`)
+			args = append(args, field, target.Language, field, target.Language, LikeContainsPattern(query))
+			args = append(args, translationIdentityArgs(identity)...)
+		}
 	}
 	if len(branches) == 0 {
 		return "", nil
@@ -672,9 +713,24 @@ func translatedTextClause(display, needle string) (string, []any) {
 	return "(" + strings.Join(branches, " OR ") + ")", args
 }
 
-// translatedExactRankSQL ranks a work whose translated title equals the query
-// above one that only contains it. It returns "" for original-language search.
-func translatedExactRankSQL(display, queryText string) (string, []any) {
+func translationIdentitySQL(alias string, identity TranslationIdentity) string {
+	if identity.ConfigKey == "" {
+		return ""
+	}
+	return ` AND (` + alias + `.origin='native' OR (` + alias + `.origin='model' AND ` + alias + `.config_key=?))`
+}
+
+func translationIdentityArgs(identity TranslationIdentity) []any {
+	if identity.ConfigKey == "" {
+		return nil
+	}
+	return []any{identity.ConfigKey}
+}
+
+// translatedExactRankSQL ranks a work whose translated title or description
+// equals the query above one that only contains it. It returns "" for
+// original-language search.
+func translatedExactRankSQL(display, queryText string, identity TranslationIdentity) (string, []any) {
 	needle := strings.TrimSpace(queryText)
 	if needle == "" {
 		return "", nil
@@ -690,16 +746,20 @@ func translatedExactRankSQL(display, queryText string) (string, []any) {
 		if query == "" {
 			continue
 		}
-		pairs = append(pairs, `(translated.language = ? AND translated.translated_text = ?)`)
+		pairs = append(pairs, `(translated.language = ? AND translated.translated_text = ? AND translated.field IN ('title','description'))`)
 		args = append(args, target.Language, query)
 	}
 	if len(pairs) == 0 {
 		return "", nil
 	}
+	args = append(args, translationIdentityArgs(identity)...)
 	return `EXISTS (
 		SELECT 1 FROM content_translation AS translated
+		JOIN work AS current_work ON current_work.id=translated.entity_id
+		  AND (CASE WHEN translated.field='title' THEN translated.source_text=current_work.title
+		            ELSE translated.source_text=current_work.description END)
 		WHERE translated.entity_kind = 'work' AND translated.entity_id = work.id
-		  AND translated.field = 'title' AND (` + strings.Join(pairs, " OR ") + `))`, args
+		  AND (` + strings.Join(pairs, " OR ") + `)` + translationIdentitySQL("translated", identity) + `)`, args
 }
 
 func searchWhereClause(clause SearchClause, userID int64) (string, []any) {

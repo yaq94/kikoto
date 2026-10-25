@@ -1,12 +1,11 @@
 package storage
 
 import (
-	"path/filepath"
 	"testing"
 )
 
 func TestSchema050UpgradePreservesWorksAndSnapshots(t *testing.T) {
-	source := filepath.Join("..", "..", "migrations")
+	source := testMigrationDir(t)
 	db := openMigrationManagerDB(t)
 	if err := Migrate(db, copyNumberedMigrationsThrough(t, source, 50)); err != nil {
 		t.Fatal(err)

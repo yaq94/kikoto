@@ -267,7 +267,7 @@ func TestNormalizedTagMigrationBackfillsEscapedUnicodeSnapshots(t *testing.T) {
 	}
 	defer db.Close()
 
-	migrationDir := filepath.Join("..", "..", "migrations")
+	migrationDir := testMigrationDir(t)
 	initialSQL, err := os.ReadFile(filepath.Join(migrationDir, "001_initial.sql"))
 	if err != nil {
 		t.Fatal(err)
@@ -312,7 +312,7 @@ func TestNormalizedTagMigrationBackfillsEscapedUnicodeSnapshots(t *testing.T) {
 }
 
 func TestWorkCodeAliasMigrationBackfillsDeclaredLanguageEditions(t *testing.T) {
-	migrationDir := filepath.Join("..", "..", "migrations")
+	migrationDir := testMigrationDir(t)
 	preAliasDir := t.TempDir()
 	entries, err := os.ReadDir(migrationDir)
 	if err != nil {
@@ -389,7 +389,7 @@ func TestWorkCodeAliasMigrationBackfillsDeclaredLanguageEditions(t *testing.T) {
 }
 
 func TestMigrateUpgradesV010DatabaseThroughCurrentMigrations(t *testing.T) {
-	migrationDir := filepath.Join("..", "..", "migrations")
+	migrationDir := testMigrationDir(t)
 	initialSQL, err := os.ReadFile(filepath.Join(migrationDir, "001_initial.sql"))
 	if err != nil {
 		t.Fatal(err)

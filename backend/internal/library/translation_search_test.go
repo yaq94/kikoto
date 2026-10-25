@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/yexca/kikoto/backend/internal/migrationfixture"
 	"github.com/yexca/kikoto/backend/internal/storage"
 )
 
@@ -16,7 +17,7 @@ func openTranslationSearchDB(t *testing.T) *sql.DB {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	if err := storage.Migrate(db, "../../migrations"); err != nil {
+	if err := storage.MigrateFS(db, migrationfixture.MustFS(t), "test"); err != nil {
 		t.Fatal(err)
 	}
 	return db
@@ -45,8 +46,8 @@ func explainQueryPlan(t *testing.T, db *sql.DB, query string, args ...any) strin
 	return plan.String()
 }
 
-// A one-character query cannot form a trigram. It must read a bounded window in
-// index order instead of scanning every translated work.
+// A one-character query cannot form a trigram. It must page the complete
+// language/field set through the short covering index.
 func TestContentTranslationSearchShortQueryBounded(t *testing.T) {
 	db := openTranslationSearchDB(t)
 	where, args := SearchWhereForUserInLanguage("夜", 0, "zh-cn")
@@ -55,8 +56,8 @@ func TestContentTranslationSearchShortQueryBounded(t *testing.T) {
 	}
 	plan := explainQueryPlan(t, db, "SELECT COUNT(*) FROM work WHERE "+where, args...)
 	t.Logf("short query plan:\n%s", plan)
-	if !strings.Contains(plan, "idx_content_translation_language_id") {
-		t.Fatalf("short query does not use the language index: %s", plan)
+	if !strings.Contains(plan, "idx_content_translation_short_current") {
+		t.Fatalf("short query does not use the short covering index: %s", plan)
 	}
 	if strings.Contains(plan, "SCAN content_translation\n") {
 		t.Fatalf("short query scans the whole translation table: %s", plan)
@@ -91,8 +92,11 @@ func TestContentTranslationSearchTraditionalBuildsTwoTargets(t *testing.T) {
 		t.Fatalf("second target = %#v, want zh-Hant/戀愛", targets[1])
 	}
 	where, args := SearchWhereForUserInLanguage("戀愛", 0, "zh-tw")
-	if strings.Count(where, "work.id IN") != 2 || len(args) != 4 {
-		t.Fatalf("zh-tw predicate = %s args=%v; want two branches", where, args)
+	// Two target languages times two searchable fields (title and
+	// description), with four bindings per branch (field, language, query
+	// and the current-config predicate on title and description each).
+	if strings.Count(where, "work.id IN") != 4 || len(args) != 20 {
+		t.Fatalf("zh-tw predicate = %s args=%v; want four branches", where, args)
 	}
 	if origin, _ := SearchWhereForUserInLanguage("戀愛", 0, "origin"); strings.Contains(origin, "content_translation") {
 		t.Fatalf("origin language touched translations: %s", origin)

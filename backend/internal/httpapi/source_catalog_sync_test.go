@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -24,7 +23,9 @@ type catalogSyncTestEntry struct {
 	Modified string
 }
 
-func TestManualFullIndexRefusesWhileIncrementalSyncRuns(t *testing.T) {
+// A manual refresh requested while a sync holds the writer is accepted and
+// queued once. It must not create a second writer or replace the generation.
+func TestManualFullIndexQueuesWhileIncrementalSyncRuns(t *testing.T) {
 	tree := newCatalogSyncTestTree()
 	tree.set("/", catalogSyncTestEntry{Name: "Partition A", IsDir: true, Modified: "p1"})
 	tree.set("/Partition A", catalogSyncTestEntry{Name: "Work 001", IsDir: true, Modified: "w1"})
@@ -41,9 +42,16 @@ func TestManualFullIndexRefusesWhileIncrementalSyncRuns(t *testing.T) {
 	if _, err := f.server.db.Exec(`INSERT INTO source_catalog_sync_run(file_source_id,status,note) VALUES(?,'running','')`, sourceID); err != nil {
 		t.Fatal(err)
 	}
-	resp := f.request(t, http.MethodPost, "/catalog/index", `{}`, http.StatusConflict)
-	if resp["code"] != "catalog_sync_running" {
+	resp := f.request(t, http.MethodPost, "/catalog/index", `{}`, http.StatusAccepted)
+	if resp["runId"] != float64(generation) || resp["existing"] != true {
 		t.Fatalf("manual full response = %#v", resp)
+	}
+	var pending int
+	if err := f.server.db.QueryRow(`SELECT manual_pending FROM source_catalog_schedule WHERE file_source_id=?`, sourceID).Scan(&pending); err != nil {
+		t.Fatal(err)
+	}
+	if pending != 1 {
+		t.Fatal("manual refresh during a sync was not queued")
 	}
 	var after int64
 	if err := f.server.db.QueryRow(`SELECT workflow_run_id FROM source_catalog_scan WHERE file_source_id=?`, sourceID).Scan(&after); err != nil {
@@ -406,15 +414,6 @@ func TestCatalogSyncDoesNotBumpGeneration(t *testing.T) {
 	}
 }
 
-func readCatalogSetting(t *testing.T, f catalogIndexFixture, key string) string {
-	t.Helper()
-	var value string
-	if err := f.server.db.QueryRow(`SELECT value_json FROM app_setting WHERE key=?`, key).Scan(&value); err != nil {
-		t.Fatalf("read %s: %v", key, err)
-	}
-	return value
-}
-
 // waitCatalogSyncSettled waits for the incremental run the daily dispatcher
 // started in the background. The catalog status alone cannot describe it: a
 // sync keeps the existing generation, so its runId never moves.
@@ -443,6 +442,7 @@ func TestCatalogDailyDispatchesIncrementalRunAfterComplete(t *testing.T) {
 	f := newCatalogSyncFixture(t, tree)
 	now := time.Date(2030, time.January, 1, 10, 0, 0, 0, catalogScheduleLocation).UTC()
 	f.server.catalogNow = func() time.Time { return now }
+	seedCatalogScheduleAt(t, f, now)
 	if p := f.runFullScan(t, ""); p["status"] != "complete" {
 		t.Fatalf("full scan did not complete: %#v", p)
 	}
@@ -450,10 +450,11 @@ func TestCatalogDailyDispatchesIncrementalRunAfterComplete(t *testing.T) {
 	if err := f.server.db.QueryRow(`SELECT workflow_run_id FROM source_catalog_scan WHERE file_source_id=?`, f.sourceID(t)).Scan(&generation); err != nil {
 		t.Fatal(err)
 	}
-	fullMarker := readCatalogSetting(t, f, catalogFullSettingPrefix+"1")
-	if fullMarker != strconv.FormatInt(nextCatalogWeeklyDue(now).Unix(), 10) {
-		t.Fatalf("next full due = %q, want %d", fullMarker, nextCatalogWeeklyDue(now).Unix())
+	schedule := readCatalogSchedule(t, f)
+	if schedule.Weekly != nextCatalogWeeklyDue(now).Unix() {
+		t.Fatalf("next full due = %d, want %d", schedule.Weekly, nextCatalogWeeklyDue(now).Unix())
 	}
+	fullMarker := schedule.Weekly
 	tree.set("/", catalogSyncTestEntry{Name: "Partition A", IsDir: true, Modified: "p1"},
 		catalogSyncTestEntry{Name: "Partition B", IsDir: true, Modified: "q1"})
 	tree.set("/Partition B", catalogSyncTestEntry{Name: "Work B", IsDir: true, Modified: "wb1"})
@@ -476,8 +477,8 @@ func TestCatalogDailyDispatchesIncrementalRunAfterComplete(t *testing.T) {
 	if sync["status"] != "succeeded" || sync["entriesPublished"] != float64(1) || sync["dirsProbed"].(float64) == 0 {
 		t.Fatalf("daily sync = %#v", sync)
 	}
-	if after := readCatalogSetting(t, f, catalogFullSettingPrefix+"1"); after != fullMarker {
-		t.Fatalf("incremental sync reset the weekly marker: before=%q after=%q", fullMarker, after)
+	if after := readCatalogSchedule(t, f).Weekly; after != fullMarker {
+		t.Fatalf("incremental sync reset the weekly marker: before=%d after=%d", fullMarker, after)
 	}
 	list := f.request(t, http.MethodGet, "/works?q=Work%20B", "", 200)
 	if len(list["works"].([]any)) != 1 {
@@ -510,7 +511,7 @@ func TestCatalogDailyResumesPartialGenerationWithFailures(t *testing.T) {
 	if _, err := f.server.db.Exec(`UPDATE source_catalog_scan SET failed=1 WHERE file_source_id=?`, f.sourceID(t)); err != nil {
 		t.Fatal(err)
 	}
-	fullMarker := readCatalogSetting(t, f, catalogFullSettingPrefix+"1")
+	fullMarker := readCatalogSchedule(t, f).Weekly
 	tomorrow := now.Add(17 * time.Hour) // next local 03:00
 	f.server.catalogNow = func() time.Time { return tomorrow }
 	if err := f.server.dispatchDueCatalogUpdates(context.WithValue(context.Background(), catalogIndexNoPacingKey{}, true)); err != nil {
@@ -530,8 +531,8 @@ func TestCatalogDailyResumesPartialGenerationWithFailures(t *testing.T) {
 	if after != generation {
 		t.Fatalf("daily resume changed generation: before=%d after=%d", generation, after)
 	}
-	if marker := readCatalogSetting(t, f, catalogFullSettingPrefix+"1"); marker != fullMarker {
-		t.Fatalf("resume reset the weekly marker: before=%q after=%q", fullMarker, marker)
+	if marker := readCatalogSchedule(t, f).Weekly; marker != fullMarker {
+		t.Fatalf("resume reset the weekly marker: before=%d after=%d", fullMarker, marker)
 	}
 	state := waitCatalogSyncSettled(t, f)
 	sync := state["lastSync"].(map[string]any)
@@ -550,6 +551,7 @@ func TestCatalogSyncWeeklyFullMarkerOnlyMovesWithANewGeneration(t *testing.T) {
 	f := newCatalogSyncFixture(t, tree)
 	now := time.Date(2030, time.January, 1, 10, 0, 0, 0, catalogScheduleLocation).UTC()
 	f.server.catalogNow = func() time.Time { return now }
+	seedCatalogScheduleAt(t, f, now)
 	if p := f.runFullScan(t, ""); p["status"] != "complete" {
 		t.Fatalf("full scan did not complete: %#v", p)
 	}
@@ -557,10 +559,10 @@ func TestCatalogSyncWeeklyFullMarkerOnlyMovesWithANewGeneration(t *testing.T) {
 	if err := f.server.db.QueryRow(`SELECT workflow_run_id FROM source_catalog_scan WHERE file_source_id=?`, f.sourceID(t)).Scan(&generation); err != nil {
 		t.Fatal(err)
 	}
-	enqueued := readCatalogSetting(t, f, catalogFullSettingPrefix+"1")
+	enqueued := readCatalogSchedule(t, f).Weekly
 	wantFull := nextCatalogWeeklyDue(now)
-	if enqueued != strconv.FormatInt(wantFull.Unix(), 10) {
-		t.Fatalf("next full due = %q, want %d", enqueued, wantFull.Unix())
+	if enqueued != wantFull.Unix() {
+		t.Fatalf("next full due = %d, want %d", enqueued, wantFull.Unix())
 	}
 	// Incremental sync keeps the marker.
 	now = now.Add(17 * time.Hour) // next local 03:00
@@ -569,8 +571,8 @@ func TestCatalogSyncWeeklyFullMarkerOnlyMovesWithANewGeneration(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitCatalogSyncSettled(t, f)
-	if marker := readCatalogSetting(t, f, catalogFullSettingPrefix+"1"); marker != enqueued {
-		t.Fatalf("incremental sync reset the weekly marker: before=%q after=%q", enqueued, marker)
+	if marker := readCatalogSchedule(t, f).Weekly; marker != enqueued {
+		t.Fatalf("incremental sync reset the weekly marker: before=%d after=%d", enqueued, marker)
 	}
 	// A full resume keeps it too. Force a failed mid-tree run so the daily
 	// dispatcher chooses the full checkpoint rather than a sync.
@@ -588,11 +590,20 @@ func TestCatalogSyncWeeklyFullMarkerOnlyMovesWithANewGeneration(t *testing.T) {
 	if err := f.server.dispatchDueCatalogUpdates(context.WithValue(context.Background(), catalogIndexNoPacingKey{}, true)); err != nil {
 		t.Fatal(err)
 	}
-	if marker := readCatalogSetting(t, f, catalogFullSettingPrefix+"1"); marker != enqueued {
-		t.Fatalf("resume reset the weekly marker: before=%q after=%q", enqueued, marker)
+	if marker := readCatalogSchedule(t, f).Weekly; marker != enqueued {
+		t.Fatalf("resume reset the weekly marker: before=%d after=%d", enqueued, marker)
 	}
-	if p := f.drain(t); p["status"] != "complete" {
-		t.Fatalf("resumed generation did not complete: %#v", p)
+	// A failed generation is repaired by a maintenance sync, not a full resume.
+	waitCatalogSyncSettled(t, f)
+	var resumed int64
+	if err := f.server.db.QueryRow(`SELECT workflow_run_id FROM source_catalog_scan WHERE file_source_id=?`, f.sourceID(t)).Scan(&resumed); err != nil {
+		t.Fatal(err)
+	}
+	if resumed != generation {
+		t.Fatalf("maintenance sync replaced generation: before=%d after=%d", generation, resumed)
+	}
+	if marker := readCatalogSchedule(t, f).Weekly; marker != enqueued {
+		t.Fatalf("maintenance sync reset the weekly marker: before=%d after=%d", enqueued, marker)
 	}
 	// Only the Sunday boundary starts a new full generation, and that enqueue is
 	// what moves the marker to the following Sunday.
@@ -601,9 +612,26 @@ func TestCatalogSyncWeeklyFullMarkerOnlyMovesWithANewGeneration(t *testing.T) {
 	if err := f.server.dispatchDueCatalogUpdates(context.WithValue(context.Background(), catalogIndexNoPacingKey{}, true)); err != nil {
 		t.Fatal(err)
 	}
+	// The missed daily boundary is earlier than the weekly one, so this tick
+	// repairs the generation with a maintenance sync and records the weekly
+	// boundary for the next tick. The full only advances the marker after it
+	// actually succeeds.
+	waitCatalogSyncSettled(t, f)
+	state := readCatalogSchedule(t, f)
+	if !state.ResumeFull {
+		t.Fatal("weekly boundary during maintenance sync was not remembered")
+	}
+	if state.Weekly != enqueued {
+		t.Fatalf("maintenance sync moved the weekly marker: before=%d after=%d", enqueued, state.Weekly)
+	}
+	dispatchCatalog(t, f)
 	nextFull := nextCatalogWeeklyDue(now)
-	if marker := readCatalogSetting(t, f, catalogFullSettingPrefix+"1"); marker != strconv.FormatInt(nextFull.Unix(), 10) {
-		t.Fatalf("new generation did not move the weekly marker: got %q want %d", marker, nextFull.Unix())
+	if p := f.drain(t); p["status"] != "complete" {
+		t.Fatalf("weekly full did not complete: %#v", p)
+	}
+	dispatchCatalog(t, f)
+	if marker := readCatalogSchedule(t, f).Weekly; marker != nextFull.Unix() {
+		t.Fatalf("new generation did not move the weekly marker: got %d want %d", marker, nextFull.Unix())
 	}
 	var after int64
 	if err := f.server.db.QueryRow(`SELECT workflow_run_id FROM source_catalog_scan WHERE file_source_id=?`, f.sourceID(t)).Scan(&after); err != nil {
@@ -640,12 +668,16 @@ func TestCatalogSyncPausesForMaintenanceAndRetriesAfterTheHold(t *testing.T) {
 	if tree.dirsHits["/"] != 0 {
 		t.Fatalf("held sync probed the tree %d times", tree.dirsHits["/"])
 	}
-	var due int64
-	if err := f.server.db.QueryRow(`SELECT CAST(value_json AS INTEGER) FROM app_setting WHERE key=?`, catalogDailySettingPrefix+"1").Scan(&due); err != nil {
+	var deferred int64
+	var reason string
+	if err := f.server.db.QueryRow(`SELECT deferred_until,deferred_reason FROM source_catalog_schedule WHERE file_source_id=?`, f.sourceID(t)).Scan(&deferred, &reason); err != nil {
 		t.Fatal(err)
 	}
-	if remaining := due - time.Now().Unix(); remaining < 4*60 || remaining > 6*60 {
-		t.Fatalf("daily due in %d seconds, want the hold end", remaining)
+	if remaining := deferred - time.Now().Unix(); remaining < 50*60 || remaining > 70*60 {
+		t.Fatalf("deferral in %d seconds, want about an hour", remaining)
+	}
+	if reason != "maintenance_hold" {
+		t.Fatalf("deferral reason=%q, want maintenance_hold", reason)
 	}
 }
 
@@ -668,12 +700,16 @@ func TestCatalogSyncPausesOnLowDiskAndDoesNotSpendRequests(t *testing.T) {
 	if state.Requests != 0 || state.DirsProbed != 0 {
 		t.Fatalf("low-disk sync spent %d requests on %d probes", state.Requests, state.DirsProbed)
 	}
-	var due int64
-	if err := f.server.db.QueryRow(`SELECT CAST(value_json AS INTEGER) FROM app_setting WHERE key=?`, catalogDailySettingPrefix+"1").Scan(&due); err != nil {
+	var deferred int64
+	var reason string
+	if err := f.server.db.QueryRow(`SELECT deferred_until,deferred_reason FROM source_catalog_schedule WHERE file_source_id=?`, f.sourceID(t)).Scan(&deferred, &reason); err != nil {
 		t.Fatal(err)
 	}
-	if remaining := due - time.Now().Unix(); remaining < 50*60 || remaining > 70*60 {
-		t.Fatalf("daily due in %d seconds, want about an hour", remaining)
+	if remaining := deferred - time.Now().Unix(); remaining < 50*60 || remaining > 70*60 {
+		t.Fatalf("deferral in %d seconds, want about an hour", remaining)
+	}
+	if reason != "low_disk" {
+		t.Fatalf("deferral reason=%q, want low_disk", reason)
 	}
 }
 

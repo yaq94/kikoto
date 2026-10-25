@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/yexca/kikoto/backend/internal/metasync"
+	"github.com/yexca/kikoto/backend/internal/migrationfixture"
 	"github.com/yexca/kikoto/backend/internal/storage"
 	"github.com/yexca/kikoto/backend/internal/testfixture"
 )
@@ -118,7 +119,7 @@ func runRecommendationScale(t *testing.T, works int) {
 		t.Fatal(err)
 	}
 	defer func() { _ = db.Close() }()
-	if err := storage.Migrate(db, "../../migrations"); err != nil {
+	if err := storage.MigrateFS(db, migrationfixture.MustFS(t), "test"); err != nil {
 		t.Fatal(err)
 	}
 	start := time.Now()

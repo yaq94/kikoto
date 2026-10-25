@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"database/sql"
 	"encoding/hex"
 	"fmt"
 	"path/filepath"
@@ -53,6 +54,10 @@ func TestContentTranslationStoreMigrationCreatesSchema(t *testing.T) {
 		"idx_content_translation_entity",
 		"idx_content_translation_language",
 		"idx_content_translation_language_id",
+		"idx_content_translation_effective",
+		"idx_content_translation_short",
+		"idx_content_translation_short_current",
+		"translation_prefill_failure_due",
 		"idx_source_field_translation_owner",
 		"idx_source_field_translation_updated",
 	} {
@@ -83,25 +88,75 @@ func TestContentTranslationStoreMigrationCreatesSchema(t *testing.T) {
 	if lastUsed != 0 {
 		t.Fatal("content_translation has a last_used_at column")
 	}
+	for _, column := range []string{"config_key"} {
+		var present int
+		if err := s.db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('content_translation') WHERE name=?`, column).Scan(&present); err != nil {
+			t.Fatal(err)
+		}
+		if present != 1 {
+			t.Fatalf("content_translation.%s is missing", column)
+		}
+	}
+	for _, column := range []string{"config_key", "cursor_language", "cursor_kind", "cursor_field", "cursor_id"} {
+		var present int
+		if err := s.db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('translation_prefill_state') WHERE name=?`, column).Scan(&present); err != nil {
+			t.Fatal(err)
+		}
+		if present != 1 {
+			t.Fatalf("translation_prefill_state.%s is missing", column)
+		}
+	}
+	var failureColumns int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('translation_prefill_failure')
+		WHERE name IN ('entity_kind','entity_id','field','language','config_key','source_hash','attempts','next_retry_at','last_error')`).Scan(&failureColumns); err != nil {
+		t.Fatal(err)
+	}
+	if failureColumns != 9 {
+		t.Fatalf("translation_prefill_failure columns = %d, want 9", failureColumns)
+	}
+	var retryNullable int
+	if err := s.db.QueryRow(`SELECT "notnull" FROM pragma_table_info('translation_prefill_failure')
+		WHERE name='next_retry_at'`).Scan(&retryNullable); err != nil {
+		t.Fatal(err)
+	}
+	if retryNullable != 0 {
+		t.Fatal("translation_prefill_failure.next_retry_at must accept NULL")
+	}
+	var entryDescription int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('source_catalog_entry') WHERE name='description'`).Scan(&entryDescription); err != nil {
+		t.Fatal(err)
+	}
+	if entryDescription != 0 {
+		t.Fatal("source_catalog_entry must not grow a description column")
+	}
+	var foreignKeyViolations int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM pragma_foreign_key_check`).Scan(&foreignKeyViolations); err != nil {
+		t.Fatal(err)
+	}
+	if foreignKeyViolations != 0 {
+		t.Fatalf("foreign key violations = %d", foreignKeyViolations)
+	}
 
-	var cursor, status string
-	if err := s.db.QueryRow(`SELECT cursor_entry_id, status FROM translation_prefill_state WHERE id = 1`).Scan(&cursor, &status); err != nil {
+	var cursor int64
+	var status string
+	if err := s.db.QueryRow(`SELECT cursor_id, status FROM translation_prefill_state WHERE id = 1`).Scan(&cursor, &status); err != nil {
 		t.Fatalf("prefill state row: %v", err)
 	}
-	if cursor != "0" || status != "idle" {
-		t.Fatalf("prefill state = (%s, %s), want (0, idle)", cursor, status)
+	if cursor != 0 || status != "idle" {
+		t.Fatalf("prefill state = (%d, %s), want (0, idle)", cursor, status)
 	}
 }
 
 func TestContentTranslationStoreFTSTriggersTrackChanges(t *testing.T) {
 	s := openContentTranslationTestServer(t)
 	ctx := context.Background()
+	configKey := translation.ConfigKey(translation.Config{Model: translation.DefaultModel, DisableThinking: true})
 	insert := func(id int64, kind, lang, text string) {
 		t.Helper()
 		if _, err := s.db.Exec(`
-			INSERT INTO content_translation(id, cache_key, entity_kind, entity_id, field, language, source_text, translated_text, origin)
-			VALUES(?,?,?,?, 'title', ?, ?, ?, 'model')`,
-			id, fmt.Sprintf("key-%d", id), kind, id, lang, text, text); err != nil {
+			INSERT INTO content_translation(id, cache_key, entity_kind, entity_id, field, language, source_text, translated_text, origin, config_key)
+			VALUES(?,?,?,?, 'title', ?, ?, ?, 'model', ?)`,
+			id, fmt.Sprintf("key-%d", id), kind, id, lang, text, text, configKey); err != nil {
 			t.Fatalf("insert %d: %v", id, err)
 		}
 	}
@@ -262,13 +317,23 @@ func TestContentTranslationStoreSaveIsIdempotent(t *testing.T) {
 func TestContentTranslationStoreSearchFiltersAndShortFallback(t *testing.T) {
 	s := openContentTranslationTestServer(t)
 	ctx := context.Background()
+	currentKey := translation.ConfigKey(translation.Config{Model: "gpt", DisableThinking: true})
 	rows := []contentTranslationRow{
-		{CacheKey: "a", EntityKind: "entry", EntityID: 10, Field: "title", Language: "zh-Hans", TranslatedText: "深海少女的告白", Origin: "model"},
-		{CacheKey: "b", EntityKind: "entry", EntityID: 11, Field: "title", Language: "zh-Hans", TranslatedText: "深海少女的告白 第二季", Origin: "model"},
+		{CacheKey: "a", EntityKind: "entry", EntityID: 10, Field: "title", Language: "zh-Hans", TranslatedText: "深海少女的告白", Origin: "model", ConfigKey: currentKey, Model: "gpt", TemplateVersion: translation.TemplateVersion},
+		{CacheKey: "b", EntityKind: "entry", EntityID: 11, Field: "title", Language: "zh-Hans", TranslatedText: "深海少女的告白 第二季", Origin: "model", ConfigKey: currentKey, Model: "gpt", TemplateVersion: translation.TemplateVersion},
 		{CacheKey: "c", EntityKind: "entry", EntityID: 12, Field: "title", Language: "ja", TranslatedText: "深海少女の告白", Origin: "native"},
-		{CacheKey: "d", EntityKind: "work", EntityID: 13, Field: "title", Language: "zh-Hans", TranslatedText: "深海少女的告白", Origin: "model"},
+		{CacheKey: "d", EntityKind: "work", EntityID: 13, Field: "title", Language: "zh-Hans", TranslatedText: "深海少女的告白", Origin: "model", ConfigKey: currentKey, Model: "gpt", TemplateVersion: translation.TemplateVersion},
+		// A model row from another output-shaping configuration is stale and
+		// must not answer a strict search even though the text matches.
+		{CacheKey: "e", EntityKind: "entry", EntityID: 14, Field: "title", Language: "zh-Hans", TranslatedText: "深海少女的旧配置", Origin: "model", ConfigKey: "legacy", Model: "gpt", TemplateVersion: translation.TemplateVersion},
 	}
 	if _, err := s.saveContentTranslations(ctx, rows); err != nil {
+		t.Fatal(err)
+	}
+	// translatedEntityIDs reads the current config key. Save accepted the
+	// explicit row keys, so configure the same output-shaping identity.
+	if _, err := s.db.Exec(`INSERT INTO app_setting(key,value_json) VALUES('translation_service',?)
+		ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json`, `{"model":"gpt","disableThinking":true}`); err != nil {
 		t.Fatal(err)
 	}
 	for _, query := range []string{"深海少女", "深海"} {
@@ -306,8 +371,8 @@ func TestContentTranslationStoreSearchFiltersAndShortFallback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if count != 3 {
-		t.Fatalf("zh-Hans count = %d, want 3", count)
+	if count != 4 {
+		t.Fatalf("zh-Hans historical row count = %d, want 4 (including the stale row)", count)
 	}
 }
 
@@ -353,32 +418,33 @@ func joinIDs(ids []int64) string {
 	return strings.Join(parts, ",")
 }
 
-// The 1-2 character fallback cannot use the trigram index, so it must only
-// inspect a bounded window of the newest rows. A marker older than that window
-// is unreachable even though it is present in the table.
-func TestContentTranslationShortQueryStaysBounded(t *testing.T) {
+// The 1-2 character fallback cannot use the trigram index. Segmented index
+// ranges keep each statement bounded while still reaching rows beyond any
+// fixed newest-window cap.
+func TestContentTranslationShortQueryCoversFullCorpus(t *testing.T) {
 	s := openContentTranslationTestServer(t)
 	ctx := context.Background()
+	configKey := translation.ConfigKey(translation.Config{Model: translation.DefaultModel, DisableThinking: true})
 	tx, err := s.db.Begin()
 	if err != nil {
 		t.Fatal(err)
 	}
 	stmt, err := tx.Prepare(`INSERT INTO content_translation(
-		cache_key, entity_kind, entity_id, field, language, source_text, translated_text, origin)
-		VALUES(?, 'entry', ?, 'title', 'zh-Hans', ?, ?, 'model')`)
+		cache_key, entity_kind, entity_id, field, language, source_text, translated_text, origin, config_key)
+		VALUES(?, 'entry', ?, 'title', 'zh-Hans', ?, ?, 'model', ?)`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := stmt.Exec("oldest", 1, "远古标记", "远古标记"); err != nil {
+	if _, err := stmt.Exec("oldest", 1, "远古标记", "远古标记", configKey); err != nil {
 		t.Fatal(err)
 	}
-	for i := 2; i <= contentTranslationShortScanLimit; i++ {
-		if _, err := stmt.Exec(fmt.Sprintf("filler-%d", i), i, "", ""); err != nil {
+	for i := 2; i <= 50000; i++ {
+		if _, err := stmt.Exec(fmt.Sprintf("filler-%d", i), i, "", "", configKey); err != nil {
 			t.Fatal(err)
 		}
 	}
-	newest := contentTranslationShortScanLimit + 1
-	if _, err := stmt.Exec("newest", newest, "近古标记", "近古标记"); err != nil {
+	newest := int64(50001)
+	if _, err := stmt.Exec("newest", newest, "近古标记", "近古标记", configKey); err != nil {
 		t.Fatal(err)
 	}
 	if err := stmt.Close(); err != nil {
@@ -391,116 +457,198 @@ func TestContentTranslationShortQueryStaysBounded(t *testing.T) {
 	if err := s.db.QueryRow(`SELECT COUNT(*) FROM content_translation`).Scan(&total); err != nil {
 		t.Fatal(err)
 	}
-	if total != contentTranslationShortScanLimit+1 {
+	if total != 50001 {
 		t.Fatalf("seeded %d rows", total)
 	}
 	if ids, err := s.translatedEntityIDs(ctx, "zh-Hans", "entry", "远古", 10); err != nil {
 		t.Fatal(err)
-	} else if len(ids) != 0 {
-		t.Fatalf("short query reached past its window: %v", ids)
+	} else if len(ids) != 1 || ids[0] != 1 {
+		t.Fatalf("short query missed the oldest row: %v", ids)
 	}
 	if ids, err := s.translatedEntityIDs(ctx, "zh-Hans", "entry", "近古", 10); err != nil {
 		t.Fatal(err)
 	} else if len(ids) != 1 || ids[0] != int64(newest) {
-		t.Fatalf("short query inside the window = %v", ids)
+		t.Fatalf("short query missed the newest row: %v", ids)
+	}
+	// The result limit is a result cap, not a scan cap: the oldest marker is
+	// still reachable when the caller asks for more than the newest page.
+	if ids, err := s.translatedEntityIDs(ctx, "zh-Hans", "entry", "标记", 50000); err != nil {
+		t.Fatal(err)
+	} else if len(ids) != 2 || ids[0] != 1 || ids[1] != newest {
+		t.Fatalf("full-set keyset result = %v, want both markers", ids)
 	}
 }
 
-// The corpus limits count and remove only model rows, oldest first, and a
-// superseded row goes before a live one.
-func TestContentTranslationRetentionHonoursModelRowBudget(t *testing.T) {
+func seedCurrentTranslationEntry(t *testing.T, db *sql.DB, id int64, title string) {
+	t.Helper()
+	if _, err := db.Exec(`INSERT OR IGNORE INTO file_source(id,code,display_name,source_type,enabled)
+		VALUES(1,'retention-fixture','Retention Source','openlist',1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO source_catalog_entry(id,file_source_id,root_path,title,availability_status)
+		VALUES(?,1,?,?,'available')`, id, fmt.Sprintf("/retention/%d", id), title); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes)
+		VALUES(?,'01.mp3','01.mp3','audio',1)`, id); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// The soft budgets never remove rows that still answer current search: a live
+// catalog entry with the current source text and the configured model/template.
+func TestContentTranslationRetentionKeepsCurrentCorpusOverBudget(t *testing.T) {
 	server := openContentTranslationTestServer(t)
 	ctx := context.Background()
+	cfg := translation.Config{Limits: translation.Limits{MaxEntries: 3, CacheBytes: 1 << 30}, Model: "m"}
+	configKey := translation.ConfigKey(cfg)
 	rows := []contentTranslationRow{
 		{CacheKey: "native-1", EntityKind: "entry", EntityID: 1, Field: "title", Language: "ja", SourceText: "native", TranslatedText: "native", Origin: "native"},
 	}
 	for i := int64(1); i <= 5; i++ {
-		rows = append(rows, contentTranslationRow{CacheKey: fmt.Sprintf("model-%d", i), EntityKind: "entry", EntityID: i, Field: "title", Language: "en", SourceText: "source", TranslatedText: "text", Origin: "model"})
+		title := fmt.Sprintf("当前标题%d", i)
+		seedCurrentTranslationEntry(t, server.db, i, title)
+		rows = append(rows, contentTranslationRow{CacheKey: fmt.Sprintf("model-%d", i), EntityKind: "entry", EntityID: i, Field: "title", Language: "zh-Hans", SourceText: title, TranslatedText: "译文", Origin: "model", ConfigKey: configKey, Model: "m", TemplateVersion: translation.TemplateVersion})
 	}
 	if _, err := server.saveContentTranslations(ctx, rows); err != nil {
 		t.Fatal(err)
 	}
-	if err := server.pruneContentTranslations(ctx, translation.Config{Limits: translation.Limits{MaxEntries: 3, CacheBytes: 1 << 30}}); err != nil {
+	if err := server.pruneContentTranslations(ctx, cfg); err != nil {
 		t.Fatal(err)
 	}
 	var model, native int
 	if err := server.db.QueryRow(`SELECT (SELECT count(*) FROM content_translation WHERE origin='model'),(SELECT count(*) FROM content_translation WHERE origin='native')`).Scan(&model, &native); err != nil {
 		t.Fatal(err)
 	}
-	if model != 3 || native != 1 {
-		t.Fatalf("after trim model=%d native=%d, want 3/1 (budget applies to model rows)", model, native)
+	if model != 5 || native != 1 {
+		t.Fatalf("after trim model=%d native=%d, want 5/1 (current rows are corpus)", model, native)
 	}
 
-	// A newer row for the same entity, field and language supersedes the old
-	// one even when the budget itself is not exceeded.
+	// A historical row for the same entity is neither current nor protected.
 	if _, err := server.saveContentTranslations(ctx, []contentTranslationRow{
-		{CacheKey: "model-new", EntityKind: "entry", EntityID: 5, Field: "title", Language: "en", SourceText: "source", TranslatedText: "new", Origin: "model"},
+		{CacheKey: "model-old", EntityKind: "entry", EntityID: 5, Field: "title", Language: "en", SourceText: "旧标题", TranslatedText: "旧译文", Origin: "model", ConfigKey: "old", Model: "old", TemplateVersion: "old"},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := server.pruneContentTranslations(ctx, translation.Config{Limits: translation.Limits{MaxEntries: 100, CacheBytes: 1 << 30}}); err != nil {
+	if err := server.pruneContentTranslations(ctx, translation.Config{Limits: translation.Limits{MaxEntries: 100, CacheBytes: 1 << 30}, Model: "m"}); err != nil {
 		t.Fatal(err)
 	}
 	var old int
-	if err := server.db.QueryRow(`SELECT count(*) FROM content_translation WHERE cache_key='model-5'`).Scan(&old); err != nil || old != 0 {
-		t.Fatalf("superseded row still present: %d %v", old, err)
+	if err := server.db.QueryRow(`SELECT count(*) FROM content_translation WHERE cache_key='model-old'`).Scan(&old); err != nil || old != 0 {
+		t.Fatalf("historical row still present: %d %v", old, err)
 	}
 }
 
-func TestContentTranslationRetentionHonoursUTF8ByteBudget(t *testing.T) {
+func TestContentTranslationRetentionKeepsCurrentCorpusUnderByteBudget(t *testing.T) {
 	server := openContentTranslationTestServer(t)
 	ctx := context.Background()
+	cfg := translation.Config{Limits: translation.Limits{CacheBytes: 48}, Model: "m"}
+	configKey := translation.ConfigKey(cfg)
 	rows := []contentTranslationRow{
 		{CacheKey: "native-big", EntityKind: "entry", EntityID: 1, Field: "title", Language: "ja", SourceText: "作者原文", TranslatedText: "作者原文", Origin: "native"},
 	}
 	for i := int64(1); i <= 3; i++ {
+		title := fmt.Sprintf("当前原文%d", i)
+		seedCurrentTranslationEntry(t, server.db, i, title)
 		rows = append(rows, contentTranslationRow{
 			CacheKey: fmt.Sprintf("model-%d", i), EntityKind: "entry", EntityID: i,
-			Field: "title", Language: "zh-Hans", SourceText: "深海少女", TranslatedText: "深海少女的告白", Origin: "model",
+			Field: "title", Language: "zh-Hans", SourceText: title, TranslatedText: "深海少女的告白", Origin: "model",
+			ConfigKey: configKey, Model: "m", TemplateVersion: translation.TemplateVersion,
 		})
 	}
 	if _, err := server.saveContentTranslations(ctx, rows); err != nil {
 		t.Fatal(err)
 	}
-	if err := server.pruneContentTranslations(ctx, translation.Config{Limits: translation.Limits{CacheBytes: 48}}); err != nil {
+	if err := server.pruneContentTranslations(ctx, cfg); err != nil {
 		t.Fatal(err)
 	}
-	var model, native, bytes int64
+	var model, native int64
 	if err := server.db.QueryRow(`SELECT
 		(SELECT count(*) FROM content_translation WHERE origin='model'),
-		(SELECT count(*) FROM content_translation WHERE origin='native'),
-		(SELECT COALESCE(sum(length(CAST(source_text AS BLOB))+length(CAST(translated_text AS BLOB))),0)
-			FROM content_translation WHERE origin='model')`).Scan(&model, &native, &bytes); err != nil {
+			(SELECT count(*) FROM content_translation WHERE origin='native')`).Scan(&model, &native); err != nil {
 		t.Fatal(err)
 	}
-	if model != 1 || native != 1 || bytes > 48 {
-		t.Fatalf("after byte trim model=%d native=%d bytes=%d, want 1/1 and <=48", model, native, bytes)
+	if model != 3 || native != 1 {
+		t.Fatalf("after byte trim model=%d native=%d, want 3/1 (current rows survive)", model, native)
+	}
+	overBudget, _, err := server.translationBudgetReport(ctx, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !overBudget {
+		t.Fatal("persistent corpus over a tiny soft budget must report over_budget")
 	}
 }
 
-// A large prefill burst may exceed one delete batch. The pass continues until
-// the model-row budget is reached or its own bound is exhausted.
-func TestContentTranslationRetentionDrainsSeveralBatches(t *testing.T) {
+// Work and series title rows are current only while their source text equals
+// the entity's current title. A stale title is historical and evictable.
+func TestContentTranslationRetentionChecksCurrentWorkAndSeriesText(t *testing.T) {
 	server := openContentTranslationTestServer(t)
 	ctx := context.Background()
-	rows := make([]contentTranslationRow, 0, 1200)
-	for i := int64(1); i <= 1200; i++ {
-		rows = append(rows, contentTranslationRow{
-			CacheKey: fmt.Sprintf("model-%d", i), EntityKind: "entry", EntityID: i,
-			Field: "title", Language: "en", SourceText: "source", TranslatedText: "text", Origin: "model",
-		})
+	cfg := translation.Config{Limits: translation.Limits{CacheBytes: 1 << 30}, Model: "m"}
+	configKey := translation.ConfigKey(cfg)
+	if _, err := server.db.Exec(`
+		INSERT INTO work(id,primary_code,title) VALUES(1,'RJ00000001','Current Work Title');
+		INSERT INTO file_source(id,code,display_name,source_type,enabled) VALUES(1,'series-source','Series Source','openlist',1);
+		INSERT INTO source_catalog_entry(id,file_source_id,root_path,title,availability_status) VALUES(1,1,'/one','Episode One','available'),(2,1,'/two','Episode Two','available');
+		INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes) VALUES(1,'01.mp3','01.mp3','audio',1),(2,'01.mp3','01.mp3','audio',1);
+		INSERT INTO catalog_series(id,title) VALUES(1,'Current Series Title');
+		INSERT INTO catalog_series_member(series_id,catalog_entry_id,position,evidence) VALUES(1,1,1,'manual'),(1,2,2,'manual');`); err != nil {
+		t.Fatal(err)
+	}
+	rows := []contentTranslationRow{
+		{CacheKey: "work-old", EntityKind: "work", EntityID: 1, Field: "title", Language: "zh-Hans", SourceText: "Old Work Title", TranslatedText: "旧作品译文", Origin: "model", ConfigKey: configKey, Model: "m", TemplateVersion: translation.TemplateVersion},
+		{CacheKey: "work-current", EntityKind: "work", EntityID: 1, Field: "title", Language: "zh-Hans", SourceText: "Current Work Title", TranslatedText: "当前作品译文", Origin: "model", ConfigKey: configKey, Model: "m", TemplateVersion: translation.TemplateVersion},
+		{CacheKey: "series-old", EntityKind: "series", EntityID: 1, Field: "title", Language: "zh-Hans", SourceText: "Old Series Title", TranslatedText: "旧系列译文", Origin: "model", ConfigKey: configKey, Model: "m", TemplateVersion: translation.TemplateVersion},
+		{CacheKey: "series-current", EntityKind: "series", EntityID: 1, Field: "title", Language: "zh-Hans", SourceText: "Current Series Title", TranslatedText: "当前系列译文", Origin: "model", ConfigKey: configKey, Model: "m", TemplateVersion: translation.TemplateVersion},
 	}
 	if _, err := server.saveContentTranslations(ctx, rows); err != nil {
 		t.Fatal(err)
 	}
-	if err := server.pruneContentTranslations(ctx, translation.Config{Limits: translation.Limits{MaxEntries: 100}}); err != nil {
+	if err := server.pruneContentTranslations(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+	var workCurrent, seriesCurrent, old int
+	if err := server.db.QueryRow(`SELECT
+		(SELECT count(*) FROM content_translation WHERE cache_key='work-current'),
+		(SELECT count(*) FROM content_translation WHERE cache_key='series-current'),
+		(SELECT count(*) FROM content_translation WHERE cache_key IN ('work-old','series-old'))`).Scan(&workCurrent, &seriesCurrent, &old); err != nil {
+		t.Fatal(err)
+	}
+	if workCurrent != 1 || seriesCurrent != 1 || old != 0 {
+		t.Fatalf("current work/series = %d/%d old = %d, want 1/1/0", workCurrent, seriesCurrent, old)
+	}
+}
+
+// A large rebuildable source-cache backlog may exceed one delete batch. The
+// pass continues until the evictable-row budget is reached or its own bound is
+// exhausted.
+func TestContentTranslationRetentionDrainsSeveralBatchesOfSourceCache(t *testing.T) {
+	server := openContentTranslationTestServer(t)
+	ctx := context.Background()
+	if _, err := server.db.Exec(`INSERT INTO file_source(id,code,display_name,source_type)
+		VALUES(1,'retention-source','Retention Source','openlist')`); err != nil {
+		t.Fatal(err)
+	}
+	rows := make([]sourceFieldTranslationRow, 0, 1200)
+	for i := int64(1); i <= 1200; i++ {
+		rows = append(rows, sourceFieldTranslationRow{
+			CacheKey: fmt.Sprintf("source-%d", i), SourceID: 1, WorkCode: fmt.Sprintf("RJ%08d", i),
+			Field: "title", Language: "en", SourceText: "source", TranslatedText: "text",
+			Model: "old", TemplateVersion: "old",
+		})
+	}
+	if _, err := server.saveSourceFieldTranslations(ctx, rows); err != nil {
+		t.Fatal(err)
+	}
+	if err := server.pruneContentTranslations(ctx, translation.Config{Limits: translation.Limits{MaxEntries: 100}, Model: "m"}); err != nil {
 		t.Fatal(err)
 	}
 	var model int
-	if err := server.db.QueryRow(`SELECT count(*) FROM content_translation WHERE origin='model'`).Scan(&model); err != nil {
+	if err := server.db.QueryRow(`SELECT count(*) FROM source_field_translation`).Scan(&model); err != nil {
 		t.Fatal(err)
 	}
 	if model != 100 {
-		t.Fatalf("model rows after burst trim = %d, want 100", model)
+		t.Fatalf("source rows after burst trim = %d, want 100", model)
 	}
 }

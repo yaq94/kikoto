@@ -1,10 +1,17 @@
 # 19：既有浏览器测试可靠性
 
-Status: ready-for-agent
-Implementation: verified-local；本地实现与 F 已验收；最终候选的 Full CI 及生产部署验收由 24 汇总，不能用旧 SHA 的 run 关闭。
-Blocked by: none
+**Status:** ready-for-agent
+**Implementation:** verified-local；本地实现与 F 已验收；最终候选的 Full CI 及生产部署验收由 24 汇总，不能用旧 SHA 的 run 关闭。
 
-依据：已确认的 CI 收尾要求；本票在 17 整体验收前集成。范围限既有骨架、收藏与移动封面触摸行为，保留原断言。完整 Full/Gate 由集成流程执行。
+**Blocked by:** none
+
+**依据:** 已确认的 CI 收尾要求；本票在 17 整体验收前集成。范围限既有骨架、收藏与移动封面触摸行为，保留原断言。完整 Full/Gate 由集成流程执行。
+
+## 验收范围
+
+**主责:** AC-26 的浏览器可靠性子项；**共同:** AC-28。
+
+本票只修复既有浏览器测试的可靠性，不新增视觉门禁，也不替代 24 的同候选 Full CI。
 
 ## 1. 目录骨架响应同步
 

@@ -95,7 +95,7 @@ delayed reports from before the clear.
 
 ## Export and import
 
-Version 3 Kikoto personal JSON contains numbered and numberless works, series
+Kikoto personal JSON version 2 contains numbered and numberless works, series
 and episodes, their stable opaque references and original titles, and your
 ratings/notes, listening marks, resume information, lifetime listening totals,
 work tags, custom tag definitions, and ordered favorite lists with icons.
@@ -118,17 +118,15 @@ with registration permission; without that permission the import is rejected.
 
 Version 3 can restore missing objects from the file's necessary information
 with registration permission. It never downloads media or changes existing
-shared relationships. When an exported episode carries its parent series, an
-empty library recreates that explicit relation without inferring it from a
-title. A version 3 episode without a valid parent is reported instead of being
-registered alone; an existing different parent is never replaced. Version 2
-files have no parent field and keep their previous independent restoration,
-which is reported as not carrying series membership. Episodes
-remain independently evaluable, while other shared associations must be
-confirmed through the shared editing workflow. Unknown source references remain
-portable without creating source connections. Repeated imports reuse references.
-Version 1 and Kikoeru formats match existing product codes and unambiguous
-aliases; missing codes are listed and skipped.
+shared relationships. Episodes remain independently evaluable; series membership
+and shared associations must be confirmed through the shared editing workflow.
+An episode identity may carry its explicit parent series identity. An episode
+whose parent is missing, conflicting or cyclic is reported and is not restored
+as a standalone work. The file version stays 2; an episode without a parent
+keeps the earlier behaviour and reports that its parent was not restored.
+Unknown source references remain portable without creating source connections.
+Repeated imports reuse references. Version 1 and Kikoeru formats match existing
+product codes and unambiguous aliases; missing codes are listed and skipped.
 
 Resume targets require an exact work/edition and an unambiguous track title
 with track/disc numbers. Missing or ambiguous tracks preserve existing playback

@@ -7,7 +7,7 @@ import (
 )
 
 func TestWorkPartyProvenanceMigrationRepairsCatalogOwnership(t *testing.T) {
-	migrationDir := filepath.Join("..", "..", "migrations")
+	migrationDir := testMigrationDir(t)
 	preRepairDir := t.TempDir()
 	entries, err := os.ReadDir(migrationDir)
 	if err != nil {

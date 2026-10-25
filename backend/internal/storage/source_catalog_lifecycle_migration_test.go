@@ -1,12 +1,11 @@
 package storage
 
 import (
-	"path/filepath"
 	"testing"
 )
 
 func TestSourceCatalogLifecycleUpgradePreservesEntriesAndPersonalState(t *testing.T) {
-	source := filepath.Join("..", "..", "migrations")
+	source := testMigrationDir(t)
 	previous := copyNumberedMigrationsThrough(t, source, 71)
 	db := openMigrationManagerDB(t)
 	if err := Migrate(db, previous); err != nil {

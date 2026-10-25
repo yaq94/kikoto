@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/yexca/kikoto/backend/internal/migrationfixture"
 	"github.com/yexca/kikoto/backend/internal/storage"
 )
 
@@ -82,7 +83,7 @@ func TestCatalogBackfillPublishesAtomicallyAndSurvivesRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	if err := storage.Migrate(db, "../../migrations"); err != nil {
+	if err := storage.MigrateFS(db, migrationfixture.MustFS(t), "test"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.Exec("INSERT INTO user_account(id,username,display_name,role) VALUES (1,'synthetic-user','Example User','user'); INSERT INTO work(id,primary_code,title) VALUES(1,'RJ00000000','Example Work'),(2,'RJ00000001','Example Other Work')"); err != nil {

@@ -140,22 +140,20 @@ The interactive lane holds 256 waiting items and the background lane follows
 Asia/Shanghai the background lane is limited to two simultaneous calls, so a
 viewer still finds a free worker; inside the window it may use every slot.
 
-Under the issue 21 target, `content_translation` is durable search corpus, not an
-LRU cache. It stores one row per `cache_key` with `origin` `native` or `model`;
-`origin=native` rows hold the source text unchanged and never increment model
-usage. There is no `last_used_at`. Current `field='title'` rows for `work`,
-`source_catalog_entry` and `catalog_series`, plus `field='description'` rows for
-`work`, are required for language-specific search and are never eviction
-candidates. `tag` and `directory` rows remain display-only;
-`source_catalog_entry` has no description column, so entry descriptions are not
-invented. The
-planned migration 099 adds a `config_key` covering the model, base URL,
-template version and reasoning switch; a row with another config key is stale
-and is not part of current coverage, while pre-099 rows remain legacy
-candidates until re-prefilled. Only `tag`/`directory` model rows and all
-`source_field_translation` rows are rebuildable display cache; they may be
-evicted within the configured budgets. `source_field_translation` has no FTS
-table and is never read by content search.
+`content_translation` is durable search corpus, not an LRU cache. It stores one
+row per `cache_key` with `origin` `native` or `model`; `origin=native` rows hold
+the source text unchanged and never increment model usage. There is no
+`last_used_at`. Current `field='title'` rows for `work`, `source_catalog_entry`
+and `catalog_series`, plus `field='description'` rows for `work`, are required
+for language-specific search and are never eviction candidates. `tag` and
+`directory` rows remain display-only; `source_catalog_entry` has no description
+column, so entry descriptions are not invented. Migration 099 adds a
+`config_key` covering the model, base URL, template version and reasoning
+switch; a row with another config key is stale and is not part of current
+coverage, while pre-099 rows remain legacy candidates until re-prefilled. Only
+`tag`/`directory` model rows and all `source_field_translation` rows are
+rebuildable display cache; they may be evicted within the configured budgets.
+`source_field_translation` has no FTS table and is never read by content search.
 
 Two administrator budgets bound the rebuildable display cache in a maintenance
 pass that runs beside the prefill worker: `maxEntries` limits the number of
@@ -178,31 +176,44 @@ superseded; it is never counted as current coverage. `zh-tw` viewers read the
 `zh-Hans` row and convert it with OpenCC `s2t` at display time, so the corpus
 does not store a second full-text copy. A title or description detected as
 `zh-Hant` is written as a native row and participates in searches for both
-scripts. The background prefill enumerates title for entries, title for series,
-and title plus description for local works; it writes native rows for text
-already in the target language before queueing model calls. `zh-tw` is a
-display projection and is not a separate prefill queue.
+scripts. The background prefill enumerates entry title, series title and local
+work title/description. Its durable cursor carries kind, field, id and
+language, in that order, so one entity receives every model language before the
+scan moves on. It writes native rows for text already in the target language
+before queueing model calls. A failed item is stored in
+`translation_prefill_failure` with its source hash, attempt count and next retry
+time; `NULL` next retry means no attempt is scheduled. The attempt budget
+survives a restart, and changed source text starts a new hash instead of
+inheriting the old failure. `complete` is written only when the effective corpus
+has no missing, stale, failed or retry item. `zh-tw` is a display projection and
+is not a separate prefill queue; native `zh-Hant` rows are reported, but a
+missing one does not block completion because the `zh-Hans` projection still
+serves the reader.
 
-Display-language search applies only to text clauses and covers title for
-entries and series, plus title and description for works; `tag` and `directory`
-translations are not search inputs.
-`zh-cn`, `en-us`, `ja-jp` and `ko-kr` map to `zh-Hans`, `en-US`, `ja-JP` and
-`ko-KR`; `zh-tw` reads `zh-Hans` with OpenCC `s2t` and native `zh-Hant`. A
+Display-language search applies only to text clauses and covers `title` for
+entries and series, plus `title` and `description` for works; `tag` and
+`directory` translations are not search inputs.
+`zh-cn`, `en-us`, `ja-jp` and `ko-kr` map to the stored tokens `zh-Hans`, `en`,
+`ja` and `ko`; `zh-tw` reads `zh-Hans` with OpenCC `s2t` and native `zh-Hant`. A
 release code or another structured identifier remains searchable regardless of
 display language. `origin` searches the original source index and never reads
 `content_translation`; target-language text searches never merge original-title
 FTS hits as a fallback. One- and two-character queries use the complete
-effective set with a covering `(language, entity_kind, field, id,
-translated_text)` index; if p95 exceeds 100 ms at the target corpus size, add a
-short-term n-gram index or equivalent indexed structure instead of accepting an
-unbounded scan.
+effective set. Migration 099 keeps the required `(language, entity_kind, field,
+id, translated_text)` index and adds `idx_content_translation_short_current`
+with `origin` and `config_key`, so the current-row predicate stays covered.
+The short query uses `LIKE` on the covered column; SQLite's ASCII
+case-insensitive comparison replaces a `lower()` call per candidate row. The
+45.6 万行 `translation-bench` run measured p95 49.45 ms for the short query and
+29.07 ms for the three-character FTS query.
 
 The `config_key` migration, persistent title/description rows, strict
-display-language search and complete short-query behavior are the issue 21
-target. The reviewed implementation still evicts model rows (including title
-rows) and limits one- and two-character searches to the newest 50,000 rows per
-language; do not cite those behaviors as completed evidence until the migration
-and replacement queries land.
+display-language search and complete short-query behavior are implemented:
+`translationPersistentCorpusSQL` excludes current corpus rows from eviction,
+`idx_content_translation_short_current` serves the keyset walk, and the short
+query no longer uses a newest-row window. The 45.6 万行 benchmark numbers above
+come from the local `translation-bench` run; the production-scale measurement
+belongs to ticket 24.
 
 Free space is read from the nearest existing parent before the data directory
 exists. Low space pauses new background generation (`paused_low_disk`) while
@@ -213,9 +224,9 @@ resumes on its own once the floor is met again; an operator-requested `paused`
 status has an empty `last_error` and stays paused. An interactive request keeps
 its model result rather than discarding a paid call, but the corpus row is not
 written while the volume is below the floor. The response reports
-`paused_low_disk`; the prefill cursor keeps the affected entry pending so it can
-be retried. Failed and empty generations are never stored. Stored rows report
-`hit`, freshly generated rows `stored`.
+`paused_low_disk`; the prefill pass records the item as a pending failure so a
+later pass retries it. Failed and empty generations are never stored. Stored
+rows report `hit`, freshly generated rows `stored`.
 ## Model contract and limits
 
 The default model invocation name is `Index-Translate-35B-A3B`; a configured name
@@ -265,6 +276,16 @@ content failures retain the verified original text.
 ## Verification
 
 HTTP and restart tests use production routes, real sessions and migrated SQLite:
+
+The real numbered chain currently ends at 096 on this branch; 097 and 098 are
+owned by unmerged branches, so the authored 099 cannot run against the packaged
+chain yet. Local Go tests and `cmd/translation-bench` use
+`internal/migrationfixture`, which copies the packaged catalog and injects
+no-op 097/098 placeholders in memory or a temporary directory. Those files are
+test fixtures only and are not committed. After the 098/099 merge, regenerate the
+development compat baseline with
+`cd backend && go run ./cmd/schema-baseline -migrations . -version-file ../../VERSION`;
+do not hand-write `compat/099_dev.sql` while the chain has a gap.
 
 ```sh
 cd backend

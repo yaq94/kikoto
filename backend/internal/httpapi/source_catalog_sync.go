@@ -70,6 +70,7 @@ type catalogSyncObservation struct {
 	Size     int64
 	Hash     string
 	Modified string
+	Revision int
 	Pending  int
 }
 
@@ -172,9 +173,6 @@ func (s *Server) queueCatalogIncrementalSync(ctx context.Context, sourceID int64
 	if err != nil || runID == 0 {
 		return runID, err
 	}
-	if err = setCatalogDailyNextUpdateTx(ctx, tx.Tx, sourceID, s.catalogTime()); err != nil {
-		return 0, err
-	}
 	return runID, tx.Commit()
 }
 
@@ -204,9 +202,9 @@ func jsonUnmarshalCatalogOptions(saved string, options *catalogIndexOptions) err
 
 func (s *Server) executeCatalogIncrementalSync(ctx context.Context, runID, sourceID int64) (runErr error) {
 	state := catalogSyncRunState{ID: runID, SourceID: sourceID, Status: "running"}
-	// resumeAt delays the next daily attempt when a hold or a low disk stopped
+	// deferredUntil moves the whole schedule when a hold or a low disk stopped
 	// this run. It stays zero for an ordinary finish.
-	var resumeAt time.Time
+	var deferredUntil time.Time
 	settleStarted := time.Now()
 	defer func() {
 		s.recordCatalogPhase(context.WithoutCancel(ctx), runID, "settle", settleStarted)
@@ -223,9 +221,14 @@ func (s *Server) executeCatalogIncrementalSync(ctx context.Context, runID, sourc
 		}
 		settle := context.WithoutCancel(ctx)
 		_ = s.finishCatalogSyncRun(settle, runID, status, state)
-		if !resumeAt.IsZero() {
-			_ = s.setCatalogDailyDue(settle, sourceID, resumeAt)
+		if !deferredUntil.IsZero() {
+			_ = setCatalogScheduleDeferredTx(settle, s.db, sourceID, deferredUntil, catalogDeferralReason(state.Note))
 		}
+		// A sync never creates a full generation itself: the full entry point
+		// refuses while a sync holds the lease. When the weekly boundary came
+		// due during this run, leave one pending bit for the scheduler to
+		// consume after the lease is gone.
+		_ = s.markCatalogResumeFullAfterSync(settle, sourceID)
 	}()
 
 	options, generation, err := s.catalogSyncOptions(ctx, sourceID)
@@ -234,10 +237,10 @@ func (s *Server) executeCatalogIncrementalSync(ctx context.Context, runID, sourc
 	}
 	// A hold or a low disk is checked before the first request, so a paused
 	// sync costs nothing and leaves every checkpoint untouched.
-	if reason, until := s.pauseCatalogSync(ctx, options); reason != "" {
+	if reason, _ := s.pauseCatalogSync(ctx, options); reason != "" {
 		state.Status = "partial"
 		state.Note = appendCatalogSyncNote(state.Note, reason)
-		resumeAt = until
+		deferredUntil = catalogDeferralDeadline(s.catalogTime())
 		return nil
 	}
 	source, err := s.catalogIndexSource(ctx, sourceID)
@@ -291,11 +294,11 @@ func (s *Server) executeCatalogIncrementalSync(ctx context.Context, runID, sourc
 		}
 		// The hold and the disk floor are re-checked between directory batches,
 		// so a long probe pass stops where the committed checkpoint ends.
-		if reason, until := s.pauseCatalogSync(ctx, options); reason != "" {
+		if reason, _ := s.pauseCatalogSync(ctx, options); reason != "" {
 			s.recordCatalogPhase(context.WithoutCancel(ctx), lease.WorkflowRunID, "scan", scanStarted)
 			state.Status = "partial"
 			state.Note = appendCatalogSyncNote(state.Note, reason)
-			resumeAt = until
+			deferredUntil = catalogDeferralDeadline(s.catalogTime())
 			return nil
 		}
 		probes, queryErr := s.pendingCatalogSyncProbes(ctx, sourceID, generation, runID, catalogSyncBatch)
@@ -439,6 +442,48 @@ func (s *Server) pauseCatalogSync(ctx context.Context, options catalogIndexOptio
 		return reason, s.catalogTime().Add(time.Hour)
 	}
 	return "", time.Time{}
+}
+
+// catalogDeferralDeadline is the single resource-hold deadline. A low disk, an
+// unknown disk state and a deployment hold all defer the whole schedule by one
+// hour; dispatch re-checks the actual condition when the deadline expires.
+func catalogDeferralDeadline(now time.Time) time.Time {
+	return now.Add(time.Hour)
+}
+
+// catalogDeferralReason maps the pause vocabulary to the persisted schedule
+// reason. A note can carry several appended diagnostics, so only an exact
+// resource pause is persisted; anything else is an unknown disk state.
+func catalogDeferralReason(note string) string {
+	switch note {
+	case "low_disk_space":
+		return "low_disk"
+	case "maintenance":
+		return "maintenance_hold"
+	default:
+		return "disk_unknown"
+	}
+}
+
+// markCatalogResumeFullAfterSync records a due weekly boundary without
+// enqueueing anything. The scheduler serialises the full generation after the
+// sync lease is released.
+func (s *Server) markCatalogResumeFullAfterSync(ctx context.Context, sourceID int64) error {
+	now := s.catalogTime()
+	var weeklyDue int64
+	var resume int
+	err := s.db.QueryRowContext(ctx, `SELECT weekly_due_at,resume_full_pending
+		FROM source_catalog_schedule WHERE file_source_id=?`, sourceID).Scan(&weeklyDue, &resume)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if resume != 0 || weeklyDue > now.Unix() {
+		return nil
+	}
+	return setCatalogResumeFullPendingTx(ctx, s.db, sourceID)
 }
 
 // settleInterruptedCatalogSyncTiming runs once at startup. A process that
@@ -646,8 +691,30 @@ func (s *Server) applyCatalogSyncProbeTx(ctx context.Context, tx *sql.Tx, source
 			if parent.Path == "/" {
 				partition = childPath
 			}
+			// The unique key is (source,path), not (source,generation,path). A
+			// cancelled generation can leave child rows of an older generation,
+			// so adopting a child must update that row instead of inserting a
+			// duplicate path.
 			if _, err = tx.ExecContext(ctx, `INSERT INTO source_catalog_directory(file_source_id,path,generation,partition_path,catalog_root,status,sync_state,observed_version,last_verified_run,last_verified_at)
-				VALUES(?,?,?,?,?,'pending','changed',?,0,CURRENT_TIMESTAMP)`, sourceID, childPath, generation, partition, parent.Root, child.Modified); err != nil {
+				VALUES(?,?,?,?,?,'pending','changed',?,0,CURRENT_TIMESTAMP)
+				ON CONFLICT(file_source_id,path) DO UPDATE SET
+					generation=excluded.generation,
+					partition_path=excluded.partition_path,
+					catalog_root=excluded.catalog_root,
+					status='pending',
+					sync_state='changed',
+					observed_version=excluded.observed_version,
+					revision=source_catalog_directory.revision+1,
+					next_page=1,
+					expected_total=-1,
+					children_cursor='',
+					attempts=0,
+					error_code='',
+					completed_at=NULL,
+					last_verified_run=0,
+					last_verified_at=CURRENT_TIMESTAMP
+				WHERE source_catalog_directory.generation<>excluded.generation`,
+				sourceID, childPath, generation, partition, parent.Root, child.Modified); err != nil {
 				return 0, err
 			}
 			if err = addCatalogDirectoryCountersTx(ctx, tx, sourceID); err != nil {
@@ -766,14 +833,19 @@ func (s *Server) applyCatalogSyncListing(ctx context.Context, sourceID, generati
 		return 0, 0, tx.Commit()
 	}
 
+	// A cancelled generation can leave the directory revision ahead of its
+	// observations: adopting a child in applyCatalogSyncProbes bumps the
+	// revision, but the listing that would rewrite those rows never ran. Read
+	// every row for the path, not only the current revision, or the insert below
+	// collides with the primary key and the stale revision survives.
 	oldRows := map[string]catalogSyncObservation{}
-	rows, err := tx.QueryContext(ctx, `SELECT name,kind,size_bytes,content_hash,modified_at,publish_pending FROM source_catalog_observation WHERE file_source_id=? AND directory_path=? AND revision=?`, sourceID, dir.Path, revision)
+	rows, err := tx.QueryContext(ctx, `SELECT name,kind,size_bytes,content_hash,modified_at,revision,publish_pending FROM source_catalog_observation WHERE file_source_id=? AND directory_path=?`, sourceID, dir.Path)
 	if err != nil {
 		return 0, 0, err
 	}
 	for rows.Next() {
 		var row catalogSyncObservation
-		if err = rows.Scan(&row.Name, &row.Kind, &row.Size, &row.Hash, &row.Modified, &row.Pending); err != nil {
+		if err = rows.Scan(&row.Name, &row.Kind, &row.Size, &row.Hash, &row.Modified, &row.Revision, &row.Pending); err != nil {
 			break
 		}
 		oldRows[row.Name] = row
@@ -787,7 +859,7 @@ func (s *Server) applyCatalogSyncListing(ctx context.Context, sourceID, generati
 	}
 
 	newRevision := revision + 1
-	if _, err = tx.ExecContext(ctx, `UPDATE source_catalog_observation SET revision=?,publish_pending=0 WHERE file_source_id=? AND directory_path=? AND revision=?`, newRevision, sourceID, dir.Path, revision); err != nil {
+	if _, err = tx.ExecContext(ctx, `UPDATE source_catalog_observation SET revision=?,publish_pending=0 WHERE file_source_id=? AND directory_path=?`, newRevision, sourceID, dir.Path); err != nil {
 		return 0, 0, err
 	}
 	// An exclusion or a damaged name removes the child from this generation.
@@ -822,7 +894,7 @@ func (s *Server) applyCatalogSyncListing(ctx context.Context, sourceID, generati
 		kind := openlist.Kind(name, obj.IsDir)
 		hash := obj.ContentHash()
 		old, exists := oldRows[name]
-		rowChanged := !exists || old.Kind != kind || old.Size != obj.Size || old.Hash != hash || old.Modified != obj.Modified
+		rowChanged := !exists || old.Revision != revision || old.Kind != kind || old.Size != obj.Size || old.Hash != hash || old.Modified != obj.Modified
 		if rowChanged {
 			changed++
 		}

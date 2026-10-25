@@ -1,7 +1,6 @@
 package storage
 
 import (
-	"path/filepath"
 	"testing"
 )
 
@@ -9,7 +8,7 @@ import (
 // rebuild must not cascade into the rows that reference an account, and the
 // pool must keep enforcing foreign keys afterwards.
 func TestContributorRoleMigrationKeepsAccountsAndReferences(t *testing.T) {
-	sourceDir := filepath.Join("..", "..", "migrations")
+	sourceDir := testMigrationDir(t)
 	db := openMigrationManagerDB(t)
 	if err := Migrate(db, copyNumberedMigrationsThrough(t, sourceDir, 65)); err != nil {
 		t.Fatal(err)

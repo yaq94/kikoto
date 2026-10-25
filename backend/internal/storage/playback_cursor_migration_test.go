@@ -8,7 +8,7 @@ import (
 )
 
 func TestPlaybackCursorMigrationBackfillsLatestCanonicalFamilyProgress(t *testing.T) {
-	migrationDir := filepath.Join("..", "..", "migrations")
+	migrationDir := testMigrationDir(t)
 	preCursorDir := t.TempDir()
 	entries, err := os.ReadDir(migrationDir)
 	if err != nil {

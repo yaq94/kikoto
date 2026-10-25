@@ -1,12 +1,11 @@
 package storage
 
 import (
-	"path/filepath"
 	"testing"
 )
 
 func TestMetadataIssuesMigrationPreservesUnavailableAndExistingMetadata(t *testing.T) {
-	source := filepath.Join("..", "..", "migrations")
+	source := testMigrationDir(t)
 	before := copyNumberedMigrationsThrough(t, source, 32)
 	db := openMigrationManagerDB(t)
 	if err := Migrate(db, before); err != nil {

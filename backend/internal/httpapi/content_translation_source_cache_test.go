@@ -229,10 +229,11 @@ func TestContentTranslationSourceFieldCacheDoesNotStoreFailedOutput(t *testing.T
 func TestTranslationRetentionCountsSourceFieldCacheAndKeepsNativeRows(t *testing.T) {
 	server := openContentTranslationTestServer(t)
 	ctx := context.Background()
-	if _, err := server.db.Exec(`INSERT INTO file_source(id,code,display_name,source_type) VALUES(1,'example_remote','Example Remote','kikoeru_compatible')`); err != nil {
+	if _, err := server.db.Exec(`INSERT INTO file_source(id,code,display_name,source_type) VALUES(1,'example_remote','Example Remote','openlist')`); err != nil {
 		t.Fatal(err)
 	}
 	nativeText := strings.Repeat("作", 40)
+	seedCurrentTranslationEntry(t, server.db, 2, "content source text 01")
 	if _, err := server.saveContentTranslations(ctx, []contentTranslationRow{
 		{CacheKey: "native-1", EntityKind: "entry", EntityID: 1, Field: "title", Language: "ja", SourceText: nativeText, TranslatedText: nativeText, Origin: "native"},
 		{CacheKey: "content-model", EntityKind: "entry", EntityID: 2, Field: "title", Language: "zh-Hans", SourceText: "content source text 01", TranslatedText: "content target text 01", Origin: "model", Model: "m", TemplateVersion: translation.TemplateVersion},
@@ -253,21 +254,25 @@ func TestTranslationRetentionCountsSourceFieldCacheAndKeepsNativeRows(t *testing
 		UPDATE source_field_translation SET updated_at='2026-01-01 00:00:04' WHERE cache_key='source-c';`); err != nil {
 		t.Fatal(err)
 	}
-	// Four model rows at 40 bytes of UTF-8 text each; this budget keeps two.
-	if err := server.pruneContentTranslations(ctx, translation.Config{Limits: translation.Limits{CacheBytes: 80}}); err != nil {
+	// The live content row is corpus. Only the three rebuildable source rows
+	// compete for this 80-byte budget, which keeps two of them.
+	if err := server.pruneContentTranslations(ctx, translation.Config{Limits: translation.Limits{CacheBytes: 80}, Model: "m"}); err != nil {
 		t.Fatal(err)
 	}
-	var modelRows, nativeRows, modelBytes int64
+	var modelRows, nativeRows, sourceBytes int64
 	if err := server.db.QueryRow(`SELECT
 		(SELECT count(*) FROM content_translation WHERE origin='model')+(SELECT count(*) FROM source_field_translation),
 		(SELECT count(*) FROM content_translation WHERE origin='native'),
-		(SELECT COALESCE(sum(length(CAST(source_text AS BLOB))+length(CAST(translated_text AS BLOB))),0) FROM content_translation WHERE origin='model')+
 		(SELECT COALESCE(sum(length(CAST(source_text AS BLOB))+length(CAST(translated_text AS BLOB))),0) FROM source_field_translation)
-	`).Scan(&modelRows, &nativeRows, &modelBytes); err != nil {
+		`).Scan(&modelRows, &nativeRows, &sourceBytes); err != nil {
 		t.Fatal(err)
 	}
-	if modelRows != 2 || nativeRows != 1 || modelBytes > 80 {
-		t.Fatalf("retention rows=%d native=%d bytes=%d, want 2/1 and <=80", modelRows, nativeRows, modelBytes)
+	if modelRows != 3 || nativeRows != 1 || sourceBytes > 80 {
+		t.Fatalf("retention rows=%d native=%d sourceBytes=%d, want 3/1 and <=80", modelRows, nativeRows, sourceBytes)
+	}
+	var contentKept int
+	if err := server.db.QueryRow(`SELECT count(*) FROM content_translation WHERE cache_key='content-model'`).Scan(&contentKept); err != nil || contentKept != 1 {
+		t.Fatalf("current content row kept=%d err=%v", contentKept, err)
 	}
 	var sourceKept int
 	if err := server.db.QueryRow(`SELECT count(*) FROM source_field_translation WHERE cache_key IN ('source-b','source-c')`).Scan(&sourceKept); err != nil || sourceKept != 2 {

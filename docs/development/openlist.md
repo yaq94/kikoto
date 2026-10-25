@@ -78,24 +78,44 @@ the panel unmounts; newly published cards refresh the source results.
 Scan options are saved with the source's checkpoint and reused by an empty
 start request. An active run keeps its options until it is stopped and resumed.
 
-A full scan that reached the end of the tree enables daily updates for that
-source. The next due time is persisted in `app_setting` and is checked by the
-existing workflow coordinator on startup and while the application runs. A
-stopped application catches up with one update when it starts; elapsed days do
-not queue multiple crawls. A run that still has unconfirmed empty ranges also
-schedules the next re-observation, but the daily trigger resumes the same
-generation instead of creating an independent full crawl, so new content below
-a transient empty answer is eventually discovered. Failed and restricted ranges
-retry on the same schedule; a low-disk pause waits for the operator. Finite
-scans and disabled sources do not enable the schedule.
+A full scan that reached the end of the tree enables the persisted schedule for
+that source. `source_catalog_schedule` holds one row per enabled OpenList source
+with `daily_due_at`, `weekly_due_at`, `deferred_until`, `deferred_reason`,
+`manual_pending`, `resume_full_pending` and `pending_full_run_id`. The old
+`source_catalog_daily:` and `source_catalog_full:` settings are read only by the
+098 migration; runtime dispatch never consults them.
 
-Daily dispatch uses the same transaction as manual dispatch: queued/running
-scans are joined, and cancelled, failed, paused or partial scans resume their
-existing generation. The due time advances with dispatch, so repeated coordinator
-checks do not continually retry a paused source. A complete success schedules
-the next update for 24 hours later. Daily work uses the saved limits, existing
-source request policy and low-space pause, and only complete coverage reports
-success. Manual starts still require `sources:write`.
+The daily boundary is the next Asia/Shanghai 03:00; the weekly boundary is the
+next Sunday 03:00. The workflow coordinator checks both on startup and while the
+application runs, so a stopped application catches up with one task instead of
+replaying every missed day. When both boundaries are due, the weekly
+reconciliation wins and only one task is created. A daily task advances the
+daily boundary; a weekly task advances both. Manual refresh consumes
+`manual_pending` once and does not move either boundary.
+
+Only one writer may hold a source at a time. A queued or running full generation
+or a running incremental sync suppresses a second task; a weekly boundary that
+comes due during a sync sets `resume_full_pending` instead of enqueueing a full
+from inside the sync. A resume full records its run in `pending_full_run_id` and
+keeps the pending bit until that run succeeds; a failed or cancelled run clears
+only the run id, so the next tick creates one replacement and the weekly
+boundary does not move.
+
+A partial, failed or cancelled generation is repaired by a maintenance sync over
+the existing generation: complete directories are probed for changes, while
+failed, restricted, pending and unconfirmed-empty ranges are retried. A full
+generation is only requested when no reusable generation exists.
+
+A low disk, disk-state failure or deployment hold writes only
+`deferred_until=now+1h` and `deferred_reason` (`low_disk`, `disk_unknown` or
+`maintenance_hold`). The due boundaries, pending bits, `pending_full_run_id` and
+checkpoints stay in place. When the deadline passes the dispatcher re-checks the
+actual condition; a condition that is still present re-arms the window, and a
+cleared condition catches up once. Finite scans and disabled sources do not
+enable the schedule; disabling keeps the row and the dispatcher skips it.
+
+Daily work uses the saved limits and the existing source request policy, and only
+complete coverage reports success. Manual starts still require `sources:write`.
 
 Every incremental update re-lists the source root in addition to probing child
 directories. Root-level files are not visible through the directory probe, so
@@ -107,8 +127,8 @@ staying falsely available.
 
 | Option | Starting value | Accepted range |
 | --- | --- | --- |
-| `concurrency` | 1 | 1–4 metadata requests within the single workflow executor |
-| `intervalMs` | 1000 | 100–60000 between metadata starts, shared per origin |
+| `concurrency` | 3 | 1–4 metadata requests within the single workflow executor |
+| `intervalMs` | 220 | 100–60000 between metadata starts, shared per origin |
 | `maxResponseBytes` | 2097152 | 1024–8388608 |
 | `pageSize` | 100 | 1–500 |
 | `pagesPerBatch` | 8 | 1–32 page or publication steps |

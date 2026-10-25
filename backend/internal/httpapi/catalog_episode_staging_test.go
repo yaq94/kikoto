@@ -3,9 +3,11 @@ package httpapi
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -401,6 +403,154 @@ func TestCatalogEpisodeActivationFailureCompensatesWithoutPublicSplit(t *testing
 	f.request(t, http.MethodPost, "/catalog/scan", `{}`, http.StatusOK)
 	if got := len(episodePublications(t, f)); got != 2 {
 		t.Fatalf("published roots after retry=%d, want two", got)
+	}
+}
+
+// A retry after a successful split must never treat published files as staged.
+// The publication row is the durable boundary: even when a legacy build left
+// pending mappings behind, the next staging pass keeps every published file and
+// the retry either reuses the identity or stops before clearing it.
+func TestCatalogEpisodePublishedFilesSurviveAStalePendingMappingRetry(t *testing.T) {
+	f := newLooseWorkFixture(t, episodeStagingTree(110))
+	files := mustOpenListFiles(t, f, "/Example")
+	if err := persistEpisodeStagingFiles(t, f, files); err != nil {
+		t.Fatal(err)
+	}
+	published := episodePublications(t, f)
+	if len(published) != 2 {
+		t.Fatalf("published roots=%v, want two", published)
+	}
+	var before int
+	if err := f.server.db.QueryRow(`SELECT count(*) FROM source_catalog_file
+		WHERE catalog_entry_id IN (SELECT id FROM source_catalog_entry WHERE file_source_id=?)`,
+		f.sourceID(t)).Scan(&before); err != nil {
+		t.Fatal(err)
+	}
+	if before == 0 {
+		t.Fatal("published split has no files to protect")
+	}
+	// Model the legacy leftover: the split is published but a pending mapping
+	// still points at a published entry.
+	metadataReviewExec(t, f.server.db, `INSERT INTO source_catalog_episode_pending(
+			source_id,parent_root,catalog_entry_root,catalog_entry_id)
+		SELECT file_source_id,'/Example',root_path,id FROM source_catalog_entry
+		WHERE root_path='/Example/Episode 1' AND file_source_id IS NOT NULL`)
+	if got := episodePendingCount(t, f); got != 1 {
+		t.Fatalf("stale pending mappings=%d, want one", got)
+	}
+
+	// Fault injection: the mapping cleanup that normally runs in the
+	// publication transaction fails. The whole publication rolls back, so the
+	// published state and its files remain untouched.
+	metadataReviewExec(t, f.server.db, `CREATE TRIGGER fail_published_mapping_cleanup
+		BEFORE DELETE ON source_catalog_episode_pending
+		WHEN EXISTS(SELECT 1 FROM source_catalog_episode_publication publication
+			WHERE publication.source_id=OLD.source_id AND publication.parent_root=OLD.parent_root
+				AND publication.state='published')
+		BEGIN SELECT RAISE(ABORT,'synthetic mapping cleanup failure'); END;`)
+	if err := persistEpisodeStagingFiles(t, f, files); err == nil {
+		t.Fatal("retry succeeded despite the injected mapping cleanup failure")
+	}
+	metadataReviewExec(t, f.server.db, `DROP TRIGGER fail_published_mapping_cleanup`)
+
+	var state string
+	if err := f.server.db.QueryRow(`SELECT state FROM source_catalog_episode_publication
+		WHERE source_id=? AND parent_root='/Example'`, f.sourceID(t)).Scan(&state); err != nil {
+		t.Fatal(err)
+	}
+	if state != "published" {
+		t.Fatalf("retry rolled the publication state back to %q", state)
+	}
+	var after int
+	if err := f.server.db.QueryRow(`SELECT count(*) FROM source_catalog_file
+		WHERE catalog_entry_id IN (SELECT id FROM source_catalog_entry WHERE file_source_id=?)`,
+		f.sourceID(t)).Scan(&after); err != nil {
+		t.Fatal(err)
+	}
+	if after != before {
+		t.Fatalf("published files changed across retry: before=%d after=%d", before, after)
+	}
+	if got := len(episodePublications(t, f)); got != len(published) {
+		t.Fatalf("published identities changed across retry: before=%v after=%v", published, episodePublications(t, f))
+	}
+
+	// Once the fault is gone the retry completes without losing a published
+	// file or changing the published identities.
+	if err := persistEpisodeStagingFiles(t, f, files); err != nil {
+		t.Fatalf("recovered retry: %v", err)
+	}
+	var recovered int
+	if err := f.server.db.QueryRow(`SELECT count(*) FROM source_catalog_file
+		WHERE catalog_entry_id IN (SELECT id FROM source_catalog_entry WHERE file_source_id=?)`,
+		f.sourceID(t)).Scan(&recovered); err != nil {
+		t.Fatal(err)
+	}
+	if recovered != before {
+		t.Fatalf("recovered retry changed published files: before=%d after=%d", before, recovered)
+	}
+	if got := len(episodePublications(t, f)); got != len(published) {
+		t.Fatalf("recovered retry changed published identities: before=%v after=%v", published, episodePublications(t, f))
+	}
+}
+
+// Between the activation batches an entry already has its source identity but
+// the parent publication row is still pending. Series detail and tracks must
+// hide it until that one row flips, then expose it without rewriting the entry.
+func TestCatalogSeriesHidesPendingPublicationUntilItIsPublished(t *testing.T) {
+	db := openMigratedTestDB(t)
+	metadataReviewExec(t, db, `INSERT INTO file_source(id,code,display_name,source_type,enabled)
+		VALUES(86,'pending-series','Pending Series','openlist',1);
+		INSERT INTO source_catalog_entry(id,file_source_id,root_path,title,availability_status) VALUES
+			(8601,86,'/series/ready','Ready','available'),
+			(8602,86,'/series/staged','Staged','available');
+		INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes) VALUES
+			(8601,'a.mp3','a','audio',1),(8602,'a.mp3','a','audio',1);
+		INSERT INTO catalog_series(id,title) VALUES(1,'Pending series');
+		INSERT INTO catalog_series_member(series_id,catalog_entry_id,position,evidence) VALUES
+			(1,8601,1,'manual'),(1,8602,2,'manual');
+		INSERT INTO source_catalog_episode_pending(source_id,parent_root,catalog_entry_root,catalog_entry_id)
+			VALUES(86,'/series','/series/staged',8602);
+		INSERT INTO source_catalog_episode_publication(source_id,parent_root,state)
+			VALUES(86,'/series','pending')`)
+	server := NewServer(db, config.Config{})
+	request := httptest.NewRequest(http.MethodGet, "/api/catalog-series/1", nil)
+	request.SetPathValue("id", "1")
+	response := httptest.NewRecorder()
+	server.getCatalogSeries(response, request)
+	var view catalogSeriesView
+	if err := json.Unmarshal(response.Body.Bytes(), &view); err != nil {
+		t.Fatal(err)
+	}
+	if len(view.Episodes) != 1 || view.Episodes[0].CatalogEntryID != 8601 {
+		t.Fatalf("pending activation leaked into the series: %+v", view.Episodes)
+	}
+	tracks := httptest.NewRequest(http.MethodGet, "/api/source-catalog/8602/tracks", nil)
+	tracks.SetPathValue("id", "8602")
+	response = httptest.NewRecorder()
+	server.getSourceCatalogTracks(response, tracks)
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("pending member tracks status = %d", response.Code)
+	}
+
+	metadataReviewExec(t, db, `UPDATE source_catalog_episode_publication SET state='published'
+		WHERE source_id=86 AND parent_root='/series'`)
+	request = httptest.NewRequest(http.MethodGet, "/api/catalog-series/1", nil)
+	request.SetPathValue("id", "1")
+	response = httptest.NewRecorder()
+	server.getCatalogSeries(response, request)
+	view = catalogSeriesView{}
+	if err := json.Unmarshal(response.Body.Bytes(), &view); err != nil {
+		t.Fatal(err)
+	}
+	if len(view.Episodes) != 2 {
+		t.Fatalf("published member stayed hidden: %+v", view.Episodes)
+	}
+	tracks = httptest.NewRequest(http.MethodGet, "/api/source-catalog/8602/tracks", nil)
+	tracks.SetPathValue("id", "8602")
+	response = httptest.NewRecorder()
+	server.getSourceCatalogTracks(response, tracks)
+	if response.Code != http.StatusOK {
+		t.Fatalf("published member tracks status = %d", response.Code)
 	}
 }
 

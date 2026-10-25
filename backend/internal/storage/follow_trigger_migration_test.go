@@ -1,14 +1,13 @@
 package storage
 
 import (
-	"path/filepath"
 	"testing"
 )
 
 // Migration 039 disables follow triggers saved with the retired follow inputs
 // and asks for reconfiguration; other workflow triggers keep running.
 func TestMigrationDisablesFollowTriggersForReconfiguration(t *testing.T) {
-	sourceDir := filepath.Join("..", "..", "migrations")
+	sourceDir := testMigrationDir(t)
 	db := openMigrationManagerDB(t)
 	if err := Migrate(db, copyNumberedMigrationsThrough(t, sourceDir, 38)); err != nil {
 		t.Fatal(err)

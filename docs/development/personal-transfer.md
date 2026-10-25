@@ -1,12 +1,12 @@
 # Personal data transfer
 
 `GET /api/user-data/export` and `POST /api/user-data/import[/preview]` use the
-existing account-owned personal store. The exporter writes version 3;
-version 1, version 2 and the Kikoeru readers retain numbered-code
-compatibility.
+existing account-owned personal store. The exporter writes version 2 with an
+optional episode `parent`; version 1 and the Kikoeru readers retain
+numbered-code compatibility.
 See [the user contract](../user/en/personal-data.md#export-and-import).
 
-Each version 2 or 3 work has `identity: {ref, kind, title, references?, parent?}`.
+Each version 2 work has `identity: {ref, kind, title, references?, parent?}`.
 `kind` is
 `work`, `episode` or `series`. `personal_transfer_ref` provides random opaque
 aliases for exact work, catalog and series rows. Its primary work reference is
@@ -15,15 +15,15 @@ They neither replace `work.id` nor define shared evaluation identity. Only
 personal records select which objects are exported. Source references carry no
 configuration, paths or network addresses.
 
-Version 3 adds `parent` only to an episode identity. It contains the minimum
+A version 2 episode identity may carry `parent`. It contains the minimum
 series identity (`ref`, `kind: "series"`, `title`, no rating, note or progress);
 there is no nested parent. The `s:` parent reference belongs to the
 `catalog_series` transfer row, never to the episode work. A parent series may
 also appear as a top-level work; it is imported once and keeps its own personal
 state. If the parent is missing, ambiguous, cyclic or points to another object,
 the episode is blocked with `parent_conflict`/`parent_cycle`; it is not restored
-as a standalone work. Version 2, which has no parent field, keeps its legacy
-`relationships_not_imported` warning.
+as a standalone work. A version 2 file whose episode has no parent field keeps
+its legacy behaviour and reports that the parent was not restored.
 
 An episode parent is exported even when the series has no personal review, so an
 episode review never loses its evaluation parent. Parent aliases resolve as that
@@ -46,8 +46,8 @@ reference then resolves to that work on later imports. Without registration
 permission the whole import is rejected, as with any other missing work.
 
 The importer keeps the evaluation level: a catalog episode must not become a
-standalone work or series, and a series reference cannot become a work. On a
-v3 episode import it writes `work.parent_work_id`, sets the episode's primary
+standalone work or series, and a series reference cannot become a work. On an
+episode import that carries `parent` it writes `work.parent_work_id`, sets the episode's primary
 `personal_transfer_ref.object_kind` to `episode`, and creates or reuses a
 `catalog_series` row for an otherwise unknown parent. `catalog_series.work_id`
 names the series' own evaluation work. An explicit `parent` reuses a registered

@@ -117,8 +117,9 @@ readers when the instance allows anonymous access.
   fields. Series detail and member tracks apply the same pending-publication and
   admission gates as the series list; a staged batch is never exposed before the
   parent publication row is `published`.
-  The reviewed 096 commit still reads series detail without those gates; issue 20
-  owns that correction and its regression test.
+  The gates are the same `catalogEntryPendingSQL` and `catalogEntryAdmittedSQL`
+  predicates the list uses, so an over-limit member disappears from the detail
+  without hiding its qualified siblings.
 
 Previews expire after 24 hours. An actor may retain at most 32 unexpired pending
 and 32 completed previews. Identity, location, title, source visibility,

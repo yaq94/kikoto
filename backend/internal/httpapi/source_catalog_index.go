@@ -7,7 +7,6 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"strconv"
 
 	"github.com/yexca/kikoto/backend/internal/openlist"
 	"github.com/yexca/kikoto/backend/internal/workflow"
@@ -227,13 +226,51 @@ func (s *Server) startSourceCatalogIndex(w http.ResponseWriter, r *http.Request)
 	result, err := s.enqueueSourceCatalogIndex(r.Context(), id, request.catalogIndexOptions, request.Force)
 	if err != nil {
 		if errors.Is(err, errCatalogSyncRunning) {
-			writeAPIError(w, http.StatusConflict, "catalog_sync_running", "An incremental catalog update is already running.", true)
+			// A manual refresh requested while a sync holds the writer is
+			// queued once. The scheduler consumes it after that sync settles;
+			// it never starts a second overlapping writer.
+			if pendingErr := s.queueCatalogManualPending(r.Context(), id); pendingErr != nil {
+				writeError(w, pendingErr)
+				return
+			}
+			runID, runErr := s.catalogGenerationRunID(r.Context(), id)
+			if runErr != nil {
+				writeError(w, runErr)
+				return
+			}
+			writeJSON(w, http.StatusAccepted, catalogIndexQueued{RunID: runID, Existing: true})
 			return
 		}
 		writeError(w, err)
 		return
 	}
+	if result.Existing {
+		// A queued or running full generation owns the source. Keep the manual
+		// request as one pending bit instead of rejecting it.
+		if err = s.queueCatalogManualPending(r.Context(), id); err != nil {
+			writeError(w, err)
+			return
+		}
+	}
 	writeJSON(w, http.StatusAccepted, result)
+}
+
+func (s *Server) queueCatalogManualPending(ctx context.Context, sourceID int64) error {
+	tx, release, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
+	if err != nil {
+		return err
+	}
+	defer release()
+	if err = setCatalogManualPendingTx(ctx, tx.Tx, sourceID, s.catalogTime()); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *Server) catalogGenerationRunID(ctx context.Context, sourceID int64) (int64, error) {
+	var runID int64
+	err := s.db.QueryRowContext(ctx, `SELECT workflow_run_id FROM source_catalog_scan WHERE file_source_id=?`, sourceID).Scan(&runID)
+	return runID, err
 }
 
 // enqueueSourceCatalogIndex is the single-source dispatch boundary. An active
@@ -269,12 +306,8 @@ func (s *Server) enqueueSourceCatalogIndexTx(ctx context.Context, tx *sql.Tx, so
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return catalogIndexQueued{}, err
 	}
-	if runID == 0 {
-		// Source ids may be reused after deletion. A replacement source must
-		// earn its own first complete scan before inheriting a daily schedule.
-		if _, err = tx.ExecContext(ctx, `DELETE FROM app_setting WHERE key=?`, catalogDailySettingPrefix+strconv.FormatInt(sourceID, 10)); err != nil {
-			return catalogIndexQueued{}, err
-		}
+	if err = ensureCatalogScheduleTx(ctx, tx, sourceID, s.catalogTime()); err != nil {
+		return catalogIndexQueued{}, err
 	}
 	if runID > 0 && status != "succeeded" && !force {
 		// Resume only unresolved directories. Already published identities and
@@ -332,11 +365,9 @@ func (s *Server) enqueueSourceCatalogIndexTx(ctx context.Context, tx *sql.Tx, so
 	if err != nil {
 		return catalogIndexQueued{}, err
 	}
-	// Only a new generation starts the weekly clock. The resume path above and
-	// the incremental sync both keep the previous marker.
-	if err = markCatalogFullGenerationTx(ctx, tx, sourceID, s.catalogTime()); err != nil {
-		return catalogIndexQueued{}, err
-	}
+	// The schedule owns both boundaries. Dispatch advances them when it creates
+	// a daily or weekly task; a resume full advances weekly only after its run
+	// succeeds. Enqueueing itself must not move either clock.
 	if _, err = enqueueCatalogDirectoryTx(ctx, tx, sourceID, runID, "/", "/", ""); err != nil {
 		return catalogIndexQueued{}, err
 	}
