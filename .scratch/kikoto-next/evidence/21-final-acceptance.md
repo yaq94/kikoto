@@ -117,7 +117,7 @@
 
 ## 未完成项
 
-- 该次重扫尚未到达终态；终态、分区完成数、失败/未确认空目录与 generation 清理
-  结果必须补齐后才能关闭 AC-21。
-- `work_matching_control` 仍为 `running`；必须确认其到达 `complete` 或
+- run 53 已于 2026-10-20 23:21:38 收于 `partial`：终态已取得，具体生产计数只保留在
+  受限运维记录，仓库不复制。partial 不等于完整覆盖，AC-21 仍须在当前候选上重跑。
+- `work_matching_control` 当时仍为 `running`；当前候选须重新确认其到达 `complete` 或
   `partial`，并记录最终游标与结果数。

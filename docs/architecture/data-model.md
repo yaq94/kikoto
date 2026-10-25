@@ -608,7 +608,7 @@ Display-language text search covers `title` for entries and series, and
 `title` plus `description` for works; `tag` and `directory` translations are
 not search inputs. `source_catalog_entry` has no description column, so entry
 descriptions are not invented. `zh-cn`, `en-us`, `ja-jp` and `ko-kr` map to
-`zh-Hans`, `en-US`, `ja-JP` and `ko-KR` respectively. `zh-tw` reads `zh-Hans`
+the stored tokens `zh-Hans`, `en`, `ja` and `ko` respectively. `zh-tw` reads `zh-Hans`
 and applies OpenCC `s2t`, while native `zh-Hant` rows remain separate and are
 also searchable. `origin` searches the original source index and never reads
 `content_translation`.

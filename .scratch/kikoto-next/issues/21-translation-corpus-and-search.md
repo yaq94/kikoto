@@ -76,6 +76,12 @@ prefill 必须按 `entity_kind × field` 枚举：entry 的 title、series 的 t
 | 1–2 字 | 在完整有效集合上按 `(language, entity_kind, field, id)` keyset 分页 `instr`；只限制返回条数，不限制扫描行数；若 p95 超过 100 ms，必须增加短词 n-gram 索引或等价索引，不能以“记录依据”放弃目标 |
 | `zh-tw` | 查询先 t2s；同时查 `zh-Hans` 与原生 `zh-Hant`；原生繁体行按原查询命中 |
 
+## 已验证的算法事实（2026-10-25）
+
+- FTS5 `trigram` 不支持少于 3 个 Unicode 字符的子串查询（官方文档：少于 3 字符不匹配任何行）。本地 SQLite 实测 2 字查询 0 命中，3 字、4 字正常。因此 1–2 字必须走独立的 `instr` 路径，不能合并成单一 FTS 查询。
+- 45.6 万行内存原型（单语言 11.4 万行、全部实体有效、索引 `(language, entity_kind, field, id, translated_text)`）：2 字够 100 条即停中位 14.3 ms、最大 14.7 ms（扫描 5,000 行）；2 字零命中最坏中位 64.7 ms、最大 67.1 ms（扫描 22,800 行）；现有 50k 窗口中位 9.3 ms。
+- 结论：完整有效集合的短查询路径已验证可行，但仍必须在 Go、磁盘、WAL 与 D-16 准入 join 下于目标环境复测，才能作为验收证据。原型数据不能代替工单要求的 p95。
+
 本地 `library/query.go` 与远程 `openlist_catalog.go` 必须调用同一套 `DisplaySearchTargets` 和 `config_key` 条件。文本搜索覆盖 work 的标题与简介、entry/series 的标题；标签、目录名仍可显示翻译，但不能被当作可搜索文本。删除或改写 `TestContentTranslationSearchRemoteIncludesOriginalText` 等固化错误行为的测试；新增“目标语言下按编号仍可搜索”“目标语言下原文标题不命中”和“目标语言下 work 简介可命中”的对偶测试。
 
 ## 验收清单
@@ -87,9 +93,12 @@ prefill 必须按 `entity_kind × field` 枚举：entry 的 title、series 的 t
 - [ ] work 的标题与简介、entry/series 的标题都参与目标语言搜索与覆盖；entry 不伪造 description；标签、目录名不进入搜索索引。
 - [ ] 1–2 字查询覆盖完整有效集合，明确结果数上限和 p95，不再只扫描每语言最新 50,000 行；超过 100 ms 时有短词索引实现。
 - [ ] 本地与远程搜索、简繁归一化、动态内容、重启和失败恢复 H/R/F 覆盖。
-- [ ] modernc SQLite、45.6 万行：精确命中 p95 <5 ms；3 字以上 p95 <100 ms；1–2 字 p95 <100 ms；WAL 峰值和数据库大小留证。
+- [ ] modernc SQLite、45.6 万行：3 字以上 p95 <100 ms；1–2 字 p95 <100 ms；WAL 峰值和数据库大小留证。
+- [ ] “精确命中”按两条用户路径分别测量，不用 `content_translation.cache_key` 唯一键查找代替搜索：结构化编号等值（`work.primary_code`／`source_catalog_entry.primary_code`）与目标语言标题整串等值（FTS trigram 短语查询）；两条均 p95 <5 ms。
 
-**测试入口:** H、R、少量 F、必要 U；真实模型与规模证据由 24 汇总。测试编号使用 `testfixture.WorkCodeAt`，超过 400 条使用 `HighCardinalityWorkCodeAt`。
+**测试入口:** H、R、少量 F、必要 U；真实模型与规模证据由 24 汇总。
+
+**迁移设计稿处置：** 另一 worktree 的 099 设计稿给 `source_catalog_entry` 加 `description`，与第 44 行、`docs/architecture/data-model.md` 和 OpenList `Object` 结构冲突，落地时删除该列；`cursor_language` 默认值统一为 `''`，游标顺序统一为 `(kind, field, id, language)`。测试编号使用 `testfixture.WorkCodeAt`，超过 400 条使用 `HighCardinalityWorkCodeAt`。
 
 ## Comments
 

@@ -95,7 +95,7 @@ delayed reports from before the clear.
 
 ## Export and import
 
-Version 2 and version 3 Kikoto personal JSON contain numbered and numberless works, series
+Kikoto personal JSON version 2 contains numbered and numberless works, series
 and episodes, their stable opaque references and original titles, and your
 ratings/notes, listening marks, resume information, lifetime listening totals,
 work tags, custom tag definitions, and ordered favorite lists with icons.
@@ -120,9 +120,10 @@ Version 2 can restore missing objects from the file's necessary information
 with registration permission. It never downloads media or changes existing
 shared relationships. Episodes remain independently evaluable; series membership
 and shared associations must be confirmed through the shared editing workflow.
-Version 3 adds the episode's explicit parent series identity. A version 3
-episode without a valid parent is reported and is not restored as a standalone
-work; version 2 keeps its previous behavior.
+An episode identity may carry its explicit parent series identity. An episode
+whose parent is missing, conflicting or cyclic is reported and is not restored
+as a standalone work. The file version stays 2; an episode without a parent
+keeps the earlier behaviour and reports that its parent was not restored.
 Unknown source references remain portable without creating source connections.
 Repeated imports reuse references. Version 1 and Kikoeru formats match existing
 product codes and unambiguous aliases; missing codes are listed and skipped.

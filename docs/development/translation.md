@@ -186,8 +186,8 @@ display projection and is not a separate prefill queue.
 Display-language search applies only to text clauses and covers title for
 entries and series, plus title and description for works; `tag` and `directory`
 translations are not search inputs.
-`zh-cn`, `en-us`, `ja-jp` and `ko-kr` map to `zh-Hans`, `en-US`, `ja-JP` and
-`ko-KR`; `zh-tw` reads `zh-Hans` with OpenCC `s2t` and native `zh-Hant`. A
+`zh-cn`, `en-us`, `ja-jp` and `ko-kr` map to the stored tokens `zh-Hans`, `en`,
+`ja` and `ko`; `zh-tw` reads `zh-Hans` with OpenCC `s2t` and native `zh-Hant`. A
 release code or another structured identifier remains searchable regardless of
 display language. `origin` searches the original source index and never reads
 `content_translation`; target-language text searches never merge original-title

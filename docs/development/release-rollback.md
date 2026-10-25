@@ -1,7 +1,7 @@
 # Release Rollback
 
 This page gives the operator procedure for rolling back a Kikoto deployment
-whose schema reached `096`. It states which image can read which schema, how to
+whose schema reached `098`. It states which image can read which schema, how to
 take and restore a database snapshot, and what to check afterwards. It records
 no deployment result; run the commands on the target host and keep their output
 with the release record.
@@ -13,10 +13,11 @@ a database snapshot and starts a binary whose packaged migration catalog ends
 at that snapshot's schema. The image names are the ones used by the current
 next-release deployment; prefer a digest when the deployment recorded one.
 
-| Image | Highest packaged migration | Schema `092` | Schema `094` | Schema `095` | Schema `096` |
-| --- | --- | --- | --- | --- | --- |
-| current build | `096` | Migrates to `096` | Migrates to `096` | Migrates to `096` | Migrates to `096` |
-| 095 image | `095` | Migrates to `095` | Migrates to `095` | Keeps `095` | Refuses |
+| Image | Highest packaged migration | Schema `094` | Schema `095` | Schema `096` | Schema `097` | Schema `098` |
+| --- | --- | --- | --- | --- | --- | --- |
+| current build | `098` | Migrates to `098` | Migrates to `098` | Migrates to `098` | Migrates to `098` | Keeps `098` |
+| 097 image | `097` | Migrates to `097` | Migrates to `097` | Migrates to `097` | Keeps `097` | Refuses |
+| 095 image | `095` | Migrates to `095` | Keeps `095` | Refuses | Refuses | Refuses |
 | 094 image | `094` | Migrates to `094` | Keeps `094` | Refuses | Refuses |
 | 092 image | `092` | Keeps `092` | Refuses | Refuses | Refuses |
 | 084 image | `084` | Refuses | Refuses | Refuses | Refuses |
@@ -131,10 +132,10 @@ uses one can wait with `up -d --wait`. The production stack in this repository
 does not define that check; poll `/health` as shown under
 [Verify The Restored Instance](#verify-the-restored-instance).
 
-## Restore A Schema 95 Or 96 Snapshot
+## Restore A Schema 95 Through 98 Snapshot
 
 Use this to return to the current build after a failed start or to recover a
-damaged `095` or `096` database. Use the image that packages the snapshot's
+damaged `095` through `098` database. Use the image that packages the snapshot's
 schema; to return to schema `094`, `092` or `083`, restore that schema's
 snapshot and start an image that packages it.
 
@@ -190,10 +191,9 @@ Then confirm:
 6. A `095` or `096` instance reports the scan progress endpoint below 20 ms with the
    catalog counters and `?exact=1` below 200 ms on the production copy.
 
-The packaged `rollback-kikoto.sh` performs this restore with staged files,
-checksum verification, schema/integrity checks and the health gate. Prefer it
-over the manual procedure when the rollback directory was written by the
-deployment helper.
+No rollback helper is packaged in this repository. Run the manual procedure
+above; keep the snapshot directory, checksum and previous image reference in the
+access-controlled deployment record.
 
 Restoring only `kikoto.db` does not revert Fetch staging, backup, or trash
 directories under `/data`. Review unmatched transaction directories as

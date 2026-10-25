@@ -10,15 +10,19 @@
 
 **依据：** [规格](spec.md)、正式 issues、[词汇表](../../GLOSSARY.md)、ADR-0004、ADR-0005（播放版本）、ADR-0006（整改一致性）与 ADR-0007（来源字段缓存）。
 
-**审查快照：** 审查时文档基线为 `6122b7bf`，代码基线为 `301e6c63`；当时主工作区已提交 `0dee19ea`、`6dee3087`、`134f7c90`。交接复核时（2026-10-24 至 2026-10-25）主仓库已前进到 `d77e37e2`：`6b4a02ec` 提交了 `096_catalog_episode_pending.sql`、`compat/096_dev.sql` 和系列暂存实现，`728651a6` 提交了 v2 可选 `parent` 的个人传输实现，`47df9c11` 提交了 wall-clock/partial 调度修复，`9bafa1ea` 合并了部分整改文档。它们都不属于本审查分支，也未被本票验收；后续实现必须以实际 SHA、测试和证据重新核对，不能把“已提交”当成“已满足合同”。
+**审查快照：** 审查时文档基线为 `6122b7bf`，代码基线为 `301e6c63`；当时主工作区已提交 `0dee19ea`、`6dee3087`、`134f7c90`。
+
+**当前集成状态（2026-10-25 复核）：** 集成分支 `codex/kikoto-catalog-remediation` 已到 `8940ef3a`，迁移头 `098`（`compat/098_dev.sql` 已生成）。工单 20 的 098 状态机、系列准入与 episode publication 事务内删除 mapping 已合入；21、22 尚无代码与迁移；23 只差文档收口；24 未开始。
+
+交接复核时（2026-10-24 至 2026-10-25）主仓库曾前进到 `d77e37e2`：`6b4a02ec` 提交了 `096_catalog_episode_pending.sql`、`compat/096_dev.sql` 和系列暂存实现，`728651a6` 提交了 v2 可选 `parent` 的个人传输实现，`47df9c11` 提交了 wall-clock/partial 调度修复，`9bafa1ea` 合并了部分整改文档。它们都不属于本审查分支，也未被本票验收；后续实现必须以实际 SHA、测试和证据重新核对，不能把“已提交”当成“已满足合同”。
 
 ## 0. 已核实的裁决
 
-1. **D-16 已实现，但需要收口。** `134f7c90` 已加入三条阈值；`catalogadmission/admission.go` 顶部旧注释仍写“Probe bounds 不决定准入”，且 SQL 过滤分支仍硬编码 5001/2001/5。20 号票只做跨层边界、系列成员语义、性能和回归，不重复实现规则。
+1. **D-16 规则已实现，跨层门禁仍需收口。** `134f7c90` 加入三条阈值；`531acdf4` 已把 SQL 常量改为引用 `catalogadmission.Probe*`、修正旧注释、给系列详情加 pending 与准入、把 episode mapping 删除移入发布事务。仍缺：单卡个人评价写入、播放准备、媒体流、作品目录标签的完整准入，系列零可见成员时返回 200 空列表，以及 42k p95。
 2. **严格目标语言搜索尚未实现。** 远程 `openlist_catalog.go` 仍把原文 FTS 命中并入显示语言结果，`content_translation_search_test.go` 还把该行为写成断言；本地 `library/query.go` 仍有每语言最新 50,000 行的固定窗口；远程短查询没有该窗口，但对原文标题与文件名做无界 `instr` 扫描并混入原文结果。
 3. **持久语料仍被预算淘汰。** `content_translation_retention.go` 会删除 model 行，包括当前搜索所需的标题；`translation_prefill.go` 的覆盖率只按语言统计历史行，不能证明当前有效条目、原文、模型和模板已覆盖。prefill 目前只枚举 entry，不枚举 series 与 work。
 4. **空库单集父级在审查基线上未恢复；主仓库后续实现仍未闭环。** `transfer_plan.go` 原来对未知 episode 只报告 `relationships_not_imported`，随后 `transfer_import.go` 创建独立 work。主仓库 `728651a6` 已加入 v2 可选 `parent`，但它通过合成 `source_catalog_entry`／`catalog_series_member` 恢复，而系列详情查询会过滤 `file_source_id IS NULL` 的成员；因此“系列卡能列出恢复的单集”仍无证据。该实现与下面 7.1 的 `work.parent_work_id` 合同也不一致，不能视为 22 完成。
-5. **ADR 与迁移治理有缺陷。** 曾有两个 ADR 共用 0005；来源字段缓存 ADR 已重编号为 0007 并补入索引。095 在首次提交后被修改过；096 已由 `6b4a02ec` 提交，迁移头当前为 96，097 必须成为下一个连续编号。
+5. **ADR 与迁移治理已修正到当前链。** 来源字段缓存 ADR 为 0007；095 冻结为两个已发布指纹；096、097、098 均已提交，迁移头 98。ADR-0006 已声明同时修正 ADR-0007 的 schema 与繁体表述，后续只剩 099／100 的落地。
 6. **发布依赖已固定。** 24 依赖 17–23；17 只依赖 03、05、09、10、14、15、16、18、19，不再把 20–24 写进 17 的阻塞边。20–24 是整改子项，不是原 AC 的替代主责。
 7. **已提交证据含敏感信息。** 21 号目录证据含生产路径、数据库路径和真实作品编号；22 号 dry-run JSON 是生产记录回放。公开证据必须脱敏或改为合成报告；`make sensitive-check` 只扫 diff，不能作为已提交证据的脱敏证明。
 
@@ -125,12 +129,12 @@ CREATE INDEX source_catalog_schedule_due
 
 ### 5.3 force 增量
 
-`force` 只表示“重新探测所有目录”，不得在 sync lease 内调用会检查 running sync 的 full 索引入口。删除当前 `executeCatalogIncrementalSync` 中在 `beginCatalogSyncLease` 前/中调用 `enqueueSourceCatalogIndex` 的路径。需要 full resume 时，把 `resume_full_pending` 写入 schedule，在当前 sync 结束后由调度器按周／手动规则创建一个 full；sync 自身只处理目录范围。
+**裁决（2026-10-25）：** `force` 表示“在 failed／partial／paused 的 generation 之后开始一次新的观测 generation”，不表示目录重探。sync 运行中调用 `/catalog/index` 不再返回 409，而是记 `manual_pending=1` 并返回 202，由调度器在 sync 结束后消费一次；不新增独立 force sync 入口。`executeCatalogIncrementalSync` 不调用 `enqueueSourceCatalogIndex`，这一点已满足。
 
 ### 5.4 D-16 三层一致
 
 - 阈值：`audio == 0` 拒绝；`files > 5000` 拒绝；`nonAudio > 2000 && audio < 5` 拒绝。等于阈值允许。
-- 适用范围：每个来源目录／卡片根；系列卡片不聚合文件数。系列中每个成员条目分别判定；未通过成员不进入系列列表、系列详情或成员 tracks，不影响同系列其他合格成员。系列至少有一个合格成员才显示。
+- 适用范围：每个来源目录／卡片根；系列卡片不聚合文件数。系列中每个成员条目分别判定；未通过成员不进入系列列表、系列详情或成员 tracks，不影响同系列其他合格成员。系列至少有一个合格成员才显示，零可见成员时详情返回 404（当前实现返回 200 加空列表，需改）。同一规则还须覆盖单卡详情、个人评价写入、播放准备、媒体流和作品目录标签。
 - `catalogadmission.Decision` 是唯一规则源。`catalogEntryAdmittedSQL`、`catalogRootAdmissionTx`、单卡 API 计数必须由同一组常量生成，不得硬编码 5001/2001/5。
 - `catalogadmission/admission.go` 顶部注释改为“三项阈值决定准入；Probe* 是 SQL 计数上限”。
 - 旧测试中“大附属文件卡允许发布”的断言改为拒绝；正常多轨、音频附带字幕／压缩包仍允许。
@@ -230,7 +234,7 @@ prefill 必须按 `entity_kind × field` 枚举：entry 的 title、series 的 t
 - 迁移回填只在 `catalog_series.work_id` 与成员 `source_catalog_entry.work_id` 都非空且不同、且该 entry 只属于一个 series 时写入；多父级、缺失或矛盾记录只进入报告。
 - `work.primary_code` 与 `logical_work.canonical_code` 在 069 后允许空值，非空值才有部分唯一索引；系列 work 可以继续使用空代码，但必须测试同一备份包含多个系列 work 时不触发唯一约束。若实现新增内部代码，它只能作为内部标识，不能进入编号解析或用户可见的发行编号。
 
-### 7.2 备份格式 v3
+### 7.2 备份格式：v2 + 可选 `parent`
 
 ```json
 {
@@ -275,7 +279,7 @@ prefill 必须按 `entity_kind × field` 枚举：entry 的 title、series 的 t
 - H：父级缺失、多个不同父级、循环、父 ref 指向错误对象、非空库已有不同父级均可审阅且不写入错误关系。
 - v2 旧格式、无媒体下载、用户隔离、迁移前后结构一致。
 - 迁移：新装与旧库升级后 `work.parent_work_id` 和索引一致；已发布迁移不回写。
-- 文档：`docs/development/personal-transfer.md` 与五个 `docs/user/*/personal-data.md` 同步 v3 父级、失败语义和“仅显式父级恢复”的例外。
+- 文档：`docs/development/personal-transfer.md` 与五个 `docs/user/*/personal-data.md` 按“v2 + 可选 parent”说明父级、失败语义和“仅显式父级恢复”的例外。
 - 现状阻断：主仓库 `728651a6` 的实现未让 `GET /api/catalog-series/{id}` 返回恢复的单集（空库合成 entry 的 `file_source_id` 为 NULL，被现有查询过滤）；在该缺口关闭前，22 只能标记 `in-progress`，不能标记 `verified-local` 或 `resolved`。
 
 ## 8. Task 5：工单 23，个人引用保留、迁移兼容与仓库规范

@@ -304,7 +304,7 @@ ci-metrics:
 ci-metrics-test:
 	$(NODE) --test scripts/ci-metrics.test.mjs
 
-ci-style: frontend-format frontend-lint frontend-docs frontend-i18n sensitive-check-test ci-plan-test go-test-shard-test pr-description-test ci-metrics-test actionlint
+ci-style: frontend-format frontend-lint frontend-docs frontend-i18n sensitive-check-test tracked-evidence-check-test tracked-evidence-check ci-plan-test go-test-shard-test pr-description-test ci-metrics-test actionlint
 
 # Coverage executes the full suite; retain the separate race-instrumented run.
 ci-backend-static: backend-format backend-lint backend-verify backend-vuln backend-vet

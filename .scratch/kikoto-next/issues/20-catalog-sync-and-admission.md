@@ -73,7 +73,9 @@ CREATE INDEX source_catalog_schedule_due
 
 ## force 增量
 
-`force` 只表示重新探测所有目录，不表示创建 full。当前没有 force sync 用户入口；`POST /api/remote-sources/{id}/catalog/index` 的 `force` 作用于 full generation，且在 sync 运行时返回 409 `catalog_sync_running`。本票新增 force sync 入口（或在同一入口区分 full 与目录重探），sync 结束需要 full 时写 `resume_full_pending` 由调度器串行处理；sync 自身不得调用会检查 running sync 的完整入口。
+**裁决（2026-10-25）：** `POST /api/remote-sources/{id}/catalog/index` 的 `force` 表示“在 failed／partial／paused 的 generation 之后开始一次新的观测 generation”，不表示目录重探。sync 运行中该入口不再返回 409：请求记成 `manual_pending=1` 并返回 202，由调度器在该 sync 结束后消费一次。
+
+本票不新增独立的 force sync 入口，删除原“force 只重探目录、不创建 full”的验收项。它与已交付入口的行为、以及规格 D-05“首次索引由管理员启动，完成后才每日更新”的边界冲突。
 
 ## D-16 三层一致
 
@@ -97,8 +99,11 @@ CREATE INDEX source_catalog_schedule_due
 - [x] 每日／周日 03:00 边界、两者同时到期、等于时间、跨日、重启追赶、低空间恢复均有 H/R 证据。`TestCatalogScheduleDailyBoundaryAndMissedCatchUp`、`TestCatalogScheduleSundayRunsFullReconciliation`、`TestCatalogScheduleSimultaneousDueCreatesOneWeekly`、`TestCatalogScheduleDeferredCatchesUpOnce`、`TestSourceCatalogDailyRetriesALowDiskPauseAfterOneHour`。
 - [x] 低空间或维护 hold 只设置一次 `deferred_until`／`deferred_reason`；到期后重新检查条件，条件未解除时继续延后，不能误跑 full。`TestCatalogScheduleDeferredCatchesUpOnce` 与低空间测试断言原因和一次追赶；维护 hold 复用 `TestCatalogSyncPausesForMaintenanceAndRetriesAfterTheHold`。
 - [x] queued full 不会被 `resume_full_pending` 重复创建；`resume_full_pending` 只在 full 终态 succeeded 后清零并推进 weekly due，failed/cancelled 保留待重试。`TestCatalogScheduleResumeFullPendingWinsAndClears`、`TestCatalogScheduleFailedResumeFullRetriesWithoutMovingWeekly`。
-- [x] force sync 不再触发 `errCatalogSyncRunning`；同一来源不产生 full 与 sync 重叠写；手动请求与同一轮已到期任务只执行一次。`TestCatalogScheduleRunningSyncDefersFullAndKeepsDue`、`TestManualFullIndexQueuesWhileIncrementalSyncRuns`、`TestIncrementalSyncRefusesWhileFullGenerationRuns`。
+- [x] sync 运行中的手动刷新记一次 `manual_pending` 并在结束后执行一次；`force` 在 failed／partial 后创建新 generation；同一来源不产生 full 与 sync 重叠写。`TestCatalogScheduleRunningSyncDefersFullAndKeepsDue`、`TestManualFullIndexQueuesWhileIncrementalSyncRuns`、`TestIncrementalSyncRefusesWhileFullGenerationRuns`。
 - [x] D-16 的 0/1/4/5 audio、2000/2001 nonAudio、5000/5001 files 在入队／发布／API 三层一致；系列成员逐条判定。`TestCatalogAdmissionPublishingPublishesEveryCardWithAudio`、`TestCatalogAdmissionAPIShowsEveryCardWithAudio`、`TestCatalogAdmissionSeriesFiltersEveryMember`。
+- [ ] 单卡个人评价写入、播放准备、媒体流与作品目录标签使用同一完整准入。`openlist_review.go` 仍是 `Files > 0 && Audio == 0`；`catalog_playback.go`、`openlist_playback.go`、`catalog_directory.go` 没有准入或待发布门禁。
+- [ ] 系列没有任何可见成员时详情返回 404，而不是 200 加空列表。现有 `TestCatalogAdmissionSeriesFiltersEveryMember` 断言 200，需同步改写。
+- [ ] 性能计划断言真实执行计划。现有 `strings.Contains(plan, "SCAN source_catalog_file")` 匹配不到实际出现的 `SCAN ff USING INDEX source_catalog_file_parent`，等于空断言。
 - [ ] 42k 卡浏览与 5,001 文件卡拒绝路径的 p95 证据（2 vCPU／2 GiB、warm、≥20 样本，浏览 p95 ≤ 300 ms、p99 ≤ 800 ms）；超限先落地 `source_catalog_entry_admission` 再复测；不得以全表扫描换取正确性。本 worktree 未在目标硬件执行 42k 基准，保持未勾选。
 - [x] 096 激活期间系列详情/成员 tracks 不可见，publication 切换后才可见；系列详情与列表使用同一 D-16 成员过滤。`TestCatalogSeriesHidesPendingPublicationUntilItIsPublished`、`TestCatalogAdmissionSeriesFiltersEveryMember`。
 - [x] 不重复实现 `134f7c90` 的规则；如发现其实现缺口，先报告再最小修正。本票只把常量接入 SQL 并补系列门禁。
@@ -107,11 +112,15 @@ CREATE INDEX source_catalog_schedule_due
 
 ## 实现与证据
 
-- 迁移：`backend/migrations/098_catalog_schedule.sql` 创建 `source_catalog_schedule`，含 `deferred_reason` 与 `pending_full_run_id`，并只回填 enabled OpenList 来源。`backend/internal/storage/catalog_schedule_migration_test.go` 覆盖 84→098、合法旧值保留、过期/非法值回退、重复启动不重写；`migration_manager_test.go` 覆盖新装与增量链 schema 一致。按集成约定，本分支不生成 `compat/098_dev.sql`。
+- 迁移：`backend/migrations/098_catalog_schedule.sql` 创建 `source_catalog_schedule`，含 `deferred_reason` 与 `pending_full_run_id`，并只回填 enabled OpenList 来源。`backend/internal/storage/catalog_schedule_migration_test.go` 覆盖 84→098、合法旧值保留、过期/非法值回退、重复启动不重写；`migration_manager_test.go` 覆盖新装与增量链 schema 一致。`compat/098_dev.sql` 已由 `cad25804` 生成，验收时按已提交文件核对，不再沿用“本分支不生成”的旧说明。
 - 调度：`source_catalog_schedule.go` 提供行生命周期与 due 计算；`source_catalog_daily.go` 在 `beginTxWithDatabaseBusyRetry` 中完成资源重查、resume 优先、manual 消费、单任务创建与同事务 due 推进。`source_catalog_schedule_test.go` 覆盖边界、同时到期、跨日追赶、deferred、resume 成功/失败、manual、disabled/enable、维护同步、父 listing 不完整。
 - D-16：`catalogadmission.Probe*` 是唯一常量源；`catalogEntryAdmittedSQL`、发布计数和单卡 API 都由它生成。系列列表、详情和成员 tracks 对每个成员独立过滤，计数只取该成员 `source_catalog_file`。
 - 096：系列详情在 pending publication 期间隐藏成员；publication 翻为 `published` 后同一查询可见。映射清理与发布状态同事务，`published` 是不可回退边界，注入清理失败后公开文件保持不变。
 - 验证命令与结果记录在交付报告；42k 性能证据未在本 worktree 采集，保持未勾选。
+
+## 派发边界（裁决 2026-10-25）
+
+`dispatchDueCatalogUpdates` 仍 `JOIN source_catalog_scan`，这是有意的，不是缺口。规格 D-05 规定首次索引由管理员启动、完成后才进入每日更新，所以新建或重新启用的来源只插入 `source_catalog_schedule` 行，在有首个 generation 之前不自动派发。不要为了“让新源立刻被调度”去掉这个 JOIN。
 
 ## Comments
 

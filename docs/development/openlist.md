@@ -127,8 +127,8 @@ staying falsely available.
 
 | Option | Starting value | Accepted range |
 | --- | --- | --- |
-| `concurrency` | 1 | 1–4 metadata requests within the single workflow executor |
-| `intervalMs` | 1000 | 100–60000 between metadata starts, shared per origin |
+| `concurrency` | 3 | 1–4 metadata requests within the single workflow executor |
+| `intervalMs` | 220 | 100–60000 between metadata starts, shared per origin |
 | `maxResponseBytes` | 2097152 | 1024–8388608 |
 | `pageSize` | 100 | 1–500 |
 | `pagesPerBatch` | 8 | 1–32 page or publication steps |

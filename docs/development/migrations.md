@@ -364,9 +364,9 @@ Per-release upgrade steps are in the [release notes](../history/index.md).
 
 ## Kikoto-next Schema Additions
 
-Migrations `069` through `097` extend the source catalog, shared associations,
+Migrations `069` through `098` extend the source catalog, shared associations,
 personal transfer, and the recoverable index; the remediation chain adds
-`098`–`100`. Pending release notes and upgrade steps are in
+`099`–`100`. Pending release notes and upgrade steps are in
 [Unreleased](../history/unreleased.md).
 
 | Migration | Change | Recovery and read behaviour |
@@ -447,7 +447,7 @@ stores the durable translation corpus, its FTS5 index and the prefill cursor.
 pending episode mapping and publication state; `097` rebuilds the display cache
 to add its source foreign key and remove unreachable rows.
 
-The `084` through `097` changes retain existing rows. `087` and `097` rebuild
+The `084` through `098` changes retain existing rows. `087` and `097` rebuild
 tables; `087` copies every entry column and recreates its indexes, triggers and
 view, while `097` copies only display-cache rows with a live source and
 recreates both cache indexes. `085`, `088`, `090`, `091` and `092` add tables or
