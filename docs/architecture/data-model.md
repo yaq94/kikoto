@@ -28,7 +28,7 @@ completed revision of a directory listing. `single` keeps the directory as one
 card, `prefix` and `file` split its direct audio by release prefix or base
 title, `episode` creates independent episode cards, and `duplicate` marks a
 container that repeats its parent's audio. The decision is recomputed for each
-completed revision. A new
+completed revision rather than frozen at the first observation. A new
 generation retires split cards it did not republish:
 their file rows are deleted and `file_source_id` and `relocated_to_id` are
 cleared, while the entry id stays resolvable for personal records. A card with
@@ -58,8 +58,8 @@ the complete split without rewriting every entry. Direct reads, source search
 and user-state writes exclude partially activated episode cards. Pending
 mappings, parent metadata files and stale-card status changes are applied in
 bounded follow-up transactions. Membership may reference a staged entry, but
-series readers require a published entry. [Catalog
-series](../development/catalog-series.md) describes the transaction and
+series readers require a published entry. See
+[Catalog series](../development/catalog-series.md) for the transaction and
 recovery boundary.
 
 ## Work Metadata
@@ -577,67 +577,57 @@ merged name never replaces the target's display name.
 
 ## Translation Corpus
 
-`content_translation` is the durable, searchable translated-content corpus. A
-row is keyed by the unique `cache_key`, which separates entity kind and id,
+Under the issue 21 target, `content_translation` is the durable, searchable
+translated-content corpus. A row is keyed by the unique `cache_key`, which
+separates entity kind and id,
 field, language, source text, origin (`native` or `model`), model, base URL,
-template version and reasoning switch. `entity_kind` is `entry`, `series` or
-`work`; `field` is `title`, `description`, `tag` or `directory`. An
-`origin=native` row stores authored source text unchanged and uses no model
-call; a model row stores only successful, nonempty output.
-`translation_prefill_state` is the singleton prefill cursor with `idle`,
-`running`, `paused` or `complete` status, the current `config_key` and the last
-error. Migration 099 adds a `config_key` covering only output-shaping
-configuration: model, base URL, template version and reasoning switch. A row
-with another key is stale and is not current coverage; rows from before 099 are
-legacy candidates until re-prefilled. Current `title` and `description` rows for
-`work` and `source_catalog_entry`, plus `title` rows for `catalog_series`, are
-required for language-specific search and are never eviction candidates for the
-`cacheBytes` or `maxEntries` budgets. `tag` and `directory` rows remain
-display-only.
+template version and reasoning switch. The planned migration 099 adds a
+`config_key` covering the output-shaping configuration; a row with another key
+is stale and is not current coverage, while rows from before 099 are treated as
+legacy candidates until re-prefilled. Native rows store the source text
+unchanged; model rows store successful generated text. Under the issue 21 target,
+current title rows for `work`, `source_catalog_entry` and `catalog_series`, plus
+description rows for `work`, are required for language-specific search and are
+never eviction candidates for the `cacheBytes` or `maxEntries` budgets. `tag`
+and `directory` translations remain display-only.
 
 `content_translation_search` is an FTS5 trigram index over
 `content_translation.translated_text`, maintained by insert, update and delete
 triggers. A display-language text search reads only rows for the requested
-storage language and current configuration; an `origin` search reads the
-original source index and never reads `content_translation`. Release codes and
-other structured identifiers remain searchable regardless of display language.
-Three-character and longer text queries use the trigram index. One- and
-two-character queries page over the complete effective set with the
-`(language, entity_kind, field, id, translated_text)` covering index and
-`instr`; they must not stop at a fixed newest-row window. If p95 exceeds 100 ms
-at the target corpus size, a short-term n-gram index or equivalent indexed
-structure is required.
+language and current configuration; an `origin` search reads the original
+source index. Release codes and other structured identifiers remain searchable
+regardless of display language. Three-character and longer text queries use the
+trigram index. One- and two-character queries page over the complete effective
+set with the `(language, entity_kind, field, id, translated_text)` index and
+`instr`; they must not stop at a fixed newest-row window. If the measured p95
+exceeds 100 ms at the target corpus size, a short-term n-gram index or an
+equivalent indexed structure is required rather than accepting an unbounded
+scan.
 
-`zh-cn`, `en-us`, `ja-jp` and `ko-kr` map to `zh-Hans`, `en-US`, `ja-JP` and
-`ko-KR`. `zh-tw` reads `zh-Hans` with OpenCC `s2t` and also searches native
-`zh-Hant` rows.
+Display-language text search covers `title` for entries and series, and
+`title` plus `description` for works; `tag` and `directory` translations are
+not search inputs. `source_catalog_entry` has no description column, so entry
+descriptions are not invented. `zh-cn`, `en-us`, `ja-jp` and `ko-kr` map to
+`zh-Hans`, `en-US`, `ja-JP` and `ko-KR` respectively. `zh-tw` reads `zh-Hans`
+and applies OpenCC `s2t`, while native `zh-Hant` rows remain separate and are
+also searchable. `origin` searches the original source index and never reads
+`content_translation`.
 
 `source_field_translation` is a rebuildable display cache for source-level
-fields such as a remote title, tag or directory name. Its cache key covers the
-source, normalized work code, field, real relative path, source text, target
-language, model, endpoint, reasoning switch and template version. The source
-foreign key cascades on deletion. The table has no FTS table or trigger and is
-never read by content search. Source availability and the exact public field are
-revalidated before a row is used.
-
-`maxEntries` and `cacheBytes` form one soft budget over evictable model rows and
-their indexes. `cacheBytes` measures SQLite pages through `dbstat`, including
-FTS shadow tables; values below 1 MiB fall back to UTF-8 text bytes. A write
-commits before the bounded trim, so a burst can remain above the target until a
-later pass. Superseded and retired rows are removed by a low-frequency cleanup
-and do not count as current coverage. If persistent title rows alone exceed the
-budget, the status reports `over_budget`; searchable title rows are not deleted.
-Native rows, personal records and source identities are never eviction
-candidates. See
+fields such as a remote title, tag or directory name. It has no FTS table and is
+never read by content search. `tag`/`directory` model rows and all
+`source_field_translation` rows may be evicted within the configured budgets.
+Superseded and retired rows are removed by a low-frequency cleanup;
+they do not count as current coverage. See
 [ADR-0006](../decisions/ADR-0006-catalog-remediation-and-translation-consistency.md)
 and [ADR-0007](../decisions/ADR-0007-source-field-translation-cache.md).
 
-The retention and complete short-query behavior above is the accepted issue 21
-target contract. This branch has not implemented the planned 099 configuration
-key or the issue 21 retention/search changes: current code can evict model rows,
-including title rows, and one- and two-character searches still scan only the
-newest 50,000 rows per language. Issue 21 owns those changes; until they land,
-this page does not describe them as completed results.
+The configuration-key, persistent title/description, strict display-language
+search and complete short-query behavior above is the accepted issue 21 target
+contract. The reviewed code still evicts model rows (including title rows) and
+limits one- and two-character searches to the newest 50,000 rows per language;
+those gaps must be implemented and measured before this section is cited as
+current behavior.
 
 ## File Availability
 
@@ -851,13 +841,6 @@ advancing beyond an existing order if necessary. A reserved server marker wins
 a tied client order. The backup's historical playback date remains presentation
 data, so an older offline report cannot undo the import; a strictly later
 checkpoint, including a backward seek, still replaces it.
-
-`personal_transfer_ref` stores an opaque reference to a work, episode, series or
-source catalog entry for personal-data transfer. A work-backed catalog reference
-becomes a non-primary work alias when its card retires. A source-only reference
-has no surviving work for the reference, so its catalog card remains until the
-reference has an explicit reviewed target. Catalog prune reports that card as
-`transfer_alias` and refuses a plan that would remove it.
 
 Lyrics preferences relate an audio media item to a lyrics media item; runtime
 location selection remains a file-source concern. A personal preference
@@ -1073,6 +1056,4 @@ answer from the index instead of reading the table row.
 - [Core boundaries](core-boundaries.md)
 - [Source presence](source-presence.md)
 - [Workflows](workflows.md)
-- [Translation service](../development/translation.md)
-- [Catalog prune](../development/catalog-prune.md)
 - [Migrations](../development/migrations.md)

@@ -18,7 +18,9 @@ import (
 	"github.com/yexca/kikoto/backend/internal/storage"
 )
 
-const adminUsage = `Usage: kikoto admin reset-password [--username NAME] [--password-stdin]
+const adminUsage = `Usage:
+  kikoto admin reset-password [--username NAME] [--password-stdin]
+  kikoto admin preflight-095 [--database PATH] [--backup-dir DIR]
 
 Resets an administrator password from the host. The account becomes an enabled
 super administrator and its sessions are signed out. Without --username the
@@ -29,12 +31,23 @@ administrator can be recovered with --username root.
 A random password is generated and printed unless --password-stdin reads one
 line from standard input. With KIKOTO_ROOT_ACCOUNT_MODE=environment the
 environment-managed account is refused; change KIKOTO_ROOT_PASSWORD instead.
+
+preflight-095 normalizes only the known historical 095 checksum after checking
+the exact source_field_translation schema. For a matching database it takes a
+backup and writes an audit record, but it never runs a numbered migration.
 `
 
 // runAdminCommand handles `kikoto admin ...`. It works on the configured
 // database while the server runs; it never migrates or creates a database.
 func runAdminCommand(args []string, stdin io.Reader, stdout io.Writer, stderr io.Writer) int {
-	if len(args) == 0 || args[0] != "reset-password" {
+	if len(args) == 0 {
+		_, _ = fmt.Fprint(stderr, adminUsage)
+		return 2
+	}
+	if args[0] == "preflight-095" {
+		return runAdminPreflight095(args[1:], stdout, stderr)
+	}
+	if args[0] != "reset-password" {
 		_, _ = fmt.Fprint(stderr, adminUsage)
 		return 2
 	}

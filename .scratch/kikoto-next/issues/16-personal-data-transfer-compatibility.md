@@ -5,13 +5,13 @@
 **Blocked by:** [12：系列与单集独立个人评价](12-series-episode-personal-reviews.md)。
 
 **Status:** ready-for-agent
-**Implementation:** resolved；本地实现与 H/F 已验收；生产部署验收见 17。
+**Implementation:** verified-local；AC-24 除“单集父级身份恢复”外的子项已验收；该子项由 22 承接，本票不主张其完成。生产部署验收见 17。
 
 **依据:** [正式规格](../spec.md) · [工单总览](../ticket-proposal.md)
 
 ## 验收范围
 
-**主责:** AC-24。
+**主责:** AC-24（不含“单集父级身份恢复”，该子项由 22 承接）。
 
 **共同:** AC-09、AC-13。
 
