@@ -43,6 +43,7 @@ export const scriptJobs = {
   "tracked-evidence-allowlist.json": [],
   "ui-copy-baseline.json": [],
   "run-browse-performance.mjs": [],
+  "run-catalog-42k-perf.mjs": [],
   "run-recommendation-performance.mjs": [],
   "run-source-index-performance.mjs": [],
   "run-source-index-tail-performance.mjs": [],
