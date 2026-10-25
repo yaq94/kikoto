@@ -36,15 +36,21 @@ export const scriptJobs = {
   "check-doc-locales.mjs": [],
   "check-pr-description.mjs": [],
   "check-sensitive.mjs": [],
+  "check-tracked-evidence.mjs": [],
   "check-ui-copy.mjs": [],
   "ci-metrics.mjs": [],
   "privacy-allowlist.json": [],
+  "tracked-evidence-allowlist.json": [],
   "ui-copy-baseline.json": [],
   "run-browse-performance.mjs": [],
   "run-recommendation-performance.mjs": [],
   "run-source-index-performance.mjs": [],
   "run-source-index-tail-performance.mjs": [],
   "test-kikoto-helper.ps1": [],
+  // Manual operations entry points. They need a deployed instance, a session
+  // cookie or a backup directory, so no CI job runs them.
+  "mixed-load.mjs": [],
+  "rollback-kikoto.sh": [],
   // A manual benchmark harness. It is not wired into a job because it needs a
   // production-sized database copy, which CI does not have.
   "catalog-bench": [],
