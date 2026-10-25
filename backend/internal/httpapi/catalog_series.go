@@ -114,6 +114,60 @@ func (s *Server) getCatalogSeries(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
+	if err = rows.Close(); err != nil {
+		writeError(w, err)
+		return
+	}
+	// A personal backup can restore a series and its episodes without a source
+	// catalog entry. The series work owns those episodes through
+	// work.parent_work_id, so the detail lists them even when no membership row
+	// exists. A source-backed row for the same work wins.
+	if view.WorkID != nil {
+		sourceWorks := map[int64]bool{}
+		position := 0
+		for _, episode := range view.Episodes {
+			if episode.WorkID != nil {
+				sourceWorks[*episode.WorkID] = true
+			}
+			if episode.Position > position {
+				position = episode.Position
+			}
+		}
+		personalRows, err := s.db.QueryContext(r.Context(), `SELECT id,title,primary_code FROM work
+			WHERE parent_work_id=? ORDER BY id`, *view.WorkID)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		for personalRows.Next() {
+			var id int64
+			var title, code string
+			if err = personalRows.Scan(&id, &title, &code); err != nil {
+				_ = personalRows.Close()
+				writeError(w, err)
+				return
+			}
+			if sourceWorks[id] {
+				continue
+			}
+			sourceWorks[id] = true
+			position++
+			workID := id
+			view.Episodes = append(view.Episodes, catalogSeriesEpisode{
+				Title:       title,
+				PrimaryCode: code,
+				WorkID:      &workID,
+				Position:    position,
+				Status:      "available",
+			})
+		}
+		if err = personalRows.Err(); err != nil {
+			_ = personalRows.Close()
+			writeError(w, err)
+			return
+		}
+		_ = personalRows.Close()
+	}
 	writeJSON(w, 200, view)
 }
 

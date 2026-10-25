@@ -3,8 +3,6 @@ package storage
 import (
 	"path/filepath"
 	"testing"
-
-	"github.com/yexca/kikoto/backend/migrations"
 )
 
 func TestSchema050UpgradePreservesWorksAndSnapshots(t *testing.T) {
@@ -19,7 +17,7 @@ func TestSchema050UpgradePreservesWorksAndSnapshots(t *testing.T) {
 	if _, err := db.Exec("INSERT INTO metadata_snapshot(work_id,provider_id,external_id,snapshot_json) SELECT work.id,provider.id,'RJ00000000','{}' FROM work CROSS JOIN metadata_provider AS provider WHERE work.primary_code='RJ00000000' AND provider.code='dlsite'"); err != nil {
 		t.Fatal(err)
 	}
-	if err := MigrateFS(db, migrations.Files, "test"); err != nil {
+	if err := MigrateFS(db, completeMigrationFS(t), "test"); err != nil {
 		t.Fatalf("schema 050 upgrade: %v", err)
 	}
 	var current, works, snapshots int

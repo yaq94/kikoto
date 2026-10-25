@@ -17,7 +17,7 @@ func TestMetadataIssuesMigrationPreservesUnavailableAndExistingMetadata(t *testi
  SELECT 1,id,'not_found','protected legacy diagnostic','2026-01-01 00:00:00' FROM metadata_provider WHERE code='dlsite';`); err != nil {
 		t.Fatal(err)
 	}
-	if err := Migrate(db, source); err != nil {
+	if err := Migrate(db, completeMigrationDir(t)); err != nil {
 		t.Fatal(err)
 	}
 	var status, checked, title string
@@ -28,7 +28,7 @@ func TestMetadataIssuesMigrationPreservesUnavailableAndExistingMetadata(t *testi
 	if status != "unavailable" || checked != "2026-01-01 00:00:00" || title != "Retained local metadata" || count != 1 {
 		t.Fatalf("migrated issue=%s %s %s %d", status, checked, title, count)
 	}
-	if err := Migrate(db, source); err != nil {
+	if err := Migrate(db, completeMigrationDir(t)); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.QueryRow("SELECT COUNT(*) FROM work_metadata_sync_state").Scan(&count); err != nil || count != 1 {

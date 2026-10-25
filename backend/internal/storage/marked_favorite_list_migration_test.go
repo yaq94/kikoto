@@ -48,7 +48,7 @@ func TestMarkedFavoriteListMigrationPreservesExplicitLegacyFavorites(t *testing.
 		t.Fatal(err)
 	}
 
-	if err := Migrate(db, migrationDir); err != nil {
+	if err := Migrate(db, completeMigrationDir(t)); err != nil {
 		t.Fatalf("apply marked-list migration: %v", err)
 	}
 	var userFavoritesKind, markedKind string
@@ -105,7 +105,7 @@ func TestMarkedFavoriteListMigrationConvertsEmptyLegacyDefault(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := Migrate(db, migrationDir); err != nil {
+	if err := Migrate(db, completeMigrationDir(t)); err != nil {
 		t.Fatalf("apply marked-list migration: %v", err)
 	}
 	var kind, name string
@@ -146,7 +146,7 @@ func TestMarkedFavoriteListMigrationMovesStateOnlyFavoritesOutOfConvertedDefault
 		t.Fatal(err)
 	}
 
-	if err := Migrate(db, migrationDir); err != nil {
+	if err := Migrate(db, completeMigrationDir(t)); err != nil {
 		t.Fatalf("apply marked-list migration: %v", err)
 	}
 	var markedKind, userKind string
@@ -198,7 +198,7 @@ func TestMarkedFavoriteListMigrationPreservesExistingUserStateTimestamps(t *test
 		t.Fatal(err)
 	}
 
-	if err := Migrate(db, migrationDir); err != nil {
+	if err := Migrate(db, completeMigrationDir(t)); err != nil {
 		t.Fatalf("apply marked-list migration: %v", err)
 	}
 	var listedUpdatedAt, unlistedUpdatedAt string

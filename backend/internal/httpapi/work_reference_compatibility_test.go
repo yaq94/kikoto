@@ -149,7 +149,7 @@ func testWorkReferencesAcrossRestart(t *testing.T, version string) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := storage.MigrateFS(db, migrations.Files, buildinfo.Version); err != nil {
+		if err := storage.MigrateFS(db, completeMigrationFS(t), buildinfo.Version); err != nil {
 			_ = db.Close()
 			t.Fatal(err)
 		}

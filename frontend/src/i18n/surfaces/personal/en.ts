@@ -431,12 +431,14 @@ export const personalEnglish = {
         identity_conflict: "Identity evidence disagrees. This object is skipped.",
         unregistered_source: "The known source is not registered. Register it before importing this record.",
         source_reference_retained: "This source reference is retained for transfer; no source connection is created.",
-        parent_missing:
-          "This episode has no parent-series membership in the library or backup. It is skipped instead of being restored as a standalone work.",
+        parent_required:
+          "This version 3 episode has no parent series. It is skipped instead of being restored as a standalone work.",
+        parent_cycle:
+          "The episode's parent chain loops back to the episode. The entry is skipped and no relation is written.",
         parent_conflict:
           "The backup's parent series contradicts the existing shared membership. The episode is skipped and the existing membership is unchanged.",
         relationships_not_imported:
-          "The episode is restored independently. Series membership and shared associations require the shared editing workflow.",
+          "This version 2 file has no parent series. The episode is restored independently; series membership requires the shared editing workflow.",
         playlist_preserved: "A list contains an unresolved reference. The list is kept unchanged.",
       },
       previewCounts: {

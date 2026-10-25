@@ -25,7 +25,7 @@ func TestSourceCatalogLifecycleUpgradePreservesEntriesAndPersonalState(t *testin
 		t.Fatal(err)
 	}
 	for range 2 {
-		if err := Migrate(db, source); err != nil {
+		if err := Migrate(db, completeMigrationDir(t)); err != nil {
 			t.Fatal(err)
 		}
 		var status, hash, note string

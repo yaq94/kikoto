@@ -33,7 +33,7 @@ func TestContentTranslationCorpusAndIndependentPreferencesSurviveRestart(t *test
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := storage.Migrate(db, filepath.Join("..", "..", "migrations")); err != nil {
+		if err := storage.Migrate(db, completeMigrationDir(t)); err != nil {
 			t.Fatal(err)
 		}
 		app = NewServer(db, config.Config{Mode: config.ModeProduction, RootUsername: "root", CacheRoot: filepath.Join(root, "cache")})

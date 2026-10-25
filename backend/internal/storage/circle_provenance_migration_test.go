@@ -128,7 +128,7 @@ func TestWorkPartyProvenanceMigrationRepairsCatalogOwnership(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := Migrate(db, migrationDir); err != nil {
+	if err := Migrate(db, completeMigrationDir(t)); err != nil {
 		t.Fatal(err)
 	}
 	var invalidRelations, catalogRows int

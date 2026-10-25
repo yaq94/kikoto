@@ -12,9 +12,26 @@ import { openWorkDetail } from "@/app/workDetailNavigation";
 import { PersonalReviewEditor } from "./PersonalReviewEditor";
 import { SharedAssociationPanel } from "./SharedAssociationPanel";
 
-export function openCatalogSeriesEpisode(seriesId: number, seriesTitle: string, episodeId: number) {
+/**
+ * A personal-only episode has no catalog entry; its work is the only address
+ * the series card can open. Source-backed episodes keep the catalog route.
+ */
+export function catalogSeriesEpisodeIntent(episode: Pick<CatalogSeriesEpisode, "catalogEntryId" | "workId">) {
+  if (episode.catalogEntryId > 0) return { kind: "catalog" as const, catalogEntryId: episode.catalogEntryId };
+  if (episode.workId !== null && episode.workId > 0)
+    return { kind: "known" as const, canonicalCode: String(episode.workId), view: "local" as const };
+  return null;
+}
+
+export function openCatalogSeriesEpisode(
+  seriesId: number,
+  seriesTitle: string,
+  episode: Pick<CatalogSeriesEpisode, "catalogEntryId" | "workId">,
+) {
+  const intent = catalogSeriesEpisodeIntent(episode);
+  if (!intent) return false;
   return openWorkDetail(
-    { kind: "catalog", catalogEntryId: episodeId },
+    intent,
     { returnTo: `/catalog-series/${seriesId}`, returnLabel: seriesTitle },
   );
 }
@@ -30,9 +47,11 @@ export function CatalogSeriesEpisodeItem({
 }) {
   const { t } = useTranslation();
   const missing = episode.status === "missing";
+  const resource =
+    episode.catalogEntryId > 0 ? { catalogEntryId: episode.catalogEntryId } : { workId: episode.workId ?? undefined };
   return (
     <li className="flex items-center justify-between gap-3 py-3" data-episode-status={episode.status ?? "available"}>
-      <ContentResourceScope resource={{ catalogEntryId: episode.catalogEntryId }}>
+      <ContentResourceScope resource={resource}>
         <span className="flex min-w-0 flex-wrap items-center gap-2">
           <span>
             {episode.position}. <TranslatedText text={episode.title} field="title" />
@@ -45,7 +64,7 @@ export function CatalogSeriesEpisodeItem({
         </span>
       </ContentResourceScope>
       <span className="text-sm text-muted-foreground">{episode.sourceName}</span>
-      <Button variant="outline" onClick={() => openCatalogSeriesEpisode(seriesId, seriesTitle, episode.catalogEntryId)}>
+      <Button variant="outline" onClick={() => openCatalogSeriesEpisode(seriesId, seriesTitle, episode)}>
         {t("catalogSeries.openEpisode")}
       </Button>
     </li>
@@ -88,7 +107,7 @@ export function CatalogSeriesDetail({ id, onBack }: { id: number; onBack: () => 
           <ol className="divide-y divide-border" aria-label={t("catalogSeries.episodes")}>
             {series.episodes.map((episode) => (
               <CatalogSeriesEpisodeItem
-                key={episode.catalogEntryId}
+                key={episode.catalogEntryId > 0 ? `entry:${episode.catalogEntryId}` : `work:${episode.workId ?? 0}`}
                 episode={episode}
                 seriesId={id}
                 seriesTitle={series.title}

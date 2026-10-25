@@ -44,7 +44,7 @@ func TestMetadataMigrationUnfreezesOnlyMatchingFamilyTitles(t *testing.T) {
 	run("INSERT INTO work(id,primary_code,title) VALUES (5,?,'Synthetic malformed override')", testfixture.WorkCode(testfixture.PrefixRJ, 4))
 	run("INSERT INTO work_manual_override(work_id,field_name,value_json) VALUES (5,'title','{invalid json')")
 	run("DELETE FROM work_search_dirty")
-	if err := Migrate(db, dir); err != nil {
+	if err := Migrate(db, completeMigrationDir(t)); err != nil {
 		t.Fatal(err)
 	}
 	for id, want := range map[int]int{1: 0, 2: 0, 3: 1, 4: 1, 5: 1} {

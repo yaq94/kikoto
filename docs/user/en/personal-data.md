@@ -95,7 +95,7 @@ delayed reports from before the clear.
 
 ## Export and import
 
-Version 2 and version 3 Kikoto personal JSON contain numbered and numberless works, series
+Version 3 Kikoto personal JSON contains numbered and numberless works, series
 and episodes, their stable opaque references and original titles, and your
 ratings/notes, listening marks, resume information, lifetime listening totals,
 work tags, custom tag definitions, and ordered favorite lists with icons.
@@ -116,22 +116,25 @@ reported separately, while safe records import. Known but unregistered catalog
 entries, series and episodes are restored at their recorded evaluation level
 with registration permission; without that permission the import is rejected.
 
-Version 2 can restore missing objects from the file's necessary information
+Version 3 can restore missing objects from the file's necessary information
 with registration permission. It never downloads media or changes existing
-shared relationships. Episodes remain independently evaluable; series membership
-and shared associations must be confirmed through the shared editing workflow.
-Version 3 adds the episode's explicit parent series identity. A version 3
-episode without a valid parent is reported and is not restored as a standalone
-work; version 2 keeps its previous behavior.
-Unknown source references remain portable without creating source connections.
-Repeated imports reuse references. Version 1 and Kikoeru formats match existing
-product codes and unambiguous aliases; missing codes are listed and skipped.
+shared relationships. When an exported episode carries its parent series, an
+empty library recreates that explicit relation without inferring it from a
+title. A version 3 episode without a valid parent is reported instead of being
+registered alone; an existing different parent is never replaced. Version 2
+files have no parent field and keep their previous independent restoration,
+which is reported as not carrying series membership. Episodes
+remain independently evaluable, while other shared associations must be
+confirmed through the shared editing workflow. Unknown source references remain
+portable without creating source connections. Repeated imports reuse references.
+Version 1 and Kikoeru formats match existing product codes and unambiguous
+aliases; missing codes are listed and skipped.
 
 Resume targets require an exact work/edition and an unambiguous track title
 with track/disc numbers. Missing or ambiguous tracks preserve existing playback
-progress. Version 2 retains unmatched incoming resume information for later
+progress. Version 3 retains unmatched incoming resume information for later
 export; it does not invent media or translate positions between editions.
-Lists with unresolved version 2 references remain unchanged.
+Lists with unresolved version 3 references remain unchanged.
 
 Import commits atomically and only handles the signed-in account. Limits are
 10 MiB, 20,000 works, 5,000 tag definitions, 1,000 lists, 50,000 list items or

@@ -28,7 +28,7 @@ func TestRecommendationCatalogUpgradePreservesPersonalDataAndQueuesExistingWorks
 	`); err != nil {
 		t.Fatal(err)
 	}
-	if err := Migrate(db, source); err != nil {
+	if err := Migrate(db, completeMigrationDir(t)); err != nil {
 		t.Fatal(err)
 	}
 	for _, table := range []string{"user_work_state", "user_preference", "user_listening_session", "recommendation_event", "recommendation_generation", "recommendation_client_session"} {
@@ -60,7 +60,7 @@ func TestRecommendationCatalogUpgradePreservesPersonalDataAndQueuesExistingWorks
 	if epoch != nil {
 		t.Fatal("upgrade published an incomplete catalog")
 	}
-	if err := Migrate(db, source); err != nil {
+	if err := Migrate(db, completeMigrationDir(t)); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.QueryRow("SELECT COUNT(*) FROM recommendation_catalog_dirty").Scan(&dirty); err != nil {

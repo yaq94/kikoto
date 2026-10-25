@@ -44,6 +44,20 @@ keeps ordered catalog entries without changing their work or edition references.
 private reviews are never copied into preview payloads. See
 [Catalog series](../development/catalog-series.md).
 
+`work.parent_work_id` records the one series work an episode belongs to. It is
+nullable, references `work(id)` with `ON DELETE RESTRICT`, and is indexed. The
+evaluation level is not a work column: it is inferred from this relation,
+`catalog_series.work_id` and `personal_transfer_ref.object_kind`. An episode has
+at most one parent, a series work has none, and the application rejects
+self-reference, a non-series parent, an episode parent and a parent cycle. A
+series and its episodes keep independent personal records. A series restored
+from a personal backup has a `catalog_series` row with null source identity, so
+its detail reads episodes through `work.parent_work_id` as well as source
+membership. Schema 100 adds the column and index, and backfills only
+unambiguous evidence: both the series and the member's entry have a registered
+work, the entry belongs to one series, and the episode work belongs to exactly
+one registered series work. Missing or contradictory rows stay null.
+
 Schema 096 adds `source_catalog_episode_pending` for finite-scan episode
 publication. Its `source_id`, `parent_root`, and `catalog_entry_root` identify
 the source snapshot; `catalog_entry_id` references the staged entry with

@@ -363,7 +363,7 @@ func TestWorkCodeAliasMigrationBackfillsDeclaredLanguageEditions(t *testing.T) {
 	if _, err := db.Exec("INSERT INTO metadata_snapshot (work_id, provider_id, external_id, snapshot_json) VALUES (?, ?, 'RJ00000000', ?)", workID, providerID, snapshot); err != nil {
 		t.Fatal(err)
 	}
-	if err := Migrate(db, migrationDir); err != nil {
+	if err := Migrate(db, completeMigrationDir(t)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -426,7 +426,7 @@ func TestMigrateUpgradesV010DatabaseThroughCurrentMigrations(t *testing.T) {
 	if _, err := db.Exec("INSERT INTO media_item (work_id, kind, title, fingerprint) VALUES (?, 'file', 'Preview', 'local:RJ00000002:bonus/preview.mp4')", workID); err != nil {
 		t.Fatal(err)
 	}
-	if err := Migrate(db, migrationDir); err != nil {
+	if err := Migrate(db, completeMigrationDir(t)); err != nil {
 		t.Fatalf("upgrade v0.1.0 database: %v", err)
 	}
 	rows, err := db.Query("SELECT filename FROM schema_migration ORDER BY filename")
@@ -685,7 +685,7 @@ func TestMigrateAddsQueryIndexes(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	if err := Migrate(db, filepath.Join("..", "..", "migrations")); err != nil {
+	if err := Migrate(db, completeMigrationDir(t)); err != nil {
 		t.Fatal(err)
 	}
 	for table, index := range map[string]string{

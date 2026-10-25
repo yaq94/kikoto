@@ -27,7 +27,7 @@ func TestRemoteMetadataFallbackMigrationQueuesRemoteWorks(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := Migrate(db, source); err != nil {
+	if err := Migrate(db, completeMigrationDir(t)); err != nil {
 		t.Fatal(err)
 	}
 	rows, err := db.Query("SELECT work_id FROM work_metadata_tag_dirty ORDER BY work_id")

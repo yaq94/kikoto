@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/yexca/kikoto/backend/internal/testfixture"
-	"github.com/yexca/kikoto/backend/migrations"
 )
 
 func TestLanguageTitleMigrationPreservesTitleOverridesAndSearchTriggers(t *testing.T) {
@@ -22,7 +21,7 @@ func TestLanguageTitleMigrationPreservesTitleOverridesAndSearchTriggers(t *testi
  SELECT id,'cover','{}','synthetic-cover.png' FROM work;`); err != nil {
 		t.Fatal(err)
 	}
-	if err := MigrateFS(db, migrations.Files, "test"); err != nil {
+	if err := MigrateFS(db, completeMigrationFS(t), "test"); err != nil {
 		t.Fatal(err)
 	}
 	var title, language, created, updated, asset string

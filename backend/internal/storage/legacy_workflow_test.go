@@ -32,7 +32,7 @@ func TestPreserveLegacyWorkflowsBeforeRemovalMigration(t *testing.T) {
 	if err := PreserveLegacyWorkflows(ctx, db, 34); err != nil {
 		t.Fatal(err)
 	}
-	if err := Migrate(db, sourceDir); err != nil {
+	if err := Migrate(db, completeMigrationDir(t)); err != nil {
 		t.Fatal(err)
 	}
 	var original, triggers, status string

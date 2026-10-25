@@ -5,7 +5,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"io"
-	"strconv"
 	"strings"
 	"time"
 
@@ -41,22 +40,11 @@ type BackupWork struct {
 // Ref names an exact retained object. References are opaque portable aliases,
 // never source addresses, translated titles or permission to change relations.
 type BackupIdentity struct {
-	Ref        string        `json:"ref"`
-	Kind       string        `json:"kind"`
-	Title      string        `json:"title"`
-	References []string      `json:"references,omitempty"`
-	Parent     *BackupParent `json:"parent,omitempty"`
-}
-
-// BackupParent is the episode's explicit catalog membership. The series
-// reference is the stable identity; the entry reference names the exact member
-// without carrying a source path or title-based matching rule.
-type BackupParent struct {
-	Ref      string `json:"ref"`
-	Title    string `json:"title"`
-	EntryRef string `json:"entryRef,omitempty"`
-	Position int    `json:"position,omitempty"`
-	Evidence string `json:"evidence,omitempty"`
+	Ref        string          `json:"ref"`
+	Kind       string          `json:"kind"`
+	Title      string          `json:"title"`
+	References []string        `json:"references,omitempty"`
+	Parent     *BackupIdentity `json:"parent,omitempty"`
 }
 
 func (w BackupWork) key() string {
@@ -152,7 +140,7 @@ func ParseImport(request ImportRequest) (Backup, error) {
 		if err := DecodeJSON(request.Data, &backup, true); err != nil {
 			return backup, err
 		}
-		if backup.Format != "kikoto-user-data" || (backup.Version != 1 && backup.Version != 2) {
+		if backup.Format != "kikoto-user-data" || (backup.Version != 1 && backup.Version != 2 && backup.Version != 3) {
 			return backup, ErrInvalid
 		}
 	case "kikoeru":
@@ -212,9 +200,6 @@ func validateBackup(b *Backup) error {
 	seen := map[string]bool{}
 	references := map[string]bool{}
 	numbered := map[string]bool{}
-	parentTitles := map[string]string{}
-	parentEntries := map[string]string{}
-	parentPositions := map[string]bool{}
 	items := 0
 	assignments := 0
 	for i := range b.Works {
@@ -224,40 +209,30 @@ func validateBackup(b *Backup) error {
 			return ErrLimit
 		}
 		var err error
-		if b.Version == 2 {
+		if b.Version >= 2 {
 			if !validBackupIdentity(w.Identity) {
 				return ErrInvalid
 			}
+			if b.Version == 2 && w.Identity.Parent != nil {
+				return ErrInvalid
+			}
+			// A malformed v3 parent blocks only its entry in the import plan, so
+			// other records still import. A v2 parent has no defined meaning and
+			// rejects the document.
+			// Parent references are validated per entry by the import plan, so a
+			// contradictory parent blocks only its episode. They are deliberately
+			// not part of this document-wide uniqueness set: a parent series and
+			// its top-level BackupWork legitimately share the same series alias.
 			for _, ref := range append([]string{w.Identity.Ref}, w.Identity.References...) {
 				if references[ref] {
 					return ErrInvalid
 				}
 				references[ref] = true
 			}
-			if w.Identity.Parent != nil {
-				parent := w.Identity.Parent
-				if title, ok := parentTitles[parent.Ref]; ok && title != parent.Title {
-					return ErrInvalid
-				}
-				parentTitles[parent.Ref] = parent.Title
-				if parent.EntryRef != "" {
-					if _, ok := parentEntries[parent.EntryRef]; ok {
-						return ErrInvalid
-					}
-					parentEntries[parent.EntryRef] = parent.Ref
-				}
-				if parent.Position > 0 {
-					key := parent.Ref + ":" + strconv.Itoa(parent.Position)
-					if parentPositions[key] {
-						return ErrInvalid
-					}
-					parentPositions[key] = true
-				}
-			}
 		} else if w.Identity != nil {
 			return ErrInvalid
 		}
-		if w.PrimaryCode != "" || b.Version != 2 {
+		if w.PrimaryCode != "" || b.Version == 1 {
 			w.PrimaryCode, err = normalizeCode(w.PrimaryCode)
 		}
 		if err != nil || seen[w.key()] {
@@ -282,14 +257,14 @@ func validateBackup(b *Backup) error {
 			tagSeen[tagNameKey(name)], w.Tags[j] = true, name
 		}
 		if p := w.Progress; p != nil {
-			if b.Version == 2 {
+			if b.Version >= 2 {
 				if !validBackupIdentity(p.MediaIdentity) {
 					return ErrInvalid
 				}
 			} else if p.MediaIdentity != nil {
 				return ErrInvalid
 			}
-			if p.MediaWorkCode != "" || b.Version != 2 {
+			if p.MediaWorkCode != "" || b.Version == 1 {
 				p.MediaWorkCode, err = normalizeCode(p.MediaWorkCode)
 			}
 			if err != nil || !validNumber(p.PositionSeconds) || p.PositionSeconds > 31536000 || (p.DurationSeconds != nil && (!validNumber(*p.DurationSeconds) || *p.DurationSeconds > 31536000 || p.PositionSeconds > *p.DurationSeconds)) {
@@ -345,14 +320,14 @@ func validateBackup(b *Backup) error {
 		for j := range list.Items {
 			item := &list.Items[j]
 			var err error
-			if b.Version == 2 {
+			if b.Version >= 2 {
 				if !workRefs[item.WorkRef] {
 					return ErrInvalid
 				}
 			} else if item.WorkRef != "" {
 				return ErrInvalid
 			}
-			if item.PrimaryCode != "" || b.Version != 2 {
+			if item.PrimaryCode != "" || b.Version == 1 {
 				item.PrimaryCode, err = normalizeCode(item.PrimaryCode)
 			}
 			if err != nil || codes[item.key()] {
@@ -383,26 +358,22 @@ func validBackupIdentity(i *BackupIdentity) bool {
 		}
 		seen[ref] = true
 	}
-	if i.Parent != nil {
-		if i.Kind != "episode" || !validBackupParent(i.Parent) || seen[i.Parent.Ref] {
-			return false
-		}
-	}
 	return true
 }
 
-func validBackupParent(parent *BackupParent) bool {
-	if parent == nil || !validTransferRef(parent.Ref) || !strings.HasPrefix(parent.Ref, "s:") || strings.TrimSpace(parent.Title) == "" {
+func validBackupParent(parent *BackupIdentity) bool {
+	if parent == nil || !validTransferRef(parent.Ref) || !strings.HasPrefix(parent.Ref, "s:") || parent.Kind != "series" || strings.TrimSpace(parent.Title) == "" || parent.Parent != nil {
 		return false
 	}
-	if parent.EntryRef != "" && (!validTransferRef(parent.EntryRef) || !strings.HasPrefix(parent.EntryRef, "c:")) {
+	if len(parent.References) > 100 {
 		return false
 	}
-	if parent.Position < 0 || parent.Position > maxTransferSeriesMembers {
-		return false
-	}
-	if parent.Evidence != "" && parent.Evidence != "directory" && parent.Evidence != "manual" {
-		return false
+	seen := map[string]bool{parent.Ref: true}
+	for _, ref := range parent.References {
+		if !validTransferRef(ref) || seen[ref] {
+			return false
+		}
+		seen[ref] = true
 	}
 	return true
 }
