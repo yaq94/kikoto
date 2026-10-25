@@ -35,6 +35,8 @@ CREATE INDEX idx_work_parent_work ON work(parent_work_id);
 
 **当前实现核对（`728651a6`）：** 该提交把 `parent` 放在 v2 的 identity 上，并在空库创建 `source_catalog_entry` 和 `catalog_series_member`。`catalog_series.go` 的详情查询仍要求 `source_catalog_entry.file_source_id IS NOT NULL`，所以导入后的系列卡不会列出该单集；这与本票的系列读取验收冲突。若最终保留 v2 格式，必须改为不伪造来源成员的父级关系并补系列详情读取；若采用本节的 `work.parent_work_id`，则删除合成 entry／member 路径。两种方案只能保留一种。
 
+**已复现的导出缺口（`d77e37e2`）：** 当来源 `source_catalog_entry` 尚未绑定 `work_id` 时，`exportIdentity` 的 parent 查询 `WHERE entry.work_id=?` 返回空，导出的 episode identity 没有 `parent`，导入结果仍是 `relationships_not_imported` 并创建独立 work。审计测试 `TestAuditPersonalTransferSeriesViewListsRestoredEpisode` 复现：`series=0 works=1`。现有 `TestPersonalTransferRestoresEpisodeParentAcrossEmptyLibraryRestart` 因先保存评价而绑定 `work_id`，掩盖了这条真实路径。修复必须同时覆盖“未绑定 work 的来源条目”导出分支，并断言目标库 `catalog_series` 存在、`GET /api/catalog-series/{id}` 列出该单集。
+
 ## 备份格式 v3
 
 ```json
