@@ -5,7 +5,7 @@
 **Blocked by:** [09：每日更新与已有扫描复用](09-daily-index-update.md)（08 为传递前置）。
 
 **Status:** ready-for-agent
-**Implementation:** implemented；`531acdf4` 落地 098 `source_catalog_schedule` 与单事务派发状态机，`6cf4ee1c` 合入集成分支的 097。`app_setting` 的 `source_catalog_daily:`／`source_catalog_full:` 只在 098 迁移内读取。当前实现：deferred 保留原 due 并在到期后重查资源条件；`pending_full_run_id` 绑定 resume full，只有该 run 成功才推进 weekly 并清标记；partial/failed/cancelled 走维护同步；force 不再创建 full。证据见下方“实现与证据”。
+**Implementation:** in-progress；`531acdf4` 落地 098 `source_catalog_schedule` 与单事务派发状态机，`6cf4ee1c` 合入集成分支的 097。`app_setting` 的 `source_catalog_daily:`／`source_catalog_full:` 只在 098 迁移内读取。当前实现：deferred 保留原 due 并在到期后重查资源条件；`pending_full_run_id` 绑定 resume full，只有该 run 成功才推进 weekly 并清标记；partial/failed/cancelled 走维护同步；`force` 在 failed／partial 之后创建新的观测 generation。仍缺单卡评价、播放、媒体流、作品目录标签的完整准入，系列零可见成员 404，真实执行计划断言与 42k p95。证据见下方“实现与证据”。
 
 **依据:** [正式规格](../spec.md)、[整改计划](../review-remediation-plan.md)、[ADR-0006](../../../docs/decisions/ADR-0006-catalog-remediation-and-translation-consistency.md)、`kikoto-remediation-addendum-20261021.md` 的 D-16/D-22/D-25。
 
@@ -73,7 +73,7 @@ CREATE INDEX source_catalog_schedule_due
 
 ## force 增量
 
-**裁决（2026-10-25）：** `POST /api/remote-sources/{id}/catalog/index` 的 `force` 表示“在 failed／partial／paused 的 generation 之后开始一次新的观测 generation”，不表示目录重探。sync 运行中该入口不再返回 409：请求记成 `manual_pending=1` 并返回 202，由调度器在该 sync 结束后消费一次。
+**裁决（2026-10-25）：** `POST /api/remote-sources/{id}/catalog/index` 的 `force` 表示“在 failed／partial／cancelled 的 generation 之后开始一次新的观测 generation”，不表示目录重探（generation 状态没有 `paused`；`paused` 只属于 sync 或运行中的任务）。sync 运行中该入口不再返回 409：请求记成 `manual_pending=1` 并返回 202，由调度器在该 sync 结束后消费一次。
 
 本票不新增独立的 force sync 入口，删除原“force 只重探目录、不创建 full”的验收项。它与已交付入口的行为、以及规格 D-05“首次索引由管理员启动，完成后才每日更新”的边界冲突。
 
@@ -100,9 +100,9 @@ CREATE INDEX source_catalog_schedule_due
 - [x] 低空间或维护 hold 只设置一次 `deferred_until`／`deferred_reason`；到期后重新检查条件，条件未解除时继续延后，不能误跑 full。`TestCatalogScheduleDeferredCatchesUpOnce` 与低空间测试断言原因和一次追赶；维护 hold 复用 `TestCatalogSyncPausesForMaintenanceAndRetriesAfterTheHold`。
 - [x] queued full 不会被 `resume_full_pending` 重复创建；`resume_full_pending` 只在 full 终态 succeeded 后清零并推进 weekly due，failed/cancelled 保留待重试。`TestCatalogScheduleResumeFullPendingWinsAndClears`、`TestCatalogScheduleFailedResumeFullRetriesWithoutMovingWeekly`。
 - [x] sync 运行中的手动刷新记一次 `manual_pending` 并在结束后执行一次；`force` 在 failed／partial 后创建新 generation；同一来源不产生 full 与 sync 重叠写。`TestCatalogScheduleRunningSyncDefersFullAndKeepsDue`、`TestManualFullIndexQueuesWhileIncrementalSyncRuns`、`TestIncrementalSyncRefusesWhileFullGenerationRuns`。
-- [x] D-16 的 0/1/4/5 audio、2000/2001 nonAudio、5000/5001 files 在入队／发布／API 三层一致；系列成员逐条判定。`TestCatalogAdmissionPublishingPublishesEveryCardWithAudio`、`TestCatalogAdmissionAPIShowsEveryCardWithAudio`、`TestCatalogAdmissionSeriesFiltersEveryMember`。
+- [ ] D-16 的 0/1/4/5 audio、2000/2001 nonAudio、5000/5001 files 在入队／发布／API 三层一致；系列成员逐条判定。发布、浏览、tracks、单卡详情已一致；个人评价、播放准备、媒体流与作品目录标签尚未接入，不能勾选整项。`TestCatalogAdmissionPublishingPublishesEveryCardWithAudio`、`TestCatalogAdmissionAPIShowsEveryCardWithAudio`、`TestCatalogAdmissionSeriesFiltersEveryMember`。
 - [ ] 单卡个人评价写入、播放准备、媒体流与作品目录标签使用同一完整准入。`openlist_review.go` 仍是 `Files > 0 && Audio == 0`；`catalog_playback.go`、`openlist_playback.go`、`catalog_directory.go` 没有准入或待发布门禁。
-- [ ] 系列没有任何可见成员时详情返回 404，而不是 200 加空列表。现有 `TestCatalogAdmissionSeriesFiltersEveryMember` 断言 200，需同步改写。
+- [ ] 系列没有任何可见成员时详情返回 404，而不是 200 加空列表。现有 `TestCatalogAdmissionSeriesFiltersEveryMember` 只断言 `Episodes` 为空、没有断言状态码，需同步改写为 404。
 - [ ] 性能计划断言真实执行计划。现有 `strings.Contains(plan, "SCAN source_catalog_file")` 匹配不到实际出现的 `SCAN ff USING INDEX source_catalog_file_parent`，等于空断言。
 - [ ] 42k 卡浏览与 5,001 文件卡拒绝路径的 p95 证据（2 vCPU／2 GiB、warm、≥20 样本，浏览 p95 ≤ 300 ms、p99 ≤ 800 ms）；超限先落地 `source_catalog_entry_admission` 再复测；不得以全表扫描换取正确性。本 worktree 未在目标硬件执行 42k 基准，保持未勾选。
 - [x] 096 激活期间系列详情/成员 tracks 不可见，publication 切换后才可见；系列详情与列表使用同一 D-16 成员过滤。`TestCatalogSeriesHidesPendingPublicationUntilItIsPublished`、`TestCatalogAdmissionSeriesFiltersEveryMember`。

@@ -2,10 +2,10 @@
 
 **What to build:** 备份携带单集必要的稳定父级身份，空库恢复保持评价对象及父级归属，不因父系列没有本人评价而丢失关系。
 
-**Blocked by:** [16：个人数据导入导出](16-personal-data-transfer-compatibility.md)；迁移顺序上须等 21 的 099 落地，100 不得跳号。
+**Blocked by:** [16：个人数据导入导出](16-personal-data-transfer-compatibility.md)；迁移 100 已在 099 之后落地，不再阻塞。
 
 **Status:** ready-for-agent
-**Implementation:** in-progress；`728651a6` 已在 v2 identity 上加入可选 `parent`，但导入仍合成 `source_catalog_entry` 与 `catalog_series_member`，且系列详情会过滤 `file_source_id IS NULL`，恢复的单集不可见。审查裁决：保留 v2 格式（不升 v3），父级关系落到 `work.parent_work_id`，禁止合成来源成员。
+**Implementation:** in-progress；`64b25252` 已落地迁移 100、`work.parent_work_id`、父级导入与系列详情回退（`catalogEntryId=0`）。但导出格式已升到 `version: 3`（`transfer_export.go:30`），与已确认的“保持 v2 + 可选 parent”决定冲突；`docs/development/personal-transfer.md` 同页混用 v2/v3；迁移回填仍缺可查询报告载体，缺“多个不同父级”和“父级登记权限 403”两类测试。必须先裁决格式，再收口。
 
 **依据:** [正式规格](../spec.md)、[ADR-0004](../../../docs/decisions/ADR-0004-work-identity-and-personal-state.md)、[ADR-0006](../../../docs/decisions/ADR-0006-catalog-remediation-and-translation-consistency.md)。
 
@@ -33,7 +33,7 @@ CREATE INDEX idx_work_parent_work ON work(parent_work_id);
 - 迁移回填只在 `catalog_series.work_id` 与成员 `source_catalog_entry.work_id` 都非空、不同时写入；由于 `catalog_series_member.catalog_entry_id` 是 UNIQUE，真正的多父级来自同一个 work 被多个 series 的 entry 指向，必须按 `work_id` 分组 `HAVING COUNT(DISTINCT series.work_id)=1` 才写，否则保留 null。缺失、矛盾与多父级必须写入可查询的报告载体，不得只打日志。
 - `work.primary_code` 与 `logical_work.canonical_code` 在 069 后允许空值，非空值才有部分唯一索引；系列 work 可以继续使用空代码，但必须测试同一备份包含多个系列 work 时不触发唯一约束。若实现新增内部代码，它只能作为内部标识，不能进入编号解析或用户可见的发行编号。
 
-**当前实现核对（`728651a6`）：** 该提交把 `parent` 放在 v2 的 identity 上，并在空库创建 `source_catalog_entry` 和 `catalog_series_member`。`catalog_series.go` 的详情查询仍要求 `source_catalog_entry.file_source_id IS NOT NULL`，所以导入后的系列卡不会列出该单集；这与本票的系列读取验收冲突。若最终保留 v2 格式，必须改为不伪造来源成员的父级关系并补系列详情读取；裁决已定：采用本节的 `work.parent_work_id`，删除合成 entry／member 路径；不再保留两套合同。
+**当前实现核对（`64b25252`）：** 导入不再合成 `source_catalog_entry`／`catalog_series_member`，只写 `work.parent_work_id`（`transfer_parent.go:382-426`）；`catalog_series.go:141-176` 在没有成员行时回退到父级关系，返回 `catalogEntryId=0`、`workId` 非空；前端已按 `workId` 打开该 episode。多父级冲突不是 409，而是 HTTP 200 + `issues[].reason=parent_conflict` 并跳过该条（`transfer_plan.go:95-98`）；409 只用于致命 `ErrConflict`。这些行为应写入验收，而不是继续引用 `728651a6` 的旧描述。
 
 **已复现的导出缺口（`d77e37e2` 起，`728651a6` 后仍存在）：** 当来源 `source_catalog_entry` 尚未绑定 `work_id` 时，`exportIdentity` 的 parent 查询 `WHERE entry.work_id=?` 返回空，导出的 episode identity 没有 `parent` 且退回 `kind=work`，导入后静默创建独立 work，`issues` 为空（`relationships_not_imported` 字符串已不存在）。独立 SQLite 回放结果：导出 `parentPresent=false`、目标 `series=0 works=1 members=0`。现有 `TestPersonalTransferRestoresEpisodeParentAcrossEmptyLibraryRestart` 因先保存评价而绑定 `work_id`，掩盖了这条真实路径。修复必须同时覆盖“未绑定 work 的来源条目”导出分支，并断言目标库 `catalog_series` 存在、`GET /api/catalog-series/{id}` 列出该单集。
 
@@ -83,11 +83,11 @@ CREATE INDEX idx_work_parent_work ON work(parent_work_id);
 - [ ] 空库只有单集评价、父系列无评价，导出再导入后父级归属保留；父系列有独立评价时也只创建一个父对象并保留其个人状态。
 - [ ] 导入后的父系列卡能列出该 episode；`catalogEntryId=0`、`workId` 非空，且不会伪造来源成员或媒体路径。
 - [ ] 重复导入不重复创建；非空库已有不同父级时冲突可见且不被覆盖。
-- [ ] 父级缺失、多个不同父级、循环、父 ref 指向错误对象、父 ref 已被其他 series 占用、v2 旧格式、权限和用户隔离均有 H/R 证据。
+- [ ] 父级缺失、多个不同父级、循环、父 ref 指向错误对象、父 ref 已被其他 series 占用、v2 旧格式、权限和用户隔离均有 H/R 证据。当前缺“多个不同父级”与“父级登记权限 403”专项测试。
 - [ ] 空库导入后再导出，episode 仍为 `kind=episode`，父系列仍为 `kind=series`；`s:` ref 属于 `catalog_series`，`w:` ref 属于 work。
-- [ ] `docs/development/personal-transfer.md` 与五个 `docs/user/*/personal-data.md` 改为“v2 + 可选 parent”，说明父级、失败语义和“仅显式父级恢复”的例外。当前这些页面写的是 v3，与 `transfer_export.go` 的 `Version: 2` 不一致。
+- [ ] `docs/development/personal-transfer.md` 与五个 `docs/user/*/personal-data.md` 统一为同一版本。当前开发页同时出现 v2 与 v3，导出器写 `version: 3`；已确认决定是 v2 + 可选 `parent`，必须先裁决并同步文档、校验与测试。
 - [ ] 同一备份包含两个系列 work 时不会因空 `primary_code`／`canonical_code` 触发唯一约束；若使用内部代码，编号解析和用户界面不暴露它。
-- [ ] 迁移后新装与旧库升级的 `work.parent_work_id` 和索引一致；已发布迁移不回写。
+- [ ] 迁移后新装与旧库升级的 `work.parent_work_id` 和索引一致；已发布迁移不回写；回填的缺失、矛盾与多父级写入可查询报告载体，而不是只打日志。
 - [ ] 导入后系列与单集可独立评价，无媒体下载或共享越权变更。
 
 **测试入口:** H、R，使用真实迁移 SQLite 与公开导入导出入口。

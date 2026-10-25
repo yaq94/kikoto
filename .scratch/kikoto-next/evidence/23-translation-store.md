@@ -44,6 +44,9 @@ GOTOOLCHAIN=go1.26.10 go run ./cmd/translation-bench \
 
 对照门槛：精确命中 p95 < 5 ms（实测 0.53 ms）；3 字以上搜索 p95 < 100 ms（实测 55.91 ms）；批量 240 条不出现 `translation_queue_full`（交互通道 256）；预翻译不显著抬高 API p95 见第 6 节。
 
+> 该 0.53 ms 是 `WHERE content_translation.cache_key=?` 唯一键查找，不是用户搜索路径。
+> 工单 21 已改为分别测量编号等值与目标语言标题整串等值，本行不得再被引用为搜索验收证据。
+
 实测值低于需求估算的 0.4–0.8 GB：456k 行、VACUUM 后 222 MB。合成标题短于真实长标题，因此真实库会更接近上限，部署后以生产副本复测为准。
 
 ### 3.1 一个被证伪的写法

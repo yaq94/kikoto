@@ -277,15 +277,15 @@ content failures retain the verified original text.
 
 HTTP and restart tests use production routes, real sessions and migrated SQLite:
 
-The real numbered chain currently ends at 096 on this branch; 097 and 098 are
-owned by unmerged branches, so the authored 099 cannot run against the packaged
-chain yet. Local Go tests and `cmd/translation-bench` use
-`internal/migrationfixture`, which copies the packaged catalog and injects
-no-op 097/098 placeholders in memory or a temporary directory. Those files are
-test fixtures only and are not committed. After the 098/099 merge, regenerate the
-development compat baseline with
+The real numbered chain currently ends at 100 on this branch; 097 through 100 are
+committed and `compat/099_dev.sql` and `compat/100_dev.sql` are generated.
+Local Go tests and `cmd/translation-bench` still use
+`internal/migrationfixture`, which copies the packaged catalog and injects no-op
+placeholders for merged migrations in memory or a temporary directory. Those
+files are test fixtures only and are not committed. Regenerate a development
+compat baseline with
 `cd backend && go run ./cmd/schema-baseline -migrations . -version-file ../../VERSION`;
-do not hand-write `compat/099_dev.sql` while the chain has a gap.
+do not hand-write a `compat/NNN_dev.sql` while the chain has a gap.
 
 ```sh
 cd backend

@@ -595,7 +595,7 @@ Under the issue 21 target, `content_translation` is the durable, searchable
 translated-content corpus. A row is keyed by the unique `cache_key`, which
 separates entity kind and id,
 field, language, source text, origin (`native` or `model`), model, base URL,
-template version and reasoning switch. The planned migration 099 adds a
+template version and reasoning switch. Migration 099 adds a
 `config_key` covering the output-shaping configuration; a row with another key
 is stale and is not current coverage, while rows from before 099 are treated as
 legacy candidates until re-prefilled. Native rows store the source text

@@ -362,20 +362,21 @@ matches the backup.
 | v0.8.0 | `059` | `059_v0.8.0.sql` |
 | v0.8.1, v0.8.2 | `066` | `066_v0.8.1.sql` |
 | v0.8.3 | `068` | `068_v0.8.3.sql` |
-| development build (unreleased) | `098` | Development baseline only; `compat/098_dev.sql` |
+| development build (unreleased) | `100` | Development baseline only; `compat/100_dev.sql` |
 
-The remediation plan adds `099` and `100` after the current tracked head.
-`096_catalog_episode_pending.sql`, `097_source_field_translation_foreign_key.sql`
-and `098_catalog_schedule.sql` are committed; `099` is the next numbered
-migration and must not be created out of sequence.
+`096_catalog_episode_pending.sql`, `097_source_field_translation_foreign_key.sql`,
+`098_catalog_schedule.sql`, `099_translation_corpus_config.sql` and
+`100_work_parent.sql` are committed; `101` is the next numbered migration and
+must not be created out of sequence. Each migration has a matching
+`compat/NNN_dev.sql` baseline.
 
 Per-release upgrade steps are in the [release notes](../history/index.md).
 
 ## Kikoto-next Schema Additions
 
-Migrations `069` through `098` extend the source catalog, shared associations,
-personal transfer, and the recoverable index; the remediation chain adds
-`099`–`100`. Pending release notes and upgrade steps are in
+Migrations `069` through `100` extend the source catalog, shared associations,
+personal transfer, and the recoverable index. Pending release notes and upgrade
+steps are in
 [Unreleased](../history/unreleased.md).
 
 | Migration | Change | Recovery and read behaviour |

@@ -5,7 +5,7 @@
 **Blocked by:** [17：组合验收与部署回退](17-integrated-acceptance-release-plan.md)、[18](18-ci-migration-completion-state.md)、[19](19-ci-browser-reliability.md)、[20](20-catalog-sync-and-admission.md)、[21](21-translation-corpus-and-search.md)、[22](22-personal-transfer-parent-identity.md)、[23](23-retention-and-repository-contracts.md)。
 
 **Status:** ready-for-agent
-**Implementation:** pending；当前没有同一最终 SHA 的 CI、迁移、真实索引和部署证据。
+**Implementation:** pending；当前没有同一最终 SHA 的 CI、迁移、真实索引和部署证据。候选账本模板见 [24-candidate-ledger.md](../evidence/24-candidate-ledger.md)；组合负载脚本、部署入口与 smoke 扩展尚未落地。
 
 **依据:** [正式规格](../spec.md)、[整改计划](../review-remediation-plan.md)、[执行记录](../execution.md)。
 
@@ -17,6 +17,7 @@
 
 - 记录最终 SHA、分支、镜像 digest（只留在受限运维记录，仓库只写 tag）、schema、配置指纹、提交清单；工作区以 `git status --porcelain` 为空判定（Windows 上先统一 `core.autocrlf`，不得用 `--ignore-cr-at-eol` 掩盖真实改动）。
 - 明确列出 20–23 的提交；`6b4a02ec`（含 096）已在候选基线内，只记 SHA，不重复计为外部交付；不包含未审阅工作区文件。
+- 候选账本按 [24-candidate-ledger.md](../evidence/24-candidate-ledger.md) 的字段填写，逐条命令附退出码与证据路径。
 - 每个提交记录：工单、AC 子项、命令、退出状态、证据路径、是否受环境限制。
 - 历史 run 53、旧 schema（83/84/95）、旧镜像和旧 CI 只作为历史记录，不能关闭当前候选。
 
@@ -25,15 +26,16 @@
 - [ ] Standards 与 Spec 双轴审查闭环；发现项有提交或明确未修复理由。
 - [ ] 同一 SHA 的 Full CI、类型检查、构建、H/R/F/U 与必要 race 证据。Full CI 只在 `main` push 与 `workflow_dispatch` 触发，因此候选分支必须显式 dispatch 该 SHA，不能等 push 自动触发。
 - [ ] 原始 AC-14 的系列证据、单集格式副本、Bonus/轨道容器和成员上限回归在当前 SHA 通过；未提交的系列修复或测试不能计入。
-- [ ] 迁移链：新装、既有库升级、旧 095 变体（若存在）和恢复；`PRAGMA foreign_key_check` 0 行。
+- [ ] 迁移链：新装、既有库升级、旧 095 变体（若存在）和恢复；095–100 连续、`compat/099_dev.sql` 与 `compat/100_dev.sql` 与迁移后 schema 一致；`PRAGMA foreign_key_check` 0 行。
 - [ ] 备份、恢复和可执行回滚路径演练；记录镜像、schema、数据库快照和回滚触发条件。仓库不含 `rollback-kikoto.sh`，演练按 `docs/development/release-rollback.md` 的手工步骤执行，并至少在隔离目录完成一次快照恢复与 `foreign_key_check`。
 - [ ] 生产 Compose 没有 healthcheck，`docker compose ps` 只要求 `running`，以 `/health` 200 作为门禁；若补 healthcheck，需同步 `deploy/compose` 与回滚文档。
-- [ ] 组合负载：播放中扫描、翻译、浏览、评价，音轨／队列／进度保持；低空间暂停与恢复。
-- [ ] 真实完整索引：分区、目录、条目、失败、受限、未确认空目录分别报告；未完成不得称 complete。
-- [ ] 有限 LIVE：真实 Index 翻译、匿名媒体 Range／定位读取；记录版本、请求、耗时和脱敏文本。
+- [ ] 组合负载：播放中扫描、翻译、浏览、评价，音轨／队列／进度保持；低空间暂停与恢复。需要可重跑脚本（`scripts/mixed-load.mjs` 或等价 Go 入口），不接受只有历史人工观测。
+- [ ] 真实完整索引：分区、目录、条目、失败、受限、未确认空目录分别报告；未完成不得称 complete。预算：2 vCPU／2 GiB 或等价实例、约 3–5 小时、需要真实 OpenList 凭据；允许 partial，但必须列出失败与未确认空目录。
+- [ ] 有限 LIVE：真实 Index 翻译、匿名媒体 Range／定位读取；记录版本、请求、耗时和脱敏文本。需要 `KIKOTO_TRANSLATION_LIVE_CONFIG`、`KIKOTO_OPENLIST_LIVE_URL`、`KIKOTO_OPENLIST_LIVE_FILE`；缺失时 skip 不计通过，并记录 skip 原因。
 - [ ] 少量非视觉 F：文本、操作、请求、持久状态和媒体功能；截图采集关闭，既有视觉测试不改写。
 - [ ] AC-25 播放中音轨／队列／进度、AC-26 进度证据、AC-27 出站边界、AC-28 截图关闭与既有视觉测试不改写全部列入矩阵。
-- [ ] 部署后真实服务验收：健康、登录、内容翻译、目录、搜索、个人记录、媒体 Range；失败时按已验证方案回滚并继续。
+- [ ] 部署后真实服务验收：健康、登录、内容翻译、目录、搜索、个人记录、媒体 Range；现有 `production-smoke.mjs` 只覆盖健康、静态资源、认证、本地扫描与媒体 Range，必须扩展到翻译、目录、搜索、个人记录，或把手工验收命令写进账本。失败时按已验证方案回滚并继续。
+- [ ] 性能门禁：42k 卡浏览 p95 ≤ 300 ms、p99 ≤ 800 ms（warm、≥20 样本）；5,001 文件卡拒绝路径同口径；译文 3 字以上与 1–2 字 p95 各 ≤ 100 ms；编号等值与目标语言标题整串等值 p95 < 5 ms。任一项超限必须落地对应索引或统计表后复测，两次复测仍超限报 blocker，不得记为通过。
 
 ## AC 子项矩阵
 

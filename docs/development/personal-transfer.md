@@ -1,12 +1,18 @@
 # Personal data transfer
 
 `GET /api/user-data/export` and `POST /api/user-data/import[/preview]` use the
-existing account-owned personal store. The exporter writes version 2 with an
-optional episode `parent`; version 1 and the Kikoeru readers retain
-numbered-code compatibility.
+existing account-owned personal store. The exporter currently writes version 3,
+which carries an optional episode `parent`; version 1 and version 2 remain
+readable, and the Kikoeru readers retain numbered-code compatibility.
+
+> **Format status: unresolved.** The confirmed remediation decision was
+> "version 2 with an optional `parent`". The implementation shipped version 3
+> instead. Both the document and the code must converge on one answer before
+> issue 22 can be closed; do not treat this section as a settled contract.
 See [the user contract](../user/en/personal-data.md#export-and-import).
 
-Each version 2 work has `identity: {ref, kind, title, references?, parent?}`.
+Each version 2 and version 3 work has
+`identity: {ref, kind, title, references?, parent?}`.
 `kind` is
 `work`, `episode` or `series`. `personal_transfer_ref` provides random opaque
 aliases for exact work, catalog and series rows. Its primary work reference is
@@ -15,7 +21,7 @@ They neither replace `work.id` nor define shared evaluation identity. Only
 personal records select which objects are exported. Source references carry no
 configuration, paths or network addresses.
 
-A version 2 episode identity may carry `parent`. It contains the minimum
+A version 3 episode identity may carry `parent`. It contains the minimum
 series identity (`ref`, `kind: "series"`, `title`, no rating, note or progress);
 there is no nested parent. The `s:` parent reference belongs to the
 `catalog_series` transfer row, never to the episode work. A parent series may
@@ -23,13 +29,15 @@ also appear as a top-level work; it is imported once and keeps its own personal
 state. If the parent is missing, ambiguous, cyclic or points to another object,
 the episode is blocked with `parent_conflict`/`parent_cycle`; it is not restored
 as a standalone work. A version 2 file whose episode has no parent field keeps
-its legacy behaviour and reports that the parent was not restored.
+its legacy behaviour and reports that the parent was not restored; a version 2
+document that does carry `parent` is rejected as invalid.
 
 An episode parent is exported even when the series has no personal review, so an
 episode review never loses its evaluation parent. Parent aliases resolve as that
 same series and never become episode references.
 
-Version 3 list items use `workRef` to select a work in the same document.
+Version 3 list items use `workRef` to select a work in the same document; version
+2 list items keep their embedded work identity.
 Progress carries `mediaIdentity` for its exact edition and retains title,
 track/disc numbers and position. The importer requires an unambiguous media
 match. `personal_transfer_progress` retains unmatched incoming resume data for

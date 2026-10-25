@@ -5,11 +5,11 @@
 **Blocked by:** [10：来源生命周期与记录保留](10-source-lifecycle-retention.md)；[21：有效译文语料、覆盖状态与严格语言搜索](21-translation-corpus-and-search.md)。ADR-0006 已接受，是本票的规则依据，不是可 `resolved` 的工单依赖。
 
 **Status:** ready-for-agent
-**Implementation:** in-progress；现有 `catalogprune` 已有 source-only alias 保护，但公开证据、数据模型、回滚说明和 095/097 迁移链仍未收口。`096` 已由 `6b4a02ec` 提交，不能再按未提交文件处理。
+**Implementation:** in-progress；现有 `catalogprune` 已有 source-only alias 保护。`096`（`6b4a02ec`）、`097`（`ec624bd3`）、`098`（`531acdf4`）、`099`（`f3dc3a41`）、`100`（`64b25252`）均已提交，`compat/099_dev.sql` 与 `compat/100_dev.sql` 已生成。剩余是公开证据、数据模型、回滚说明的收口，以及当前候选上的复验。
 
 **依据:** [正式规格](../spec.md)、[AGENTS.md](../../../AGENTS.md)、[ADR-0006](../../../docs/decisions/ADR-0006-catalog-remediation-and-translation-consistency.md)、[ADR-0007](../../../docs/decisions/ADR-0007-source-field-translation-cache.md)。
 
-**涉及文件:** `backend/cmd/kikoto/main.go`、`backend/internal/storage/migration.go`（或新增早期 preflight 文件）、备份实现、`backend/migrations/097_*.sql`、`backend/migrations/compat/096_dev.sql`、`docs/development/migrations.md`、`docs/development/release-rollback.md`、`docs/architecture/data-model.md`、指定测试夹具、证据文件。
+**涉及文件:** `backend/cmd/kikoto/main.go`、`backend/internal/storage/migration.go`（或新增早期 preflight 文件）、备份实现、只读校验 `backend/migrations/097_*.sql`、`backend/migrations/compat/096_dev.sql`、`docs/development/migrations.md`、`docs/development/release-rollback.md`、`docs/architecture/data-model.md`、指定测试夹具、证据文件。
 
 ## 验收归属
 
@@ -49,9 +49,9 @@
 
 - [ ] source-only alias、work-backed alias、stale apply、个人评价保留均有 H 回归。
 - [ ] 合成 dry-run 不含生产路径、记录标识或作品编号。
-- [ ] 095 历史、096 已提交、097 已提交（`ec624bd3`）、旧库升级测试有明确证据；不修改已发布迁移。
+- [ ] 095 历史、096–100 已提交、旧库升级测试有明确证据；不修改已发布迁移。当前链为 `096 6b4a02ec → 097 ec624bd3 → 098 531acdf4 → 099 f3dc3a41 → 100 64b25252`，`compat/099_dev.sql`、`compat/100_dev.sql` 已生成。
 - [ ] 旧 095 的 checksum 兼容在 `prepareMigrationState` 之前完成；有旧库、无旧库、指纹不匹配三条路径均有测试，且不存在通用 checksum 绕过。
-- [ ] 097 始终存在并保持编号连续；新装、当前 095 和旧 095 三种数据库都执行同一套重建，且 `foreign_key_check` 0 行。
+- [ ] 097 始终存在并保持编号连续；新装、当前 095 和旧 095 三种数据库都执行同一套重建，且 `foreign_key_check` 0 行。095–100 连续无缺口，需在当前候选上复验。
 - [ ] 数据模型、翻译文档、回滚说明、迁移文档、测试夹具和历史叙述修正。
 - [ ] tracked-evidence 扫描、文档链接、locale 和相关行为回归通过。
 
