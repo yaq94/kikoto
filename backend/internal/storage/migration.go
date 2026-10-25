@@ -136,6 +136,10 @@ type MigrateOptions struct {
 	// Numbered migrations cannot be reverted, so an error stops the upgrade
 	// before the schema changes. It is not called for a fresh database.
 	BeforeUpgrade func(fromVersion int, toVersion int) error
+	// PreflightBackupDir receives the snapshot and audit record for the
+	// one-time legacy 095 checksum normalization. Empty derives a backups
+	// directory beside a file-backed database.
+	PreflightBackupDir string
 	// Development adds the development baselines in compat/ to the catalog.
 	// Without it the catalog ignores compat/ and refuses a database whose
 	// ledger records a development baseline.
@@ -157,6 +161,11 @@ func MigrateFSWithOptions(db *sql.DB, migrationFS fs.FS, appVersion string, opti
 	}
 	if migrationFS == nil {
 		return errors.New("migrate database: nil migration filesystem")
+	}
+	// This must run before prepareMigrationCatalog reads the ledger. The frozen
+	// 095 checksum gate would otherwise reject the only databases 097 repairs.
+	if _, err := PreflightLegacyMigration095(context.Background(), db, options.PreflightBackupDir); err != nil {
+		return err
 	}
 	catalog, classification, err := prepareMigrationCatalog(db, migrationFS, options.Development)
 	if err != nil {

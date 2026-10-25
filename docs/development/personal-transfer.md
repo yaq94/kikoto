@@ -1,20 +1,29 @@
 # Personal data transfer
 
 `GET /api/user-data/export` and `POST /api/user-data/import[/preview]` use the
-existing account-owned personal store. The exporter writes version 2;
-version 1 and the Kikoeru readers retain numbered-code compatibility.
+existing account-owned personal store. The exporter writes version 3;
+version 1, version 2 and the Kikoeru readers retain numbered-code
+compatibility.
 See [the user contract](../user/en/personal-data.md#export-and-import).
 
-Each version 2 work has `identity: {ref, kind, title, references?, parent?}`.
-`kind` is `work`, `episode` or `series`. An episode's optional `parent` carries
-the exact series reference, title, catalog entry reference, position and
-membership evidence. It is present even when the series has no personal review,
-so an episode review does not lose its evaluation parent. `personal_transfer_ref`
-provides random opaque aliases for exact work, catalog and series rows. Its
-primary work reference is stable across restarts; imported aliases keep repeated
-transfers idempotent. They neither replace `work.id` nor define shared evaluation
-identity. Only personal records select which objects are exported. Source
-references carry no configuration, paths or network addresses.
+Each version 2 or 3 work has `identity: {ref, kind, title, references?, parent?}`.
+`kind` is
+`work`, `episode` or `series`. `personal_transfer_ref` provides random opaque
+aliases for exact work, catalog and series rows. Its primary work reference is
+stable across restarts; imported aliases keep repeated transfers idempotent.
+They neither replace `work.id` nor define shared evaluation identity. Only
+personal records select which objects are exported. Source references carry no
+configuration, paths or network addresses.
+
+Version 3 adds `parent` only to an episode identity. It contains the minimum
+series identity (`ref`, `kind: "series"`, `title`, no rating, note or progress);
+there is no nested parent. The `s:` parent reference belongs to the
+`catalog_series` transfer row, never to the episode work. A parent series may
+also appear as a top-level work; it is imported once and keeps its own personal
+state. If the parent is missing, ambiguous, cyclic or points to another object,
+the episode is blocked with `parent_conflict`/`parent_cycle`; it is not restored
+as a standalone work. Version 2, which has no parent field, keeps its legacy
+`relationships_not_imported` warning.
 
 Version 2 list items use `workRef` to select a work in the same document.
 Progress carries `mediaIdentity` for its exact edition and retains title,
@@ -33,15 +42,16 @@ reference then resolves to that work on later imports. Without registration
 permission the whole import is rejected, as with any other missing work.
 
 The importer keeps the evaluation level: a catalog episode must not become a
-standalone work or series, and a series reference cannot become a work. An
-episode's explicit `parent` rebuilds the same minimal series work, catalog entry
-and ordered membership when they are absent. It never matches a parent from a
-title or path and never changes an existing membership. A missing parent with no
-existing membership is reported as `parent_missing`; a contradictory parent is
-reported as `parent_conflict`, and neither condition registers the episode alone.
-The importer never downloads media, starts a media workflow or reconstructs
-shared associations. Unknown source references are retained as transfer aliases
-and reported as having no source connection.
+standalone work or series, and a series reference cannot become a work. On a
+v3 episode import it writes `work.parent_work_id`, sets the episode's primary
+`personal_transfer_ref.object_kind` to `episode`, and creates or reuses a
+`catalog_series` row for an otherwise unknown parent. A personal-only series
+has no `catalog_series_member` because there is no `source_catalog_entry`; the
+series endpoint lists its children through `work.parent_work_id` and returns
+`catalogEntryId=0`. It never downloads media, starts a media workflow,
+reconstructs shared associations or invents source membership. Unknown source
+references are retained as transfer aliases and reported as having no source
+connection.
 
 Review planning groups exact references through `shared_work_identity`.
 Different nonempty incoming values block the whole evaluation group, including
