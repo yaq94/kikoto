@@ -53,6 +53,8 @@ func TestCatalogSeriesUpgradePreviewRestartAndStaleConfirmation(t *testing.T) {
 		INSERT INTO file_source_endpoint(file_source_id,api_url,base_url) VALUES(7,'https://source.example.invalid','https://source.example.invalid');
 		INSERT INTO work(id,primary_code,title) VALUES(11,'','Example A'),(12,'','Example B');
 		INSERT INTO source_catalog_entry(id,file_source_id,root_path,title,work_id) VALUES(1,7,'/Example A','Example A',11),(2,7,'/Example B','Example B',12);
+		INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes) VALUES
+			(1,'a.mp3','A','audio',1),(2,'b.mp3','B','audio',1);
 		INSERT INTO user_work_state(user_id,work_id,rating,note) SELECT id,11,4,'Private A' FROM user_account WHERE username='synthetic-user';
 		INSERT INTO user_work_state(user_id,work_id,rating,note) SELECT id,12,1,'Private B' FROM user_account WHERE username='synthetic-user';
 		INSERT INTO user_work_state(user_id,work_id,rating,note) SELECT id,11,2,'Other private A' FROM user_account WHERE username='synthetic-listener';`)

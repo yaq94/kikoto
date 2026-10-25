@@ -10,7 +10,8 @@ import (
 
 // A metadata-only parent is catalog provenance, not a card. Both the detail and
 // review routes must hide it, while a retired alias without a source remains
-// readable for old links.
+// readable for old links. A source-backed zero-file identity has no current
+// published release either, so admission hides it like any other no-audio card.
 func TestSourceCatalogHidesMetadataOnlyParentsButKeepsSourcelessAliases(t *testing.T) {
 	db := openMigratedTestDB(t)
 	if _, err := db.Exec(`INSERT INTO file_source(id,code,display_name,source_type)
@@ -45,8 +46,8 @@ func TestSourceCatalogHidesMetadataOnlyParentsButKeepsSourcelessAliases(t *testi
 	if works != 0 {
 		t.Fatalf("hidden parent created %d works", works)
 	}
-	reviewRequest(t, handler, admin, http.MethodGet, "/api/source-catalog/5", "", http.StatusOK)
-	reviewRequest(t, handler, admin, http.MethodPatch, "/api/source-catalog/5/user-state", `{"rating":3}`, http.StatusOK)
+	reviewRequest(t, handler, admin, http.MethodGet, "/api/source-catalog/5", "", http.StatusNotFound)
+	reviewRequest(t, handler, admin, http.MethodPatch, "/api/source-catalog/5/user-state", `{"rating":3}`, http.StatusNotFound)
 	reviewRequest(t, handler, admin, http.MethodGet, "/api/source-catalog/5/tracks", "", http.StatusNotFound)
 	reviewRequest(t, handler, admin, http.MethodGet, "/api/source-catalog/2", "", http.StatusOK)
 	alias := reviewRequest(t, handler, admin, http.MethodGet, "/api/source-catalog/3", "", http.StatusOK)

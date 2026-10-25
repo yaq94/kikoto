@@ -74,7 +74,10 @@ func (s *Server) updateSourceCatalogUserState(w http.ResponseWriter, r *http.Req
 			writeError(w, admissionErr)
 			return
 		}
-		if admission.Files > 0 && admission.Audio == 0 {
+		// A retained missing record has no current published file set to judge;
+		// every other source-backed card must pass the same admission rule as
+		// the detail, tracks and browse routes.
+		if catalogEntryAdmissionRequired(entry) && !admission.Admitted() {
 			writeCatalogEntryNotAvailable(w, admission)
 			return
 		}

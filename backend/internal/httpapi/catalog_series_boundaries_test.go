@@ -37,6 +37,10 @@ func TestCatalogSeriesIndexKeepsAnExistingReviewedContainer(t *testing.T) {
 	if _, err := s.db.Exec(`INSERT INTO source_catalog_entry(id,file_source_id,root_path,title,work_id) VALUES(1,?,'/Example','Example',11)`, sid); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := s.db.Exec(`INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes)
+		VALUES(1,'track.mp3','Track','audio',1)`); err != nil {
+		t.Fatal(err)
+	}
 	translationRequest(t, host, admin, "PATCH", "/api/source-catalog/1/user-state", `{"rating":4,"note":"Original review"}`, 200)
 	base := "/api/remote-sources/" + strconv.Itoa(sid)
 	translationRequest(t, host, admin, "POST", base+"/catalog/index", `{"intervalMs":100,"minFreeBytes":0}`, 202)
@@ -71,7 +75,9 @@ func TestCatalogSeriesPreviewBoundsAnonymousReadAndTranslation(t *testing.T) {
 	s, host, admin, listener := translationHTTPFixture(t)
 	metadataReviewExec(t, s.db, `INSERT INTO file_source(id,code,display_name,source_type) VALUES(7,'example_remote_a','Example Remote A','openlist');
  INSERT INTO file_source_endpoint(file_source_id,base_url,api_url) VALUES(7,'https://source.example.invalid','https://source.example.invalid');
- INSERT INTO source_catalog_entry(id,file_source_id,root_path,title) VALUES(1,7,'/Example A','Example A'),(2,7,'/Example B','Example B');`)
+	 INSERT INTO source_catalog_entry(id,file_source_id,root_path,title) VALUES(1,7,'/Example A','Example A'),(2,7,'/Example B','Example B');
+	 INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes) VALUES
+		(1,'a.mp3','A','audio',1),(2,'b.mp3','B','audio',1);`)
 	const body = `{"title":"Example series","catalogEntryIds":[1,2]}`
 	translationRequest(t, host, admin, "PATCH", "/api/access-policy", `{"anonymousAccessEnabled":true}`, 200)
 	translationRequest(t, host, nil, "POST", "/api/catalog-series/previews", body, 401)

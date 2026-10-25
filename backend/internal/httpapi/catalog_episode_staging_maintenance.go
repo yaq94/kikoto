@@ -101,42 +101,6 @@ func (s *Server) discardCatalogEpisodeOrphans(ctx context.Context, sourceID int6
 	return s.discardCatalogEpisodePendingRoots(ctx, sourceID, parent, orphans)
 }
 
-// deleteCatalogEpisodeMappings clears bookkeeping for a split whose parent
-// state row has already published. Publishing deletes the same rows in its own
-// transaction; this bounded helper remains for repair callers that must clear a
-// legacy leftover without rewriting the published state.
-func (s *Server) deleteCatalogEpisodeMappings(ctx context.Context, sourceID int64, parent string, entryIDs []int64) {
-	for start := 0; start < len(entryIDs); start += catalogEpisodeWriteRows {
-		end := start + catalogEpisodeWriteRows
-		if end > len(entryIDs) {
-			end = len(entryIDs)
-		}
-		tx, release, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
-		if err != nil {
-			logCatalogEpisodeMaintenance("pending mappings", err)
-			return
-		}
-		placeholders := make([]string, end-start)
-		args := make([]any, 0, end-start+2)
-		args = append(args, sourceID, parent)
-		for index, id := range entryIDs[start:end] {
-			placeholders[index] = "?"
-			args = append(args, id)
-		}
-		_, err = tx.ExecContext(ctx, `DELETE FROM source_catalog_episode_pending
-			WHERE source_id=? AND parent_root=? AND catalog_entry_id IN (`+
-			strings.Join(placeholders, ",")+`)`, args...)
-		if err == nil {
-			err = tx.Commit()
-		}
-		release()
-		if err != nil {
-			logCatalogEpisodeMaintenance("pending mappings", err)
-			return
-		}
-	}
-}
-
 // markCatalogEpisodeStaleCards updates at most 100 entry rows per transaction.
 func (s *Server) markCatalogEpisodeStaleCards(ctx context.Context, sourceID int64, parent string, keep map[int64]bool) error {
 	lastID := int64(0)

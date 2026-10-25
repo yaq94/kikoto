@@ -169,7 +169,7 @@ func advanceCatalogScheduleTx(ctx context.Context, tx *sql.Tx, sourceID int64, k
 		return err
 	case "weekly":
 		_, err := tx.ExecContext(ctx, `UPDATE source_catalog_schedule SET daily_due_at=?,weekly_due_at=?,
-				resume_full_pending=0,pending_full_run_id=NULL,updated_at=CURRENT_TIMESTAMP
+				resume_full_pending=0,pending_full_run_id=NULL,deferred_until=0,deferred_reason='',updated_at=CURRENT_TIMESTAMP
 			WHERE file_source_id=?`, nextCatalogDailyDue(now).Unix(), nextCatalogWeeklyDue(now).Unix(), sourceID)
 		return err
 	case "manual":

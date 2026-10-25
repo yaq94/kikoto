@@ -493,6 +493,99 @@ func TestCatalogEpisodePublishedFilesSurviveAStalePendingMappingRetry(t *testing
 	}
 }
 
+// A new episode staged below an already published split is the row the final
+// transaction deletes after flipping the parent publication row. Injecting a
+// failure on that DELETE must roll the flip back and must not touch the
+// published episodes or their files; only the not-yet-public episode is
+// compensated.
+func TestCatalogEpisodeFinalizeCleanupFailureKeepsPublishedSplit(t *testing.T) {
+	f := newLooseWorkFixture(t, episodeStagingTree(110))
+	files := mustOpenListFiles(t, f, "/Example")
+	if err := persistEpisodeStagingFiles(t, f, files); err != nil {
+		t.Fatal(err)
+	}
+	published := episodePublications(t, f)
+	if len(published) != 2 {
+		t.Fatalf("published roots=%v, want the initial two", published)
+	}
+	// The next scan adds one episode below the already published split. Its
+	// pending mapping is the only row the finalize transaction has to delete.
+	tree := episodeStagingTree(110)
+	tree["/Example"] = append(tree["/Example"], looseDir("Episode 3"))
+	tree["/Example/Episode 3"] = []map[string]any{looseAudio("bonus.mp3")}
+	f.updates(tree)
+	files = mustOpenListFiles(t, f, "/Example")
+	type cardState struct {
+		id    int64
+		files int
+	}
+	before := map[string]cardState{}
+	rows, err := f.server.db.Query(`SELECT e.root_path,e.id,
+			(SELECT count(*) FROM source_catalog_file f WHERE f.catalog_entry_id=e.id)
+		FROM source_catalog_entry e WHERE e.file_source_id=? AND e.root_path LIKE '/Example%'`,
+		f.sourceID(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for rows.Next() {
+		var root string
+		var state cardState
+		if err = rows.Scan(&root, &state.id, &state.files); err != nil {
+			t.Fatal(err)
+		}
+		before[root] = state
+	}
+	readErr := rows.Err()
+	_ = rows.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if len(before) != 2 {
+		t.Fatalf("published cards=%v, want two", before)
+	}
+
+	// The failure targets only the DELETE that runs after the publication row
+	// became published in the same transaction. The compensation path sees the
+	// rolled-back pending state and is not affected.
+	metadataReviewExec(t, f.server.db, `CREATE TRIGGER fail_finalize_mapping_cleanup
+		BEFORE DELETE ON source_catalog_episode_pending
+		WHEN EXISTS(SELECT 1 FROM source_catalog_episode_publication publication
+			WHERE publication.source_id=OLD.source_id AND publication.parent_root=OLD.parent_root
+				AND publication.state='published')
+		BEGIN SELECT RAISE(ABORT,'synthetic finalize mapping cleanup failure'); END;`)
+	err = persistEpisodeStagingFiles(t, f, files)
+	if err == nil || !strings.Contains(err.Error(), "synthetic finalize mapping cleanup failure") {
+		t.Fatalf("persist error=%v, want the injected finalize cleanup failure", err)
+	}
+	metadataReviewExec(t, f.server.db, `DROP TRIGGER fail_finalize_mapping_cleanup`)
+
+	for root, want := range before {
+		var got cardState
+		if err = f.server.db.QueryRow(`SELECT id,
+				(SELECT count(*) FROM source_catalog_file f WHERE f.catalog_entry_id=e.id)
+			FROM source_catalog_entry e WHERE e.file_source_id=? AND e.root_path=?`,
+			f.sourceID(t), root).Scan(&got.id, &got.files); err != nil {
+			t.Fatalf("published card %s after the failed finalize: %v", root, err)
+		}
+		if got != want {
+			t.Fatalf("published card %s changed across the failed finalize: before=%+v after=%+v", root, want, got)
+		}
+	}
+	var newEpisode int
+	if err = f.server.db.QueryRow(`SELECT count(*) FROM source_catalog_entry WHERE root_path='/Example/Episode 3'`).Scan(&newEpisode); err != nil {
+		t.Fatal(err)
+	}
+	if newEpisode != 0 {
+		t.Fatalf("unpublished episode survived compensation: %d rows", newEpisode)
+	}
+	if got := episodePendingCount(t, f); got != 0 {
+		t.Fatalf("pending mappings=%d after compensation, want zero", got)
+	}
+}
+
 // Between the activation batches an entry already has its source identity but
 // the parent publication row is still pending. Series detail and tracks must
 // hide it until that one row flips, then expose it without rewriting the entry.

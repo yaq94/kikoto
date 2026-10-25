@@ -30,7 +30,7 @@ func catalogRootAdmissionTx(ctx context.Context, tx *sql.Tx, sourceID, generatio
 			SELECT 1 FROM source_catalog_directory d
 			JOIN source_catalog_observation o ON o.file_source_id=d.file_source_id AND o.directory_path=d.path AND o.revision=d.revision
 			WHERE d.file_source_id=?1 AND d.generation=?2 AND d.catalog_root=?3
-					AND d.work_split<>'duplicate' LIMIT %d)),
+						AND d.work_split<>'duplicate' AND o.kind<>'folder' LIMIT %d)),
 		(SELECT count(*) FROM (
 			SELECT 1 FROM source_catalog_directory d
 			JOIN source_catalog_observation o ON o.file_source_id=d.file_source_id AND o.directory_path=d.path AND o.revision=d.revision
@@ -40,7 +40,7 @@ func catalogRootAdmissionTx(ctx context.Context, tx *sql.Tx, sourceID, generatio
 			SELECT 1 FROM source_catalog_directory d
 			JOIN source_catalog_observation o ON o.file_source_id=d.file_source_id AND o.directory_path=d.path AND o.revision=d.revision
 			WHERE d.file_source_id=?1 AND d.generation=?2 AND d.catalog_root=?3
-					AND d.work_split<>'duplicate' AND o.kind<>'audio' LIMIT %d)),
+						AND d.work_split<>'duplicate' AND o.kind<>'audio' AND o.kind<>'folder' LIMIT %d)),
 		NOT EXISTS(SELECT 1 FROM source_catalog_directory d
 			WHERE d.file_source_id=?1 AND d.generation=?2 AND d.catalog_root=?3
 					AND d.status<>'complete' AND NOT (d.status='empty' AND d.error_code='not_found'))`,
@@ -184,18 +184,21 @@ func (s *Server) blockUnadmittedCatalogRootTx(ctx context.Context, tx *sql.Tx, s
 // numbers. Each count stops at the first row that can decide its threshold, and
 // the catalog entry index serves the probes.
 func catalogEntryAdmittedSQL(alias string) string {
+	publishedFiles := func(fileAlias string) string {
+		return fmt.Sprintf(`%[1]s.catalog_entry_id=%[2]s.id AND %[1]s.kind<>'folder' AND %[1]s.observed_generation=%[2]s.last_seen_generation`, fileAlias, alias)
+	}
 	return fmt.Sprintf(`(
-		EXISTS(SELECT 1 FROM source_catalog_file aqf WHERE aqf.catalog_entry_id=%[1]s.id AND aqf.kind='audio')
+			EXISTS(SELECT 1 FROM source_catalog_file aqf WHERE aqf.catalog_entry_id=%[1]s.id AND aqf.kind='audio' AND aqf.observed_generation=%[1]s.last_seen_generation)
 			AND %[2]s
-            AND (SELECT count(*) FROM (SELECT 1 FROM source_catalog_file af WHERE af.catalog_entry_id=%[1]s.id LIMIT %[3]d)) <= %[4]d
+	            AND (SELECT count(*) FROM (SELECT 1 FROM source_catalog_file af WHERE %[3]s LIMIT %[4]d)) <= %[5]d
             AND NOT (
-                (SELECT count(*) FROM (SELECT 1 FROM source_catalog_file anf WHERE anf.catalog_entry_id=%[1]s.id AND anf.kind<>'audio' LIMIT %[5]d)) > %[6]d
-                AND (SELECT count(*) FROM (SELECT 1 FROM source_catalog_file aaf WHERE aaf.catalog_entry_id=%[1]s.id AND aaf.kind='audio' LIMIT %[7]d)) < %[7]d
+	                (SELECT count(*) FROM (SELECT 1 FROM source_catalog_file anf WHERE %[6]s AND anf.kind<>'audio' AND anf.kind<>'folder' LIMIT %[7]d)) > %[8]d
+		                AND (SELECT count(*) FROM (SELECT 1 FROM source_catalog_file aaf WHERE %[9]s AND aaf.kind='audio' LIMIT %[10]d)) < %[10]d
             )
-		)`, alias, catalogEntryPendingSQL(alias),
-		catalogadmission.ProbeFiles+1, catalogadmission.ProbeFiles,
-		catalogadmission.ProbeNonAudio+1, catalogadmission.ProbeNonAudio,
-		catalogadmission.ProbeAudio)
+			)`, alias, catalogEntryPendingSQL(alias),
+		publishedFiles("af"), catalogadmission.ProbeFiles+1, catalogadmission.ProbeFiles,
+		publishedFiles("anf"), catalogadmission.ProbeNonAudio+1, catalogadmission.ProbeNonAudio,
+		publishedFiles("aaf"), catalogadmission.ProbeAudio)
 }
 
 // catalogEntryAdmission is the structured answer for one card id. The counts
@@ -215,12 +218,21 @@ func catalogPublishedEntryAdmission(ctx context.Context, q interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
 }, id int64) (catalogEntryAdmission, error) {
 	var adm catalogEntryAdmission
+	// Count the card's current published file set: the rows observed in the
+	// generation that last published the entry. Rows left by an older
+	// generation are provenance for the tracks view, not part of this card's
+	// published release, and folder rows are directory markers rather than
+	// files. The publisher applies the same exclusion.
+	// One statement reads the entry's generation and its three bounded counts,
+	// so a concurrent publish cannot change the generation between the lookup
+	// and the counts.
 	err := q.QueryRowContext(ctx, fmt.Sprintf(`SELECT
-			(SELECT count(*) FROM (SELECT 1 FROM source_catalog_file f WHERE f.catalog_entry_id=? LIMIT %d)),
-			(SELECT count(*) FROM (SELECT 1 FROM source_catalog_file f WHERE f.catalog_entry_id=? AND f.kind='audio' LIMIT %d)),
-			(SELECT count(*) FROM (SELECT 1 FROM source_catalog_file f WHERE f.catalog_entry_id=? AND f.kind<>'audio' LIMIT %d))`,
+			(SELECT count(*) FROM (SELECT 1 FROM source_catalog_file f WHERE f.catalog_entry_id=e.id AND f.kind<>'folder' AND f.observed_generation=e.last_seen_generation LIMIT %d)),
+			(SELECT count(*) FROM (SELECT 1 FROM source_catalog_file f WHERE f.catalog_entry_id=e.id AND f.kind='audio' AND f.observed_generation=e.last_seen_generation LIMIT %d)),
+			(SELECT count(*) FROM (SELECT 1 FROM source_catalog_file f WHERE f.catalog_entry_id=e.id AND f.kind<>'audio' AND f.kind<>'folder' AND f.observed_generation=e.last_seen_generation LIMIT %d))
+		FROM source_catalog_entry e WHERE e.id=?`,
 		catalogadmission.ProbeFiles+1, catalogadmission.ProbeAudio, catalogadmission.ProbeNonAudio+1),
-		id, id, id).Scan(&adm.Files, &adm.Audio, &adm.NonAudio)
+		id).Scan(&adm.Files, &adm.Audio, &adm.NonAudio)
 	if err != nil {
 		return catalogEntryAdmission{}, err
 	}
@@ -236,6 +248,16 @@ func catalogPublishedEntryAdmitted(ctx context.Context, q interface {
 		return false, err
 	}
 	return adm.Admitted(), nil
+}
+
+// catalogEntryAdmissionRequired reports whether a source-backed card must pass
+// the published-file bounds before it can be read. A retained missing card is
+// provenance with personal state: its source confirmed the absence, so it has
+// no current published file set to judge. Every other source-backed card,
+// including a zero-file or folder-only row, is judged by the same rule; there
+// is no implicit zero-file bypass.
+func catalogEntryAdmissionRequired(entry catalogEntry) bool {
+	return entry.SourceID != 0 && entry.Status != "missing"
 }
 
 // clearCatalogRootPendingTx removes one blocked card from the publish queue.
