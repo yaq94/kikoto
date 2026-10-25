@@ -142,3 +142,38 @@ func TestAdminResetPasswordRefusesEnvironmentManagedAccount(t *testing.T) {
 		t.Fatalf("other account exit code = %d, stderr = %s", code, stderr.String())
 	}
 }
+
+func TestAdminPreflight095ReportsCurrentChecksum(t *testing.T) {
+	migratedCommandTestDatabase(t)
+	backupDir := filepath.Join(t.TempDir(), "backups")
+	var stdout, stderr bytes.Buffer
+	if code := runAdminCommand([]string{"preflight-095", "--backup-dir", backupDir}, strings.NewReader(""), &stdout, &stderr); code != 0 {
+		t.Fatalf("preflight-095 exit code = %d, stderr = %s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "Legacy 095 checksum is already current; no change.") {
+		t.Fatalf("preflight-095 output = %s", stdout.String())
+	}
+	if _, err := os.Stat(backupDir); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("preflight-095 created a backup directory for a current database: %v", err)
+	}
+}
+
+func TestAdminPreflight095ReportsNoLegacyChecksum(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "empty.db")
+	if err := os.WriteFile(path, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("KIKOTO_MODE", "production")
+	t.Setenv("KIKOTO_DB_PATH", path)
+	t.Setenv("KIKOTO_DB_BACKUP_DIR", "")
+	var stdout, stderr bytes.Buffer
+	if code := runAdminCommand([]string{"preflight-095", "--database", path}, strings.NewReader(""), &stdout, &stderr); code != 0 {
+		t.Fatalf("preflight-095 exit code = %d, stderr = %s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "No legacy 095 checksum requires normalization; no change.") {
+		t.Fatalf("preflight-095 output = %s", stdout.String())
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(path), "backups")); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("preflight-095 created a backup directory for an empty database: %v", err)
+	}
+}

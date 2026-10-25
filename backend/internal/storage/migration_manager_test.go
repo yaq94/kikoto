@@ -16,7 +16,7 @@ import (
 
 var numberedMigrationFilePattern = regexp.MustCompile(`^[0-9]{3}_[a-z0-9][a-z0-9_]*\.sql$`)
 
-const latestNumberedMigrationVersion = 96
+const latestNumberedMigrationVersion = 97
 
 // latestReleasedBaseline is the newest file in migrations/baseline/, which
 // production uses for a fresh database.
@@ -307,8 +307,8 @@ func TestMigrateAdoptsLegacyMigrationLedger(t *testing.T) {
 
 func TestMigrateBaselineMatchesCompleteIncrementalChain(t *testing.T) {
 	migrationDir := filepath.Join("..", "..", "migrations")
-	if got := latestNumberedMigrationFilename(t, migrationDir); got != "096_catalog_episode_pending.sql" {
-		t.Fatalf("latest migration = %q, want the catalog episode pending migration", got)
+	if got := latestNumberedMigrationFilename(t, migrationDir); got != "097_source_field_translation_foreign_key.sql" {
+		t.Fatalf("latest migration = %q, want the source-field translation foreign-key migration", got)
 	}
 	incrementalDir := copyNumberedMigrations(t, migrationDir)
 
