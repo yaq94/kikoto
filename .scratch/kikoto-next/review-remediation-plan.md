@@ -153,7 +153,7 @@ CREATE INDEX source_catalog_schedule_due
 
 ### 6.1 数据模型与迁移
 
-在 096 已提交后使用计划编号 099（097 是 095 修复，098 是目录调度；若集成时编号变化，按连续链调整）：
+在 096 已提交后使用计划编号 099（097 是 095 重建，098 是目录调度；迁移运行器拒绝跳号，实测缺 097/098 时 099 会报 `expected version 097, found 099`）。21 的 099 只能在前两项提交存在后落地，不得临时改号绕过。
 
 - `content_translation` 增加 `config_key TEXT NOT NULL DEFAULT ''`；索引 `(language, entity_kind, field, config_key, entity_id)`，并增加短查询覆盖索引 `(language, entity_kind, field, id, translated_text)`。
 - `translation_prefill_state` 增加 `config_key TEXT NOT NULL DEFAULT ''`、`cursor_kind TEXT NOT NULL DEFAULT 'entry'`、`cursor_field TEXT NOT NULL DEFAULT 'title'`、`cursor_language TEXT NOT NULL DEFAULT ''`、`cursor_id INTEGER NOT NULL DEFAULT 0`、`last_error TEXT` 仍保留。`id=1` 单行状态足够，因为一个配置只有一个 prefill 队列；游标顺序固定为 `(kind, field, id, language)`。
