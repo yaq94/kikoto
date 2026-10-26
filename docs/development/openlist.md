@@ -33,16 +33,24 @@ observation generation. Completed directories survive retries. Changing page
 size restarts only incomplete page sequences.
 
 `GET /api/remote-sources/{id}/catalog/index?page=1` requires the same permission.
-It returns run id, timestamps, attempted pages, observed entries, indexed entries,
-completed/pending/failed/restricted/unconfirmed-empty directory counts and
-the unresolved detail rows. The detail total uses the same completed predicate
-as the counters: a confirmed `not_found` directory is completed coverage and is
-not listed as an unresolved detail.
-paginated partition and unresolved-directory details (50 per list). It never
-reports a whole-source percentage with an unknown denominator. An empty answer
-remains unconfirmed; permission failures and unfinished ranges prevent complete
+It returns run id, timestamps, attempted pages, observed entries, indexed
+entries, completed/pending/failed/restricted/unconfirmed-empty directory counts,
+and paginated partition and unresolved-directory details (50 per list).
+`finishedAt` is present only once the run settled, so a stopped partial pass is
+distinguishable from a live one. The detail total uses the same completed
+predicate as the counters: a confirmed `not_found` directory is completed
+coverage and is not listed as an unresolved detail. The endpoint never reports a
+whole-source percentage with an unknown denominator. An empty answer remains
+unconfirmed; permission failures and unfinished ranges prevent complete
 coverage. The existing workflow cancel and retry endpoints stop or resume the
 same scan without discarding its published catalog or private reviews.
+
+Browse cards carry `availability` and `remotePlayable` as separate answers.
+`availability` is the last observed verdict for the card's range; a failed,
+restricted, maintenance or unconfirmed range proves nothing about its files, so
+the detail, track and media endpoints keep serving the last published set and
+`remotePlayable` stays true. Only a confirmed `missing` card, an operator
+exclusion or a disabled source removes playback.
 
 ## Directory exclusions
 
