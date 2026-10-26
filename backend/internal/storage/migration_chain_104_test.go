@@ -8,34 +8,34 @@ import (
 	"testing"
 )
 
-// The integration branch's chain head is 105. These tests pin the whole
+// The integration branch's chain head is 104. These tests pin the whole
 // upgrade path rather than one migration: a fresh install, the two boundaries
 // that exist in the field (68 and 84), a restart, and database integrity.
-func TestMigrationChain105FreshInstall(t *testing.T) {
+func TestMigrationChain104FreshInstall(t *testing.T) {
 	db := openMigrationManagerDB(t)
 	if err := Migrate(db, completeMigrationDir(t)); err != nil {
 		t.Fatalf("fresh install: %v", err)
 	}
 
-	assertSchemaVersion(t, db, 105)
+	assertSchemaVersion(t, db, 104)
 	var history int
 	if err := db.QueryRow("SELECT COUNT(*) FROM schema_migration").Scan(&history); err != nil {
 		t.Fatal(err)
 	}
-	if want := 1 + 105 - latestReleasedBaselineVersion; history != want {
+	if want := 1 + 104 - latestReleasedBaselineVersion; history != want {
 		t.Fatalf("fresh install history = %d rows, want %d", history, want)
 	}
 	var filename string
 	if err := db.QueryRow("SELECT filename FROM schema_migration ORDER BY version DESC LIMIT 1").Scan(&filename); err != nil {
 		t.Fatal(err)
 	}
-	if want := "105_translation_short_scan_scope.sql"; filename != want {
+	if want := "104_source_catalog_entry_admission.sql"; filename != want {
 		t.Fatalf("last migration = %q, want %q", filename, want)
 	}
 	assertMigrationIntegrity(t, db)
 }
 
-func TestMigrationChain105Upgrades068AndKeepsUserData(t *testing.T) {
+func TestMigrationChain104Upgrades068AndKeepsUserData(t *testing.T) {
 	sourceDir := filepath.Join("..", "..", "migrations")
 	db := openMigrationManagerDB(t)
 	if err := Migrate(db, copyNumberedMigrationsThrough(t, sourceDir, 68)); err != nil {
@@ -46,9 +46,9 @@ func TestMigrationChain105Upgrades068AndKeepsUserData(t *testing.T) {
 	}
 
 	if err := Migrate(db, completeMigrationDir(t)); err != nil {
-		t.Fatalf("upgrade 068 to 105: %v", err)
+		t.Fatalf("upgrade 068 to 104: %v", err)
 	}
-	assertSchemaVersion(t, db, 105)
+	assertSchemaVersion(t, db, 104)
 	var value string
 	if err := db.QueryRow(`SELECT value_json FROM app_setting WHERE key = 'chain_103_probe'`).Scan(&value); err != nil {
 		t.Fatalf("read user data after upgrade: %v", err)
@@ -61,7 +61,7 @@ func TestMigrationChain105Upgrades068AndKeepsUserData(t *testing.T) {
 
 // 084 is the production starting point: the released baseline is 068, and the
 // field database stopped at the last pre-translation-catalog schema.
-func TestMigrationChain105Upgrades084ToCurrentShape(t *testing.T) {
+func TestMigrationChain104Upgrades084ToCurrentShape(t *testing.T) {
 	sourceDir := filepath.Join("..", "..", "migrations")
 	db := openMigrationManagerDB(t)
 	if err := Migrate(db, copyNumberedMigrationsThrough(t, sourceDir, 84)); err != nil {
@@ -75,19 +75,18 @@ func TestMigrationChain105Upgrades084ToCurrentShape(t *testing.T) {
 	}
 
 	if err := Migrate(db, completeMigrationDir(t)); err != nil {
-		t.Fatalf("upgrade 084 to 105: %v", err)
+		t.Fatalf("upgrade 084 to 104: %v", err)
 	}
-	assertSchemaVersion(t, db, 105)
+	assertSchemaVersion(t, db, 104)
 	assertCurrentSourceFieldTranslationSchema(t, db)
 	assertWorkParentColumnAndIndex(t, db)
 	assertTranslationPrefillFailedStatus(t, db)
 	assertTranslationShortScanIndexes(t, db)
 	assertCatalogEntryAdmissionTable(t, db)
-	assertTranslationShortScanScope(t, db)
 	assertMigrationIntegrity(t, db)
 }
 
-func TestMigrationChain105RestartIsIdempotent(t *testing.T) {
+func TestMigrationChain104RestartIsIdempotent(t *testing.T) {
 	db := openMigrationManagerDB(t)
 	dir := completeMigrationDir(t)
 	if err := Migrate(db, dir); err != nil {
@@ -179,7 +178,7 @@ func assertTranslationShortScanIndexes(t *testing.T, db *sql.DB) {
 		t.Fatal(err)
 	}
 	normalized := strings.Join(strings.Fields(strings.ToLower(indexSQL)), " ")
-	want := "create index idx_content_translation_short_scan on content_translation(language,entity_kind,field,source_id,effective,id,origin,config_key,translated_text)"
+	want := "create index idx_content_translation_short_scan on content_translation(language, entity_kind, field, id, origin, config_key, translated_text)"
 	if normalized != want {
 		t.Fatalf("short scan index definition = %q, want %q", normalized, want)
 	}
@@ -218,33 +217,6 @@ func assertCatalogEntryAdmissionTable(t *testing.T, db *sql.DB) {
 	}
 	if foreignKeys != 1 {
 		t.Fatalf("source_catalog_entry_admission cascade foreign key=%d, want 1", foreignKeys)
-	}
-}
-
-// assertTranslationShortScanScope checks the columns the short query reads
-// instead of joining the entity: the source and the current-source flag. The
-// triggers are what keep a stale value from surviving an edit.
-func assertTranslationShortScanScope(t *testing.T, db *sql.DB) {
-	t.Helper()
-	var tableSQL string
-	if err := db.QueryRow(`SELECT COALESCE(sql,'') FROM sqlite_schema
-		WHERE type='table' AND name='content_translation'`).Scan(&tableSQL); err != nil {
-		t.Fatal(err)
-	}
-	for _, column := range []string{"source_id", "effective"} {
-		if !strings.Contains(tableSQL, column) {
-			t.Fatalf("content_translation lacks %s: %s", column, tableSQL)
-		}
-	}
-	var triggers int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_schema WHERE type='trigger'
-		AND name IN ('content_translation_scope_work_update',
-			'content_translation_scope_entry_update',
-			'content_translation_scope_entry_delete')`).Scan(&triggers); err != nil {
-		t.Fatal(err)
-	}
-	if triggers != 3 {
-		t.Fatalf("content_translation scope triggers=%d, want 3", triggers)
 	}
 }
 

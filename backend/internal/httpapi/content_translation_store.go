@@ -167,16 +167,13 @@ func (s *Server) saveContentTranslations(ctx context.Context, rows []contentTran
 	stmt, err := tx.PrepareContext(ctx, `
 		INSERT INTO content_translation(
 		  cache_key, entity_kind, entity_id, entity_key, field, language,
-			  source_text, translated_text, origin, config_key, model, template_version, source_id)
-			VALUES(?,?,?,?,?,?,?,?,?,?,?,?,CASE WHEN ?='entry'
-				THEN (SELECT file_source_id FROM source_catalog_entry WHERE id=?) ELSE NULL END)
+			  source_text, translated_text, origin, config_key, model, template_version)
+			VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(cache_key) DO UPDATE SET
 		  translated_text = excluded.translated_text,
 			  config_key = excluded.config_key,
 		  model = excluded.model,
 		  template_version = excluded.template_version,
-		  source_id = excluded.source_id,
-		  effective = CASE WHEN content_translation.source_text=excluded.source_text THEN 1 ELSE 0 END,
 		  updated_at = CURRENT_TIMESTAMP`)
 	if err != nil {
 		return "", fmt.Errorf("save content translations: %w", err)
@@ -194,8 +191,7 @@ func (s *Server) saveContentTranslations(ctx context.Context, rows []contentTran
 		}
 		if _, err := stmt.ExecContext(ctx, row.CacheKey, row.EntityKind, row.EntityID, row.EntityKey,
 			row.Field, row.Language, row.SourceText, row.TranslatedText,
-			row.Origin, row.ConfigKey, row.Model, row.TemplateVersion,
-			row.EntityKind, row.EntityID); err != nil {
+			row.Origin, row.ConfigKey, row.Model, row.TemplateVersion); err != nil {
 			return "", fmt.Errorf("save content translation %q: %w", row.Field, err)
 		}
 	}

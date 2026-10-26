@@ -24,10 +24,8 @@ func insertTranslatedContent(t *testing.T, db *sql.DB, kind string, id int64, fi
 		configKey = translation.ConfigKey(translation.Config{Model: translation.DefaultModel, DisableThinking: true})
 	}
 	if _, err := db.Exec(`INSERT INTO content_translation(
-		cache_key, entity_kind, entity_id, field, language, source_text, translated_text, origin, config_key, model, template_version, source_id)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,CASE WHEN ?='entry'
-			THEN (SELECT file_source_id FROM source_catalog_entry WHERE id=?) ELSE NULL END)`,
-		key, kind, id, field, language, sourceText, text, origin, configKey, model, template, kind, id); err != nil {
+		cache_key, entity_kind, entity_id, field, language, source_text, translated_text, origin, config_key, model, template_version)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?)`, key, kind, id, field, language, sourceText, text, origin, configKey, model, template); err != nil {
 		t.Fatalf("insert translation %s/%d/%s: %v", kind, id, language, err)
 	}
 }
@@ -445,8 +443,8 @@ func TestContentTranslationSearchRemoteDoesNotTruncateLargeMatchSet(t *testing.T
 		INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes)
 		SELECT i,'01.mp3','01.mp3','audio',1 FROM n;
 		WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<5001)
-		INSERT INTO content_translation(cache_key,entity_kind,entity_id,field,language,source_text,translated_text,origin,config_key,model,template_version,source_id)
-		SELECT 'limit-'||i,'entry',i,'title','zh-Hans','Original '||i,'作品'||i,'model',?,?,?,(SELECT file_source_id FROM source_catalog_entry WHERE id=i) FROM n`,
+		INSERT INTO content_translation(cache_key,entity_kind,entity_id,field,language,source_text,translated_text,origin,config_key,model,template_version)
+		SELECT 'limit-'||i,'entry',i,'title','zh-Hans','Original '||i,'作品'||i,'model',?,?,? FROM n`,
 		translation.ConfigKey(translation.Config{Model: translation.DefaultModel, DisableThinking: true}),
 		translation.DefaultModel, translation.TemplateVersion); err != nil {
 		t.Fatal(err)
@@ -470,13 +468,11 @@ func TestContentTranslationSearchRemoteShortQueryCoversRowsBeyondFiftyThousand(t
 		INSERT INTO source_catalog_entry(id,file_source_id,root_path,title,availability_status)
 		SELECT i,7,'/bulk/'||i,'Original '||i,'available' FROM n;
 		WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<50001)
-		INSERT INTO content_translation(cache_key,entity_kind,entity_id,field,language,source_text,translated_text,origin,source_id)
-		SELECT 'short-marker','entry',1,'title','zh-Hans','甲乙丙','甲乙丙','native',
-			(SELECT file_source_id FROM source_catalog_entry WHERE id=1);
+		INSERT INTO content_translation(cache_key,entity_kind,entity_id,field,language,source_text,translated_text,origin)
+		SELECT 'short-marker','entry',1,'title','zh-Hans','甲乙丙','甲乙丙','native';
 		WITH RECURSIVE n(i) AS (SELECT 2 UNION ALL SELECT i+1 FROM n WHERE i<50001)
-		INSERT INTO content_translation(cache_key,entity_kind,entity_id,field,language,source_text,translated_text,origin,config_key,model,template_version,source_id)
-		SELECT 'short-filler-'||i,'entry',i,'title','zh-Hans','Original '||i,'作品'||i,'model',?,?,?,
-			(SELECT file_source_id FROM source_catalog_entry WHERE id=i) FROM n`,
+		INSERT INTO content_translation(cache_key,entity_kind,entity_id,field,language,source_text,translated_text,origin,config_key,model,template_version)
+		SELECT 'short-filler-'||i,'entry',i,'title','zh-Hans','Original '||i,'作品'||i,'model',?,?,? FROM n`,
 		translation.ConfigKey(translation.Config{Model: translation.DefaultModel, DisableThinking: true}),
 		translation.DefaultModel, translation.TemplateVersion); err != nil {
 		t.Fatal(err)
