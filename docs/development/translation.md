@@ -233,21 +233,23 @@ description rows alone exceed them, the coverage status reports `over_budget`
 and keeps those rows. Only `tag`/`directory` model rows and
 `source_field_translation` rows are eviction candidates.
 
-The local `translation-bench` measurement conditions and results:
+Short-query measurement on the release target (2 vCPU, 3,616,400 KiB, Linux,
+modernc SQLite, 114,000 entities x 4 languages, 20 samples after warmup):
 
 | Condition | Result | Evidence |
 | --- | --- | --- |
-| 456,000 corpus rows (114,000 entities × 4 languages), local machine, card-page short query `limit=200`, p95 | en 1.094 ms, zh-Hans 0.575 ms, ja 1.316 ms, ko 1.506 ms | `.kikoto-work/reports/bench-456k-final.json` |
-| Same corpus, complete-set short query `limit=0` for the total, p95 | en 313.119 ms, zh-Hans 317.013 ms, ja 520.704 ms, ko 478.139 ms | `.kikoto-work/reports/bench-456k-final.json` |
-| Same corpus, target-language title exact match, p95 | 1.58–2.505 ms | `.kikoto-work/reports/bench-456k-final.json` |
-| Same corpus, FTS three characters and longer, p95 | 0.573–1.506 ms | `.kikoto-work/reports/bench-456k-final.json` |
-| Same corpus, numbered exact match | below timer resolution (0.00 ms, max 0.53 ms) | `.kikoto-work/reports/bench-456k-final.json` |
+| Card page, p95 | en 8.37 ms, zh-Hans 8.98 ms, ja 9.38 ms, ko 8.79 ms; zero-match 46.69 ms | `/root/kikoto/bench42k/short4/report.json` |
+| Complete effective set behind the capped total, p95 | en 8.15 ms, zh-Hans 7.35 ms, ja 7.34 ms, ko 7.39 ms; zero-match 51.70 ms | same |
+| Raw scan without the card-id projection, p95 | 50.7-54.2 ms | same |
+| Plan | both arms `SEARCH ct USING COVERING INDEX idx_content_translation_short_scan` | same |
 
-The card-page short query meets the 100 ms limit; the complete-set short query
-does not. The run excludes the D-16 admission join and does not use the target
-hardware. The database measured 425.6 MB (`dbBytes` 446,291,968), the FTS index
-35.9 MB and 404.5 MB after `VACUUM`; insert time was 131–147 s and the WAL peak
-23.3 MB.
+The 1-2 character path is inside the 100 ms limit on the target, including a
+needle that matches nothing. The database measured 740,361,264 bytes and the
+seed took 113.7 s. The earlier local 456,000-row run
+(`.kikoto-work/reports/bench-456k-final.json`) predates the 105 scope columns and
+is kept only as history: its complete-set numbers (313-521 ms) describe the
+pre-105 join shape, not the current one. Exact-title and release-code paths are
+measured by `translation-bench`; the candidate records them under ticket 21.
 
 Free space is read from the nearest existing parent before the data directory
 exists. Low space pauses new background generation (`paused_low_disk`) while

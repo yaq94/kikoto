@@ -693,6 +693,19 @@ func (s *Server) settleCatalogLifecycleBatch(ctx context.Context, job workflowJo
 	if err = setCatalogEntryStatusesTx(ctx, tx.Tx, updates); err != nil {
 		return false, err
 	}
+	// A republished card drops its stale-generation files above, and that
+	// delete clears the stored search scope. The card is still playable, so
+	// restore the scope in the same transaction; a card marked missing stays
+	// cleared, which is the correct answer for a card with no current audio.
+	availableIDs := []int64{}
+	for _, update := range updates {
+		if update.Status == "available" {
+			availableIDs = append(availableIDs, update.ID)
+		}
+	}
+	if err = refreshContentTranslationBrowsableTx(ctx, tx.Tx, availableIDs); err != nil {
+		return false, err
+	}
 	if len(entries) < catalogLifecycleRows {
 		if stage == "observe" {
 			stage = "reconcile"

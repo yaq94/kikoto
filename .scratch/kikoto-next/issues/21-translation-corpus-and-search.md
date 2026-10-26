@@ -93,7 +93,7 @@ prefill 必须按 `entity_kind × field` 枚举：entry 的 title、series 的 t
 - [x] prefill 游标包含语言维度；失败先持久化再推进，重启后 retry 队列仍会重试该语言，不能被后续实体推进掩盖；永久失败不会阻塞其他实体。扫到末尾且无新条目、无 due retry 时写 `failed`，该状态不是终态，下一批仍处理 due retry（`a2a84617`）。
 - [x] 目标语言搜索严格只返回目标语言译文或原生同语言内容；`origin` 才出现原文；编号查询不受语言过滤。
 - [x] work 的标题与简介、entry/series 的标题都参与目标语言搜索与覆盖；entry 不伪造 description；标签、目录名不进入搜索索引。
-- [ ] 1–2 字查询覆盖完整有效集合，明确结果数上限和 p95，不再只扫描每语言最新 50,000 行。`bc880d91` 已把本地、远程与 bench 统一到 `library.ShortTranslationSearchSQL`，远程入口用 `catalogEntryAdmittedSQL` 作为行范围的一部分；`6f39e888` 的 103 索引让有序取页走 keyset 顺序。仍缺 `after` 续扫参数、D-16 join 的目标规模证据和目标硬件 p95。卡片页 `limit=200` 已达标，完整集合未达标，见下方基准。
+- [x] 1–2 字查询覆盖完整有效集合，明确结果数上限和 p95，不再只扫描每语言最新 50,000 行。`bc880d91` 把本地、远程与 bench 统一到 `library.ShortTranslationSearchSQL`；`6f39e888` 的 103 索引让有序取页走 keyset 顺序；`0ec8cda0` 的 105 把 `source_id` 与 `browsable` 物化到译文行，扫描不再回查实体或逐行计算准入。结果上限为 `catalogShortSearchResultLimit=1000`，报告的 total 就是该上限计数；`After` 只用于单字段 arm 的 keyset 续扫（多字段 arm 在设置 `After` 时跳过，避免跨字段游标漏行）。目标机（2 vCPU，113,000 实体 × 4 语言）卡片页 p95 8.37/8.98/9.38/8.79 ms、零命中 46.69 ms；完整集合 p95 8.15/7.35/7.34/7.39 ms、零命中 51.70 ms，均在 100 ms 内。证据 `/root/kikoto/bench42k/short4/report.json`。
 - [x] 本地与远程搜索、简繁归一化、动态内容、重启和失败恢复 H/R/F 覆盖。
 - [ ] modernc SQLite、45.6 万行基准。`bc880d91` 已重写语料与采样：每个实体写四种模型语言、按 id 确定性取样、默认 `--rows 456000`，短查询调用共享生成器。本机基准（`.kikoto-work/reports/bench-456k-final.json`，114,000 实体 × 4 语言，非目标硬件）结果：
   - 卡片页短查询 `limit=200` p95：en 1.094 ms、zh-Hans 0.575 ms、ja 1.316 ms、ko 1.506 ms，达标（≤100 ms）。

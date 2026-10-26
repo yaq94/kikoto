@@ -206,6 +206,12 @@ func applyCatalogExclusionTx(ctx context.Context, tx *sql.Tx, sourceID int64, p 
 			return err
 		}
 	}
+	// Removing an excluded card's files clears its stored search scope. The
+	// card keeps its identity and personal state, but it must not answer a
+	// target-language search any more; recompute the rows in this transaction.
+	if err = refreshContentTranslationBrowsableTx(ctx, tx, ids); err != nil {
+		return err
+	}
 	// A parent card's root can sit above the excluded directory while one of
 	// its files falls inside it. Those rows belong to the excluded subtree and
 	// must go too, or the card would keep advertising audio from a path the
@@ -216,10 +222,19 @@ func applyCatalogExclusionTx(ctx context.Context, tx *sql.Tx, sourceID int64, p 
 	// A file published from a folded format copy carries its own directory.
 	fileBase := `COALESCE(NULLIF(f.source_root,''),` + base + `)`
 	fullPath := `(CASE WHEN ` + fileBase + `='/' THEN '/' || f.relative_path ELSE ` + fileBase + ` || '/' || f.relative_path END)`
+	// The same rule covers a parent card whose files partly sit under the
+	// excluded path: only the surviving file set decides its scope.
+	affected, err := catalogExclusionEntries(ctx, tx, sourceID, p)
+	if err != nil {
+		return err
+	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM source_catalog_file WHERE (catalog_entry_id, relative_path) IN (
 		SELECT f.catalog_entry_id, f.relative_path FROM source_catalog_file f JOIN source_catalog_entry b ON b.id=f.catalog_entry_id
 		WHERE b.file_source_id=? AND `+ancestor+` AND `+catalogPathExcludedSQL("?", fullPath)+`)`,
 		sourceID, p, p, p, p, sourceID, p, p, p, p); err != nil {
+		return err
+	}
+	if err = refreshContentTranslationBrowsableTx(ctx, tx, affected); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM source_catalog_observation

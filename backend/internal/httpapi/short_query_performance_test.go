@@ -8,7 +8,6 @@ import (
 	"os"
 	"runtime"
 	"sort"
-	"strconv"
 	"testing"
 	"time"
 
@@ -43,17 +42,15 @@ type shortQueryReport struct {
 }
 
 type shortQueryCase struct {
-	Language  string          `json:"language"`
-	Needle    string          `json:"needle"`
-	Matches   int             `json:"matches"`
-	HitScan   shortQueryStats `json:"hitScan"`
-	HitSet    shortQueryStats `json:"hitSet"`
-	HitCapped shortQueryStats `json:"hitCapped"`
-	HitPage   shortQueryStats `json:"hitPage"`
-	Complete  shortQueryStats `json:"complete"`
-	Page      shortQueryStats `json:"page"`
-	HitPlan   []string        `json:"hitPlan"`
-	Plan      []string        `json:"plan"`
+	Language string          `json:"language"`
+	Needle   string          `json:"needle"`
+	Matches  int             `json:"matches"`
+	HitScan  shortQueryStats `json:"hitScan"`
+	HitSet   shortQueryStats `json:"hitSet"`
+	Complete shortQueryStats `json:"complete"`
+	Page     shortQueryStats `json:"page"`
+	HitPlan  []string        `json:"hitPlan"`
+	Plan     []string        `json:"plan"`
 }
 
 type shortQueryStats struct {
@@ -129,8 +126,8 @@ func TestShortQueryPerformance(t *testing.T) {
 		t.Logf("report written to %s", out)
 	}
 	for _, item := range report.Cases {
-		t.Logf("%-9s %-6q matches=%d hit p95=%.1f capped p95=%.1f hitpage p95=%.1f card p95=%.1f page p95=%.1f",
-			item.Language, item.Needle, item.Matches, item.HitSet.P95Ms, item.HitCapped.P95Ms, item.HitPage.P95Ms, item.Complete.P95Ms, item.Page.P95Ms)
+		t.Logf("%-9s %-6q matches=%d hit p95=%.1f card p95=%.1f page p95=%.1f",
+			item.Language, item.Needle, item.Matches, item.HitSet.P95Ms, item.Complete.P95Ms, item.Page.P95Ms)
 	}
 }
 
@@ -159,7 +156,6 @@ func shortQueryMeasure(t *testing.T, db *sql.DB, sourceID int64, target library.
 		return db.QueryRowContext(context.Background(), scanCountSQL, scanArgs...).Scan(&total)
 	})
 	hitSQL := hitPrefix + `SELECT count(*) FROM search_hits`
-	hitPageSQL := catalogStatementPrefix(hitPrefix) + `SELECT catalog_entry_id FROM search_hits LIMIT 200`
 	for range warmup {
 		if err := db.QueryRowContext(context.Background(), hitSQL, hitArgs...).Scan(&result.Matches); err != nil {
 			t.Fatalf("%s warm hit set: %v", target.Language, err)
@@ -170,28 +166,6 @@ func shortQueryMeasure(t *testing.T, db *sql.DB, sourceID int64, target library.
 		return db.QueryRowContext(context.Background(), hitSQL, hitArgs...).Scan(&total)
 	})
 	result.HitSet.Rows = result.Matches
-	// A capped total stops after the cap, which is what an interface that shows
-	// "N+" instead of an exact count needs.
-	hitCappedSQL := catalogStatementPrefix(hitPrefix) + `SELECT count(*) FROM (SELECT catalog_entry_id FROM search_hits LIMIT ` +
-		strconv.Itoa(catalogShortSearchResultLimit) + `)`
-	result.HitCapped = shortQuerySample(samples, func() error {
-		var total int
-		return db.QueryRowContext(context.Background(), hitCappedSQL, hitArgs...).Scan(&total)
-	})
-	result.HitCapped.Rows = result.Matches
-	result.HitPage = shortQuerySample(samples, func() error {
-		rows, err := db.QueryContext(context.Background(), hitPageSQL, hitArgs...)
-		if err != nil {
-			return err
-		}
-		defer func() { _ = rows.Close() }()
-		count := 0
-		for rows.Next() {
-			count++
-		}
-		result.HitPage.Rows = count
-		return rows.Err()
-	})
 	result.HitPlan = shortQueryPlan(t, db, hitSQL, hitArgs)
 
 	completeSQL := catalogStatementPrefix(prefix) + `SELECT count(*) ` + from

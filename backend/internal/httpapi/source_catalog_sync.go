@@ -932,9 +932,21 @@ func (s *Server) applyCatalogSyncListing(ctx context.Context, sourceID, generati
 			// A complete parent listing confirmed that the child folder is
 			// gone. Remove the files and internals of that subtree now; the
 			// lifecycle pass then marks a card with no remaining audio missing.
+			// Removing a confirmed-gone subtree clears the stored search scope
+			// of the cards that owned those files. A card that still has audio
+			// in another directory must stay searchable, so recompute the
+			// affected cards in this transaction instead of leaving them
+			// hidden until the next publish.
+			affected, selectErr := catalogExclusionEntries(ctx, tx.Tx, sourceID, childPath)
+			if selectErr != nil {
+				return 0, 0, selectErr
+			}
 			if _, err = tx.ExecContext(ctx, `DELETE FROM source_catalog_file WHERE catalog_entry_id IN (
 					SELECT id FROM source_catalog_entry WHERE file_source_id=? AND (`+catalogExclusionBaseRootSQL+`=? OR substr(`+catalogExclusionBaseRootSQL+`,1,length(?)+1)=? || '/'))`,
 				sourceID, childPath, childPath, childPath); err != nil {
+				return 0, 0, err
+			}
+			if err = refreshContentTranslationBrowsableTx(ctx, tx.Tx, affected); err != nil {
 				return 0, 0, err
 			}
 			if _, err = tx.ExecContext(ctx, `DELETE FROM source_catalog_observation
