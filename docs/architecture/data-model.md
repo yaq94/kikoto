@@ -597,8 +597,7 @@ id, field, language, source text, origin, model, base URL, template version and
 reasoning switch. The row stores `entity_kind` (`entry`, `series` or `work`),
 `entity_id`, `entity_key`, `field` (`title`, `description`, `tag` or
 `directory`), `language`, `source_text`, `translated_text`, `origin`
-(`native` or `model`), `config_key`, `model`, `template_version`, `source_id`
-and `effective`.
+(`native` or `model`), `config_key`, `model` and `template_version`.
 
 `config_key` covers the output-shaping configuration: model, base URL,
 template version and reasoning switch. A native row is current for its
@@ -606,15 +605,10 @@ language. A model row is current only while its `config_key` equals the
 configured key; a row with an empty or different key stays readable and does
 not satisfy current coverage.
 
-`source_id` records the entry's `file_source_id` or the series' `source_id`.
-`effective` is 1 while `source_text` still equals the entity's current title or
-description. Triggers recompute both columns when a work title or description
-changes, when an entry title or file source changes, and when an entry is
-deleted. A NULL `source_id` means the source is unknown. The short-scan index is
-`idx_content_translation_short_scan` on `(language, entity_kind, field,
-source_id, effective, id, origin, config_key, translated_text)`. Its prefix
-separates one source's rows from another's, so a per-source short scan reads a
-single index range instead of joining every candidate to the entity row.
+The short-scan index is `idx_content_translation_short_scan` on `(language,
+entity_kind, field, id, origin, config_key, translated_text)`. Keeping `id`
+next to the range prefix makes an ordered page a plain index read, and the
+trailing columns cover the current-row predicate and the matched text.
 
 The effective entity set is:
 
