@@ -86,7 +86,9 @@ translation config key and prefill cursor columns. `100` adds
 an idempotent backfill. `102` rebuilds `translation_prefill_state` to allow the
 `failed` status and indexes the prefill failure table by
 `(config_key, source_hash)`. `103` replaces the two 099 short-query indexes
-with `idx_content_translation_short_scan`. `105` adds the stored
+with `idx_content_translation_short_scan`. `104` adds
+`source_catalog_entry_admission`, the per-card admission counts, and
+invalidates a row whenever its file set changes. `105` adds the stored
 `source_id`/`browsable` columns and replaces that index with the scoped shape.
 
 No migration deletes or rewrites card or personal rows. A `068`–`104`
