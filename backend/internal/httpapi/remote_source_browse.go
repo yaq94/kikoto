@@ -70,7 +70,7 @@ type remoteWorkSummary struct {
 	// Availability is the last observed source verdict, which is a separate
 	// answer from playability: a failed or unconfirmed range keeps its
 	// published files and stays playable.
-	Availability    string   `json:"availability"`
+	Availability    string   `json:"availability,omitempty"`
 	WorkID          *int64   `json:"workId"`
 	Favorite        bool     `json:"favorite"`
 	ListeningStatus string   `json:"listeningStatus"`
@@ -627,13 +627,20 @@ func (s *Server) buildRemoteWorkSummary(ctx context.Context, userID, sourceID in
 		CircleRef: projected.CircleRef, AgeRating: projected.AgeRating, Rating: projected.Rating,
 		RatingCount: projected.RatingCount, Sales: projected.Sales, Price: projected.Price,
 		Tags: projected.Tags, VoiceActors: projected.VoiceActors, VoiceRefs: projected.VoiceRefs,
-		ImportStatus: status, RemotePlayable: true, WorkID: workID, Favorite: favorite,
+		// This builder serves a remote upstream that has already answered, so
+		// the card is available by construction.
+		ImportStatus: status, RemotePlayable: true, Availability: "available", WorkID: workID, Favorite: favorite,
 		ListeningStatus: listeningStatus, RecommendScore: recommendScore, DurationSeconds: projected.DurationSeconds,
 	}, nil
 }
 
 func mergeRemoteWorkSummary(existing *remoteWorkSummary, item remoteWorkSummary) {
 	existing.RemotePlayable = existing.RemotePlayable || item.RemotePlayable
+	// A merged card keeps the most severe verdict it saw: one unavailable
+	// source row must not be hidden by another row that is available.
+	if existing.Availability == "" || existing.Availability == "available" {
+		existing.Availability = item.Availability
+	}
 	existing.Favorite = existing.Favorite || item.Favorite
 	if existing.ListeningStatus == "none" {
 		existing.ListeningStatus = item.ListeningStatus

@@ -648,8 +648,8 @@ starts from the oldest effective row rather than a recent window; the cap
 bounds the returned cards and is applied inside the scan, so a query that
 matches the whole source stops at the bound. The reported `total` shares that
 budget, and a bounded overflow probe sets `truncated` when more effective rows
-exist. A full count of 114,000 matches costs 667–693 ms at p95 on the release
-target, which is why the budget covers the total as well.
+exist. An unbounded count of a whole-source match set is too slow for a
+keystroke, which is why the budget covers the total as well.
 `zh-cn`, `en-us`, `ja-jp` and `ko-kr` map to `zh-Hans`, `en`,
 `ja` and `ko`; `zh-tw` reads `zh-Hans` with OpenCC `s2t` and also reads native
 `zh-Hant` rows.

@@ -47,6 +47,9 @@ type shortQueryCase struct {
 	Matches  int             `json:"matches"`
 	HitScan  shortQueryStats `json:"hitScan"`
 	HitSet   shortQueryStats `json:"hitSet"`
+	// Total is the bounded count the API reports. Complete is kept as the JSON
+	// key older reports used for that shape; Uncapped is the diagnostic that
+	// walks every match without the result budget.
 	Complete shortQueryStats `json:"complete"`
 	Uncapped shortQueryStats `json:"uncapped"`
 	Page     shortQueryStats `json:"page"`
@@ -76,7 +79,7 @@ func TestShortQueryPerformance(t *testing.T) {
 	startedAt := time.Now()
 	db := openMigratedTestDBWithProductionPool(t)
 	report := shortQueryReport{
-		Label:      "short-query-complete-set",
+		Label:      "short-query-bounded-total",
 		StartedAt:  startedAt.UTC().Format(time.RFC3339),
 		Thresholds: map[string]float64{"totalP95Ms": 100, "pageP95Ms": 100},
 		Notes: []string{

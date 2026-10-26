@@ -102,7 +102,7 @@ func ShortTranslationSearchSQL(targets []DisplaySearchTarget, arms []ShortSearch
 // kind), whether more effective rows exist than the given budget. Each probe
 // walks at most limit+1 rows of the same index range, so it costs one page
 // rather than a full count. A caller uses it to mark a truncated result list
-// without pretending the budget is the size of the effective set.
+// instead of presenting the budget as the whole answer.
 //
 // The statement returns (language, entity_kind, overflow) per branch.
 func ShortTranslationSearchOverflowSQL(targets []DisplaySearchTarget, arms []ShortSearchArm, limit int) (string, []any) {

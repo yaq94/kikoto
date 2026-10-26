@@ -298,7 +298,7 @@ Administrators may disable that extension for compatible services that reject it
 there is no automatic parameter downgrade or repeated generation.
 
 Input is at most 8 KiB, HTTP
-request JSON at most 16 KiB, and buffered response data at most 256 KiB. The
+request JSON at most 64 KiB, and buffered response data at most 256 KiB. The
 whole completion timeout defaults to 60 seconds and is adjustable from 1 to 60.
 Request cancellation and application shutdown cancel the upstream request.
 

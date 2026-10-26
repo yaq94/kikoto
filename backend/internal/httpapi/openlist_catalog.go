@@ -771,7 +771,7 @@ func (s *Server) listOpenListWorks(w http.ResponseWriter, r *http.Request, sourc
 		countSQL  string
 		countArgs []any
 		// A short translated search builds a bounded page and counts the full
-		// match set separately, so the page query carries no window total.
+		// candidate set separately, so the page query carries no window total.
 		separateCount bool
 		// overflowSQL answers whether the effective set holds more cards than
 		// the budget. It is a bounded probe, not a count.
@@ -806,9 +806,10 @@ func (s *Server) listOpenListWorks(w http.ResponseWriter, r *http.Request, sourc
 		pageArgs = append([]any{}, args...)
 		pageSQL = catalogCardPageSQL(prefix, from, short)
 		pageArgs = append(pageArgs, pageSize, (page-1)*pageSize)
-		countPrefix, countFrom, countQueryArgs := openListCatalogCardsQueryLocalized(source.ID, q, targets, configKey, pageLimit)
-		countSQL = catalogStatementPrefix(countPrefix) + `SELECT COUNT(*) ` + countFrom
-		countArgs = countQueryArgs
+		// The page and the total are the same statement shape: both read the
+		// bounded candidate set, so one build answers both and cannot drift.
+		countSQL = catalogStatementPrefix(prefix) + `SELECT COUNT(*) ` + from
+		countArgs = args
 		separateCount = short
 		if short {
 			overflowSQL, overflowArgs = shortSearchOverflowQuery(targets, source.ID, configKey)

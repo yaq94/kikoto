@@ -287,6 +287,13 @@ func catalogVerdictPlayable(status string) bool {
 	}
 }
 
+// catalogVerdictPlayableSQL is the SQL form of catalogVerdictPlayable. A series
+// and its member cards read the same rule, so a series of failed-but-playable
+// episodes cannot report itself unplayable while each episode stays playable.
+func catalogVerdictPlayableSQL(status string) string {
+	return `(` + status + ` NOT IN ('missing','excluded','disabled'))`
+}
+
 // catalogEntryHasAudioSQL answers whether a card can play anything, using the
 // same stored counts the admission filter reads. A browse page evaluates this
 // for every candidate, so the live file probe would add one index lookup per

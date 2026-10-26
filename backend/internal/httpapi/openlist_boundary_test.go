@@ -155,6 +155,61 @@ func TestOpenListCatalogMarksRetainedCardsUnplayable(t *testing.T) {
 	}
 }
 
+// A series card must report the same playback answer as its members. A series
+// whose episodes were merely failed or unconfirmed keeps their published files,
+// so it stays playable; only a confirmed absence removes it.
+func TestOpenListCatalogSeriesPlayabilityFollowsMemberVerdict(t *testing.T) {
+	remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"code":200,"data":{"content":[],"total":0}}`))
+	}))
+	defer remote.Close()
+	db := openMigratedTestDBWithProductionPool(t)
+	_, err := db.Exec(`INSERT INTO file_source(id,code,display_name,source_type,config_json) VALUES(7,'example_remote_a','Example Remote A','openlist','{"openListRoots":["/Example Series"]}');
+		INSERT INTO file_source_endpoint(file_source_id,api_url,base_url) VALUES(7,?,?);
+		INSERT INTO source_catalog_entry(id,file_source_id,root_path,title,availability_status,last_seen_generation) VALUES
+			(1,7,'/Example Series/Episode 1','Episode 1','unavailable',1),
+			(2,7,'/Example Series/Episode 2','Episode 2','unconfirmed_empty',1);
+		INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes,observed_generation) VALUES
+			(1,'01.mp3','01.mp3','audio',16,1),
+			(2,'02.mp3','02.mp3','audio',16,1);
+		INSERT INTO catalog_series(id,source_id,title) VALUES(9,7,'Example Series');
+		INSERT INTO catalog_series_member(series_id,catalog_entry_id,position,evidence) VALUES
+			(9,1,1,'directory'),(9,2,2,'directory');`, remote.URL, remote.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := NewServer(db, config.Config{Mode: config.ModeProduction, RootUsername: "synthetic-user", DataRoot: t.TempDir(), CacheRoot: t.TempDir()})
+	t.Cleanup(func() { _ = server.Shutdown(context.Background()) })
+	createTestAdministrator(t, server, "synthetic-user", "synthetic-password")
+	handler := server.Routes()
+	cookie := loginTestSession(t, handler, "synthetic-user", "synthetic-password")
+	list := reviewRequest(t, handler, cookie, http.MethodGet, "/api/remote-sources/7/works", "", http.StatusOK)
+	var series map[string]any
+	for _, raw := range list["works"].([]any) {
+		card := raw.(map[string]any)
+		if card["seriesId"] == float64(9) {
+			series = card
+		}
+	}
+	if series == nil {
+		t.Fatalf("series card missing: %#v", list)
+	}
+	if series["remotePlayable"] != true {
+		t.Fatalf("series card = %#v, want playable while its members keep published files", series)
+	}
+	// A confirmed absence is the verdict that removes playback.
+	if _, err = db.Exec(`UPDATE source_catalog_entry SET availability_status='missing' WHERE id IN (1,2)`); err != nil {
+		t.Fatal(err)
+	}
+	list = reviewRequest(t, handler, cookie, http.MethodGet, "/api/remote-sources/7/works", "", http.StatusOK)
+	for _, raw := range list["works"].([]any) {
+		card := raw.(map[string]any)
+		if card["seriesId"] == float64(9) && card["remotePlayable"] != false {
+			t.Fatalf("missing series card = %#v, want unplayable", card)
+		}
+	}
+}
+
 func TestOpenListMediaRejectsUntrustedDestinations(t *testing.T) {
 	credentialURL := url.URL{Scheme: "http", Host: "source.example.invalid", Path: "/audio", User: url.UserPassword("synthetic-user", "synthetic-password")}
 	for _, target := range []string{"file:///etc/passwd", credentialURL.String(), "http://127.0.0.2/audio", "http://192.0.2.1/audio", "http://[::1]/audio"} {

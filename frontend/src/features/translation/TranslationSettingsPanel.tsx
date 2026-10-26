@@ -32,7 +32,6 @@ export function TranslationSettingsPanel({ readOnly = false }: { readOnly?: bool
   const lifetime = useRef<AbortController | null>(null);
   const trial = useRef<AbortController | null>(null);
   const trialBytes = trialInputBytes(text);
-  const trialTooLong = trialBytes > trialInputLimitBytes;
 
   useEffect(() => {
     const controller = new AbortController();
@@ -297,7 +296,7 @@ export function TranslationSettingsPanel({ readOnly = false }: { readOnly?: bool
                   {t("translationAdmin.cancel")}
                 </Button>
               )}
-              <Button type="submit" disabled={disabled || dirty || !text.trim() || trialTooLong || !saved?.baseUrl}>
+              <Button type="submit" disabled={disabled || dirty || !text.trim() || !saved?.baseUrl}>
                 {t(busy === "test" ? "translationAdmin.testing" : "translationAdmin.test")}
               </Button>
             </>
@@ -310,14 +309,18 @@ export function TranslationSettingsPanel({ readOnly = false }: { readOnly?: bool
               value={text}
               onChange={(event) => {
                 const next = event.target.value;
-                setText(trialInputBytes(next) > trialInputLimitBytes ? text : next);
+                // Stop at the byte bound the API enforces. The counter below
+                // shows the measurement, so a refused keystroke is visible
+                // rather than silently dropped.
+                if (trialInputBytes(next) <= trialInputLimitBytes) setText(next);
                 setResult(null);
               }}
               disabled={disabled}
               required
+              aria-describedby="translation-trial-bytes"
               className="w-full"
             />
-            <p role={trialTooLong ? "alert" : undefined} className="text-xs text-muted-foreground">
+            <p id="translation-trial-bytes" className="text-xs text-muted-foreground">
               {t("translationAdmin.inputBytes", { used: trialBytes, limit: trialInputLimitBytes })}
             </p>
           </SettingsRow>

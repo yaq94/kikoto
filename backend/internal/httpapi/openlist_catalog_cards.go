@@ -185,7 +185,7 @@ func openListCatalogCardsQueryFiltered(sourceID int64, query string, entryIDs, s
 	seriesPlayable := `CASE WHEN EXISTS(
 			SELECT 1 FROM catalog_series_member mm JOIN source_catalog_entry ee ON ee.id=mm.catalog_entry_id
 			JOIN source_catalog_file ff INDEXED BY source_catalog_file_parent ON ff.catalog_entry_id=ee.id AND ff.kind='audio'
-			WHERE mm.series_id=s.id AND ee.relocated_to_id IS NULL AND ee.availability_status='available' AND ` + catalogEntryAdmittedSQL("ee") + `
+			WHERE mm.series_id=s.id AND ee.relocated_to_id IS NULL AND ` + catalogVerdictPlayableSQL("ee.availability_status") + ` AND ` + catalogEntryAdmittedSQL("ee") + `
 		) THEN 'available' ELSE 'missing' END`
 	seriesHasAudio := `EXISTS(
 			SELECT 1 FROM catalog_series_member mm JOIN source_catalog_entry ee ON ee.id=mm.catalog_entry_id
@@ -202,7 +202,7 @@ func openListCatalogCardsQueryFiltered(sourceID int64, query string, entryIDs, s
 		seriesPlayable = `CASE WHEN EXISTS(
 			SELECT 1 FROM catalog_series_member mm JOIN source_catalog_entry ee ON ee.id=mm.catalog_entry_id
 			JOIN source_catalog_file ff INDEXED BY source_catalog_file_parent ON ff.catalog_entry_id=ee.id AND ff.kind='audio'
-			WHERE mm.series_id=s.id AND ee.relocated_to_id IS NULL AND ee.availability_status='available'
+			WHERE mm.series_id=s.id AND ee.relocated_to_id IS NULL AND ` + catalogVerdictPlayableSQL("ee.availability_status") + `
 		) THEN 'available' ELSE 'missing' END`
 		seriesHasAudio = `EXISTS(
 			SELECT 1 FROM catalog_series_member mm JOIN source_catalog_entry ee ON ee.id=mm.catalog_entry_id
