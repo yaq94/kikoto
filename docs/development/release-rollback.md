@@ -156,10 +156,10 @@ uses one can wait with `up -d --wait`. The production stack in this repository
 does not define that check; poll `/health` as shown under
 [Verify The Restored Instance](#verify-the-restored-instance).
 
-## Restore A Schema 95 Through 103 Snapshot
+## Restore A Schema 95 Through 104 Snapshot
 
 Use this to return to the current build after a failed start or to recover a
-damaged `095` through `103` database. Use the image that packages the snapshot's
+damaged `095` through `104` database. Use the image that packages the snapshot's
 schema; to return to schema `094`, `092` or `083`, restore that schema's
 snapshot and start an image that packages it.
 
