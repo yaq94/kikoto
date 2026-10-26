@@ -6,9 +6,71 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/yexca/kikoto/backend/internal/translation"
 )
+
+// translationCoverageCacheTTL bounds how stale an operator view may be. The
+// coverage query walks the whole effective corpus and the admission subqueries
+// per language; on a 41k-card source that costs seconds, and a page that polls
+// it would otherwise hold every pooled connection. The worker still calls
+// translationCorpusCoverageFor directly, so its completion decision never reads
+// this cache.
+const translationCoverageCacheTTL = 15 * time.Second
+
+type translationCoverageCacheEntry struct {
+	configKey   string
+	at          time.Time
+	coverage    translationCorpusCoverage
+	overBudget  bool
+	budgetBytes int64
+}
+
+// translationOperatorSnapshot is the expensive half of the operator view: the
+// effective-corpus coverage plus the cache-budget report.
+type translationOperatorSnapshot struct {
+	coverage    translationCorpusCoverage
+	overBudget  bool
+	budgetBytes int64
+}
+
+// cachedTranslationOperatorSnapshot serialises the expensive operator read.
+// Concurrent requests wait for one computation instead of each starting their
+// own corpus scan and dbstat walk; a page that polls the view must not hold
+// every pooled connection. The prefill worker still calls the uncached
+// coverage function, so its completion decision never reads this snapshot.
+func (s *Server) cachedTranslationOperatorSnapshot(ctx context.Context, cfg translation.Config) (translationOperatorSnapshot, error) {
+	configKey := translation.ConfigKey(cfg)
+	s.translationCoverageMu.Lock()
+	defer s.translationCoverageMu.Unlock()
+	if cached := s.translationCoverage; cached != nil &&
+		cached.configKey == configKey && time.Since(cached.at) < translationCoverageCacheTTL {
+		return translationOperatorSnapshot{coverage: cached.coverage, overBudget: cached.overBudget, budgetBytes: cached.budgetBytes}, nil
+	}
+	coverage, err := s.translationCorpusCoverageFor(ctx, cfg)
+	if err != nil {
+		return translationOperatorSnapshot{coverage: coverage}, err
+	}
+	overBudget, budget, err := s.translationBudgetReport(ctx, cfg)
+	if err != nil {
+		return translationOperatorSnapshot{coverage: coverage}, err
+	}
+	s.translationCoverage = &translationCoverageCacheEntry{
+		configKey: configKey, at: time.Now(), coverage: coverage,
+		overBudget: overBudget, budgetBytes: budget,
+	}
+	return translationOperatorSnapshot{coverage: coverage, overBudget: overBudget, budgetBytes: budget}, nil
+}
+
+// invalidateTranslationCoverageCache drops the operator snapshot after a write
+// that changes the corpus, so a paused or newly configured service does not
+// keep reporting the previous coverage for a full TTL.
+func (s *Server) invalidateTranslationCoverageCache() {
+	s.translationCoverageMu.Lock()
+	s.translationCoverage = nil
+	s.translationCoverageMu.Unlock()
+}
 
 // translationPrefillFailureStop is the persisted attempt count after which an
 // item is reported failed. A failed item stays in the failure table and keeps

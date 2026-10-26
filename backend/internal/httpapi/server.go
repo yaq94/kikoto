@@ -109,6 +109,8 @@ type Server struct {
 	translationPrefillMu           sync.Mutex
 	translationRetentionWrites     atomic.Int64
 	translationPrefillWrites       []time.Time
+	translationCoverageMu          sync.Mutex
+	translationCoverage            *translationCoverageCacheEntry
 	catalogDiskSpace               func(string) (diskSpaceSnapshot, error)
 	catalogNow                     func() time.Time
 	workMatchingMu                 sync.Mutex

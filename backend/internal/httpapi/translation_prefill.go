@@ -86,10 +86,11 @@ func (s *Server) translationPrefillStatus(ctx context.Context) (translationPrefi
 	if err != nil {
 		return view, err
 	}
-	coverage, err := s.translationCorpusCoverageFor(ctx, cfg)
+	snapshot, err := s.cachedTranslationOperatorSnapshot(ctx, cfg)
 	if err != nil {
 		return view, err
 	}
+	coverage := snapshot.coverage
 	view.ConfigKey = translation.ConfigKey(cfg)
 	view.Total = coverage.Total
 	for _, language := range append(append([]string{}, translationModelLanguages...), translation.SourceHant) {
@@ -107,12 +108,8 @@ func (s *Server) translationPrefillStatus(ctx context.Context) (translationPrefi
 			view.LastError = coverageMessage(coverage)
 		}
 	}
-	overBudget, budget, err := s.translationBudgetReport(ctx, cfg)
-	if err != nil {
-		return view, err
-	}
-	view.OverBudget = overBudget
-	view.BudgetBytes = budget
+	view.OverBudget = snapshot.overBudget
+	view.BudgetBytes = snapshot.budgetBytes
 	return view, nil
 }
 
@@ -349,6 +346,12 @@ func (s *Server) runTranslationPrefillBatch(ctx context.Context) (bool, error) {
 		return false, err
 	}
 	s.noteTranslationPrefillWrite(written)
+	if status != state.Status {
+		// A status transition is what an operator acts on; ordinary progress
+		// stays behind the short snapshot TTL instead of forcing a full corpus
+		// recount after every batch.
+		s.invalidateTranslationCoverageCache()
+	}
 	if status == "complete" {
 		return false, nil
 	}
