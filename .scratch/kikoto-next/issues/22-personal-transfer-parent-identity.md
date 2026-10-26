@@ -4,8 +4,8 @@
 
 **Blocked by:** [16：个人数据导入导出](16-personal-data-transfer-compatibility.md)；迁移 100 已在 099 之后落地，不再阻塞。
 
-**Status:** ready-for-agent
-**Implementation:** in-progress；`64b25252` 已落地迁移 100、`work.parent_work_id`、父级导入与系列详情回退（`catalogEntryId=0`）。导出格式已回到 `version: 2` 加可选 `parent`（`transfer_export.go:30`），v3 按未知版本拒绝；父级别名冲突会报告 `parent_alias_not_imported`（`transfer_import.go:246`，测试 `transfer_parent_test.go:237`）。本地 H 测试与前端构建已有证据，但尚未在当前候选上完整重跑。
+**Status:** in-review
+**Implementation:** 已完成；`64b25252` 已落地迁移 100、`work.parent_work_id`、父级导入与系列详情回退（`catalogEntryId=0`）。导出格式为 `version: 2` 加可选 `parent`（`transfer_export.go:30`），v3 按未知版本拒绝；父级别名冲突报告 `parent_alias_not_imported`（`transfer_import.go:246`）。导出遇多父系列不再致命：`exportIdentity` 把冲突降级为 `issues[].reason=parent_conflict`，条目保留 ref 与评分备注、`parent` 留空（`transfer_identity.go:10-75`）。当前候选上 `go test ./internal/personal/ ./internal/httpapi/ -run 'Personal|Transfer' -count=1` 通过。
 
 **依据:** [正式规格](../spec.md)、[ADR-0004](../../../docs/decisions/ADR-0004-work-identity-and-personal-state.md)、[ADR-0006](../../../docs/decisions/ADR-0006-catalog-remediation-and-translation-consistency.md)。
 
@@ -35,7 +35,9 @@ CREATE INDEX idx_work_parent_work ON work(parent_work_id);
 
 **当前实现核对（`64b25252`，格式由后续提交收口）：** 导入不再合成 `source_catalog_entry`／`catalog_series_member`，只写 `work.parent_work_id`（`transfer_parent.go:382-426`）；`catalog_series.go:141-176` 在没有成员行时回退到父级关系，返回 `catalogEntryId=0`、`workId` 非空；前端已按 `workId` 打开该 episode。多父级冲突不是 409，而是 HTTP 200 + `issues[].reason=parent_conflict` 并跳过该条（`transfer_plan.go:95-98`）；409 只用于致命 `ErrConflict`。导出写 `version: 2`，带 `parent` 的 episode 通过父 ref、kind、标题校验；`parent_alias_not_imported` 在父级仍有多个 `s:` 别名时报告，但不阻止父级恢复。
 
-**导出缺口与当前修复（`d77e37e2` 起，`728651a6` 后仍存在）：** 当来源 `source_catalog_entry` 尚未绑定 `work_id` 时，旧 `exportIdentity` 的 parent 查询 `WHERE entry.work_id=?` 返回空，导出的 episode identity 没有 `parent` 且退回 `kind=work`，导入后静默创建独立 work，`issues` 为空。独立 SQLite 回放结果：导出 `parentPresent=false`、目标 `series=0 works=1 members=0`。当前 `transfer_identity.go:110-152` 已在 `parent_work_id` 为空时按 `source_catalog_entry.work_id` 与 `personal_transfer_ref.catalog_entry_id` 查唯一 `catalog_series_member`，只有唯一 series 才导出父级，多个 series 仍按冲突处理；`exportEpisodeParent` 在没有任何成员时返回 `nil`，导出条目保留但报告父级未恢复。该分支目前只有 `transfer_parent_test.go` 的导入/往返覆盖，尚未看到针对“未绑定 work 的来源条目导出”专项断言，仍需补测并在当前候选重跑。
+**导出缺口与修复：** 当来源 `source_catalog_entry` 尚未绑定 `work_id` 时，旧 `exportIdentity` 的 parent 查询 `WHERE entry.work_id=?` 返回空，导出的 episode identity 没有 `parent` 且退回 `kind=work`，导入后静默创建独立 work，`issues` 为空。当前 `transfer_identity.go:110-175` 已在 `parent_work_id` 为空时按 `source_catalog_entry.work_id` 与 `personal_transfer_ref.catalog_entry_id` 查唯一 `catalog_series_member`，只有唯一 series 才导出父级；没有任何成员时返回 `nil`，导出条目保留、父级留空，导入侧报告 `relationships_not_imported`。该分支已有专项断言 `TestAuditPersonalTransferExportsParentWithoutRegisteredEntry`（`backend/internal/httpapi/personal_transfer_series_view_audit_test.go:167`）并在当前候选通过。
+
+**多父级导出语义（本次修复）：** 一个 episode 的 work 被两个不同 series 的 member entry 指向时，`exportEpisodeParent` 返回内部哨兵 `errExportParentConflict`，`exportIdentity` 不向上冒泡 `ErrConflict`，而是保留该条 identity（`kind=episode`、主 `w:` ref、全部 `c:`/`s:` 引用）与评分／备注，`parent` 留空，并向 `Backup.Issues` 追加 `{ref: <episode w: ref>, reason: "parent_conflict"}`。导出 HTTP 入口返回 200，其他条目不受影响；`issues` 按 ref 排序以保持两次导出可比。导入端对 `parent` 缺失的 v2 条目仍报 `relationships_not_imported`，不猜测父级。
 
 ## 备份格式：v2 + 可选 `parent`
 
@@ -80,15 +82,15 @@ CREATE INDEX idx_work_parent_work ON work(parent_work_id);
 
 ## 验收清单
 
-- [ ] 空库只有单集评价、父系列无评价，导出再导入后父级归属保留；父系列有独立评价时也只创建一个父对象并保留其个人状态。
-- [ ] 导入后的父系列卡能列出该 episode；`catalogEntryId=0`、`workId` 非空，且不会伪造来源成员或媒体路径。
-- [ ] 重复导入不重复创建；非空库已有不同父级时冲突可见且不被覆盖。
-- [ ] 父级缺失、多个不同父级、循环、父 ref 指向错误对象、父 ref 已被其他 series 占用、v2 旧格式、权限和用户隔离均有 H/R 证据。`transfer_parent_test.go` 已覆盖父级缺失、冲突、别名、循环、共享父级、两个空代码系列和格式校验；仍缺“父级登记权限 403”专项测试，且当前候选尚未完整重跑。
-- [ ] 空库导入后再导出，episode 仍为 `kind=episode`，父系列仍为 `kind=series`；`s:` ref 属于 `catalog_series`，`w:` ref 属于 work。
+- [x] 空库只有单集评价、父系列无评价，导出再导入后父级归属保留；父系列有独立评价时也只创建一个父对象并保留其个人状态。`TestTransferV2RestoresPersonalOnlyParentAndRoundTrips`、`TestTransferV2TopLevelSeriesKeepsItsReview`。
+- [x] 导入后的父系列卡能列出该 episode；`catalogEntryId=0`、`workId` 非空，且不会伪造来源成员或媒体路径。`TestAuditPersonalTransferSeriesViewListsRestoredEpisode`、`TestAuditPersonalTransferExportsParentWithoutRegisteredEntry`。
+- [x] 重复导入不重复创建；非空库已有不同父级时冲突可见且不被覆盖。`TestTransferV2RestoresPersonalOnlyParentAndRoundTrips`（重复导入 works=2/series=1）、`TestTransferV2KeepsExistingDifferentParent`、`TestPersonalTransferMultipleDifferentParentsReportConflict`。
+- [x] 父级缺失、多个不同父级、循环、父 ref 指向错误对象、父 ref 已被其他 series 占用、v2 旧格式、权限和用户隔离均有 H/R 证据。`transfer_parent_test.go` 覆盖父级缺失、冲突、别名、循环、共享父级、两个空代码系列和格式校验；父 ref 被其他 series 占用见 `TestTransferV2ParentReferenceConflicts/alias_owned_by_another_series`；已有 `personal_transfer_parent_scope_test.go:165` 覆盖父级登记权限 403 并通过；多父级导出非致命见 `TestPersonalTransferExportReportsMultipleParentsWithoutFailing` 与 `TestTransferExportReportsMultipleSeriesParentInsteadOfFailing`。
+- [x] 空库导入后再导出，episode 仍为 `kind=episode`，父系列仍为 `kind=series`；`s:` ref 属于 `catalog_series`，`w:` ref 属于 work。`TestTransferEmptyLibraryRoundTripKeepsKindsAndRefOwners`。
 - [x] `docs/development/personal-transfer.md` 与用户页统一为 v2 + 可选 `parent`；导出器写 `version: 2`，v3 按未知版本拒绝。
-- [ ] 同一备份包含两个系列 work 时不会因空 `primary_code`／`canonical_code` 触发唯一约束；若使用内部代码，编号解析和用户界面不暴露它。
-- [ ] 迁移后新装与旧库升级的 `work.parent_work_id` 和索引一致；已发布迁移不回写；回填的缺失、矛盾与多父级写入可查询报告载体，而不是只打日志。
-- [ ] 导入后系列与单集可独立评价，无媒体下载或共享越权变更。
+- [x] 同一备份包含两个系列 work 时不会因空 `primary_code`／`canonical_code` 触发唯一约束；若使用内部代码，编号解析和用户界面不暴露它。`TestTransferV2TwoEmptyCodeSeriesDoNotCollide`、`TestTransferTwoSeriesWorksWithEmptyCodesRoundTrip`。
+- [x] 迁移后新装与旧库升级的 `work.parent_work_id` 和索引一致；已发布迁移不回写；回填的缺失、矛盾与多父级写入可查询报告载体，而不是只打日志。既有 `TestWorkParentMigrationCreatesColumnAndIndex`、`TestWorkParentMigrationBackfillsOnlyUnambiguousMembership`、`TestMigrationChain104FreshInstall`、`TestMigrationChain104Upgrades068AndKeepsUserData`、`TestMigrationChain104Upgrades084ToCurrentShape`、`TestMigrateRejectsChangedAppliedMigration`，本次只核实运行，未改迁移文件。
+- [x] 导入后系列与单集可独立评价，无媒体下载或共享越权变更。`TestTransferRestoredSeriesAndEpisodeHaveIndependentReviews`、`TestPersonalTransferRestoredSeriesAndEpisodeReviewIndependently`（同时断言 media/workflow_run/member 均为 0）。
 
 **测试入口:** H、R，使用真实迁移 SQLite 与公开导入导出入口。
 

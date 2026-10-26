@@ -40,6 +40,14 @@
 ## 风险与边界
 
 - 现有系列详情只列出来源可见成员；空库恢复的目录条目没有 `file_source_id`，因此不会出现在来源系列详情中，但成员行、稳定引用和后续导出仍保留。该行为沿用既有“无来源成员不展示”契约。
-- 一个 work 若同时属于多个不同系列，现有备份模型不能用一个 `parent` 表达，导出返回冲突而不静默选取。
+- 一个 work 若同时属于多个不同系列，现有备份模型不能用一个 `parent` 表达。导出不再失败：该条保留 `w:`／`c:` 引用和评分备注，`parent` 留空，并在备份 `issues` 中报告 `parent_conflict`；导入端按 v2 无父级条目报告 `relationships_not_imported`，不猜测系列。
 - 父级位置和证据来自导出时的成员行；外部手写备份缺少位置时按该系列下一个位置恢复，缺少证据时使用 `manual`。
 - 本机 Go 为 1.27.3，Node 为 24.22.1；项目声明 Node 24.19.0，`npm ci` 仅在关闭 engine 严格检查后完成。`make frontend-docs` 因本机系统 Node 22.23.4 与声明不一致而失败，直接运行同一组文档检查脚本通过。
+
+## 多父级导出修复（当前候选 `3259df47` 之上）
+
+- `exportIdentity` 在 `exportEpisodeParent` 返回内部哨兵 `errExportParentConflict` 时不再冒泡 `ErrConflict`：identity 原样返回，`parent` 为空，同时产出 `{ref: <episode w: ref>, reason: "parent_conflict"}`。
+- `Backup` 新增只用于导出的 `issues`（`json:"issues,omitempty"`，复用 `ImportIssue`），导出结果按 `ref`、`reason` 排序；导入忽略该字段。
+- 红例：`TestTransferExportReportsMultipleSeriesParentInsteadOfFailing` 在修复前报 `export failed on an ambiguous parent: personal record already exists`；修复后同一备份含两条 episode，冲突条目 `parent=nil` 且 `issues` 恰一条 `parent_conflict`，唯一父系列条目仍带 `parent`。
+- 绿例：`go test ./internal/personal/ ./internal/httpapi/ -run 'Personal|Transfer' -count=1` 通过（personal 27.307s，httpapi 54.587s）；`go test ./internal/storage/ -run 'TestWorkParentMigration|TestMigrationChain104|TestMigrateRejectsChangedAppliedMigration|TestMigrateFreshDatabaseUsesLatestReleasedBaseline' -count=1` 通过。
+- 权限 403：`TestPersonalTransferParentRegistrationRequiresPermissionAndStaysUserScoped`（`backend/internal/httpapi/personal_transfer_parent_scope_test.go:165`）通过。
