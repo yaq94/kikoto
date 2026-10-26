@@ -56,6 +56,7 @@ const libraryKorean = {
   cancelSelection: "선택 취소",
   noRemoteSearchMatch: "이 페이지에 현재 검색과 일치하는 원격 작품이 없습니다.",
   noRemoteWorks: "이 페이지에 원격 작품이 없습니다.",
+  remoteSearchTruncated: "처음 {{total}}개 결과만 표시합니다. 검색 범위를 좁히면 나머지를 볼 수 있습니다.",
   remoteSourceDisabledTitle: "원격 소스가 비활성화됨",
   remoteSourceDisabledDescription: "이 소스는 활성화되지 않아 작품을 불러올 수 없습니다.",
   remoteSourceUnavailableTitle: "원격 소스를 사용할 수 없음",

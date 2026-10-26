@@ -56,6 +56,7 @@ const libraryJapanese = {
   cancelSelection: "選択をキャンセル",
   noRemoteSearchMatch: "このページに現在の検索に一致するリモート作品はありません。",
   noRemoteWorks: "このページにリモート作品はありません。",
+  remoteSearchTruncated: "最初の {{total}} 件のみ表示しています。検索を絞り込むと残りを確認できます。",
   remoteSourceDisabledTitle: "リモートソースは無効です",
   remoteSourceDisabledDescription: "このソースは有効になっていないため、作品を読み込めません。",
   remoteSourceUnavailableTitle: "リモートソースを利用できません",

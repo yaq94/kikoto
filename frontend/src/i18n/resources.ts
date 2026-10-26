@@ -55,6 +55,7 @@ export const libraryEnglish = {
   cancelSelection: "Cancel selection",
   noRemoteSearchMatch: "No remote works match the current search on this page.",
   noRemoteWorks: "No remote works on this page.",
+  remoteSearchTruncated: "Showing the first {{total}} matches. Narrow the search to see the rest.",
   remoteSourceDisabledTitle: "Remote source is disabled",
   remoteSourceDisabledDescription: "This source is not enabled, so its works cannot be loaded.",
   remoteSourceUnavailableTitle: "Remote source is unavailable",

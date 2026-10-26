@@ -336,6 +336,11 @@ export function RemoteSourcePanel({
           </Button>
         </div>
       )}
+      {model.truncated && !model.remoteError && (
+        <p role="status" className="text-sm text-muted-foreground">
+          {t("library.remoteSearchTruncated", { total: model.totalItems })}
+        </p>
+      )}
       <RemoteSourceResults
         source={source}
         visibleWorks={model.visibleWorks}

@@ -20,6 +20,10 @@ export type RemoteWorksResponse = {
   sort: LibrarySort;
   direction: SortDirection;
   sortApplied: boolean;
+  // A 1-2 character translated search builds at most one result budget. When
+  // the effective set holds more matches, total is the number inside that
+  // budget and this flag says the list stopped early.
+  truncated?: boolean;
   recommendationUnavailable?: boolean;
 };
 

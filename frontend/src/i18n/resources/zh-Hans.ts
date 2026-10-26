@@ -56,6 +56,7 @@ export const libraryHans = {
   cancelSelection: "取消选择",
   noRemoteSearchMatch: "此页没有匹配当前搜索的远程作品。",
   noRemoteWorks: "此页没有远程作品。",
+  remoteSearchTruncated: "仅显示前 {{total}} 个匹配结果，缩小搜索范围可查看其余内容。",
   remoteSourceDisabledTitle: "远程来源未启用",
   remoteSourceDisabledDescription: "此来源尚未启用，因此无法加载作品。",
   remoteSourceUnavailableTitle: "远程来源不可用",

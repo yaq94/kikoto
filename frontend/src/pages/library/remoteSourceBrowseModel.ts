@@ -10,6 +10,9 @@ type RemoteSourceBrowseModel = {
   totalItems: number;
   totalPages: number;
   currentPage: number;
+  // True when a 1-2 character translated search stopped at the result budget,
+  // so total is the number inside the budget rather than the whole set.
+  truncated: boolean;
   remotePaginationProps: {
     page: number;
     pageSize: number;
@@ -49,6 +52,7 @@ export function remoteSourceBrowseModel({
     totalItems,
     totalPages,
     currentPage,
+    truncated: Boolean(result?.truncated),
     remotePaginationProps: { page: currentPage, pageSize, totalItems, totalPages, onPageChange },
     remoteError:
       result?.error ??

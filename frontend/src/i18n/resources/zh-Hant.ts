@@ -57,6 +57,7 @@ const libraryHant = {
   cancelSelection: "取消選取",
   noRemoteSearchMatch: "此頁沒有符合目前搜尋的遠端作品。",
   noRemoteWorks: "此頁沒有遠端作品。",
+  remoteSearchTruncated: "僅顯示前 {{total}} 個符合結果，縮小搜尋範圍可查看其餘內容。",
   remoteSourceDisabledTitle: "遠端來源未啟用",
   remoteSourceDisabledDescription: "此來源尚未啟用，因此無法載入作品。",
   remoteSourceUnavailableTitle: "遠端來源無法使用",
