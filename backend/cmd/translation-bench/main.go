@@ -186,7 +186,9 @@ func measure(rows, runs int) (sizeReport, error) {
 			return report, err
 		}
 		entry := languageReport{Language: language, Sample: title}
-		entry.ExactTitle = timeQuery(runs, func() (int, error) { return countExactTitle(db, language, title) })
+		exactTitleSQL, exactTitleArgs := exactTitleQuery(language, title)
+		entry.ExactTitle = timeQuery(runs, func() (int, error) { return countQuery(db, exactTitleSQL, exactTitleArgs...) })
+		entry.ExactTitle.Plan = explainPlan(db, exactTitleSQL, exactTitleArgs...)
 		term := searchTerm(title)
 		entry.FTS = timeQuery(runs, func() (int, error) { return countFTS(db, language, term) })
 		shortSQL, shortArgs := shortSearch(language, firstRunes(title, 2))
@@ -362,19 +364,17 @@ func countFTS(db *sql.DB, language, term string) (int, error) {
 	return count, err
 }
 
-// countExactTitle is the user path "the whole translated title equals the
+// exactTitleQuery is the user path "the whole translated title equals the
 // query", answered by the trigram phrase index rather than a cache key.
-func countExactTitle(db *sql.DB, language, title string) (int, error) {
-	var count int
-	err := db.QueryRow(`SELECT count(*) FROM (
+func exactTitleQuery(language, title string) (string, []any) {
+	return `SELECT count(*) FROM (
 		SELECT t.entity_id FROM content_translation_search
 		JOIN content_translation AS t ON t.id = content_translation_search.rowid
 		WHERE content_translation_search MATCH ? AND t.language = ? AND t.entity_kind = 'work'
 		  AND t.field = 'title' AND t.translated_text = ? AND t.browsable = 1
 		  AND (t.origin='native' OR (t.origin='model' AND t.config_key=?))
 		LIMIT 200
-	)`, `"`+strings.ReplaceAll(title, `"`, `""`)+`"`, language, title, benchConfigKey).Scan(&count)
-	return count, err
+	)`, []any{`"` + strings.ReplaceAll(title, `"`, `""`) + `"`, language, title, benchConfigKey}
 }
 
 // countCode is the language-independent release-code lookup. It uses the same

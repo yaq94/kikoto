@@ -241,7 +241,10 @@ modernc SQLite, 114,000 entities x 4 languages, 20 samples after warmup):
 | Card page, p95 | en 8.37 ms, zh-Hans 8.98 ms, ja 9.38 ms, ko 8.79 ms; zero-match 46.69 ms | `/root/kikoto/bench42k/short4/report.json` |
 | Complete effective set behind the capped total, p95 | en 8.15 ms, zh-Hans 7.35 ms, ja 7.34 ms, ko 7.39 ms; zero-match 51.70 ms | same |
 | Raw scan without the card-id projection, p95 | 50.7-54.2 ms | same |
-| Plan | both arms `SEARCH ct USING COVERING INDEX idx_content_translation_short_scan` | same |
+| Local library work page (title + description), p95 | en 0.24 ms, zh-Hans 0.26 ms, ja 0.24 ms, ko 0.22 ms | `/root/kikoto/bench42k/short5/translation-bench-105b.json` |
+| Exact translated title, p95 | zh-Hans 1.27 ms, en 1.32 ms, ja 1.58 ms, ko 1.76 ms | `/root/kikoto/bench42k/short5/translation-bench-105c.json` |
+| Release code, p95 | 0.07 ms | same |
+| Plan | both arms `SEARCH ct USING COVERING INDEX idx_content_translation_short_scan`; exact title uses `VIRTUAL TABLE INDEX 0:M1` then a rowid probe | same |
 
 The 1-2 character path is inside the 100 ms limit on the target, including a
 needle that matches nothing. The database measured 740,361,264 bytes and the
