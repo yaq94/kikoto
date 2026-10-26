@@ -5,7 +5,7 @@
 **Blocked by:** [10：来源生命周期与记录保留](10-source-lifecycle-retention.md)；[21：有效译文语料、覆盖状态与严格语言搜索](21-translation-corpus-and-search.md)。ADR-0006 已接受，是本票的规则依据，不是可 `resolved` 的工单依赖。
 
 **Status:** ready-for-agent
-**Implementation:** in-progress；现有 `catalogprune` 已有 source-only alias 保护。`095` 与 `097` 已提交，`096`（`6b4a02ec`）、`098`（`531acdf4`）、`099`（`f3dc3a41`）、`100`（`64b25252`）、`101`/`102`（`0c945b3e`）、`103`（`6f39e888`）也已提交，`compat/103_dev.sql` 已生成。剩余是公开证据、数据模型、回滚说明的收口，以及当前候选上的复验。
+**Implementation:** verified-local；现有 `catalogprune` 已有 source-only alias 保护。`095` 与 `097` 已提交，`096`（`6b4a02ec`）、`098`（`531acdf4`）、`099`（`f3dc3a41`）、`100`（`64b25252`）、`101`/`102`（`0c945b3e`）、`103`（`6f39e888`）也已提交，`compat/103_dev.sql` 已生成。剩余是公开证据、数据模型、回滚说明的收口，以及当前候选上的复验。
 
 **依据:** [正式规格](../spec.md)、[AGENTS.md](../../../AGENTS.md)、[ADR-0006](../../../docs/decisions/ADR-0006-catalog-remediation-and-translation-consistency.md)、[ADR-0007](../../../docs/decisions/ADR-0007-source-field-translation-cache.md)。
 
@@ -47,13 +47,13 @@
 
 ## 验收清单
 
-- [ ] source-only alias、work-backed alias、stale apply、个人评价保留均有 H 回归。
-- [ ] 合成 dry-run 不含生产路径、记录标识或作品编号。
-- [ ] 095 历史、096–103 已提交、旧库升级测试有明确证据；不修改已发布迁移。当前链为 `096 6b4a02ec → 097 ec624bd3 → 098 531acdf4 → 099 f3dc3a41 → 100 64b25252 → 101 0c945b3e → 102 0c945b3e → 103 6f39e888`，`compat/103_dev.sql` 已生成。
-- [ ] 旧 095 的 checksum 兼容在 `prepareMigrationState` 之前完成；有旧库、无旧库、指纹不匹配三条路径均有测试，且不存在通用 checksum 绕过。
-- [ ] 097 始终存在并保持编号连续；新装、当前 095 和旧 095 三种数据库都执行同一套重建，且 `foreign_key_check` 0 行。095–103 连续无缺口，需在当前候选上复验。
-- [ ] 数据模型、翻译文档、回滚说明、迁移文档、测试夹具和历史叙述修正。
-- [ ] tracked-evidence 扫描、文档链接、locale 和相关行为回归通过。
+- [x] source-only alias、work-backed alias、stale apply、个人评价保留均有 H 回归。`TestCatalogPrunePreservesSourceOnlyTransferAlias`、`TestCatalogPrunePreservesWorkBackedTransferAlias`、`TestCatalogPruneRefusesChangedReport`、`TestCatalogPruneDryRunAndApply`、`TestCatalogPruneKeepsSplitCardRowsWithSharedRoot`、`TestCatalogPrunePendingSplitCardIsNotBroken` 全部通过（2026-10-26 复跑）。
+- [x] 合成 dry-run 不含生产路径、记录标识或作品编号。`TestCatalogPruneDryRunAndApply` 使用合成路径与合成编号，报告只含计数、原因与批次指纹；`node scripts/check-tracked-evidence.mjs` 对 51 个已跟踪证据文件全文扫描通过。
+- [x] 095 历史、096–104 已提交、旧库升级测试有明确证据；不修改已发布迁移。当前链为 `096 6b4a02ec → 097 ec624bd3 → 098 531acdf4 → 099 f3dc3a41 → 100 64b25252 → 101/102 0c945b3e → 103 6f39e888 → 104 ee13ef88`；`compat/104_dev.sql` 已生成，`migration_chain_104_test.go` 覆盖新装、68→104、84→104、重复启动幂等与 `foreign_key_check` 0 行。
+- [x] 旧 095 的 checksum 兼容在 `prepareMigrationState` 之前完成；有旧库、无旧库、指纹不匹配三条路径均有测试，且不存在通用 checksum 绕过。`migration_preflight_095_test.go` 覆盖三条路径；`docs/development/migrations.md` 已改为描述实际调用位置。
+- [x] 097 始终存在并保持编号连续；新装、当前 095 和旧 095 三种数据库都执行同一套重建，且 `foreign_key_check` 0 行。095–104 逐个编号核对无缺口，`migration_chain_104_test.go` 在当前候选上通过。
+- [x] 数据模型、翻译文档、回滚说明、迁移文档、测试夹具和历史叙述修正。`docs/architecture/data-model.md` 的 Translation Corpus 已改为当前实现（含 `source_catalog_entry_admission`、`source_id`、`effective`）；`docs/development/translation.md` 去掉日期化叙述并把基准改成条件、结果、证据三列表；`docs/development/migrations.md` 合并重复的 `Legacy 095 Checksum Preflight` 小节并修正 preflight 调用位置；`docs/development/release-rollback.md` 补 104 兼容矩阵行。
+- [x] tracked-evidence 扫描、文档链接、locale 和相关行为回归通过。`check-tracked-evidence.mjs`（51 文件）、`check-doc-links.mjs`（134 份）、`check-doc-locales.mjs`（5 locale / 11 用户页）退出码均为 0；`go test ./internal/httpapi -run TestCatalogPrune` 6 项通过。
 
 **测试入口:** H/R 的保留回归、迁移兼容测试、文档与敏感信息检查、合成 dry-run；实际生产清理由 24 另行验收。
 
