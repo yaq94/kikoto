@@ -14,16 +14,16 @@ import (
 )
 
 type remoteWorksResponse struct {
-	SourceID                  int64               `json:"sourceId"`
-	Works                     []remoteWorkSummary `json:"works"`
-	Page                      int                 `json:"page"`
-	PageSize                  int                 `json:"pageSize"`
-	Total                     int                 `json:"total"`
-	Status                    string              `json:"status"`
-	Error                     *remoteWorksError   `json:"error,omitempty"`
-	Sort        string `json:"sort"`
-	Direction   string `json:"direction"`
-	SortApplied bool   `json:"sortApplied"`
+	SourceID    int64               `json:"sourceId"`
+	Works       []remoteWorkSummary `json:"works"`
+	Page        int                 `json:"page"`
+	PageSize    int                 `json:"pageSize"`
+	Total       int                 `json:"total"`
+	Status      string              `json:"status"`
+	Error       *remoteWorksError   `json:"error,omitempty"`
+	Sort        string              `json:"sort"`
+	Direction   string              `json:"direction"`
+	SortApplied bool                `json:"sortApplied"`
 	// Truncated says the card list stopped at the result budget while the
 	// complete effective set holds more matches. Total stays the exact size of
 	// that set, so a client can say "1000 of 4213" instead of presenting the
