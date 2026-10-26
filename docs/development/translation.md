@@ -204,11 +204,11 @@ display language. `origin` searches the original source index and never reads
 `content_translation`; target-language text searches never merge original-title
 FTS hits as a fallback. One- and two-character queries use the complete
 effective set. `idx_content_translation_short_scan` is
-`(language, entity_kind, field, source_id, effective, id, origin, config_key,
-translated_text)`. The `source_id` and `effective` prefix lets a per-source
-short scan read one index range; the trailing columns cover the current-row
-predicate and the text. The short query matches the covered column with
-`instr()`, so a candidate row needs no per-row `lower()` call or table lookup.
+`(language, entity_kind, field, id, origin, config_key, translated_text)`.
+Keeping `id` next to the range prefix makes an ordered page a plain index read;
+the trailing columns cover the current-row predicate and the text. The short
+query matches the covered column with `instr()`, so a candidate row needs no
+per-row `lower()` call or table lookup.
 
 `translationPersistentCorpusSQL` excludes current corpus rows from eviction.
 The `maxEntries` and `cacheBytes` limits are soft: when current title or
