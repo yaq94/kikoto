@@ -8,6 +8,14 @@ import { Input, NativeSelect, Textarea, otherCredentialFieldProps } from "@/comp
 import { ApiError } from "@/lib/apiTransport";
 import { translationApi, type TranslationResult, type TranslationSettings, type TranslationTarget } from "./api";
 
+// The server limits the trial input by bytes, because that is what the request
+// carries. A character counter would let 8,192 CJK characters through and then
+// reject them, so the field measures its UTF-8 size and stops at the same
+// bound the API enforces.
+const trialInputLimitBytes = 8 * 1024;
+const trialInputEncoder = new TextEncoder();
+const trialInputBytes = (text: string) => trialInputEncoder.encode(text).byteLength;
+
 export function TranslationSettingsPanel({ readOnly = false }: { readOnly?: boolean }) {
   const { t } = useTranslation();
   const [settings, setSettings] = useState<TranslationSettings | null>(null);
@@ -23,6 +31,8 @@ export function TranslationSettingsPanel({ readOnly = false }: { readOnly?: bool
   const [loadVersion, setLoadVersion] = useState(0);
   const lifetime = useRef<AbortController | null>(null);
   const trial = useRef<AbortController | null>(null);
+  const trialBytes = trialInputBytes(text);
+  const trialTooLong = trialBytes > trialInputLimitBytes;
 
   useEffect(() => {
     const controller = new AbortController();
@@ -287,7 +297,7 @@ export function TranslationSettingsPanel({ readOnly = false }: { readOnly?: bool
                   {t("translationAdmin.cancel")}
                 </Button>
               )}
-              <Button type="submit" disabled={disabled || dirty || !text.trim() || !saved?.baseUrl}>
+              <Button type="submit" disabled={disabled || dirty || !text.trim() || trialTooLong || !saved?.baseUrl}>
                 {t(busy === "test" ? "translationAdmin.testing" : "translationAdmin.test")}
               </Button>
             </>
@@ -299,14 +309,17 @@ export function TranslationSettingsPanel({ readOnly = false }: { readOnly?: bool
               aria-label={t("translationAdmin.text")}
               value={text}
               onChange={(event) => {
-                setText(event.target.value);
+                const next = event.target.value;
+                setText(trialInputBytes(next) > trialInputLimitBytes ? text : next);
                 setResult(null);
               }}
               disabled={disabled}
               required
-              maxLength={8192}
               className="w-full"
             />
+            <p role={trialTooLong ? "alert" : undefined} className="text-xs text-muted-foreground">
+              {t("translationAdmin.inputBytes", { used: trialBytes, limit: trialInputLimitBytes })}
+            </p>
           </SettingsRow>
           <SettingsRow title={t("translationAdmin.target")} htmlFor="translation-target">
             <NativeSelect

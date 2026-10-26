@@ -32,6 +32,7 @@ export const translationAdmin = {
   saved: "翻譯設定已儲存。",
   trial: "試譯",
   trialHint: "使用已儲存的設定翻譯一段不含敏感資訊的短文字。每次試譯只傳送一次請求。",
+  inputBytes: "已輸入 {{used}} / {{limit}} 位元組",
   text: "試譯文字",
   target: "翻譯目標語言",
   test: "測試已儲存的設定",

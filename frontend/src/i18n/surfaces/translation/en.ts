@@ -33,6 +33,7 @@ export const translationAdmin = {
   saved: "Translation settings saved.",
   trial: "Translation trial",
   trialHint: "Send a short, non-sensitive text using the saved configuration. Each trial makes one request.",
+  inputBytes: "{{used}} of {{limit}} bytes used",
   text: "Trial text",
   target: "Translation target",
   test: "Test saved configuration",

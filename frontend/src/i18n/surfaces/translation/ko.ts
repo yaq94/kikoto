@@ -32,6 +32,7 @@ export const translationAdmin = {
   saved: "번역 설정을 저장했습니다.",
   trial: "번역 테스트",
   trialHint: "저장된 설정으로 민감한 정보가 없는 짧은 글을 번역합니다. 테스트마다 한 번만 요청합니다.",
+  inputBytes: "{{used}} / {{limit}}바이트 입력됨",
   text: "테스트 글",
   target: "번역 대상 언어",
   test: "저장된 설정 테스트",
