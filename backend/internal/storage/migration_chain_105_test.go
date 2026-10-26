@@ -8,49 +8,49 @@ import (
 	"testing"
 )
 
-// The integration branch's chain head is 104. These tests pin the whole
+// The integration branch's chain head is 105. These tests pin the whole
 // upgrade path rather than one migration: a fresh install, the two boundaries
 // that exist in the field (68 and 84), a restart, and database integrity.
-func TestMigrationChain104FreshInstall(t *testing.T) {
+func TestMigrationChain105FreshInstall(t *testing.T) {
 	db := openMigrationManagerDB(t)
 	if err := Migrate(db, completeMigrationDir(t)); err != nil {
 		t.Fatalf("fresh install: %v", err)
 	}
 
-	assertSchemaVersion(t, db, 104)
+	assertSchemaVersion(t, db, 105)
 	var history int
 	if err := db.QueryRow("SELECT COUNT(*) FROM schema_migration").Scan(&history); err != nil {
 		t.Fatal(err)
 	}
-	if want := 1 + 104 - latestReleasedBaselineVersion; history != want {
+	if want := 1 + 105 - latestReleasedBaselineVersion; history != want {
 		t.Fatalf("fresh install history = %d rows, want %d", history, want)
 	}
 	var filename string
 	if err := db.QueryRow("SELECT filename FROM schema_migration ORDER BY version DESC LIMIT 1").Scan(&filename); err != nil {
 		t.Fatal(err)
 	}
-	if want := "104_source_catalog_entry_admission.sql"; filename != want {
+	if want := "105_translation_search_scope.sql"; filename != want {
 		t.Fatalf("last migration = %q, want %q", filename, want)
 	}
 	assertMigrationIntegrity(t, db)
 }
 
-func TestMigrationChain104Upgrades068AndKeepsUserData(t *testing.T) {
+func TestMigrationChain105Upgrades068AndKeepsUserData(t *testing.T) {
 	sourceDir := filepath.Join("..", "..", "migrations")
 	db := openMigrationManagerDB(t)
 	if err := Migrate(db, copyNumberedMigrationsThrough(t, sourceDir, 68)); err != nil {
 		t.Fatalf("create 068 database: %v", err)
 	}
-	if _, err := db.Exec(`INSERT INTO app_setting(key, value_json) VALUES ('chain_103_probe', '{"kept":true}')`); err != nil {
+	if _, err := db.Exec(`INSERT INTO app_setting(key, value_json) VALUES ('chain_105_probe', '{"kept":true}')`); err != nil {
 		t.Fatalf("seed user data: %v", err)
 	}
 
 	if err := Migrate(db, completeMigrationDir(t)); err != nil {
-		t.Fatalf("upgrade 068 to 104: %v", err)
+		t.Fatalf("upgrade 068 to 105: %v", err)
 	}
-	assertSchemaVersion(t, db, 104)
+	assertSchemaVersion(t, db, 105)
 	var value string
-	if err := db.QueryRow(`SELECT value_json FROM app_setting WHERE key = 'chain_103_probe'`).Scan(&value); err != nil {
+	if err := db.QueryRow(`SELECT value_json FROM app_setting WHERE key = 'chain_105_probe'`).Scan(&value); err != nil {
 		t.Fatalf("read user data after upgrade: %v", err)
 	}
 	if value != `{"kept":true}` {
@@ -61,7 +61,7 @@ func TestMigrationChain104Upgrades068AndKeepsUserData(t *testing.T) {
 
 // 084 is the production starting point: the released baseline is 068, and the
 // field database stopped at the last pre-translation-catalog schema.
-func TestMigrationChain104Upgrades084ToCurrentShape(t *testing.T) {
+func TestMigrationChain105Upgrades084ToCurrentShape(t *testing.T) {
 	sourceDir := filepath.Join("..", "..", "migrations")
 	db := openMigrationManagerDB(t)
 	if err := Migrate(db, copyNumberedMigrationsThrough(t, sourceDir, 84)); err != nil {
@@ -75,9 +75,9 @@ func TestMigrationChain104Upgrades084ToCurrentShape(t *testing.T) {
 	}
 
 	if err := Migrate(db, completeMigrationDir(t)); err != nil {
-		t.Fatalf("upgrade 084 to 104: %v", err)
+		t.Fatalf("upgrade 084 to 105: %v", err)
 	}
-	assertSchemaVersion(t, db, 104)
+	assertSchemaVersion(t, db, 105)
 	assertCurrentSourceFieldTranslationSchema(t, db)
 	assertWorkParentColumnAndIndex(t, db)
 	assertTranslationPrefillFailedStatus(t, db)
@@ -86,7 +86,7 @@ func TestMigrationChain104Upgrades084ToCurrentShape(t *testing.T) {
 	assertMigrationIntegrity(t, db)
 }
 
-func TestMigrationChain104RestartIsIdempotent(t *testing.T) {
+func TestMigrationChain105RestartIsIdempotent(t *testing.T) {
 	db := openMigrationManagerDB(t)
 	dir := completeMigrationDir(t)
 	if err := Migrate(db, dir); err != nil {
@@ -178,9 +178,30 @@ func assertTranslationShortScanIndexes(t *testing.T, db *sql.DB) {
 		t.Fatal(err)
 	}
 	normalized := strings.Join(strings.Fields(strings.ToLower(indexSQL)), " ")
-	want := "create index idx_content_translation_short_scan on content_translation(language, entity_kind, field, id, origin, config_key, translated_text)"
+	want := "create index idx_content_translation_short_scan on content_translation(language,entity_kind,field,source_id,browsable,id,origin,config_key,translated_text,entity_id)"
 	if normalized != want {
 		t.Fatalf("short scan index definition = %q, want %q", normalized, want)
+	}
+	var viewSQL string
+	if err := db.QueryRow(`SELECT COALESCE(sql,'') FROM sqlite_schema
+		WHERE type='view' AND name='content_translation_scope'`).Scan(&viewSQL); err != nil {
+		t.Fatalf("content_translation_scope view: %v", err)
+	}
+	var scopeColumns int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('content_translation')
+		WHERE name IN ('source_id','browsable')`).Scan(&scopeColumns); err != nil {
+		t.Fatal(err)
+	}
+	if scopeColumns != 2 {
+		t.Fatalf("content_translation scope columns=%d, want 2", scopeColumns)
+	}
+	var scopeTriggers int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_schema WHERE type='trigger'
+		AND name LIKE 'content_translation_scope_%'`).Scan(&scopeTriggers); err != nil {
+		t.Fatal(err)
+	}
+	if scopeTriggers != 13 {
+		t.Fatalf("content_translation scope triggers=%d, want 13", scopeTriggers)
 	}
 }
 

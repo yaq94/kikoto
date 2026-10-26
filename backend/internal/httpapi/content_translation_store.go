@@ -179,6 +179,7 @@ func (s *Server) saveContentTranslations(ctx context.Context, rows []contentTran
 		return "", fmt.Errorf("save content translations: %w", err)
 	}
 	defer stmt.Close()
+	keys := make([]string, 0, len(rows))
 	for _, row := range rows {
 		if row.CacheKey == "" {
 			return "", errors.New("save content translations: empty cache key")
@@ -194,6 +195,14 @@ func (s *Server) saveContentTranslations(ctx context.Context, rows []contentTran
 			row.Origin, row.ConfigKey, row.Model, row.TemplateVersion); err != nil {
 			return "", fmt.Errorf("save content translation %q: %w", row.Field, err)
 		}
+		keys = append(keys, row.CacheKey)
+	}
+	// The scope columns answer "is this row still searchable", and they depend
+	// on the row that was just written. The insert trigger covers new keys; an
+	// upsert of an existing key does not fire it, so the batch recomputes its
+	// own rows from the same view the triggers read.
+	if err := refreshContentTranslationScopeTx(ctx, tx.Tx, keys); err != nil {
+		return "", err
 	}
 	if err := tx.Commit(); err != nil {
 		return "", fmt.Errorf("save content translations: %w", err)
@@ -249,6 +258,7 @@ func (s *Server) translatedEntityIDs(ctx context.Context, language, entityKind, 
 			WHERE content_translation_search MATCH ?
 			  AND t.language = ?
 			  AND t.entity_kind = ?
+			  AND t.browsable=1
 			  AND `+current+`
 			-- No ORDER BY: FTS5 yields rowids in index order, so LIMIT stops
 			-- early. The caller sorts cards; sorting here would read every match.

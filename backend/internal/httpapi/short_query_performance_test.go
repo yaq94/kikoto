@@ -8,6 +8,7 @@ import (
 	"os"
 	"runtime"
 	"sort"
+	"strconv"
 	"testing"
 	"time"
 
@@ -45,6 +46,7 @@ type shortQueryCase struct {
 	Language  string          `json:"language"`
 	Needle    string          `json:"needle"`
 	Matches   int             `json:"matches"`
+	HitScan   shortQueryStats `json:"hitScan"`
 	HitSet    shortQueryStats `json:"hitSet"`
 	HitCapped shortQueryStats `json:"hitCapped"`
 	HitPage   shortQueryStats `json:"hitPage"`
@@ -142,8 +144,22 @@ func shortQueryMeasure(t *testing.T, db *sql.DB, sourceID int64, target library.
 	// The hit set is the short query itself: the complete effective range with
 	// the current-row and admission predicates, capped only at the return.
 	hitPrefix, hitArgs := localizedCatalogSearchSQL([]library.DisplaySearchTarget{target}, sourceID, true, configKey)
+	// The raw scan is the same generator without the catalog id mapping, so the
+	// difference between it and the hit set is the cost of turning a translation
+	// row into a card id.
+	scanSQL, scanArgs := library.ShortTranslationSearchSQL(
+		[]library.DisplaySearchTarget{target},
+		[]library.ShortSearchArm{
+			{EntityKind: "entry", Fields: []string{"title"}, SourceID: sourceID, ConfigKey: configKey},
+			{EntityKind: "series", Fields: []string{"title"}, SourceID: sourceID, ConfigKey: configKey},
+		}, 0)
+	scanCountSQL := `SELECT count(*) FROM (` + scanSQL + `)`
+	result.HitScan = shortQuerySample(samples, func() error {
+		var total int
+		return db.QueryRowContext(context.Background(), scanCountSQL, scanArgs...).Scan(&total)
+	})
 	hitSQL := hitPrefix + `SELECT count(*) FROM search_hits`
-	hitPageSQL := hitPrefix + `SELECT entity_id FROM search_hits LIMIT 200`
+	hitPageSQL := catalogStatementPrefix(hitPrefix) + `SELECT catalog_entry_id FROM search_hits LIMIT 200`
 	for range warmup {
 		if err := db.QueryRowContext(context.Background(), hitSQL, hitArgs...).Scan(&result.Matches); err != nil {
 			t.Fatalf("%s warm hit set: %v", target.Language, err)
@@ -156,7 +172,8 @@ func shortQueryMeasure(t *testing.T, db *sql.DB, sourceID int64, target library.
 	result.HitSet.Rows = result.Matches
 	// A capped total stops after the cap, which is what an interface that shows
 	// "N+" instead of an exact count needs.
-	hitCappedSQL := hitPrefix + `SELECT count(*) FROM (SELECT entity_id FROM search_hits LIMIT 1000)`
+	hitCappedSQL := catalogStatementPrefix(hitPrefix) + `SELECT count(*) FROM (SELECT catalog_entry_id FROM search_hits LIMIT ` +
+		strconv.Itoa(catalogShortSearchResultLimit) + `)`
 	result.HitCapped = shortQuerySample(samples, func() error {
 		var total int
 		return db.QueryRowContext(context.Background(), hitCappedSQL, hitArgs...).Scan(&total)
@@ -177,7 +194,7 @@ func shortQueryMeasure(t *testing.T, db *sql.DB, sourceID int64, target library.
 	})
 	result.HitPlan = shortQueryPlan(t, db, hitSQL, hitArgs)
 
-	completeSQL := prefix + `SELECT count(*) ` + from
+	completeSQL := catalogStatementPrefix(prefix) + `SELECT count(*) ` + from
 	for range warmup {
 		if err := db.QueryRowContext(context.Background(), completeSQL, args...).Scan(&result.Matches); err != nil {
 			t.Fatalf("%s warm complete: %v", target.Language, err)
@@ -189,9 +206,11 @@ func shortQueryMeasure(t *testing.T, db *sql.DB, sourceID int64, target library.
 	})
 	result.Complete.Rows = result.Matches
 
-	pageSQL := prefix + `SELECT id ` + from + ` LIMIT 200`
+	pageSQL := catalogStatementPrefix(prefix) + `SELECT id ` + from +
+		` ORDER BY exact DESC,updated_at DESC,series_id DESC,id DESC LIMIT ? OFFSET ?`
+	pageArgs := append(append([]any{}, args...), 200, 0)
 	result.Page = shortQuerySample(samples, func() error {
-		rows, err := db.QueryContext(context.Background(), pageSQL, args...)
+		rows, err := db.QueryContext(context.Background(), pageSQL, pageArgs...)
 		if err != nil {
 			return err
 		}
@@ -231,12 +250,19 @@ func shortQuerySample(samples int, run func() error) shortQueryStats {
 	for range samples {
 		started := time.Now()
 		if err := run(); err != nil {
-			return stats
+			stats.Durations = append(stats.Durations, -1)
+			continue
 		}
 		stats.Durations = append(stats.Durations, float64(time.Since(started).Microseconds())/1000)
 	}
 	sorted := append([]float64{}, stats.Durations...)
 	sort.Float64s(sorted)
+	// A failed sample sorts first; reporting it as a fast query would hide a
+	// broken shape behind a good number.
+	if sorted[0] < 0 {
+		stats.Samples = 0
+		return stats
+	}
 	stats.MinMs = sorted[0]
 	stats.MaxMs = sorted[len(sorted)-1]
 	sum := 0.0

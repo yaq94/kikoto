@@ -358,7 +358,10 @@ func refreshSourceCatalogEntryAdmissionsTx(ctx context.Context, tx *sql.Tx, sour
 			audio=excluded.audio,non_audio=excluded.non_audio,updated_at=CURRENT_TIMESTAMP`,
 		catalogadmission.ProbeFiles+1, catalogadmission.ProbeAudio, catalogadmission.ProbeNonAudio+1),
 		sourceID)
-	return err
+	if err != nil {
+		return err
+	}
+	return refreshSourceContentTranslationBrowsableTx(ctx, tx, sourceID)
 }
 
 // clearCatalogRootPendingTx removes one blocked card from the publish queue.

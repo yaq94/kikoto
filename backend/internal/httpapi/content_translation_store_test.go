@@ -163,6 +163,12 @@ func TestContentTranslationStoreFTSTriggersTrackChanges(t *testing.T) {
 	insert(1, "entry", "zh-Hans", "深海少女的告白")
 	insert(2, "entry", "zh-Hans", "浅海少年的告白")
 	insert(3, "entry", "ja", "深海少女の告白")
+	// These ids have no catalog row. The trigger leaves them non-browsable,
+	// which is the production answer; this test covers the FTS index, so mark
+	// them searchable after the insert trigger has run.
+	if _, err := s.db.Exec(`UPDATE content_translation SET browsable=1`); err != nil {
+		t.Fatal(err)
+	}
 
 	hits, err := s.translatedEntityIDs(ctx, "zh-Hans", "entry", "深海少女", 10)
 	if err != nil {
@@ -281,6 +287,11 @@ func TestContentTranslationStoreSaveIsIdempotent(t *testing.T) {
 	if _, err := s.saveContentTranslations(ctx, []contentTranslationRow{row}); err != nil {
 		t.Fatal(err)
 	}
+	// The row names no live entity, so the scope refresh leaves it
+	// non-browsable. This test covers the upsert and the FTS trigger.
+	if _, err := s.db.Exec(`UPDATE content_translation SET browsable=1`); err != nil {
+		t.Fatal(err)
+	}
 	var count int
 	if err := s.db.QueryRow(`SELECT COUNT(*) FROM content_translation WHERE cache_key = ?`, key).Scan(&count); err != nil {
 		t.Fatal(err)
@@ -328,6 +339,12 @@ func TestContentTranslationStoreSearchFiltersAndShortFallback(t *testing.T) {
 		{CacheKey: "e", EntityKind: "entry", EntityID: 14, Field: "title", Language: "zh-Hans", TranslatedText: "深海少女的旧配置", Origin: "model", ConfigKey: "legacy", Model: "gpt", TemplateVersion: translation.TemplateVersion},
 	}
 	if _, err := s.saveContentTranslations(ctx, rows); err != nil {
+		t.Fatal(err)
+	}
+	// This test covers the store's search mechanics, not catalog admission:
+	// the rows name no live entity, so give them the scope a real card would
+	// have. Admission itself is covered by the scope tests.
+	if _, err := s.db.Exec(`UPDATE content_translation SET browsable=1`); err != nil {
 		t.Fatal(err)
 	}
 	// translatedEntityIDs reads the current config key. Save accepted the
@@ -459,6 +476,11 @@ func TestContentTranslationShortQueryCoversFullCorpus(t *testing.T) {
 	}
 	if total != 50001 {
 		t.Fatalf("seeded %d rows", total)
+	}
+	// The fixture names no live entities. This test measures how far the scan
+	// reaches, so every seeded row stands in for a searchable card.
+	if _, err := s.db.Exec(`UPDATE content_translation SET browsable=1`); err != nil {
+		t.Fatal(err)
 	}
 	if ids, err := s.translatedEntityIDs(ctx, "zh-Hans", "entry", "远古", 10); err != nil {
 		t.Fatal(err)

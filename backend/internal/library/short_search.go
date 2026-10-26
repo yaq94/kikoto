@@ -7,16 +7,20 @@ import (
 )
 
 // ShortSearchArm is one entity kind that a 1-2 character translation search
-// covers. Scope is an extra predicate over the content_translation alias `ct`
-// that ties a row to a still-effective entity: current source text, a live
-// entity, and the admission rules of the caller. ScopeArgs fill its
-// placeholders in order. ConfigKey selects the model rows that may answer the
-// search; an empty key keeps the caller's historical "any model row" rule.
+// covers. SourceID narrows the scan to one source; zero keeps every source,
+// which is what a local library search needs. ConfigKey selects the model rows
+// that may answer the search; an empty key keeps the caller's historical "any
+// model row" rule.
+//
+// After continues a single-field arm after one translation row id. A
+// multi-field arm (work title and description) cannot resume from one id
+// cursor, because the index order is (field, id) and one cursor would skip the
+// rows of the other field; such an arm is omitted when After is set.
 type ShortSearchArm struct {
 	EntityKind string
 	Fields     []string
-	Scope      string
-	ScopeArgs  []any
+	SourceID   int64
+	After      int64
 	ConfigKey  string
 }
 
@@ -26,12 +30,19 @@ type ShortSearchArm struct {
 // index. The scan covers the complete effective language/field range; only the
 // number of returned rows is capped.
 //
+// Effectiveness is stored on the row: `browsable` says the stored source text
+// still matches a live, playable entity, and `source_id` says which source the
+// entity belongs to. Both live in the index prefix, so the scan answers its
+// range without joining a wide entity row per candidate.
+//
 // A positive limit caps the returned rows and orders them by
 // (language, entity_kind, field, id), which is the keyset order a caller can
 // continue from and which makes the cap deterministic. Zero keeps the complete
 // effective set unordered, which is what a count or a paginated total needs: a
 // sort there would read the whole range before returning anything. The returned
-// subquery exposes (entity_id, language, entity_kind, field, id).
+// subquery exposes (entity_id, language, entity_kind, field, id, exact), where
+// `exact` says the stored text equals the needle. The comparison rides on the
+// row the scan already read, so exact-first ordering costs no second pass.
 func ShortTranslationSearchSQL(targets []DisplaySearchTarget, arms []ShortSearchArm, limit int) (string, []any) {
 	if len(arms) == 0 || len(targets) == 0 {
 		return "", nil
@@ -42,29 +53,37 @@ func ShortTranslationSearchSQL(targets []DisplaySearchTarget, arms []ShortSearch
 		if arm.EntityKind == "" || len(arm.Fields) == 0 {
 			continue
 		}
+		if arm.After > 0 && len(arm.Fields) != 1 {
+			continue
+		}
 		placeholders := strings.TrimSuffix(strings.Repeat("?,", len(arm.Fields)), ",")
 		for _, target := range targets {
 			needle := strings.TrimSpace(target.Query)
 			if needle == "" {
 				continue
 			}
-			branch := `SELECT ct.entity_id,ct.language,ct.entity_kind,ct.field,ct.id
+			branch := `SELECT ct.entity_id,ct.language,ct.entity_kind,ct.field,ct.id,(ct.translated_text=?) AS exact
 				FROM content_translation ct INDEXED BY idx_content_translation_short_scan
 				WHERE ct.language=? AND ct.entity_kind=? AND ct.field IN (` + placeholders + `)
-				  AND ` + shortTranslationCurrentSQL(target.Language, arm.ConfigKey) + `
-				  AND instr(ct.translated_text, ?) > 0`
-			branchArgs := []any{target.Language, arm.EntityKind}
+				  AND ct.browsable=1`
+			branchArgs := []any{needle, target.Language, arm.EntityKind}
 			for _, field := range arm.Fields {
 				branchArgs = append(branchArgs, field)
 			}
+			if arm.SourceID != 0 {
+				branch += ` AND ct.source_id=?`
+				branchArgs = append(branchArgs, arm.SourceID)
+			}
+			branch += ` AND ` + shortTranslationCurrentSQL(target.Language, arm.ConfigKey)
 			if target.Language != translation.SourceHant && arm.ConfigKey != "" {
 				branchArgs = append(branchArgs, arm.ConfigKey)
 			}
-			branchArgs = append(branchArgs, needle)
-			if arm.Scope != "" {
-				branch += ` AND (` + arm.Scope + `)`
-				branchArgs = append(branchArgs, arm.ScopeArgs...)
+			if arm.After > 0 {
+				branch += ` AND ct.id>?`
+				branchArgs = append(branchArgs, arm.After)
 			}
+			branch += ` AND instr(ct.translated_text, ?) > 0`
+			branchArgs = append(branchArgs, needle)
 			branches = append(branches, branch)
 			args = append(args, branchArgs...)
 		}
@@ -72,7 +91,7 @@ func ShortTranslationSearchSQL(targets []DisplaySearchTarget, arms []ShortSearch
 	if len(branches) == 0 {
 		return "", nil
 	}
-	sqlText := `SELECT entity_id,language,entity_kind,field,id FROM (
+	sqlText := `SELECT entity_id,language,entity_kind,field,id,exact FROM (
 		` + strings.Join(branches, `
 		UNION ALL
 		`) + `

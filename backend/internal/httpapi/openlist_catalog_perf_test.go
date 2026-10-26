@@ -80,7 +80,7 @@ func TestOpenListCatalogBrowseSinglePassPlan(t *testing.T) {
 	}
 
 	prefix, from, args := openListCatalogCardsQuery(7, "")
-	pageSQL := prefix + `SELECT id,series_id,primary_code,title,work_id,updated_at,availability_status,has_audio,COUNT(*) OVER () AS total ` + from + ` ORDER BY updated_at DESC,series_id DESC,id DESC LIMIT ? OFFSET ?`
+	pageSQL := catalogCardPageSQL(prefix, from, false)
 	plan := explainCatalogPlan(t, db, pageSQL, append(args, 2, 0)...)
 	t.Logf("empty browse plan:\n%s", plan)
 	assertNoCatalogFileTableScan(t, plan)
@@ -104,8 +104,9 @@ func TestOpenListCatalogBrowseSinglePassPlan(t *testing.T) {
 			var seriesID int64
 			var code, title, updated, availability string
 			var workID sql.NullInt64
+			var exact int
 			var hasAudio bool
-			if err = rows.Scan(&item.id, &seriesID, &code, &title, &workID, &updated, &availability, &hasAudio, &item.total); err != nil {
+			if err = rows.Scan(&item.id, &seriesID, &code, &title, &workID, &updated, &availability, &exact, &hasAudio, &item.total); err != nil {
 				t.Fatal(err)
 			}
 			cards = append(cards, item)
@@ -158,8 +159,8 @@ func TestOpenListCatalogSearchFTSCoverage(t *testing.T) {
 	}
 
 	prefix, from, args := openListCatalogCardsQuery(7, "Hidden")
-	searchSQL := prefix + `SELECT id,series_id,COUNT(*) OVER () AS total ` + from + ` ORDER BY updated_at DESC,series_id DESC,id DESC LIMIT 24 OFFSET 0`
-	plan := explainCatalogPlan(t, db, searchSQL, args...)
+	searchSQL := catalogCardPageSQL(prefix, from, false)
+	plan := explainCatalogPlan(t, db, searchSQL, append(append([]any{}, args...), 24, 0)...)
 	t.Logf("search plan:\n%s", plan)
 	assertNoCatalogFileTableScan(t, plan)
 	if !strings.Contains(plan, "VIRTUAL TABLE") {
@@ -168,7 +169,7 @@ func TestOpenListCatalogSearchFTSCoverage(t *testing.T) {
 
 	readIDs := func(query string) []string {
 		prefix, from, args := openListCatalogCardsQuery(7, query)
-		rows, err := db.Query(prefix+`SELECT id,series_id,COUNT(*) OVER () AS total `+from+` ORDER BY updated_at DESC,series_id DESC,id DESC LIMIT 24`, args...)
+		rows, err := db.Query(catalogStatementPrefix(prefix)+`SELECT id,series_id,COUNT(*) OVER () AS total `+from+` ORDER BY updated_at DESC,series_id DESC,id DESC LIMIT 24`, args...)
 		if err != nil {
 			t.Fatalf("%s: %v", query, err)
 		}
@@ -353,11 +354,8 @@ func TestOpenListCatalogLanguageSearchPlan(t *testing.T) {
 		t.Fatal(err)
 	}
 	prefix, from, args := openListCatalogCardsQueryForEntries(7, ids)
-	rank, rankArgs := openListTranslationExactRankSQL([]library.DisplaySearchTarget{{Language: "zh-Hans", Query: "作品1"}}, "language_cards", "")
-	pageSQL := prefix + `language_cards AS MATERIALIZED (SELECT * ` + from + `)
-	SELECT id,series_id,primary_code,title,work_id,updated_at,availability_status,has_audio,(SELECT COUNT(*) FROM language_cards) AS total
-	FROM language_cards ORDER BY ` + rank + ` DESC, updated_at DESC,series_id DESC,id DESC LIMIT ? OFFSET ?`
-	plan := explainCatalogPlan(t, db, pageSQL, append(append([]any{}, args...), append(rankArgs, 2, 0)...)...)
+	pageSQL := catalogCardPageSQL(prefix, from, false)
+	plan := explainCatalogPlan(t, db, pageSQL, append(append([]any{}, args...), 2, 0)...)
 	t.Logf("language search plan:\n%s", plan)
 	assertNoCatalogFileTableScan(t, plan)
 	if strings.Contains(plan, "source_catalog_entry_live_root") {
@@ -367,7 +365,7 @@ func TestOpenListCatalogLanguageSearchPlan(t *testing.T) {
 		t.Fatalf("language search does not probe entries by rowid: %s", plan)
 	}
 	var total, rows int
-	if err := db.QueryRow(pageSQL, append(append([]any{}, args...), append(rankArgs, 2, 0)...)...).Scan(new(int64), new(int64), new(string), new(string), new(sql.NullInt64), new(string), new(string), new(bool), &total); err != nil {
+	if err := db.QueryRow(pageSQL, append(append([]any{}, args...), 2, 0)...).Scan(new(int64), new(int64), new(string), new(string), new(sql.NullInt64), new(string), new(string), new(int64), new(bool), &total); err != nil {
 		t.Fatalf("run language page: %v", err)
 	}
 	rows = 1
@@ -424,11 +422,19 @@ func TestOpenListCatalogSearchSingleEntryScan(t *testing.T) {
 	for _, query := range []string{"Episode 1", "Ep"} {
 		t.Run(query, func(t *testing.T) {
 			prefix, from, args := openListCatalogCardsQuery(7, query)
-			searchSQL := prefix + `SELECT id,series_id,COUNT(*) OVER () AS total ` + from + ` ORDER BY updated_at DESC,series_id DESC,id DESC LIMIT 24 OFFSET 0`
-			plan := explainCatalogPlan(t, db, searchSQL, args...)
+			searchSQL := catalogCardPageSQL(prefix, from, false)
+			plan := explainCatalogPlan(t, db, searchSQL, append(append([]any{}, args...), 24, 0)...)
 			t.Logf("%q plan:\n%s", query, plan)
-			if count := strings.Count(plan, "SEARCH e USING INDEX source_catalog_entry_live_root"); count != 1 {
-				t.Fatalf("query %q reads the entry source %d times, want 1: %s", query, count, plan)
+			// A keyword search drives the pipeline from its hit set, so the
+			// source is never scanned; each candidate is a rowid probe. The
+			// empty browse above keeps the single live-root read.
+			if strings.Contains(plan, "SCAN e USING INDEX source_catalog_entry_live_root") {
+				t.Fatalf("query %q scans the entry source: %s", query, plan)
+			}
+			if query == "Episode 1" {
+				if count := strings.Count(plan, "source_catalog_entry_live_root"); count != 0 {
+					t.Fatalf("query %q reads the live-root index %d times, want 0: %s", query, count, plan)
+				}
 			}
 			if !strings.Contains(plan, "SEARCH e USING INTEGER PRIMARY KEY (rowid=?)") {
 				t.Fatalf("query %q does not probe entries by rowid: %s", query, plan)

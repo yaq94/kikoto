@@ -675,7 +675,8 @@ func translatedTextClause(display, needle string, identity TranslationIdentity) 
 				WHERE content_translation_search MATCH ?
 				  AND translated.entity_kind = 'work'
 				  AND translated.field = ?
-					  AND translated.language = ?`+translationIdentitySQL("translated", identity)+`)`)
+					  AND translated.language = ?
+					  AND translated.browsable=1`+translationIdentitySQL("translated", identity)+`)`)
 				args = append(args, `"`+strings.ReplaceAll(query, `"`, `""`)+`"`, field, target.Language)
 				args = append(args, translationIdentityArgs(identity)...)
 			}
@@ -685,10 +686,6 @@ func translatedTextClause(display, needle string, identity TranslationIdentity) 
 			EntityKind: "work",
 			Fields:     []string{"title", "description"},
 			ConfigKey:  identity.ConfigKey,
-			Scope: `EXISTS(SELECT 1 FROM work current_work
-				WHERE current_work.id=ct.entity_id
-				  AND (CASE WHEN ct.field='title' THEN ct.source_text=current_work.title
-				            ELSE ct.source_text=current_work.description END))`,
 		}}, 0)
 		if shortSQL == "" {
 			continue

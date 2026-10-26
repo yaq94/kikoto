@@ -194,6 +194,14 @@ generation to `-1`, so a reader falls back to live counting instead of trusting
 a count from an older file set. The publish transaction rewrites the row after
 the card's files commit.
 
+Schema 105 is `105_translation_search_scope.sql`. It adds `source_id` and
+`browsable` to `content_translation`, backfills them, replaces
+`idx_content_translation_short_scan` with the scoped covering shape, and creates
+the `content_translation_scope` and `catalog_entry_searchable` views plus the
+triggers that keep the stored scope current. The number was used by an
+unpublished draft that was reverted before any database received it; no released
+105 exists.
+
 ## Fresh Installs And Upgrades
 
 The single-row `schema_state` table records the current schema version, the
@@ -388,10 +396,11 @@ matches the backup.
 | v0.8.0 | `059` | `059_v0.8.0.sql` |
 | v0.8.1, v0.8.2 | `066` | `066_v0.8.1.sql` |
 | v0.8.3 | `068` | `068_v0.8.3.sql` |
-| development build (unreleased) | `104` | Development baseline only; `compat/104_dev.sql` |
+| development build (unreleased) | `105` | Development baseline only; `compat/105_dev.sql` |
 
-The numbered chain runs `096` through `104` without a gap.
-`compat/104_dev.sql` is the current development baseline; `compat/103_dev.sql`,
+The numbered chain runs `096` through `105` without a gap.
+`compat/105_dev.sql` is the current development baseline; `compat/104_dev.sql`,
+`compat/103_dev.sql`,
 `compat/102_dev.sql` and `compat/096_dev.sql` remain as earlier development
 baselines, and there is no separate `compat/101_dev.sql`.
 
@@ -399,7 +408,7 @@ Per-release upgrade steps are in the [release notes](../history/index.md).
 
 ## Kikoto-next Schema Additions
 
-Migrations `069` through `104` extend the source catalog, shared associations,
+Migrations `069` through `105` extend the source catalog, shared associations,
 personal transfer, and the recoverable index. Pending release notes and upgrade
 steps are in
 [Unreleased](../history/unreleased.md).
@@ -442,6 +451,7 @@ steps are in
 | `102_translation_prefill_status.sql` | Rebuild `translation_prefill_state` with `failed`; index the failure table by `(config_key, source_hash)` | The cursor row survives the rebuild; triggers are recreated, and bounded failure cleanup uses the index |
 | `103_translation_short_scan_index.sql` | Replace the 099 short-query indexes with `idx_content_translation_short_scan` | An ordered short page reads the index in keyset order; the complete-set count needs no table lookup |
 | `104_source_catalog_entry_admission.sql` | `source_catalog_entry_admission`, one count row per card and generation | A matching generation answers admission from the primary key; a file write invalidates the row and the reader counts live rows |
+| `105_translation_search_scope.sql` | Stored `source_id`/`browsable`, scoped short-scan index, scope views and triggers | A per-source short search answers language, kind, field, source, admission and text from one covering range |
 
 The Release To Schema Map above lists every numbered file. `069` rebuilds `work`
 and `logical_work` to relax code uniqueness and creates the catalog entry and
@@ -501,7 +511,8 @@ recreates both cache indexes, and `102` copies the single prefill-state row and
 recreates its reset triggers. `103` only replaces indexes. `085`, `088`, `090`,
 `091` and `092` add tables
 or columns with defaults, `093` adds an index, `094` adds one column default,
-`095` adds a rebuildable cache table, and `104` adds a derived count table.
+`095` adds a rebuildable cache table, `104` adds a derived count table, and
+`105` adds stored scope columns with their derived index.
 Startup refuses a database newer than the binary before running a handler.
 Rolling back any of these schemas requires a database snapshot, not a reverse
 migration; see [Release rollback](release-rollback.md).

@@ -318,6 +318,9 @@ func persistOpenListSnapshotTx(ctx context.Context, tx *sql.Tx, sourceID int64, 
 	if err = refreshCatalogEntryAdmissionTx(ctx, tx, id); err != nil {
 		return 0, err
 	}
+	if err = refreshContentTranslationBrowsableTx(ctx, tx, []int64{id}); err != nil {
+		return 0, err
+	}
 	return id, nil
 }
 
@@ -767,6 +770,9 @@ func (s *Server) listOpenListWorks(w http.ResponseWriter, r *http.Request, sourc
 		pageArgs  []any
 		countSQL  string
 		countArgs []any
+		// A short translated search reports the capped candidate count, which
+		// the page query no longer carries in every row.
+		cappedCount bool
 	)
 	// An empty query stays on the browse path: there is nothing to match, so
 	// the display language must not narrow the list.
@@ -782,20 +788,22 @@ func (s *Server) listOpenListWorks(w http.ResponseWriter, r *http.Request, sourc
 		}
 		configKey := translation.ConfigKey(cfg)
 		prefix, from, args := openListCatalogCardsQueryLocalized(source.ID, q, targets, configKey)
-		rank, rankArgs := openListTranslationExactRankSQL(targets, "language_cards", configKey)
-		alias := `(SELECT * ` + from + `) AS language_cards`
-		cards := prefix + `SELECT id,series_id,primary_code,title,work_id,updated_at,availability_status,has_audio,COUNT(*) OVER () AS total
-	FROM ` + alias + ` ORDER BY ` + rank + ` DESC, updated_at DESC,series_id DESC,id DESC LIMIT ? OFFSET ?`
-		pageSQL = cards
-		pageArgs = append(append([]any{}, args...), rankArgs...)
+		pageArgs = append([]any{}, args...)
+		// A 1-2 character query reports a capped total, so the window count
+		// would walk the whole candidate set to answer a question the cap
+		// already decided. The longer path keeps it: its candidate set is
+		// bounded by the trigram index.
+		short := utf8.RuneCountInString(q) < 3
+		pageSQL = catalogCardPageSQL(prefix, from, short)
 		pageArgs = append(pageArgs, pageSize, (page-1)*pageSize)
-		countSQL = prefix + `SELECT COUNT(*) FROM ` + alias
+		countSQL = catalogStatementPrefix(prefix) + `SELECT COUNT(*) ` + from
 		countArgs = args
+		cappedCount = short
 	} else {
 		prefix, from, args := openListCatalogCardsQuery(source.ID, q)
-		pageSQL = prefix + `SELECT id,series_id,primary_code,title,work_id,updated_at,availability_status,has_audio,COUNT(*) OVER () AS total ` + from + ` ORDER BY updated_at DESC,series_id DESC,id DESC LIMIT ? OFFSET ?`
+		pageSQL = catalogCardPageSQL(prefix, from, false)
 		pageArgs = append(append([]any{}, args...), pageSize, (page-1)*pageSize)
-		countSQL = prefix + "SELECT COUNT(*) " + from
+		countSQL = catalogStatementPrefix(prefix) + "SELECT COUNT(*) " + from
 		countArgs = args
 	}
 	rows, err := s.db.QueryContext(r.Context(), pageSQL, pageArgs...)
@@ -808,8 +816,9 @@ func (s *Server) listOpenListWorks(w http.ResponseWriter, r *http.Request, sourc
 	for rows.Next() {
 		var item remoteWorkSummary
 		var availability string
+		var exact int
 		var hasAudio bool
-		if err = rows.Scan(&item.CatalogEntryID, &item.SeriesID, &item.PrimaryCode, &item.Title, &item.WorkID, &item.UpdatedAt, &availability, &hasAudio, &total); err != nil {
+		if err = catalogCardScan(rows, &item, &availability, &exact, &hasAudio, &total, cappedCount); err != nil {
 			break
 		}
 		item.RemoteID = strconv.FormatInt(item.CatalogEntryID, 10)
@@ -835,6 +844,12 @@ func (s *Server) listOpenListWorks(w http.ResponseWriter, r *http.Request, sourc
 	if err != nil {
 		writeError(w, err)
 		return
+	}
+	if cappedCount {
+		if err = s.db.QueryRowContext(r.Context(), countSQL, countArgs...).Scan(&total); err != nil {
+			writeError(w, err)
+			return
+		}
 	}
 	if len(works) == 0 && page > 1 {
 		// The total rides on the page. An out-of-range page has no row to carry
@@ -877,33 +892,43 @@ func openListCatalogCardsQueryFiltered(sourceID int64, query string, entryIDs, s
 	seriesScope := ""
 	scope := []string{}
 	searched := entryIDs != nil || seriesIDs != nil
+	// A short translated search only returns rows whose stored `browsable` flag
+	// already means "admitted and playable". Recomputing admission and the audio
+	// probe per candidate would repeat that work 1000 times for no new answer.
+	trustedScope := false
 	if searched {
 		// A display-language search already knows the matching identities.
 		// Drive the card pipeline from that bounded set with primary-key
 		// lookups instead of scanning every entry of the source. A sentinel id
 		// keeps the entry arm empty when only a series title matched.
-		entryValues := "(?)"
+		entryValues := "(?,0)"
 		if len(entryIDs) > 0 {
-			entryValues = strings.TrimSuffix(strings.Repeat("(?),", len(entryIDs)), ",")
+			entryValues = strings.TrimSuffix(strings.Repeat("(?,0),", len(entryIDs)), ",")
 			for _, id := range entryIDs {
 				args = append(args, id)
 			}
 		} else {
 			args = append(args, int64(-1))
 		}
-		prefix = "WITH requested_entry(id) AS (VALUES " + entryValues + "), "
+		prefix = "WITH requested_entry(id,exact) AS (VALUES " + entryValues + "), "
 		entrySource = "requested_entry AS requested CROSS JOIN source_catalog_entry AS e ON e.id = requested.id"
 		scope = append(scope, `s.id IN (
 			SELECT scope_member.series_id FROM catalog_series_member AS scope_member
 			JOIN requested_entry AS scope_requested ON scope_requested.id = scope_member.catalog_entry_id)`)
+		// The series arm always reads requested_series, so the name must exist
+		// even when the caller supplied no series ids. A sentinel keeps it
+		// empty.
+		values := "(?,0)"
 		if len(seriesIDs) > 0 {
-			values := strings.TrimSuffix(strings.Repeat("(?),", len(seriesIDs)), ",")
-			prefix += "requested_series(id) AS (VALUES " + values + "), "
-			scope = append(scope, `s.id IN (SELECT id FROM requested_series)`)
+			values = strings.TrimSuffix(strings.Repeat("(?,0),", len(seriesIDs)), ",")
 			for _, id := range seriesIDs {
 				args = append(args, id)
 			}
+		} else {
+			args = append(args, int64(-1))
 		}
+		prefix += "requested_series(id,exact) AS (VALUES " + values + "), "
+		scope = append(scope, `s.id IN (SELECT id FROM requested_series)`)
 		seriesScope = " AND (" + strings.Join(scope, " OR ") + ")"
 	}
 	if query != "" {
@@ -911,10 +936,29 @@ func openListCatalogCardsQueryFiltered(sourceID int64, query string, entryIDs, s
 			// A display language searches only its own corpus. Original-title
 			// matches are not a fallback for a missing translation.
 			prefix, args = localizedCatalogSearchSQL(localized, sourceID, utf8.RuneCountInString(query) < 3, configKey)
-			entrySearch = ` AND (e.id IN (SELECT catalog_entry_id FROM search_hits WHERE catalog_entry_id<>0)
-			OR EXISTS(SELECT 1 FROM search_hits sh JOIN catalog_series_member sm ON sm.series_id=sh.series_id WHERE sh.series_id<>0 AND sm.catalog_entry_id=e.id))`
-			seriesSearch = ` AND (s.id IN (SELECT series_id FROM search_hits WHERE series_id<>0)
-			OR EXISTS(SELECT 1 FROM search_hits sh JOIN catalog_series_member sm ON sm.catalog_entry_id=sh.catalog_entry_id WHERE sh.catalog_entry_id<>0 AND sm.series_id=s.id))`
+			// The hit set already names the cards. Driving the pipeline from it
+			// keeps the work proportional to the matches instead of scanning
+			// every entry of the source and filtering afterwards. A 1-2
+			// character query can match the whole source, so its candidate set
+			// is capped; the reported total is capped with it.
+			short := utf8.RuneCountInString(query) < 3
+			// The cap lives inside each arm, so SQLite stops scanning at the
+			// bound instead of materializing a full-source match first.
+			hits := "search_hits"
+			// `exact` rides along so the page can order exact titles first
+			// without a second probe per card.
+			prefix += `, requested_entry(id,exact) AS (SELECT catalog_entry_id,max(exact) FROM ` + hits +
+				` WHERE catalog_entry_id<>0 GROUP BY catalog_entry_id), ` +
+				`requested_series(id,exact) AS (SELECT series_id,max(exact) FROM ` + hits +
+				` WHERE series_id<>0 GROUP BY series_id) `
+			entrySource = "requested_entry AS requested CROSS JOIN source_catalog_entry AS e ON e.id = requested.id"
+			scope = append(scope, `s.id IN (
+				SELECT scope_member.series_id FROM catalog_series_member AS scope_member
+				JOIN requested_entry AS scope_requested ON scope_requested.id = scope_member.catalog_entry_id)`)
+			scope = append(scope, `s.id IN (SELECT id FROM requested_series)`)
+			seriesScope = " AND (" + strings.Join(scope, " OR ") + ")"
+			searched = true
+			trustedScope = short
 		} else if utf8.RuneCountInString(query) >= 3 {
 			prefix = `WITH search_hits AS MATERIALIZED (
 	SELECT d.catalog_entry_id, d.series_id
@@ -922,11 +966,17 @@ func openListCatalogCardsQueryFiltered(sourceID int64, query string, entryIDs, s
 	WHERE source_catalog_search MATCH ? AND (d.entity_kind='series' OR d.file_source_id=?)
 	`
 			args = append(args, ftsPhrase(query), sourceID)
-			prefix += `) `
-			entrySearch = ` AND (e.id IN (SELECT catalog_entry_id FROM search_hits WHERE catalog_entry_id<>0)
-	OR EXISTS(SELECT 1 FROM search_hits sh JOIN catalog_series_member sm ON sm.series_id=sh.series_id WHERE sh.series_id<>0 AND sm.catalog_entry_id=e.id))`
-			seriesSearch = ` AND (s.id IN (SELECT series_id FROM search_hits WHERE series_id<>0)
-	OR EXISTS(SELECT 1 FROM search_hits sh JOIN catalog_series_member sm ON sm.catalog_entry_id=sh.catalog_entry_id WHERE sh.catalog_entry_id<>0 AND sm.series_id=s.id))`
+			// The trigram path has no exact flag; its ordering stays by
+			// recency, and 0 keeps the shared page projection valid.
+			prefix += `), requested_entry(id,exact) AS (SELECT catalog_entry_id,0 FROM search_hits WHERE catalog_entry_id<>0), ` +
+				`requested_series(id,exact) AS (SELECT series_id,0 FROM search_hits WHERE series_id<>0) `
+			entrySource = "requested_entry AS requested CROSS JOIN source_catalog_entry AS e ON e.id = requested.id"
+			scope = append(scope, `s.id IN (
+				SELECT scope_member.series_id FROM catalog_series_member AS scope_member
+				JOIN requested_entry AS scope_requested ON scope_requested.id = scope_member.catalog_entry_id)`)
+			scope = append(scope, `s.id IN (SELECT id FROM requested_series)`)
+			seriesScope = " AND (" + strings.Join(scope, " OR ") + ")"
+			searched = true
 		} else {
 			// A trigram needs three characters. One- and two-character queries
 			// keep the old substring behaviour rather than silently matching
@@ -965,25 +1015,56 @@ func openListCatalogCardsQueryFiltered(sourceID int64, query string, entryIDs, s
 		args = append(args, sourceID)
 		entryDedup = ` AND (e.work_id IS NULL OR e.id IN (SELECT id FROM work_rank WHERE rank=1))`
 	}
-	arms := `(
-		SELECT e.id,0 AS series_id,e.primary_code,e.title,e.work_id,e.updated_at,e.availability_status,
-			` + catalogEntryHasAudioSQL("e") + ` AS has_audio FROM ` + entrySource + `
-		WHERE e.file_source_id=? AND e.relocated_to_id IS NULL AND NOT EXISTS(SELECT 1 FROM catalog_series_member m WHERE m.catalog_entry_id=e.id AND (SELECT COUNT(*) FROM catalog_series_member sibling WHERE sibling.series_id=m.series_id)>=2)
-			AND ` + catalogEntryAdmittedSQL("e") + entrySearch + `
-			` + entryDedup + `
-		UNION ALL
-		SELECT 0,s.id,'',s.title,s.work_id,s.created_at,CASE WHEN EXISTS(
+	entryHasAudio := catalogEntryHasAudioSQL("e")
+	entryAdmitted := catalogEntryAdmittedSQL("e")
+	// `exact` only exists on a search hit set. A browse has no needle, so every
+	// card is equally inexact.
+	entryExact := "0 AS exact"
+	seriesExact := "0 AS exact"
+	if searched {
+		entryExact = "requested.exact AS exact"
+		seriesExact = "COALESCE((SELECT exact FROM requested_series WHERE id=s.id),0) AS exact"
+	}
+	seriesPlayable := `CASE WHEN EXISTS(
 			SELECT 1 FROM catalog_series_member mm JOIN source_catalog_entry ee ON ee.id=mm.catalog_entry_id
 			JOIN source_catalog_file ff INDEXED BY source_catalog_file_parent ON ff.catalog_entry_id=ee.id AND ff.kind='audio'
 			WHERE mm.series_id=s.id AND ee.relocated_to_id IS NULL AND ee.availability_status='available' AND ` + catalogEntryAdmittedSQL("ee") + `
-		) THEN 'available' ELSE 'missing' END,EXISTS(
+		) THEN 'available' ELSE 'missing' END`
+	seriesHasAudio := `EXISTS(
 			SELECT 1 FROM catalog_series_member mm JOIN source_catalog_entry ee ON ee.id=mm.catalog_entry_id
 			JOIN source_catalog_file ff INDEXED BY source_catalog_file_parent ON ff.catalog_entry_id=ee.id AND ff.kind='audio'
 			WHERE mm.series_id=s.id AND ee.relocated_to_id IS NULL AND ` + catalogEntryAdmittedSQL("ee") + `
-		) AS has_audio FROM catalog_series s
+		)`
+	if trustedScope {
+		// A stored `browsable` row already passed admission and has audio. The
+		// series arm still needs a member's availability, but its admission and
+		// audio probes are known to succeed.
+		entryHasAudio = "1"
+		entryAdmitted = "1=1"
+		seriesPlayable = `CASE WHEN EXISTS(
+			SELECT 1 FROM catalog_series_member mm JOIN source_catalog_entry ee ON ee.id=mm.catalog_entry_id
+			JOIN source_catalog_file ff INDEXED BY source_catalog_file_parent ON ff.catalog_entry_id=ee.id AND ff.kind='audio'
+			WHERE mm.series_id=s.id AND ee.relocated_to_id IS NULL AND ee.availability_status='available'
+		) THEN 'available' ELSE 'missing' END`
+		seriesHasAudio = `EXISTS(
+			SELECT 1 FROM catalog_series_member mm JOIN source_catalog_entry ee ON ee.id=mm.catalog_entry_id
+			JOIN source_catalog_file ff INDEXED BY source_catalog_file_parent ON ff.catalog_entry_id=ee.id AND ff.kind='audio'
+			WHERE mm.series_id=s.id AND ee.relocated_to_id IS NULL
+		)`
+	}
+	arms := `(
+		SELECT e.id,0 AS series_id,e.primary_code,e.title,e.work_id,e.updated_at,e.availability_status,` + entryExact + `,
+			` + entryHasAudio + ` AS has_audio FROM ` + entrySource + `
+		WHERE e.file_source_id=? AND e.relocated_to_id IS NULL AND NOT EXISTS(SELECT 1 FROM catalog_series_member m WHERE m.catalog_entry_id=e.id AND (SELECT COUNT(*) FROM catalog_series_member sibling WHERE sibling.series_id=m.series_id)>=2)
+			AND ` + entryAdmitted + entrySearch + `
+			` + entryDedup + `
+		UNION ALL
+		SELECT 0,s.id,'',s.title,s.work_id,s.created_at,` + seriesPlayable + `,` + seriesExact + `,
+			` + seriesHasAudio + ` AS has_audio FROM catalog_series s
 		WHERE (SELECT COUNT(*) FROM catalog_series_member all_members WHERE all_members.series_id=s.id)>=2` + seriesScope + `
 		AND EXISTS(SELECT 1 FROM catalog_series_member m CROSS JOIN source_catalog_entry e ON e.rowid=m.catalog_entry_id
-		WHERE m.series_id=s.id AND e.file_source_id=? AND e.relocated_to_id IS NULL AND ` + catalogEntryAdmittedSQL("e") + seriesSearch + `)
+		WHERE m.series_id=s.id AND e.file_source_id=? AND e.relocated_to_id IS NULL AND ` +
+		map[bool]string{true: "1=1", false: catalogEntryAdmittedSQL("e")}[trustedScope] + seriesSearch + `)
 	)`
 	if searched {
 		rankSuffix = `FROM (SELECT candidates.*,ROW_NUMBER() OVER (PARTITION BY CASE WHEN work_id IS NOT NULL THEN 'work:' || (SELECT identity_work_id FROM shared_work_identity WHERE work_id=candidates.work_id) WHEN series_id>0 THEN 'series:' || series_id ELSE 'catalog:' || id END ORDER BY series_id,id) AS identity_rank FROM ` + arms + ` AS candidates) AS cards WHERE identity_rank=1`
@@ -1002,11 +1083,60 @@ func ftsPhrase(query string) string {
 	return `"` + strings.ReplaceAll(query, `"`, `""`) + `"`
 }
 
+// catalogCardPageColumns is the card projection every reader shares. `exact`
+// follows the availability so a search can put exact titles first; a browse
+// reports 0.
+const catalogCardPageColumns = `id,series_id,primary_code,title,work_id,updated_at,availability_status,exact,has_audio`
+
+// catalogCardPageSQL builds the page query for one candidate set. A capped
+// search omits the window total and reports its count separately; every other
+// shape carries the total on the page so a non-empty page needs one statement.
+func catalogCardPageSQL(prefix, from string, capped bool) string {
+	total := `,COUNT(*) OVER () AS total`
+	if capped {
+		total = ""
+	}
+	return catalogStatementPrefix(prefix) + `SELECT ` + catalogCardPageColumns + total + ` ` + from +
+		` ORDER BY exact DESC,updated_at DESC,series_id DESC,id DESC LIMIT ? OFFSET ?`
+}
+
+// catalogStatementPrefix closes a CTE list that ends with a separator, so a
+// statement can follow it. A prefix that already ends in a complete definition
+// is left alone.
+func catalogStatementPrefix(prefix string) string {
+	trimmed := strings.TrimSpace(prefix)
+	if strings.HasSuffix(trimmed, ",") {
+		return strings.TrimSuffix(trimmed, ",") + " "
+	}
+	if trimmed == "" {
+		return ""
+	}
+	return trimmed + " "
+}
+
+// catalogCardScan reads one card row. capped selects the eight-column shape
+// without the window total.
+func catalogCardScan(rows *sql.Rows, item *remoteWorkSummary, availability *string, exact *int, hasAudio *bool, total *int, capped bool) error {
+	if capped {
+		return rows.Scan(&item.CatalogEntryID, &item.SeriesID, &item.PrimaryCode, &item.Title, &item.WorkID,
+			&item.UpdatedAt, availability, exact, hasAudio)
+	}
+	return rows.Scan(&item.CatalogEntryID, &item.SeriesID, &item.PrimaryCode, &item.Title, &item.WorkID,
+		&item.UpdatedAt, availability, exact, hasAudio, total)
+}
+
 // localizedCatalogSearchSQL builds the translated hit set for a display
 // language. Entry and series titles are searchable; source_catalog_entry has
 // no description column. Three or more characters use the trigram index;
 // one- and two-character needles use the shared keyset generator so the
 // remote, local and benchmark paths cannot diverge again.
+// catalogShortSearchResultLimit caps how many cards a 1-2 character search
+// returns. The scan still walks the complete effective range; only the result
+// set is bounded, and the same bound is what the reported total counts. A
+// query that matches the whole source would otherwise build a card pipeline
+// proportional to the source on every keystroke.
+const catalogShortSearchResultLimit = 1000
+
 func localizedCatalogSearchSQL(targets []library.DisplaySearchTarget, sourceID int64, short bool, configKey string) (string, []any) {
 	if !short {
 		prefix := `WITH search_hits AS MATERIALIZED (`
@@ -1016,30 +1146,32 @@ func localizedCatalogSearchSQL(targets []library.DisplaySearchTarget, sourceID i
 				prefix += ` UNION ALL `
 			}
 			phrase := ftsPhrase(target.Query)
-			prefix += `SELECT ct.entity_id AS catalog_entry_id,0 AS series_id FROM content_translation_search
+			prefix += `SELECT ct.entity_id AS catalog_entry_id,0 AS series_id,(ct.translated_text=?) AS exact FROM content_translation_search
 				JOIN content_translation ct ON ct.id=content_translation_search.rowid
 				JOIN source_catalog_entry e ON e.id=ct.entity_id
 				WHERE content_translation_search MATCH ? AND ct.entity_kind='entry'
 				  AND ct.field='title' AND ct.language=?
 				  AND e.file_source_id=? AND e.relocated_to_id IS NULL
 				  AND ct.source_text=e.title
+				  AND ct.browsable=1
 				  AND ` + catalogEntryAdmittedSQL("e") + `
 				  AND ` + translationCurrentRowSQL("ct", target.Language) + `
 				UNION ALL
-				SELECT 0 AS catalog_entry_id,ct.entity_id AS series_id FROM content_translation_search
+				SELECT 0 AS catalog_entry_id,ct.entity_id AS series_id,(ct.translated_text=?) AS exact FROM content_translation_search
 				JOIN content_translation ct ON ct.id=content_translation_search.rowid
 				JOIN catalog_series s ON s.id=ct.entity_id
 				WHERE content_translation_search MATCH ? AND ct.entity_kind='series' AND ct.field='title' AND ct.language=?
 				  AND s.source_id=? AND ct.source_text=s.title
+				  AND ct.browsable=1
 				  AND (SELECT COUNT(*) FROM catalog_series_member sm WHERE sm.series_id=s.id)>=2
 				  AND EXISTS(SELECT 1 FROM catalog_series_member sm JOIN source_catalog_entry se ON se.id=sm.catalog_entry_id
 					WHERE sm.series_id=s.id AND se.relocated_to_id IS NULL AND ` + catalogEntryAdmittedSQL("se") + `)
 				  AND ` + translationCurrentRowSQL("ct", target.Language)
-			args = append(args, phrase, target.Language, sourceID)
+			args = append(args, target.Query, phrase, target.Language, sourceID)
 			if target.Language != translation.SourceHant {
 				args = append(args, configKey)
 			}
-			args = append(args, phrase, target.Language, sourceID)
+			args = append(args, target.Query, phrase, target.Language, sourceID)
 			if target.Language != translation.SourceHant {
 				args = append(args, configKey)
 			}
@@ -1047,97 +1179,33 @@ func localizedCatalogSearchSQL(targets []library.DisplaySearchTarget, sourceID i
 		return prefix + `) `, args
 	}
 
-	// The admission predicate is part of the row scope, not an outer filter:
-	// a translated title for a card that cannot be shown must not consume the
-	// result budget.
-	arms := []library.ShortSearchArm{
-		{
-			EntityKind: "entry",
-			Fields:     []string{"title"},
-			ConfigKey:  configKey,
-			Scope: `EXISTS(SELECT 1 FROM source_catalog_entry e
-				WHERE e.id=ct.entity_id AND e.file_source_id=? AND e.relocated_to_id IS NULL
-				  AND ct.source_text=e.title AND ` + catalogEntryAdmittedSQL("e") + `)`,
-			ScopeArgs: []any{sourceID},
-		},
-		{
-			EntityKind: "series",
-			Fields:     []string{"title"},
-			ConfigKey:  configKey,
-			Scope: `EXISTS(SELECT 1 FROM catalog_series s
-				WHERE s.id=ct.entity_id AND s.source_id=? AND ct.source_text=s.title
-				  AND (SELECT COUNT(*) FROM catalog_series_member sm WHERE sm.series_id=s.id)>=2
-				  AND EXISTS(SELECT 1 FROM catalog_series_member sm JOIN source_catalog_entry se ON se.id=sm.catalog_entry_id
-					WHERE sm.series_id=s.id AND se.relocated_to_id IS NULL AND ` + catalogEntryAdmittedSQL("se") + `))`,
-			ScopeArgs: []any{sourceID},
-		},
+	// The row itself carries the conclusion: `browsable` says the stored text
+	// still matches a live, playable card of an enabled source. Keeping it in
+	// the scan index means a translated title for a card that cannot be shown
+	// neither consumes the result budget nor costs a join per candidate.
+	entrySQL, entryArgs := library.ShortTranslationSearchSQL(targets, []library.ShortSearchArm{
+		{EntityKind: "entry", Fields: []string{"title"}, SourceID: sourceID, ConfigKey: configKey},
+	}, catalogShortSearchResultLimit)
+	seriesSQL, seriesArgs := library.ShortTranslationSearchSQL(targets, []library.ShortSearchArm{
+		{EntityKind: "series", Fields: []string{"title"}, SourceID: sourceID, ConfigKey: configKey},
+	}, catalogShortSearchResultLimit)
+	if entrySQL == "" && seriesSQL == "" {
+		return `WITH search_hits AS MATERIALIZED (SELECT -1 AS catalog_entry_id, -1 AS series_id, 0 AS exact WHERE 0) `, nil
 	}
-	// The hit set is the complete effective set. Paging happens on the card
-	// query, so a cap here would silently truncate the reported total.
-	shortSQL, args := library.ShortTranslationSearchSQL(targets, arms, 0)
-	if shortSQL == "" {
-		return `WITH search_hits AS MATERIALIZED (SELECT -1 AS catalog_entry_id, -1 AS series_id WHERE 0) `, nil
+	// Project each arm straight into the two card columns plus the exact-match
+	// flag the scan already computed. Routing both through one intermediate row
+	// set would materialize every match twice, which at the size of a full
+	// source costs more than the scan itself.
+	branches := []string{}
+	args := []any{}
+	if entrySQL != "" {
+		branches = append(branches, `SELECT entity_id AS catalog_entry_id,0 AS series_id,exact FROM (`+entrySQL+`)`)
+		args = append(args, entryArgs...)
 	}
-	prefix := `WITH short_hits AS MATERIALIZED (` + shortSQL + `),
-		search_hits AS MATERIALIZED (
-			SELECT entity_id AS catalog_entry_id,0 AS series_id FROM short_hits WHERE entity_kind='entry'
-			UNION ALL
-			SELECT 0 AS catalog_entry_id,entity_id AS series_id FROM short_hits WHERE entity_kind='series'
-		) `
+	if seriesSQL != "" {
+		branches = append(branches, `SELECT 0 AS catalog_entry_id,entity_id AS series_id,exact FROM (`+seriesSQL+`)`)
+		args = append(args, seriesArgs...)
+	}
+	prefix := `WITH search_hits AS MATERIALIZED (` + strings.Join(branches, " UNION ALL ") + `) `
 	return prefix, args
-}
-
-// openListTranslationExactRankSQL marks a card whose translated title equals
-// the query, so exact hits sort ahead of substring hits. Ranking uses the same
-// effective-row definition as inclusion: current source text and current
-// config key, with native rows exempt from the key. A series card inherits an
-// exact hit from any member entry.
-func openListTranslationExactRankSQL(targets []library.DisplaySearchTarget, cardAlias, configKey string) (string, []any) {
-	conditionFor := func(alias, sourceText string) (string, []any) {
-		pairs := []string{}
-		args := []any{}
-		for _, target := range targets {
-			query := strings.TrimSpace(target.Query)
-			if query == "" {
-				continue
-			}
-			pairs = append(pairs, `(`+alias+`.language = ? AND `+alias+`.translated_text = ? AND `+alias+`.field = 'title')`)
-			args = append(args, target.Language, target.Query)
-		}
-		if len(pairs) == 0 {
-			return "", nil
-		}
-		condition := "(" + strings.Join(pairs, " OR ") + ") AND " + alias + `.source_text=` + sourceText
-		if configKey != "" {
-			condition += ` AND (` + alias + `.origin='native' OR (` + alias + `.origin='model' AND ` + alias + `.config_key=?))`
-			args = append(args, configKey)
-		}
-		return condition, args
-	}
-
-	memberTitle, memberTitleArgs := conditionFor("exact_hit", "(SELECT title FROM source_catalog_entry WHERE id=rank_member.catalog_entry_id)")
-	seriesCondition, seriesArgs := conditionFor("series_hit", cardAlias+".title")
-	entryTitle, entryTitleArgs := conditionFor("exact_hit", cardAlias+".title")
-	if memberTitle == "" || seriesCondition == "" || entryTitle == "" {
-		return "0", nil
-	}
-	series := `(EXISTS (
-			SELECT 1 FROM catalog_series_member AS rank_member
-			WHERE rank_member.series_id = ` + cardAlias + `.series_id
-			  AND EXISTS (
-				SELECT 1 FROM content_translation AS exact_hit INDEXED BY idx_content_translation_entity
-				WHERE exact_hit.entity_kind = 'entry' AND exact_hit.entity_id = rank_member.catalog_entry_id
-				  AND ` + memberTitle + `))
-		  OR EXISTS (
-			SELECT 1 FROM content_translation AS series_hit INDEXED BY idx_content_translation_entity
-			WHERE series_hit.entity_kind = 'series' AND series_hit.entity_id = ` + cardAlias + `.series_id
-			  AND series_hit.field = 'title' AND ` + seriesCondition + `))`
-	entry := `EXISTS (
-			SELECT 1 FROM content_translation AS exact_hit INDEXED BY idx_content_translation_entity
-			WHERE exact_hit.entity_kind = 'entry' AND exact_hit.entity_id = ` + cardAlias + `.id
-			  AND ` + entryTitle + `)`
-	rankArgs := append([]any{}, memberTitleArgs...)
-	rankArgs = append(rankArgs, seriesArgs...)
-	rankArgs = append(rankArgs, entryTitleArgs...)
-	return `(CASE WHEN ` + cardAlias + `.series_id > 0 THEN ` + series + ` ELSE ` + entry + ` END)`, rankArgs
 }

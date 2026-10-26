@@ -605,10 +605,19 @@ language. A model row is current only while its `config_key` equals the
 configured key; a row with an empty or different key stays readable and does
 not satisfy current coverage.
 
+`content_translation` also stores `source_id` (the source an entry or series
+belongs to, NULL for a work) and `browsable` (1 while the stored source text
+still equals the entity's current text, the owning source is enabled, and the
+card passes admission). Both are conclusions, not inputs: the
+`content_translation_scope` view holds the rule and triggers recompute the
+affected rows. `catalog_entry_searchable` holds the card rule that the entry and
+series arms share.
+
 The short-scan index is `idx_content_translation_short_scan` on `(language,
-entity_kind, field, id, origin, config_key, translated_text)`. Keeping `id`
-next to the range prefix makes an ordered page a plain index read, and the
-trailing columns cover the current-row predicate and the matched text.
+entity_kind, field, source_id, browsable, id, origin, config_key,
+translated_text, entity_id)`. A per-source search answers language, kind, field,
+source, admission and text from one range without joining the entity row;
+`entity_id` is last so the returned id also comes from the index.
 
 The effective entity set is:
 
@@ -633,9 +642,11 @@ remain searchable regardless of display language.
 
 Three-character and longer queries use the trigram index. One- and
 two-character queries scan the complete effective set in
-`(language, entity_kind, field, id)` order through the covering short-scan
-index and match `translated_text` with `instr()`. The limit caps returned rows,
-not scanned rows. `zh-cn`, `en-us`, `ja-jp` and `ko-kr` map to `zh-Hans`, `en`,
+`(language, entity_kind, field, source_id, browsable, id)` order through the
+covering short-scan index and match `translated_text` with `instr()`. The scan
+walks every effective row; the cap bounds the returned cards and is applied
+inside the scan, so a query that matches the whole source stops at the bound.
+`zh-cn`, `en-us`, `ja-jp` and `ko-kr` map to `zh-Hans`, `en`,
 `ja` and `ko`; `zh-tw` reads `zh-Hans` with OpenCC `s2t` and also reads native
 `zh-Hant` rows.
 

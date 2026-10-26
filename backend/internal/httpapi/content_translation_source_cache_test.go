@@ -350,6 +350,11 @@ func TestSourceFieldTranslationCacheStaysOutOfSearchCorpus(t *testing.T) {
 	}}); err != nil {
 		t.Fatal(err)
 	}
+	// The row names no live card; this test covers the store boundary, not
+	// admission.
+	if _, err := server.db.Exec(`UPDATE content_translation SET browsable=1`); err != nil {
+		t.Fatal(err)
+	}
 	ids, err = server.translatedEntityIDs(ctx, "zh-Hans", "entry", "CorpusNeedle", 10)
 	if err != nil {
 		t.Fatal(err)

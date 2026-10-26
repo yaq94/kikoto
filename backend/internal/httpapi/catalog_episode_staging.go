@@ -536,6 +536,16 @@ func (s *Server) finalizeCatalogEpisodeRoots(ctx context.Context, sourceID int64
 	if first == 0 {
 		return 0, errors.New("catalog episode activation produced no catalog identity")
 	}
+	// Activation changes file_source_id on every episode, which is part of the
+	// stored search scope. Refreshing here keeps a published split searchable in
+	// the same transaction that made it visible.
+	published := make([]int64, 0, len(keep))
+	for id := range keep {
+		published = append(published, id)
+	}
+	if err = refreshContentTranslationBrowsableTx(ctx, tx.Tx, published); err != nil {
+		return 0, err
+	}
 	if err = tx.Commit(); err != nil {
 		return 0, err
 	}

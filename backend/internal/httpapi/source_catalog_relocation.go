@@ -341,6 +341,12 @@ func relocateCatalogEntryTx(ctx context.Context, tx *sql.Tx, old, target catalog
 	if err := setCatalogEntryStatusTx(ctx, tx, old.id, "available"); err != nil {
 		return err
 	}
+	// The survivor's file set was replaced above. A file write clears the
+	// stored search scope, so the same transaction restores it for the card
+	// that is still playable.
+	if err := refreshContentTranslationBrowsableTx(ctx, tx, []int64{old.id}); err != nil {
+		return err
+	}
 	// Clearing file_source_id removes the alias from the indexed projection.
 	// Recount in the same transaction so the scan progress cannot drift.
 	if sourceID.Valid {

@@ -202,13 +202,30 @@ entries and series, plus `title` and `description` for works; `tag` and
 release code or another structured identifier remains searchable regardless of
 display language. `origin` searches the original source index and never reads
 `content_translation`; target-language text searches never merge original-title
-FTS hits as a fallback. One- and two-character queries use the complete
+FTS hits as a fallback. One- and two-character queries scan the complete
 effective set. `idx_content_translation_short_scan` is
-`(language, entity_kind, field, id, origin, config_key, translated_text)`.
-Keeping `id` next to the range prefix makes an ordered page a plain index read;
-the trailing columns cover the current-row predicate and the text. The short
-query matches the covered column with `instr()`, so a candidate row needs no
-per-row `lower()` call or table lookup.
+`(language, entity_kind, field, source_id, browsable, id, origin, config_key,
+translated_text, entity_id)`.
+
+`source_id` and `browsable` are stored conclusions about a row. `source_id` names
+the source an entry or series belongs to. `browsable` means the stored source
+text still equals the entity's current text, the owning source is enabled, and
+the card passes the admission bounds. Both sit in the index prefix, so a
+per-source search answers language, kind, field, source, admission and text from
+one index range; it never joins the entity row per candidate. `entity_id` is the
+last column so the returned id also comes from the index.
+
+`content_translation_scope` is the single definition of that conclusion.
+Triggers recompute the affected rows when an entity title, source, admission
+generation, series membership, or source enabled flag changes. A file write
+clears `browsable` and the publish transaction restores it, which makes a missed
+refresh hide a card rather than show one that cannot play. `catalog_entry_searchable`
+holds the shared card rule both the entry and series arms read.
+
+A short search caps its result set at `catalogShortSearchResultLimit`; the cap
+is part of the scan, so a query matching the whole source stops at the bound.
+The reported total is that capped count, and the exact-title flag is computed in
+the same scan rather than by a second probe per card.
 
 `translationPersistentCorpusSQL` excludes current corpus rows from eviction.
 The `maxEntries` and `cacheBytes` limits are soft: when current title or

@@ -338,10 +338,6 @@ func shortSearchWithLimit(language, needle string, limit int) (string, []any) {
 			EntityKind: "work",
 			Fields:     []string{"title", "description"},
 			ConfigKey:  benchConfigKey,
-			Scope: `EXISTS(SELECT 1 FROM work current_work
-				WHERE current_work.id=ct.entity_id
-				  AND (CASE WHEN ct.field='title' THEN ct.source_text=current_work.title
-				            ELSE ct.source_text=current_work.description END))`,
 		}},
 		limit,
 	)
@@ -359,7 +355,7 @@ func countFTS(db *sql.DB, language, term string) (int, error) {
 		SELECT t.entity_id FROM content_translation_search
 		JOIN content_translation AS t ON t.id = content_translation_search.rowid
 		WHERE content_translation_search MATCH ? AND t.language = ? AND t.entity_kind = 'work'
-		  AND t.field = 'title'
+		  AND t.field = 'title' AND t.browsable = 1
 		  AND (t.origin='native' OR (t.origin='model' AND t.config_key=?))
 		LIMIT 200
 	)`, `"`+strings.ReplaceAll(term, `"`, `""`)+`"`, language, benchConfigKey).Scan(&count)
@@ -374,7 +370,7 @@ func countExactTitle(db *sql.DB, language, title string) (int, error) {
 		SELECT t.entity_id FROM content_translation_search
 		JOIN content_translation AS t ON t.id = content_translation_search.rowid
 		WHERE content_translation_search MATCH ? AND t.language = ? AND t.entity_kind = 'work'
-		  AND t.field = 'title' AND t.translated_text = ?
+		  AND t.field = 'title' AND t.translated_text = ? AND t.browsable = 1
 		  AND (t.origin='native' OR (t.origin='model' AND t.config_key=?))
 		LIMIT 200
 	)`, `"`+strings.ReplaceAll(title, `"`, `""`)+`"`, language, title, benchConfigKey).Scan(&count)

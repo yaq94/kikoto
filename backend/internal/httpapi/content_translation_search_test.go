@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -27,6 +28,48 @@ func insertTranslatedContent(t *testing.T, db *sql.DB, kind string, id int64, fi
 		cache_key, entity_kind, entity_id, field, language, source_text, translated_text, origin, config_key, model, template_version)
 		VALUES(?,?,?,?,?,?,?,?,?,?,?)`, key, kind, id, field, language, sourceText, text, origin, configKey, model, template); err != nil {
 		t.Fatalf("insert translation %s/%d/%s: %v", kind, id, language, err)
+	}
+	refreshTestTranslationScope(t, db)
+}
+
+// refreshTestTranslationScope applies the production publish and scope steps.
+// A test seeds catalog rows directly, so without this the stored scope would
+// stay at its insert default and every search would look empty.
+func refreshTestTranslationScope(t *testing.T, db *sql.DB) {
+	t.Helper()
+	tx, err := db.Begin()
+	if err != nil {
+		t.Fatalf("begin scope refresh: %v", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	rows, err := tx.Query(`SELECT id FROM file_source`)
+	if err != nil {
+		t.Fatalf("list sources: %v", err)
+	}
+	sources := []int64{}
+	for rows.Next() {
+		var id int64
+		if err = rows.Scan(&id); err != nil {
+			t.Fatalf("scan source: %v", err)
+		}
+		sources = append(sources, id)
+	}
+	if err = rows.Err(); err != nil {
+		t.Fatalf("list sources: %v", err)
+	}
+	_ = rows.Close()
+	for _, id := range sources {
+		if err = refreshSourceCatalogEntryAdmissionsTx(context.Background(), tx, id); err != nil {
+			t.Fatalf("refresh source %d admissions: %v", id, err)
+		}
+	}
+	if _, err = tx.Exec(`UPDATE content_translation SET (source_id,browsable)=(
+		SELECT scope.source_id,scope.browsable FROM content_translation_scope scope
+		WHERE scope.translation_id=content_translation.id)`); err != nil {
+		t.Fatalf("refresh translation scope: %v", err)
+	}
+	if err = tx.Commit(); err != nil {
+		t.Fatalf("commit scope refresh: %v", err)
 	}
 }
 
@@ -432,7 +475,10 @@ func TestContentTranslationSearchRemoteExactRankUsesEffectiveRows(t *testing.T) 
 	}
 }
 
-func TestContentTranslationSearchRemoteDoesNotTruncateLargeMatchSet(t *testing.T) {
+// A 1-2 character query can match the whole source, so its card pipeline is
+// bounded. The bound is explicit and reported: the total is the capped count,
+// and a page past the cap is empty rather than a silent slice of a longer set.
+func TestContentTranslationSearchRemoteCapsShortMatchSet(t *testing.T) {
 	db := openMigratedTestDB(t)
 	seedCatalogPlanSource(t, db)
 	if _, err := db.Exec(`
@@ -449,9 +495,16 @@ func TestContentTranslationSearchRemoteDoesNotTruncateLargeMatchSet(t *testing.T
 		translation.DefaultModel, translation.TemplateVersion); err != nil {
 		t.Fatal(err)
 	}
-	response := requestRemoteWorks(t, db, "q="+url.QueryEscape("作品")+"&lang=zh-cn&pageSize=100&page=51")
-	if response.Total != 5001 || len(response.Works) != 1 {
-		t.Fatalf("bounded search = total %d rows %d, want 5001/1", response.Total, len(response.Works))
+	refreshTestTranslationScope(t, db)
+	response := requestRemoteWorks(t, db, "q="+url.QueryEscape("作品")+"&lang=zh-cn&pageSize=100&page=10")
+	if response.Total != catalogShortSearchResultLimit || len(response.Works) != 100 {
+		t.Fatalf("bounded search = total %d rows %d, want %d/100",
+			response.Total, len(response.Works), catalogShortSearchResultLimit)
+	}
+	// Three characters use the trigram path, which reports the complete set.
+	fts := requestRemoteWorks(t, db, "q="+url.QueryEscape("作品1")+"&lang=zh-cn&pageSize=100&page=12")
+	if fts.Total != 1111 || len(fts.Works) != 11 {
+		t.Fatalf("fts search = total %d rows %d, want 1111/11", fts.Total, len(fts.Works))
 	}
 }
 

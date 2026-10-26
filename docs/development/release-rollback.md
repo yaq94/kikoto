@@ -13,21 +13,22 @@ a database snapshot and starts a binary whose packaged migration catalog ends
 at that snapshot's schema. The image names are the ones used by the current
 next-release deployment; prefer a digest when the deployment recorded one.
 
-| Image         | Highest packaged migration | `094`       | `095`       | `096`    | `097`       | `098`       | `099`       | `100`       | `101`       | `102`       | `103`       | `104`       |
-| ------------- | -------------------------- | ----------- | ----------- | -------- | ----------- | ----------- | ----------- | ----------- | ----------- | ----------- | ----------- | ----------- |
-| current build | `104`                      | to `104`    | to `104`    | to `104` | to `104`    | to `104`    | to `104`    | to `104`    | to `104`    | to `104`    | to `104`    | Keeps `104` |
-| 103 image     | `103`                      | to `103`    | to `103`    | to `103` | to `103`    | to `103`    | to `103`    | to `103`    | to `103`    | to `103`    | Keeps `103` | Refuses     | Refuses |
-| 102 image     | `102`                      | to `102`    | to `102`    | to `102` | to `102`    | to `102`    | to `102`    | to `102`    | to `102`    | Keeps `102` | Refuses     | Refuses     | Refuses |
-| 101 image     | `101`                      | to `101`    | to `101`    | to `101` | to `101`    | to `101`    | to `101`    | to `101`    | Keeps `101` | Refuses     | Refuses     | Refuses     | Refuses |
-| 100 image     | `100`                      | to `100`    | to `100`    | to `100` | to `100`    | to `100`    | to `100`    | Keeps `100` | Refuses     | Refuses     | Refuses     | Refuses     | Refuses |
-| 099 image     | `099`                      | to `099`    | to `099`    | to `099` | to `099`    | to `099`    | Keeps `099` | Refuses     | Refuses     | Refuses     | Refuses     | Refuses     | Refuses |
-| 098 image     | `098`                      | to `098`    | to `098`    | to `098` | to `098`    | Keeps `098` | Refuses     | Refuses     | Refuses     | Refuses     | Refuses     | Refuses     | Refuses |
-| 097 image     | `097`                      | to `097`    | to `097`    | to `097` | Keeps `097` | Refuses     | Refuses     | Refuses     | Refuses     | Refuses     | Refuses     | Refuses     | Refuses |
-| 095 image     | `095`                      | to `095`    | Keeps `095` | Refuses  | Refuses     | Refuses     | Refuses     | Refuses     | Refuses     | Refuses     | Refuses     | Refuses     | Refuses |
-| 094 image     | `094`                      | Keeps `094` | Refuses     | Refuses  | Refuses     | Refuses     | Refuses     | Refuses     | Refuses     | Refuses     | Refuses     | Refuses     | Refuses |
-| 092 image     | `092`                      | Refuses     | Refuses     | Refuses  | Refuses     | Refuses     | Refuses     | Refuses     | Refuses     | Refuses     | Refuses     | Refuses     | Refuses |
-| 084 image     | `084`                      | Refuses     | Refuses     | Refuses  | Refuses     | Refuses     | Refuses     | Refuses     | Refuses     | Refuses     | Refuses     | Refuses     | Refuses |
-| 083 image     | `083`                      | Refuses     | Refuses     | Refuses  | Refuses     | Refuses     | Refuses     | Refuses     | Refuses     | Refuses     | Refuses     | Refuses     | Refuses |
+| Image | Highest packaged migration | `094` | `095` | `096` | `097` | `098` | `099` | `100` | `101` | `102` | `103` | `104` | `105` |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| current build | `105` | to `105` | to `105` | to `105` | to `105` | to `105` | to `105` | to `105` | to `105` | to `105` | to `105` | to `105` | Keeps `105` |
+| 104 image | `104` | to `104` | to `104` | to `104` | to `104` | to `104` | to `104` | to `104` | to `104` | to `104` | to `104` | Keeps `104` | Refuses |
+| 103 image | `103` | to `103` | to `103` | to `103` | to `103` | to `103` | to `103` | to `103` | to `103` | to `103` | Keeps `103` | Refuses | Refuses |
+| 102 image | `102` | to `102` | to `102` | to `102` | to `102` | to `102` | to `102` | to `102` | to `102` | Keeps `102` | Refuses | Refuses | Refuses |
+| 101 image | `101` | to `101` | to `101` | to `101` | to `101` | to `101` | to `101` | to `101` | Keeps `101` | Refuses | Refuses | Refuses | Refuses |
+| 100 image | `100` | to `100` | to `100` | to `100` | to `100` | to `100` | to `100` | Keeps `100` | Refuses | Refuses | Refuses | Refuses | Refuses |
+| 099 image | `099` | to `099` | to `099` | to `099` | to `099` | to `099` | Keeps `099` | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses |
+| 098 image | `098` | to `098` | to `098` | to `098` | to `098` | Keeps `098` | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses |
+| 097 image | `097` | to `097` | to `097` | to `097` | Keeps `097` | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses |
+| 095 image | `095` | to `095` | Keeps `095` | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses |
+| 094 image | `094` | Keeps `094` | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses |
+| 092 image | `092` | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses |
+| 084 image | `084` | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses |
+| 083 image | `083` | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses |
 
 Numbered migrations have no down path. A rollback restores a snapshot taken
 before the upgrade and starts an image whose packaged catalog ends at that
@@ -85,13 +86,14 @@ translation config key and prefill cursor columns. `100` adds
 an idempotent backfill. `102` rebuilds `translation_prefill_state` to allow the
 `failed` status and indexes the prefill failure table by
 `(config_key, source_hash)`. `103` replaces the two 099 short-query indexes
-with `idx_content_translation_short_scan` on
-`(language, entity_kind, field, id, origin, config_key, translated_text)`.
+with `idx_content_translation_short_scan`. `105` adds the stored
+`source_id`/`browsable` columns and replaces that index with the scoped shape.
 
-No migration deletes or rewrites card or personal rows. A `068`–`102`
+No migration deletes or rewrites card or personal rows. A `068`–`104`
 snapshot restored into the current image upgrades along the numbered chain; a
-`103` database needs a binary that packages `103`. A `102` binary refuses
-`103`, a `101` binary refuses `102`, a `100` binary refuses `101`, an `095`
+`105` database needs a binary that packages `105`. A `104` binary refuses
+`105`, a `103` binary refuses `104`, a `102` binary refuses `103`, a `101`
+binary refuses `102`, a `100` binary refuses `101`, an `095`
 binary refuses `096`, an `094` binary refuses `095`, an `083` binary must be
 paired with an `083` snapshot, and an `084` binary refuses `085` and later.
 
@@ -156,10 +158,10 @@ uses one can wait with `up -d --wait`. The production stack in this repository
 does not define that check; poll `/health` as shown under
 [Verify The Restored Instance](#verify-the-restored-instance).
 
-## Restore A Schema 95 Through 104 Snapshot
+## Restore A Schema 95 Through 105 Snapshot
 
 Use this to return to the current build after a failed start or to recover a
-damaged `095` through `104` database. Use the image that packages the snapshot's
+damaged `095` through `105` database. Use the image that packages the snapshot's
 schema; to return to schema `094`, `092` or `083`, restore that schema's
 snapshot and start an image that packages it.
 
@@ -217,7 +219,9 @@ Then confirm:
 7. A `101` instance reads `work.parent_work_id` and the
    `work_parent_backfill_report` table. A `102` instance also reads the rebuilt
    prefill state. A `103` instance also has `idx_content_translation_short_scan`
-   and neither of the two 099 short-query indexes. In all cases the status query
+   and neither of the two 099 short-query indexes. A `105` instance also has
+   `content_translation.source_id`, `content_translation.browsable` and the
+   `content_translation_scope` view. In all cases the status query
    returns the snapshot's version and the parent report does not contain rows
    for works that already have a parent.
 

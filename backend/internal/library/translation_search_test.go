@@ -94,7 +94,9 @@ func TestContentTranslationSearchTraditionalBuildsTwoTargets(t *testing.T) {
 	where, args := SearchWhereForUserInLanguage("戀愛", 0, "zh-tw")
 	// One branch per target language covers both searchable fields through the
 	// shared generator, so the two targets cannot drift apart.
-	if strings.Count(where, "work.id IN") != 2 || len(args) != 10 {
+	// Each branch carries the needle twice: once for the exact-match flag the
+	// scan computes and once for the substring predicate.
+	if strings.Count(where, "work.id IN") != 2 || len(args) != 12 {
 		t.Fatalf("zh-tw predicate = %s args=%v; want two branches", where, args)
 	}
 	if origin, _ := SearchWhereForUserInLanguage("戀愛", 0, "origin"); strings.Contains(origin, "content_translation") {
