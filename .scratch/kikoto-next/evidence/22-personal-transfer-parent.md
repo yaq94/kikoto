@@ -1,11 +1,21 @@
 # 22：个人备份的单集父级归属证据
 
+> 本文件记录 `134f7c90` 之后的实现过程与红绿例，测试函数名以该分支为准。
+> 当前分支（`codex/kikoto-catalog-remediation`）的实际回归测试名为：
+> `TestPersonalTransferRestoresKnownUnregisteredCatalogSeriesAndEpisodeAcrossRestart`、
+> `TestPersonalTransferMultipleDifferentParentsReportConflict`、
+> `TestPersonalTransferParentRegistrationRequiresPermissionAndStaysUserScoped`、
+> `TestTransferV2RestoresPersonalOnlyParentAndRoundTrips`、
+> `TestTransferV2ParentCycleIsReported`、`TestTransferV2EpisodeWithoutParentKeepsLegacyBehavior`。
+> 迁移 100（`work.parent_work_id`）已在当前分支落地，见 `issues/22` 与
+> `backend/migrations/100_work_parent.sql`。
+
 ## 产物与范围
 
 - 分支为 `codex/kikoto-personal-parent-remediation`，基于 `134f7c90`；实现只修改个人传输、HTTP 传输测试与对应文档。
 - 版本 2 的 `BackupIdentity` 增加可选 `parent: {ref, title, entryRef, position, evidence}`。`ref` 是现有 `s:` 系列引用，`entryRef` 是单集的 `c:` 目录引用，不引入第二套身份。
 - 父级只在单集有明确 `catalog_series_member` 时导出，即使系列没有本人评价也会写入。导入利用同一引用解析已有系列，或在空库创建最小的 series work、`catalog_series`、目录条目和成员行。
-- 没有数据库结构变更，因此没有新增迁移或基线。
+- 该分支本身不修改数据库结构；父级列 `work.parent_work_id` 与迁移 100 由当前集成分支提供。
 
 ## 红例
 

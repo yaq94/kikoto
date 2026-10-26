@@ -105,7 +105,7 @@ prefill 必须按 `entity_kind × field` 枚举：entry 的 title、series 的 t
 
 **测试入口:** H、R、少量 F、必要 U；真实模型与规模证据由 24 汇总。
 
-**本地验证限制：** 分支开发期通过 `internal/migrationfixture` 在版本缺失时注入 no-op 097/098 占位；占位不进仓库。098 已由 `cad25804` 合入，099 已由 `f3dc3a41` 合入，101/102 已由 `0c945b3e` 合入，103 已由 `6f39e888` 合入，`compat/103_dev.sql` 已生成；`migration_chain_103_test.go` 覆盖新装到 103、68→103、84→103、重复启动幂等与 `foreign_key_check` 0 行，但真实链上的 storage 与 httpapi 重跑仍未完成，完成前不得把本票标为 `verified-local`。
+**本地验证限制：** 分支开发期通过 `internal/migrationfixture` 在版本缺失时注入 no-op 097/098 占位；占位不进仓库。098 已由 `cad25804` 合入，099 已由 `f3dc3a41` 合入，101/102 已由 `0c945b3e` 合入，103 已由 `6f39e888` 合入，104 已由 `ee13ef88` 合入，105 已由 `0ec8cda0` 与 `48c12395` 合入，`compat/105_dev.sql` 已生成；`migration_chain_105_test.go` 覆盖新装到 105、68→105、84→105、重复启动幂等与 `foreign_key_check` 0 行。当前分支的 storage、httpapi 与 library 全量测试已通过；最终候选的迁移、Full CI 与部署后真实翻译/搜索验收由 24 执行。
 
 **迁移设计稿处置：** 另一 worktree 的 099 设计稿给 `source_catalog_entry` 加 `description`，与第 44 行、`docs/architecture/data-model.md` 和 OpenList `Object` 结构冲突，落地时删除该列；`cursor_language` 默认值统一为 `''`，游标顺序统一为 `(kind, field, id, language)`。测试编号使用 `testfixture.WorkCodeAt`，超过 400 条使用 `HighCardinalityWorkCodeAt`。
 
