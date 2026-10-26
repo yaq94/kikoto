@@ -12,17 +12,17 @@
 
 **审查快照：** 审查时文档基线为 `6122b7bf`，代码基线为 `301e6c63`；当时主工作区已提交 `0dee19ea`、`6dee3087`、`134f7c90`。
 
-**当前集成状态（2026-10-26 复核）：** 集成分支 `codex/kikoto-catalog-remediation` 已到 `e750b11d`（merge issue21），迁移头 `103`（`101_work_parent_backfill_report.sql`、`102_translation_prefill_status.sql`、`103_translation_short_scan_index.sql` 已提交，`compat/103_dev.sql` 已生成，`compat/102_dev.sql` 保留为 102 基线）。工单 20 的 098 状态机、系列准入与 episode publication 事务内删除 mapping 已合入；其余准入入口已在 `codex/kikoto-issue20-admission`（`602afdc0`）实现，待集成验证。21 的 099/102、严格语言搜索、共享短查询生成器与 `failed` 终态（`a2a84617`）已合入；本机 45.6 万行基准中卡片页达标，完整集合 p95 313.119–520.704 ms 未达标，D-16 join 未纳入。22 的迁移 100、`work.parent_work_id`、v2 + 可选 `parent` 与 `parent_alias_not_imported` 已合入，当前候选未完整重跑。23 进入文档收口；24 未开始。逐项结论见 [审查记录](audit-20261025-review.md)。
+**当前集成状态（2026-10-27 复核）：** 集成分支 `codex/kikoto-catalog-remediation` 已到 `2ad508e8`，迁移头 `105`（`101_work_parent_backfill_report.sql`、`102_translation_prefill_status.sql`、`103_translation_short_scan_index.sql`、`104_source_catalog_entry_admission.sql`、`105_translation_search_scope.sql` 已提交，`compat/105_dev.sql` 已生成）。工单 20 的 098 状态机、系列准入与 episode publication 事务内删除 mapping 已合入，其余准入入口（`602afdc0`）已并入并通过定向测试；42k 目标机浏览 p95 199.192 ms、5,001 文件卡拒绝 p95 0.593 ms。21 的 099/102/105、严格语言搜索、共享短查询生成器与 `failed` 终态已合入；1–2 字查询的返回条数与 `total` 共用 1000 张预算，超出以 `truncated` 标记（完整计数 p95 667–693 ms，故不采用）。22 的迁移 100、`work.parent_work_id`、v2 + 可选 `parent` 与 `parent_alias_not_imported` 已合入并记为 `resolved`。23 的文档与保留回归已收口；24 汇总同候选发布证据。逐项结论见 [审查记录](audit-20261025-review.md)。
 
 交接复核时（2026-10-24 至 2026-10-25）主仓库曾前进到 `d77e37e2`：`6b4a02ec` 提交了 `096_catalog_episode_pending.sql`、`compat/096_dev.sql` 和系列暂存实现，`728651a6` 提交了 v2 可选 `parent` 的个人传输实现，`47df9c11` 提交了 wall-clock/partial 调度修复，`9bafa1ea` 合并了部分整改文档。这些提交均已并入当前分支，但仍需在当前候选上重新验收；后续实现必须以实际 SHA、测试和证据重新核对，不能把“已提交”当成“已满足合同”。
 
 ## 0. 已核实的裁决
 
-1. **D-16 规则已实现，跨层门禁已在分支收口。** `134f7c90` 加入三条阈值；`531acdf4` 已把 SQL 常量改为引用 `catalogadmission.Probe*`、修正旧注释、给系列详情加 pending 与准入、把 episode mapping 删除移入发布事务。`codex/kikoto-issue20-admission` 的 `602afdc0` 已补单卡个人评价写入、播放准备、媒体流、作品目录标签准入，系列零可见成员 404，零文件与旧 generation 集合统一，目录优先 sync 的 due 推进顺序，诊断按来源过滤与可失败的 plan 断言；该分支尚未并入集成分支，待集成验证。42k p95 仍未采集。
-2. **严格目标语言搜索已实现，残余在短查询路径。** 以下描述的是审查基线 `301e6c63` 的历史状态，用于说明为什么必须统一生成器：远程显示语言搜索当时仍并入原文 FTS、原文标题或文件名，1–2 字查询在本地、远程、bench 各有一套分段实现，远程短查询与长查询都没有 join D-16 准入。当前分支已由 `f3dc3a41` 移除原文回退，`bc880d91` 合并共享短查询生成器并给远程短查询补上 D-16 准入，`6f39e888` 用 103 的扫描索引替换 099 的短查询索引，`a2a84617` 写入 `failed` 终态；当前残余是短查询 keyset 续扫（缺 `after` 游标）、D-16 join 的真实规模证据、45.6 万行目标环境基准与真实迁移链重跑，详见[工单 21](issues/21-translation-corpus-and-search.md)。
+1. **D-16 规则已实现，跨层门禁已收口。** `134f7c90` 加入三条阈值；`531acdf4` 已把 SQL 常量改为引用 `catalogadmission.Probe*`、修正旧注释、给系列详情加 pending 与准入、把 episode mapping 删除移入发布事务。`602afdc0` 已补单卡个人评价写入、播放准备、媒体流、作品目录标签准入，系列零可见成员 404，零文件与旧 generation 集合统一，目录优先 sync 的 due 推进顺序，诊断按来源过滤与可失败的 plan 断言，并已并入集成分支。42k 目标机 p95 199.192 ms、5,001 文件卡拒绝 p95 0.593 ms。
+2. **严格目标语言搜索已实现。** 以下描述的是审查基线 `301e6c63` 的历史状态，用于说明为什么必须统一生成器：远程显示语言搜索当时仍并入原文 FTS、原文标题或文件名，1–2 字查询在本地、远程、bench 各有一套分段实现，远程短查询与长查询都没有 join D-16 准入。当前分支已由 `f3dc3a41` 移除原文回退，`bc880d91` 合并共享短查询生成器并给远程短查询补上 D-16 准入，`6f39e888` 用 103 的扫描索引替换 099 的短查询索引，`a2a84617` 写入 `failed` 终态，`0ec8cda0` 的 105 把 `source_id`／`browsable` 物化到译文行；`48c12395` 让返回总数与卡片页共用结果预算，超出以 `truncated` 标记。目标机 456,000 行基准与 114,000 实体短查询复测均已完成，详见[工单 21](issues/21-translation-corpus-and-search.md)。
 3. **持久语料在审查基线上会被预算淘汰；当前已改为软预算告警。** 审查时 `content_translation_retention.go` 会删除 model 行，包括当前搜索所需的标题；prefill 的覆盖率也只按语言统计历史行，且只枚举 entry。当前分支已把当前 title／description 行纳入不可淘汰的持久语料，覆盖率改为关联有效实体、当前字段与 `config_key`；超限只报 `over_budget`。剩余证据是真实规模基准与当前候选复验。
 4. **空库单集父级在审查基线上未恢复；当前已按 `work.parent_work_id` 实现。** 审查时 `transfer_plan.go` 对未知 episode 只报告 `relationships_not_imported`，随后创建独立 work。`64b25252` 已合入迁移 100、父级写入与系列详情回退，`catalogEntryId=0`、`workId` 非空的单集可以在没有成员行时列出；导出格式为 v2 + 可选 `parent`，`parent_alias_not_imported` 已实现并有测试，仍缺父级登记权限 403 测试与当前候选完整重跑。
-5. **ADR 与迁移治理已修正到当前链。** 来源字段缓存 ADR 为 0007；095 冻结为两个已发布指纹；096–103 均已提交，迁移头 103，`compat/103_dev.sql` 已生成。ADR-0006 已声明同时修正 ADR-0007 的 schema 与繁体表述；099、100、101、102、103 已落地，剩余是当前候选上的真实迁移链复验。
+5. **ADR 与迁移治理已修正到当前链。** 来源字段缓存 ADR 为 0007；095 冻结为两个已发布指纹；096–105 均已提交，迁移头 105，`compat/105_dev.sql` 已生成。ADR-0006 已声明同时修正 ADR-0007 的 schema 与繁体表述；099、100、101、102、103、104、105 已落地，剩余是当前候选上的真实迁移链复验。
 6. **发布依赖已固定。** 24 依赖 17–23；17 只依赖 03、05、09、10、14、15、16、18、19，不再把 20–24 写进 17 的阻塞边。20–24 是整改子项，不是原 AC 的替代主责。
 7. **已提交证据含敏感信息。** 21 号目录证据含生产路径、数据库路径和真实作品编号；22 号 dry-run JSON 是生产记录回放。公开证据必须脱敏或改为合成报告；`make sensitive-check` 只扫 diff，不能作为已提交证据的脱敏证明。
 
@@ -146,9 +146,9 @@ CREATE INDEX source_catalog_schedule_due
 
 ### 6.1 数据模型与迁移
 
-21 的迁移是 099（097 是 095 重建，098 是目录调度），102 为 prefill 增加 `failed` 状态和失败表索引，103 用 `idx_content_translation_short_scan` 替换 099 的两个短查询索引。迁移运行器拒绝跳号，实测缺 097/098 时 099 会报 `expected version 097, found 099`；编号只能按已提交链依次落地，不得临时改号绕过。
+21 的迁移是 099（097 是 095 重建，098 是目录调度），102 为 prefill 增加 `failed` 状态和失败表索引，103 用 `idx_content_translation_short_scan` 替换 099 的两个短查询索引，105 把 `source_id`／`browsable` 物化到译文行并把该索引换成 scoped covering 形状。迁移运行器拒绝跳号，实测缺 097/098 时 099 会报 `expected version 097, found 099`；编号只能按已提交链依次落地，不得临时改号绕过。
 
-- `content_translation` 增加 `config_key TEXT NOT NULL DEFAULT ''`；索引 `(language, entity_kind, field, config_key, entity_id)`，并增加短查询覆盖索引 `(language, entity_kind, field, id, translated_text)`。103 删除 099 的 `idx_content_translation_short` 与 `idx_content_translation_short_current`，改用 `(language, entity_kind, field, id, origin, config_key, translated_text)` 的 `idx_content_translation_short_scan`。
+- `content_translation` 增加 `config_key TEXT NOT NULL DEFAULT ''`；索引 `(language, entity_kind, field, config_key, entity_id)`，并增加短查询覆盖索引 `(language, entity_kind, field, id, translated_text)`。103 删除 099 的 `idx_content_translation_short` 与 `idx_content_translation_short_current`，改用 `(language, entity_kind, field, id, origin, config_key, translated_text)` 的 `idx_content_translation_short_scan`；105 再增加 `source_id`、`browsable` 两列，把索引改成 `(language, entity_kind, field, source_id, browsable, id, origin, config_key, translated_text, entity_id)`，使短查询不再逐行回查实体或计算准入。
 - `translation_prefill_state` 增加 `config_key TEXT NOT NULL DEFAULT ''`、`cursor_kind TEXT NOT NULL DEFAULT 'entry'`、`cursor_field TEXT NOT NULL DEFAULT 'title'`、`cursor_language TEXT NOT NULL DEFAULT ''`、`cursor_id INTEGER NOT NULL DEFAULT 0`、`last_error TEXT` 仍保留。`id=1` 单行状态足够，因为一个配置只有一个 prefill 队列；游标顺序固定为 `(kind, field, id, language)`。
 - 新增 `translation_prefill_failure(entity_kind, entity_id, field, language, config_key, source_hash, attempts, next_retry_at, last_error, PRIMARY KEY(...))`；失败计数持久化，重启不丢，原文变化后旧失败行不能阻断新文本。
 - `config_key` 只覆盖会影响模型输出的配置：model、base URL、template version、disableThinking；不包含 API key、并发、超时或预算。
@@ -276,16 +276,16 @@ prefill 必须按 `entity_kind × field` 枚举：entry 的 title、series 的 t
 3. 重新生成合成 dry-run；报告只含合成 fixture、计数和原因，不含生产 entryId／sourceId／path。
 4. 旧 dry-run 只作历史，不可 apply；具体生产计数不进入公开证据。
 
-### 8.2 迁移 095–103
+### 8.2 迁移 095–105
 
 - 095 冻结：记录 `25f96c22` 首次加入（无外键）和 `5defaa1c` 修改（`ON DELETE CASCADE`）的事实与两个 SHA-256；当前文件不再改写。
 - 096 已由 `6b4a02ec` 提交（`096_catalog_episode_pending.sql`、`compat/096_dev.sql` 和系列暂存实现）；不得把其他变更塞进 096。
 - 确认是否有数据库执行过旧 095：
-  - 没有旧库：记录证据；097 仍统一重建 `source_field_translation`，保持 `095 → 096 → 097 → 098 → 099 → 100 → 101 → 102 → 103` 连续。新装基线以冻结 095 和已提交 096 为准。
+  - 没有旧库：记录证据；097 仍统一重建 `source_field_translation`，保持 `095 → 096 → 097 → 098 → 099 → 100 → 101 → 102 → 103 → 104 → 105` 连续。新装基线以冻结 095 和已提交 096 为准。
   - 有旧库：097 同样重建 `source_field_translation`：新表带外键、复制合法 source_id 行、丢弃孤儿缓存、重建索引、`PRAGMA foreign_key_check` 0 行。不得根据“是否有旧库”分叉 097。
 - 旧 095 的 checksum 与当前 095 不同，`migration.go` 会在到达 097 前拒绝启动。097 本身无法解决这个门禁，必须在 `prepareMigrationState` / `validateAndAdoptHistory` 之前、`MigrateFSWithOptions` 之前提供一次性 preflight：只对精确匹配旧 095 表结构指纹的数据库，先在自身事务中创建备份，再把该 ledger 行的 checksum 规范化为当前 095 checksum；不匹配、部分匹配或存在额外对象时拒绝启动。
 - 禁止通用“忽略 checksum”开关。preflight 记录旧／新 checksum、schema 指纹、时间、备份路径和结果，并提供离线等价命令；097 只做结构重建。涉及 `backend/cmd/kikoto/main.go`、`backend/internal/storage/migration.go` 或新的早期 preflight 文件、备份实现、`docs/development/migrations.md` 与 `docs/development/release-rollback.md`。
-- 096–103 已提交：101 增加 `work_parent_backfill_report` 并幂等重跑父级回填，102 重建 `translation_prefill_state` 以允许 `failed` 状态，并给 `translation_prefill_failure` 补 `(config_key, source_hash)` 索引，103 替换短查询索引；`compat/103_dev.sql` 已生成。迁移头、compat 文件与测试常量必须连续一致，097 的 SQL 仍须在新装、当前 095、旧 095 三种数据库上执行同一套重建路径。
+- 096–105 已提交：101 增加 `work_parent_backfill_report` 并幂等重跑父级回填，102 重建 `translation_prefill_state` 以允许 `failed` 状态，并给 `translation_prefill_failure` 补 `(config_key, source_hash)` 索引，103 替换短查询索引，104 增加每卡准入计数行与其失效触发器，105 物化译文搜索 scope 并建立 scope 视图与维护触发器；`compat/105_dev.sql` 已生成。迁移头、compat 文件与测试常量必须连续一致，097 的 SQL 仍须在新装、当前 095、旧 095 三种数据库上执行同一套重建路径。
 
 ### 8.3 文档与证据
 

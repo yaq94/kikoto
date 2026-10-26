@@ -5,7 +5,7 @@
 **Blocked by:** [09：每日更新与已有扫描复用](09-daily-index-update.md)（08 为传递前置）。
 
 **Status:** ready-for-agent
-**Implementation:** verified-local；`531acdf4` 落地 098 `source_catalog_schedule` 与单事务派发状态机，`6cf4ee1c` 合入集成分支的 097。`app_setting` 的 `source_catalog_daily:`／`source_catalog_full:` 只在 098 迁移内读取。当前实现：deferred 保留原 due 并在到期后重查资源条件；`pending_full_run_id` 绑定 resume full，只有该 run 成功才推进 weekly 并清标记；partial/failed/cancelled 走维护同步；`force` 在 failed／partial／cancelled 之后创建新的观测 generation。单卡评价、播放准备、媒体流、作品目录标签的完整准入，系列零可见成员 404，零文件与旧 generation 集合统一，目录优先 sync 的 due 推进顺序，诊断 `Probe*` 按来源过滤，以及可失败的真实 plan 断言均已并入集成分支并通过测试（`TestCatalogAdmissionEntryPointsUsePublishedSet`、`TestCatalogAdmissionCountsCurrentPublishedFiles`、`TestCatalogAdmissionZeroFileCardIsRefused`、`TestCatalogSeriesOmitsEntriesWithoutASource`、`TestCatalogScheduleDailyDueWaitsForSyncCreation`、`TestCatalogDiagnosticsOversizeCardsUseTheProbeBoundPerSource`、`TestCatalogScheduleRunningFullRegistersPendingRun` 与五个 plan 断言）。42k p95 已在目标机取得：浏览 p95 182.14 ms、5,001 文件卡拒绝 p95 0.69 ms。
+**Implementation:** verified-local；`531acdf4` 落地 098 `source_catalog_schedule` 与单事务派发状态机，`6cf4ee1c` 合入集成分支的 097。`app_setting` 的 `source_catalog_daily:`／`source_catalog_full:` 只在 098 迁移内读取。当前实现：deferred 保留原 due 并在到期后重查资源条件；`pending_full_run_id` 绑定 resume full，只有该 run 成功才推进 weekly 并清标记；partial/failed/cancelled 走维护同步；`force` 在 failed／partial／cancelled 之后创建新的观测 generation。单卡评价、播放准备、媒体流、作品目录标签的完整准入，系列零可见成员 404，零文件与旧 generation 集合统一，目录优先 sync 的 due 推进顺序，诊断 `Probe*` 按来源过滤，以及可失败的真实 plan 断言均已并入集成分支并通过测试（`TestCatalogAdmissionEntryPointsUsePublishedSet`、`TestCatalogAdmissionCountsCurrentPublishedFiles`、`TestCatalogAdmissionZeroFileCardIsRefused`、`TestCatalogSeriesOmitsEntriesWithoutASource`、`TestCatalogScheduleDailyDueWaitsForSyncCreation`、`TestCatalogDiagnosticsOversizeCardsUseTheProbeBoundPerSource`、`TestCatalogScheduleRunningFullRegistersPendingRun` 与五个 plan 断言）。42k p95 已在目标机取得：浏览 p95 199.192 ms、5,001 文件卡拒绝 p95 0.593 ms（2026-10-27 复测）。
 
 **依据:** [正式规格](../spec.md)、[整改计划](../review-remediation-plan.md)、[ADR-0006](../../../docs/decisions/ADR-0006-catalog-remediation-and-translation-consistency.md)、`kikoto-remediation-addendum-20261021.md` 的 D-16/D-22/D-25。
 
@@ -108,7 +108,7 @@ CREATE INDEX source_catalog_schedule_due
 - [x] 诊断接口使用 `catalogadmission.ProbeFiles` 并按来源过滤，且排除 folder 与非当前 generation。`TestCatalogDiagnosticsOversizeCardsUseTheProbeBoundPerSource`。
 - [x] 运行中的 full 遇 weekly 到期把当前 generation 写入 `pending_full_run_id`，成功后推进 weekly、失败保留待重试，不产生第二个 full。`TestCatalogScheduleRunningFullRegistersPendingRun`、`TestCatalogScheduleResumeFullPendingWinsAndClears`、`TestCatalogScheduleFailedResumeFullRetriesWithoutMovingWeekly`。
 - [x] 性能计划断言真实执行计划且可失败。`catalog_plan_assert_test.go` 的 `assertNoCatalogFileTableScan` 在 `TestOpenListCatalogBrowseSinglePassPlan`、`TestOpenListCatalogLanguageSearchPlan`、`TestOpenListCatalogShortTranslationSearchPlan`、`TestCatalogPublishQueryPlanStaysDirectoryDriven`、`TestCatalogSplitPlanIgnoresPreviousRevisionFiles` 上全部通过（2026-10-26 复跑）。
-- [x] 42k 卡浏览与 5,001 文件卡拒绝路径的 p95 证据（2 vCPU／3.5 GiB、warm、30 样本）。`104_source_catalog_entry_admission.sql` 把每卡三个有界计数与其 generation 存成一行，文件写入在触发器里失效该行，发布批次与手工快照在写文件的事务内刷新；`catalogEntryAdmittedSQL` 与 `catalogEntryHasAudioSQL` 先读该行，generation 不匹配时回落到实时计数，两条路径共用 `catalogadmission.Decision`。浏览路径的 work 去重改为只对已关联 work 的卡片做分区排名，未登记卡片按自身 id 唯一，搜索路径保留单次排名以维持 rowid 探测。目标机（2 vCPU／3,531 MiB，warm，30 样本）实测：42,624 卡浏览 p50 176.27 ms、**p95 182.14 ms**、p99 184.94 ms；5,001 文件卡拒绝 p50 0.45 ms、**p95 0.69 ms**、p99 0.71 ms。改进前同一路径 p95 523.33 ms。证据：`.kikoto-work/reports/catalog-42k-perf.json`（改进前）、`/root/kikoto/bench42k/v104c/report.json`（当前）。
+- [x] 42k 卡浏览与 5,001 文件卡拒绝路径的 p95 证据（2 vCPU／3.5 GiB、warm、30 样本）。`104_source_catalog_entry_admission.sql` 把每卡三个有界计数与其 generation 存成一行，文件写入在触发器里失效该行，发布批次与手工快照在写文件的事务内刷新；`catalogEntryAdmittedSQL` 与 `catalogEntryHasAudioSQL` 先读该行，generation 不匹配时回落到实时计数，两条路径共用 `catalogadmission.Decision`。浏览路径的 work 去重改为只对已关联 work 的卡片做分区排名，未登记卡片按自身 id 唯一，搜索路径保留单次排名以维持 rowid 探测。目标机（2 vCPU／3,531 MiB，warm，30 样本，2026-10-27 复测）实测：42,624 卡浏览 p50 185.168 ms、**p95 199.192 ms**、p99 226.981 ms；5,001 文件卡拒绝 p50 0.420 ms、**p95 0.593 ms**、p99 0.596 ms。2026-10-25 的同一路径为 p95 523.334 ms。证据：`.kikoto-work/reports/catalog-42k-perf.json`（改进前）、发布记录中的 catalog-42k 报告（路径不入库）。
 - [x] 096 激活期间系列详情/成员 tracks 不可见，publication 切换后才可见；系列详情与列表使用同一 D-16 成员过滤。`TestCatalogSeriesHidesPendingPublicationUntilItIsPublished`、`TestCatalogAdmissionSeriesFiltersEveryMember`。
 - [x] 不重复实现 `134f7c90` 的规则；如发现其实现缺口，先报告再最小修正。本票只把常量接入 SQL 并补系列门禁。
 
@@ -121,7 +121,7 @@ CREATE INDEX source_catalog_schedule_due
 - D-16：`catalogadmission.Probe*` 是唯一常量源；`catalogEntryAdmittedSQL`、发布计数和单卡 API 都由它生成。系列列表、详情和成员 tracks 对每个成员独立过滤，计数只取该成员 `source_catalog_file`。
 - 096：系列详情在 pending publication 期间隐藏成员；publication 翻为 `published` 后同一查询可见。映射清理与发布状态同事务，`published` 是不可回退边界，注入清理失败后公开文件保持不变。
 - 准入收口：个人评价、播放准备、媒体流与作品目录标签复用同一准入，系列空详情返回 404，准入计数限定当前 generation 并排除 folder，sync 先建行再推进 due，诊断按来源过滤，plan 断言可失败。上述行为已在集成分支上通过定向测试复验（2026-10-26）。
-- 验证命令与结果记录在交付报告；42k 性能证据未在本 worktree 采集，保持未勾选。
+- 验证命令与结果记录在交付报告；42k 性能证据在目标机采集，报告保存在发布记录目录。
 
 ## 派发边界（裁决 2026-10-25）
 

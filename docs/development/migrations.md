@@ -501,9 +501,12 @@ persisted schedule; `099` adds the translation config key and prefill cursor;
 `100` adds the work parent; `101` adds the backfill report; `102` rebuilds the
 prefill state to allow `failed` and indexes the failure table; `103` replaces
 the two 099 short-query indexes with one keyset-ordered covering index. `104`
-adds the per-card admission count row and its invalidation triggers.
+adds the per-card admission count row and its invalidation triggers. `105`
+stores the translation search scope (`source_id`, `browsable`), replaces the
+short-scan index with the scoped covering shape, and creates the scope views
+and their maintenance triggers.
 
-The `084` through `104` changes retain existing rows. `087`, `097` and `102`
+The `084` through `105` changes retain existing rows. `087`, `097` and `102`
 rebuild tables; `087` copies every entry column and recreates its indexes,
 triggers and view, `097` copies only display-cache rows with a live source and
 recreates both cache indexes, and `102` copies the single prefill-state row and

@@ -5,7 +5,7 @@
 **Blocked by:** [03：简繁转换与受保护名称保持](03-traditional-chinese-conversion.md)（02 为传递前置）；[07](07-openlist-first-playable-slice.md)（entry 实体）；[08](08-recoverable-full-source-index.md)（有效集合与准入）；[20](20-catalog-sync-and-admission.md)（098 迁移）。
 
 **Status:** ready-for-agent
-**Implementation:** verified-local；`f3dc3a41` 补齐 099 配置键、有效语料覆盖、持久 prefill 失败、保留规则与严格语言搜索；`0c945b3e` 增加 102 的 `failed` 状态枚举与失败表 `(config_key, source_hash)` 索引；`bc880d91` 把本地、远程与 bench 的 1–2 字查询统一到共享短查询生成器，并给远程短查询补上 D-16 准入；`6f39e888` 用 103 的 `idx_content_translation_short_scan` 替换 099 的两个短查询索引；`a2a84617` 写入 `failed` 终态并把覆盖拆为 `native`／`model`；`0ec8cda0` 的 105 把 `source_id`／`browsable` 物化到译文行，短查询不再逐行回查实体，结果上限 1000；`fb9dd2c0` 在生命周期结算、子树删除、排除与重定位路径恢复 scope；`7565c852` 让 work 短查询保持索引顺序。迁移头为 105，`compat/105_dev.sql` 已生成，`migration_chain_105_test.go` 覆盖 68/84→105。目标机 456,000 行基准全部达标：卡片页 7.0–9.8 ms、完整集合 7.3–8.2 ms、零命中 45–51 ms、work 短页 0.22–0.26 ms、标题整串等值 1.27–1.76 ms、编号等值 0.07 ms。仍待 24 在最终候选上重跑迁移链、Full CI 与部署后真实翻译/搜索验收。
+**Implementation:** verified-local；`f3dc3a41` 补齐 099 配置键、有效语料覆盖、持久 prefill 失败、保留规则与严格语言搜索；`0c945b3e` 增加 102 的 `failed` 状态枚举与失败表 `(config_key, source_hash)` 索引；`bc880d91` 把本地、远程与 bench 的 1–2 字查询统一到共享短查询生成器，并给远程短查询补上 D-16 准入；`6f39e888` 用 103 的 `idx_content_translation_short_scan` 替换 099 的两个短查询索引；`a2a84617` 写入 `failed` 终态并把覆盖拆为 `native`／`model`；`0ec8cda0` 的 105 把 `source_id`／`browsable` 物化到译文行，短查询不再逐行回查实体，结果上限 1000；`fb9dd2c0` 在生命周期结算、子树删除、排除与重定位路径恢复 scope；`7565c852` 让 work 短查询保持索引顺序。迁移头为 105，`compat/105_dev.sql` 已生成，`migration_chain_105_test.go` 覆盖 68/84→105。目标机 456,000 行基准：卡片页与同预算总数 p95 均在 13 ms 内、零命中 48 ms、标题整串等值 1.37–1.73 ms、编号等值 0.018 ms；无预算全量计数 p95 667–693 ms，已由结果预算与 `truncated` 取代。仍待 24 在最终候选上重跑迁移链、Full CI 与部署后真实翻译/搜索验收。
 
 **依据:** [正式规格](../spec.md)、[整改计划](../review-remediation-plan.md)、[ADR-0006](../../../docs/decisions/ADR-0006-catalog-remediation-and-translation-consistency.md)、翻译工作包 D-27/D-29/D-30。
 
@@ -73,7 +73,7 @@ prefill 必须按 `entity_kind × field` 枚举：entry 的 title、series 的 t
 | 目标语言文本 | 只查目标语言 native 或当前 `config_key` 的 model 标题与简介；不得并入原文 FTS，不得回退原文 |
 | 编号、精确代码 | 语言无关；始终查 `primary_code`／`work` 代码，不因显示语言被过滤 |
 | 3 字以上 | FTS5 trigram，join 有效实体、当前行和 D-16 准入 |
-| 1–2 字 | 在完整有效集合上按 `(language, entity_kind, field, id)` keyset 分页 `instr`；只限制返回条数，不限制扫描行数；若 p95 超过 100 ms，必须增加短词 n-gram 索引或等价索引，不能以“记录依据”放弃目标 |
+| 1–2 字 | 在完整有效集合上按 `(language, entity_kind, field, id)` keyset 扫描 `instr`，按索引顺序覆盖全部有效行；返回条数与 `total` 共用 1000 张卡片的结果预算，超出时以 `truncated` 标记还有更多（2026-10-27 裁决：目标机完整计数 p95 667–693 ms，100 ms 内不可行） |
 | `zh-tw` | 查询先 t2s；同时查 `zh-Hans` 与原生 `zh-Hant`；原生繁体行按原查询命中 |
 
 ## 已验证的算法事实（2026-10-25）
@@ -93,7 +93,7 @@ prefill 必须按 `entity_kind × field` 枚举：entry 的 title、series 的 t
 - [x] prefill 游标包含语言维度；失败先持久化再推进，重启后 retry 队列仍会重试该语言，不能被后续实体推进掩盖；永久失败不会阻塞其他实体。扫到末尾且无新条目、无 due retry 时写 `failed`，该状态不是终态，下一批仍处理 due retry（`a2a84617`）。
 - [x] 目标语言搜索严格只返回目标语言译文或原生同语言内容；`origin` 才出现原文；编号查询不受语言过滤。
 - [x] work 的标题与简介、entry/series 的标题都参与目标语言搜索与覆盖；entry 不伪造 description；标签、目录名不进入搜索索引。
-- [x] 1–2 字查询覆盖完整有效集合，明确结果数上限和 p95，不再只扫描每语言最新 50,000 行。`bc880d91` 把本地、远程与 bench 统一到 `library.ShortTranslationSearchSQL`；`6f39e888` 的 103 索引让有序取页走 keyset 顺序；`0ec8cda0` 的 105 把 `source_id` 与 `browsable` 物化到译文行，扫描不再回查实体或逐行计算准入。卡片页最多返回 `catalogShortSearchResultLimit=1000` 张，`total` 是完整有效集合的大小，`truncated` 由每分支读 `limit+1` 行的有界探测给出；上限按 `(language, entity_kind)` 分支应用，`zh-tw` 的原生 `zh-Hant` 行不会被简体命中挤掉。`After` 只用于单字段 arm 的 keyset 续扫（多字段 arm 在设置 `After` 时跳过，避免跨字段游标漏行）。目标机（2 vCPU，114,000 实体 × 4 语言）卡片页 p95 8.37/8.98/9.38/8.79 ms、零命中 46.69 ms；完整集合计数 p95 8.15/7.35/7.34/7.39 ms、零命中 51.70 ms，均在 100 ms 内。证据 `short-query-target.json`。
+- [x] 1–2 字查询覆盖完整有效集合，明确结果数上限和 p95，不再只扫描每语言最新 50,000 行。`bc880d91` 把本地、远程与 bench 统一到 `library.ShortTranslationSearchSQL`；`6f39e888` 的 103 索引让有序取页走 keyset 顺序；`0ec8cda0` 的 105 把 `source_id` 与 `browsable` 物化到译文行，短查询不再逐行回查实体；`48c12395` 让返回总数与卡片页共用同一结果预算，超出预算时以 `truncated` 标记“还有更多”。卡片页与总数最多处理 `catalogShortSearchResultLimit=1000` 张，`truncated` 由每分支读 `limit+1` 行的有界探测给出；上限按 `(language, entity_kind)` 分支应用，`zh-tw` 的原生 `zh-Hant` 行不会被简体命中挤掉。`After` 只用于单字段 arm 的 keyset 续扫（多字段 arm 在设置 `After` 时跳过，避免跨字段游标漏行）。目标机（2 vCPU，114,000 实体 × 4 语言，20 样本，全部标题命中）卡片页 p95 8.91/8.86/9.63/12.59 ms、零命中 48.29 ms；同预算的总数 p95 8.9/8.9/9.6/12.6 ms、零命中 48.3 ms，均在 100 ms 内；无预算全量计数仅作诊断，p95 667–693 ms，正是它被预算替代的原因。证据为发布记录中的 `short-query.json`。
 - [x] 本地与远程搜索、简繁归一化、动态内容、重启和失败恢复 H/R/F 覆盖。
 - [x] modernc SQLite、45.6 万行基准。`bc880d91` 已重写语料与采样：每个实体写四种模型语言、按 id 确定性取样、默认 `--rows 456000`，短查询调用共享生成器。本机基准（`.kikoto-work/reports/bench-456k-final.json`，114,000 实体 × 4 语言，非目标硬件）结果：
   - 卡片页短查询 `limit=200` p95：en 1.094 ms、zh-Hans 0.575 ms、ja 1.316 ms、ko 1.506 ms，达标（≤100 ms）。
@@ -101,7 +101,7 @@ prefill 必须按 `entity_kind × field` 枚举：entry 的 title、series 的 t
   - 目标语言标题整串等值 p95 1.58–2.505 ms；FTS p95 0.573–1.506 ms；编号等值低于计时器分辨率（0.00 ms，max 0.53 ms）。
   - DB 425.6 MB（`dbBytes` 446,291,968）、FTS 35.9 MB、VACUUM 后 404.5 MB；插入 131–147 s，WAL 峰值 23.3 MB。
   - 该运行未包含 D-16 准入 join；目标硬件（2 vCPU／2 GiB、warm、≥20 样本）结果仍缺。
-- [x] “精确命中”按两条用户路径分别测量并留证。`translation-bench` 用 `primary_code` 等值与目标语言标题整串等值两条查询，不读 `cache_key`。目标机（2 vCPU、456,000 行、20 样本）结果：标题整串等值 p95 1.274/1.322/1.584/1.756 ms（zh-Hans/en/ja/ko），计划为 `SCAN content_translation_search VIRTUAL TABLE INDEX 0:M1` 加 rowid 主键探测；编号等值 p95 0.07 ms。均低于 5 ms 门槛。证据 `translation-bench-target-exact.json`。
+- [x] “精确命中”按两条用户路径分别测量并留证。`translation-bench` 用 `primary_code` 等值与目标语言标题整串等值两条查询，不读 `cache_key`。目标机（2 vCPU、456,000 行、20 样本）结果：标题整串等值 p95 1.393/1.367/1.593/1.725 ms（zh-Hans/en/ja/ko），计划为 `SCAN content_translation_search VIRTUAL TABLE INDEX 0:M1` 加 rowid 主键探测；编号等值 p95 0.018 ms。均低于 5 ms 门槛。证据为发布记录中的 `translation-bench.json`。
 
 **测试入口:** H、R、少量 F、必要 U；真实模型与规模证据由 24 汇总。
 

@@ -641,11 +641,15 @@ reads `content_translation`. Release codes and other structured identifiers
 remain searchable regardless of display language.
 
 Three-character and longer queries use the trigram index. One- and
-two-character queries scan the complete effective set in
+two-character queries scan the effective set in
 `(language, entity_kind, field, source_id, browsable, id)` order through the
 covering short-scan index and match `translated_text` with `instr()`. The scan
-walks every effective row; the cap bounds the returned cards and is applied
-inside the scan, so a query that matches the whole source stops at the bound.
+starts from the oldest effective row rather than a recent window; the cap
+bounds the returned cards and is applied inside the scan, so a query that
+matches the whole source stops at the bound. The reported `total` shares that
+budget, and a bounded overflow probe sets `truncated` when more effective rows
+exist. A full count of 114,000 matches costs 667–693 ms at p95 on the release
+target, which is why the budget covers the total as well.
 `zh-cn`, `en-us`, `ja-jp` and `ko-kr` map to `zh-Hans`, `en`,
 `ja` and `ko`; `zh-tw` reads `zh-Hans` with OpenCC `s2t` and also reads native
 `zh-Hant` rows.

@@ -4,8 +4,8 @@
 
 **Blocked by:** [16：个人数据导入导出](16-personal-data-transfer-compatibility.md)；迁移 100 已在 099 之后落地，不再阻塞。
 
-**Status:** in-review
-**Implementation:** 已完成；`64b25252` 已落地迁移 100、`work.parent_work_id`、父级导入与系列详情回退（`catalogEntryId=0`）。导出格式为 `version: 2` 加可选 `parent`（`transfer_export.go:30`），v3 按未知版本拒绝；父级别名冲突报告 `parent_alias_not_imported`（`transfer_import.go:246`）。导出遇多父系列不再致命：`exportIdentity` 把冲突降级为 `issues[].reason=parent_conflict`，条目保留 ref 与评分备注、`parent` 留空（`transfer_identity.go:10-75`）。当前候选上 `go test ./internal/personal/ ./internal/httpapi/ -run 'Personal|Transfer' -count=1` 通过。
+**Status:** ready-for-agent
+**Implementation:** resolved（记录 SHA `2ad508e8`）；迁移 100 增加 `work.parent_work_id`，父级导入与系列详情回退（`catalogEntryId=0`）已落地。导出格式为 `version: 2` 加可选 `parent`（`transfer_export.go:30`），v3 按未知版本拒绝；父级别名冲突报告 `parent_alias_not_imported`（`transfer_import.go:246`）。导出遇多父系列不再致命：`exportIdentity` 把冲突降级为 `issues[].reason=parent_conflict`，条目保留 ref 与评分备注、`parent` 留空（`transfer_identity.go:10-75`）。`go test ./internal/personal/ ./internal/httpapi/ -run 'Personal|Transfer' -count=1` 在记录 SHA 上通过。
 
 **依据:** [正式规格](../spec.md)、[ADR-0004](../../../docs/decisions/ADR-0004-work-identity-and-personal-state.md)、[ADR-0006](../../../docs/decisions/ADR-0006-catalog-remediation-and-translation-consistency.md)。
 
@@ -17,7 +17,7 @@
 
 ## 数据模型
 
-迁移编号固定为 100，位于 097、098、099 之后；098／099 尚未提交时不得预写 100，落地时必须同步迁移头与 `compat/100_dev.sql`：
+迁移编号为 100，位于 097、098、099 之后；当前迁移头为 105，`compat/105_dev.sql` 已生成：
 
 ```sql
 ALTER TABLE work ADD COLUMN parent_work_id INTEGER REFERENCES work(id) ON DELETE RESTRICT;
@@ -89,7 +89,7 @@ CREATE INDEX idx_work_parent_work ON work(parent_work_id);
 - [x] 空库导入后再导出，episode 仍为 `kind=episode`，父系列仍为 `kind=series`；`s:` ref 属于 `catalog_series`，`w:` ref 属于 work。`TestTransferEmptyLibraryRoundTripKeepsKindsAndRefOwners`。
 - [x] `docs/development/personal-transfer.md` 与用户页统一为 v2 + 可选 `parent`；导出器写 `version: 2`，v3 按未知版本拒绝。
 - [x] 同一备份包含两个系列 work 时不会因空 `primary_code`／`canonical_code` 触发唯一约束；若使用内部代码，编号解析和用户界面不暴露它。`TestTransferV2TwoEmptyCodeSeriesDoNotCollide`、`TestTransferTwoSeriesWorksWithEmptyCodesRoundTrip`。
-- [x] 迁移后新装与旧库升级的 `work.parent_work_id` 和索引一致；已发布迁移不回写；回填的缺失、矛盾与多父级写入可查询报告载体，而不是只打日志。既有 `TestWorkParentMigrationCreatesColumnAndIndex`、`TestWorkParentMigrationBackfillsOnlyUnambiguousMembership`、`TestMigrationChain104FreshInstall`、`TestMigrationChain104Upgrades068AndKeepsUserData`、`TestMigrationChain104Upgrades084ToCurrentShape`、`TestMigrateRejectsChangedAppliedMigration`，本次只核实运行，未改迁移文件。
+- [x] 迁移后新装与旧库升级的 `work.parent_work_id` 和索引一致；已发布迁移不回写；回填的缺失、矛盾与多父级写入可查询报告载体，而不是只打日志。既有 `TestWorkParentMigrationCreatesColumnAndIndex`、`TestWorkParentMigrationBackfillsOnlyUnambiguousMembership`、`TestMigrationChain105FreshInstall`、`TestMigrationChain105Upgrades068AndKeepsUserData`、`TestMigrationChain105Upgrades084ToCurrentShape`、`TestMigrateRejectsChangedAppliedMigration`，本次只核实运行，未改迁移文件。
 - [x] 导入后系列与单集可独立评价，无媒体下载或共享越权变更。`TestTransferRestoredSeriesAndEpisodeHaveIndependentReviews`、`TestPersonalTransferRestoredSeriesAndEpisodeReviewIndependently`（同时断言 media/workflow_run/member 均为 0）。
 
 **测试入口:** H、R，使用真实迁移 SQLite 与公开导入导出入口。
@@ -97,3 +97,5 @@ CREATE INDEX idx_work_parent_work ON work(parent_work_id);
 ## Comments
 
 `relationships_not_imported` 不能成为已确认父级静默丢失的完成状态。当前 `registerTransferWork` 对未知 episode 只创建独立 work；必须先完成父级数据模型和备份字段，再改导入路径。迁移编号在 096 落地后按连续链分配，不能抢占或跳号。
+
+2026-10-27：`Status` 由无效值 `in-review` 修正为 `ready-for-agent`；`Implementation` 记为 `resolved`，记录 SHA `2ad508e8`。证据文件的测试名已与当前分支对齐，旧分支测试名不再作为完成依据。

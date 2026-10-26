@@ -1,6 +1,6 @@
 # 22：个人备份的单集父级归属证据
 
-> 本文件记录 `134f7c90` 之后的实现过程与红绿例，测试函数名以该分支为准。
+> 本文件记录 `134f7c90` 之后的实现过程与红绿例。
 > 当前分支（`codex/kikoto-catalog-remediation`）的实际回归测试名为：
 > `TestPersonalTransferRestoresKnownUnregisteredCatalogSeriesAndEpisodeAcrossRestart`、
 > `TestPersonalTransferMultipleDifferentParentsReportConflict`、
@@ -15,20 +15,20 @@
 - 分支为 `codex/kikoto-personal-parent-remediation`，基于 `134f7c90`；实现只修改个人传输、HTTP 传输测试与对应文档。
 - 版本 2 的 `BackupIdentity` 增加可选 `parent: {ref, title, entryRef, position, evidence}`。`ref` 是现有 `s:` 系列引用，`entryRef` 是单集的 `c:` 目录引用，不引入第二套身份。
 - 父级只在单集有明确 `catalog_series_member` 时导出，即使系列没有本人评价也会写入。导入利用同一引用解析已有系列，或在空库创建最小的 series work、`catalog_series`、目录条目和成员行。
-- 该分支本身不修改数据库结构；父级列 `work.parent_work_id` 与迁移 100 由当前集成分支提供。
+- 迁移 100 增加 `work.parent_work_id` 及其索引；个人传输实现读写该列，不另建迁移。
 
 ## 红例
 
-1. `go test ./internal/httpapi -run '^TestPersonalTransferRestoresEpisodeParentAcrossEmptyLibraryRestart$' -count=1 -timeout=15m`
-   - 退出 1：`episode identity has no parent`。导出只有单集自身的 `w:` 和 `c:` 引用。
-2. 仅加入父级导出字段后重跑同一条命令：
-   - 退出 1：`registered works = 1, want the episode and its series only`。备份已有父级，但导入仍把单集登记成独立作品。
+早期分支（`134f7c90` 之后）记录过两个红例，测试函数已随实现重写，现由下列当前回归覆盖：
+
+1. 导出缺少父级：失败信息为 `episode identity has no parent`，导出只有单集自身的 `w:` 和 `c:` 引用。当前由 `TestAuditPersonalTransferExportsParentWithoutRegisteredEntry` 覆盖。
+2. 导入忽略父级：失败信息为 `registered works = 1, want the episode and its series only`，备份已有父级但导入仍把单集登记成独立作品。当前由 `TestTransferV2RestoresPersonalOnlyParentAndRoundTrips` 覆盖。
 
 ## 绿例
 
-- `go test ./internal/httpapi -run '^TestPersonalTransfer(RestoresEpisodeParentAcrossEmptyLibraryRestart|BlocksEpisodeWithoutRestorableParent|KeepsExistingDifferentEpisodeParent)$' -count=1 -timeout=15m`：退出 0。
-- `go test ./internal/personal -run '^TestClaimTransferRef' -count=1 -timeout=15m`：退出 0；缺失触发器别名时创建明确 `s:` 行，引用已属于其他系列时拒绝改写。
-- `go test ./internal/personal ./internal/httpapi -run 'PersonalTransfer|Transfer|Import|Export|ClaimTransferRef' -count=1 -timeout=15m`：退出 0。
+- `go test ./internal/httpapi -run '^(TestPersonalTransferRestoresKnownUnregisteredCatalogSeriesAndEpisodeAcrossRestart|TestPersonalTransferMultipleDifferentParentsReportConflict|TestPersonalTransferParentRegistrationRequiresPermissionAndStaysUserScoped)$' -count=1 -timeout=15m`：退出 0。
+- `go test ./internal/personal -run '^(TestTransferV2RestoresPersonalOnlyParentAndRoundTrips|TestTransferV2ParentCycleIsReported|TestTransferV2ParentAliasForTheSameSeriesIsReported|TestTransferV2ParentReferenceConflicts)$' -count=1 -timeout=15m`：退出 0；父级往返、循环、别名与 ref 归属冲突均有断言，引用已属于其他系列时拒绝改写。
+- `go test ./internal/personal ./internal/httpapi -run 'PersonalTransfer|Transfer|Import|Export' -count=1 -timeout=15m`：退出 0。
 - `go test ./internal/personal ./internal/httpapi -count=1 -timeout=15m`：退出 0；personal 19.375s，httpapi 484.309s。
 - `go vet ./...`：退出 0。
 - `go run ../scripts/check-go-format.go internal/personal internal/httpapi`：退出 0。
@@ -41,7 +41,7 @@
 
 - 空库导入只在备份明确携带父级时创建 series work 和成员关系；不按标题、路径或相似名称匹配。
 - 父级引用已有 series 但尚未登记时，只补建该 series work；已有 series work 时直接复用。
-- `claimTransferRef` 先确认目标 series/目录存在且请求的 ref 未指向其他对象；目标对象没有触发器生成的别名时，直接创建明确 ref 行，不依赖触发器存在。
+- 父级 ref 解析先确认目标 series/目录存在且请求的 ref 未指向其他对象；目标对象没有触发器生成的别名时，直接创建明确 ref 行，不依赖触发器存在（`transfer_plan.go:361` 的 `parentClaims` 冲突检查）。
 - 单集已有同一父级时重复导入保持幂等，不增加 work、series、目录条目或成员行。
 - 单集已属于另一个系列时报告 `parent_conflict` 并跳过该单集，既有成员关系不改。
 - 单集没有父级信息且资料库也没有既有成员关系时报告 `parent_missing`，不创建独立 work。
@@ -59,5 +59,5 @@
 - `exportIdentity` 在 `exportEpisodeParent` 返回内部哨兵 `errExportParentConflict` 时不再冒泡 `ErrConflict`：identity 原样返回，`parent` 为空，同时产出 `{ref: <episode w: ref>, reason: "parent_conflict"}`。
 - `Backup` 新增只用于导出的 `issues`（`json:"issues,omitempty"`，复用 `ImportIssue`），导出结果按 `ref`、`reason` 排序；导入忽略该字段。
 - 红例：`TestTransferExportReportsMultipleSeriesParentInsteadOfFailing` 在修复前报 `export failed on an ambiguous parent: personal record already exists`；修复后同一备份含两条 episode，冲突条目 `parent=nil` 且 `issues` 恰一条 `parent_conflict`，唯一父系列条目仍带 `parent`。
-- 绿例：`go test ./internal/personal/ ./internal/httpapi/ -run 'Personal|Transfer' -count=1` 通过（personal 27.307s，httpapi 54.587s）；`go test ./internal/storage/ -run 'TestWorkParentMigration|TestMigrationChain104|TestMigrateRejectsChangedAppliedMigration|TestMigrateFreshDatabaseUsesLatestReleasedBaseline' -count=1` 通过。
+- 绿例：`go test ./internal/personal/ ./internal/httpapi/ -run 'Personal|Transfer' -count=1` 通过（personal 27.307s，httpapi 54.587s）；`go test ./internal/storage/ -run 'TestWorkParentMigration|TestMigrationChain105|TestMigrateRejectsChangedAppliedMigration|TestMigrateFreshDatabaseUsesLatestReleasedBaseline' -count=1` 通过。
 - 权限 403：`TestPersonalTransferParentRegistrationRequiresPermissionAndStaysUserScoped`（`backend/internal/httpapi/personal_transfer_parent_scope_test.go:165`）通过。

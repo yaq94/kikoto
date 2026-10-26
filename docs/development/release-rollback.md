@@ -91,7 +91,7 @@ with `idx_content_translation_short_scan`. `104` adds
 invalidates a row whenever its file set changes. `105` adds the stored
 `source_id`/`browsable` columns and replaces that index with the scoped shape.
 
-No migration deletes or rewrites card or personal rows. A `068`–`104`
+No migration deletes or rewrites card or personal rows. A `068`–`105`
 snapshot restored into the current image upgrades along the numbered chain; a
 `105` database needs a binary that packages `105`. A `104` binary refuses
 `105`, a `103` binary refuses `104`, a `102` binary refuses `103`, a `101`
@@ -130,7 +130,8 @@ copy does not recurse into itself.
 Keep a named snapshot for every schema the rollback matrix lists:
 `rollbacks/schema-095`, `rollbacks/schema-096`, `rollbacks/schema-097`,
 `rollbacks/schema-098`, `rollbacks/schema-099`, `rollbacks/schema-100`,
-`rollbacks/schema-101`, `rollbacks/schema-102` and `rollbacks/schema-103`. The automatic
+`rollbacks/schema-101`, `rollbacks/schema-102`, `rollbacks/schema-103`,
+`rollbacks/schema-104` and `rollbacks/schema-105`. The automatic
 pre-migration backup is named after the schema it leaves, so copy it to the
 matching `schema-NNN` directory before the next upgrade overwrites the
 reference. A snapshot only helps if its image is still available; record the

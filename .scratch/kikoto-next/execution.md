@@ -1,16 +1,16 @@
 # Kikoto 下一阶段执行记录
 
 **Status:** ready-for-agent
-**Implementation:** in-progress；01–19 的历史证据按对应产物保留；20–24 为当前整改任务，最终候选、真实覆盖与部署证据未闭环。
+**Implementation:** in-progress；01–19 的历史证据按对应产物保留；20–24 的整改已汇总到候选 `2ad508e8`，24 待终验。
 
 ## 当前状态
 
-**当前部署：** 生产运行 `kikoto:next-17c4e5d4`（容器 `kikoto`，schema 84，`/health` 200 `v0.8.3`）；`nostalgic_franklin` 是隔离实例（`kikoto:next-301e6c63`，bridge 网络，未占用 7655）。集成分支尚未部署；部署版本、镜像 tag、备份与回滚路径在部署完成后写入 24 的候选账本。
-**集成状态（2026-10-26 复核）：** 集成分支 `codex/kikoto-catalog-remediation` 已推进到 `7201adbe`。迁移头 `105`：`101_work_parent_backfill_report.sql` 增加父级回填报告表并幂等重跑回填，`102_translation_prefill_status.sql` 为 prefill 增加 `failed` 状态并给失败表补 `(config_key, source_hash)` 索引，`103_translation_short_scan_index.sql` 用 `idx_content_translation_short_scan` 替换 099 的两个短查询索引，`104_source_catalog_entry_admission.sql` 为每卡准入计数建表并在文件写入事务内失效、发布事务内刷新，`105_translation_search_scope.sql` 把 `source_id`／`browsable` 物化到译文行并建立 scope 视图与触发器；`compat/105_dev.sql` 已生成。`migration_chain_105_test.go` 覆盖新装到 105、68→105、84→105、重复启动幂等与 `foreign_key_check` 0 行。20 的 098 状态机、系列准入、publication 事务内删 mapping、其余准入入口、零可见成员 404、零文件与旧 generation 集合统一、due 推进顺序、诊断过滤与 plan 断言全部并入并通过定向测试；42k 目标机 p95 182.14 ms。21 的 099/102/105、严格语言搜索、共享短查询生成器与 `failed` 终态已合入；卡片页与完整集合计数均在目标机 100 ms 内，结果上限 1000 并带 `truncated` 标记。22 的 100、`work.parent_work_id`、v2 + 可选 `parent`、`parent_alias_not_imported`、多父级导出改为可审阅 `parent_conflict` 均已合入并通过测试。23 的文档与保留回归已收口。24 已具备冻结候选的条件。
+**当前部署：** 生产运行 `kikoto:next-2ad508e8`（容器 `kikoto`，schema 105，`/health` 200 `v0.8.3`）；部署前为 schema 84 / 镜像 `kikoto:next-17c4e5d4`。`nostalgic_franklin` 是隔离实例（`kikoto:next-301e6c63`，bridge 网络，未占用 7655）。部署版本、镜像 tag、备份与回滚路径见 [24 候选账本](evidence/24-candidate-2ad508e8.md)。
+**集成状态（2026-10-27 复核）：** 集成分支 `codex/kikoto-catalog-remediation` 已推进到 `2ad508e8`。迁移头 `105`：`101_work_parent_backfill_report.sql` 增加父级回填报告表并幂等重跑回填，`102_translation_prefill_status.sql` 为 prefill 增加 `failed` 状态并给失败表补 `(config_key, source_hash)` 索引，`103_translation_short_scan_index.sql` 用 `idx_content_translation_short_scan` 替换 099 的两个短查询索引，`104_source_catalog_entry_admission.sql` 为每卡准入计数建表并在文件写入事务内失效、发布事务内刷新，`105_translation_search_scope.sql` 把 `source_id`／`browsable` 物化到译文行并建立 scope 视图与触发器；`compat/105_dev.sql` 已生成。`migration_chain_105_test.go` 覆盖新装到 105、68→105、84→105、重复启动幂等与 `foreign_key_check` 0 行。20 的 098 状态机、系列准入、publication 事务内删 mapping、其余准入入口、零可见成员 404、零文件与旧 generation 集合统一、due 推进顺序、诊断过滤与 plan 断言全部并入并通过定向测试；42k 目标机 p95 199.192 ms、5,001 文件卡拒绝 p95 0.593 ms。21 的 099/102/105、严格语言搜索、共享短查询生成器与 `failed` 终态已合入；1–2 字查询的返回条数与 `total` 共用 1000 张预算并以 `truncated` 标记，目标机卡片页与同预算总数 p95 均 ≤13 ms、零命中 48 ms。22 的 100、`work.parent_work_id`、v2 + 可选 `parent`、`parent_alias_not_imported`、多父级导出改为可审阅 `parent_conflict` 均已合入并通过测试。23 的文档与保留回归已收口。候选 `2ad508e8` 已冻结：Full CI run `40341543004` success，生产已部署 `kikoto:next-2ad508e8` / schema 105，`/health` 200 `v0.8.3`。84→105 迁移演练完成 21 个迁移、总耗时 20,840 ms、`quick_check` ok、FK 0；回滚演练中 84 快照配旧镜像 health 200，105 库配旧镜像启动失败（schema newer than binary）。24 待终验。
 
 **审查快照：** 审查时文档基线 `6122b7bf`；代码审查基线 `301e6c63`。`6b4a02ec`（096 与系列暂存）、`728651a6`（v2 可选 `parent`）、`47df9c11`（wall-clock/partial 调度）均已并入当前分支，但仍需在当前候选上重新验收；不要把它们当作已签收的外部交付。历史 run 53 为 partial，不能当作完整覆盖。2026-10-25 的逐项审查见 [audit-20261025-review.md](audit-20261025-review.md)。
 
-**当前候选：** 尚未冻结。01–19 的 `resolved` 仅表示其记录 SHA 上的历史本地证据，不等于当前候选已验收。24 必须对同一 SHA 重跑主责 AC、整改子项、Full CI、迁移、LIVE 和部署。
+**当前候选：** 已冻结 `2ad508e8`（见 [24 候选账本](evidence/24-candidate-2ad508e8.md)）。01–19 的 `resolved` 仅表示其记录 SHA 上的历史本地证据，不等于当前候选已验收；24 仍在同一 SHA 上完成终验。
 
 `final-spec-review-20261024.md` 曾在 `a711bc39` 记录 AC-14 的系列发现失败（单集/格式副本/Bonus、成员上限）和 AC-26 的部署证据缺口；后续未提交工作区改动不能替代当前 SHA 的回归，24 必须把 AC-14 列入首要门禁。
 
@@ -18,11 +18,11 @@
 
 | 工单                                                                                                                                    | 责任                                      | Implementation | 完成所需证据                                                                                                                                                                                                                        |
 | --------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------- | -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [20 持续目录增量、固定调度与准入回归](issues/20-catalog-sync-and-admission.md)                                                          | partial 变化发现、固定调度、D-16 跨层边界 | verified-local | H/R、失败重试与恢复、单卡评价／播放／媒体流／目录标签准入、零可见成员 404、零文件与旧 generation 集合统一、due 推进顺序、诊断过滤与 plan 断言均已在集成分支通过定向测试；42k 目标机浏览 p95 182.14 ms、5,001 文件卡拒绝 p95 0.69 ms |
-| [21 有效译文语料与严格语言搜索](issues/21-translation-corpus-and-search.md)                                                             | 有效语料、覆盖、严格搜索、短查询          | verified-local | 099/102/105、严格语言搜索、共享短查询生成器与 `failed` 终态已合入；卡片页、完整集合计数与零命中 p95 均在目标机 100 ms 内；结果上限 1000 并带 `truncated` 标记；最终候选复验由 24 执行 |
-| [22 个人备份父级归属](issues/22-personal-transfer-parent-identity.md)                                                                   | 空库单集与父系列恢复                      | verified-local | 100 与 `parent_work_id`、v2 + 可选 `parent`、`parent_alias_not_imported`、多父级导出改为可审阅 `parent_conflict`；10 项验收全部勾选并有测试名；权限 403 与往返身份均有 H/R 证据                                                     |
+| [20 持续目录增量、固定调度与准入回归](issues/20-catalog-sync-and-admission.md)                                                          | partial 变化发现、固定调度、D-16 跨层边界 | verified-local | H/R、失败重试与恢复、单卡评价／播放／媒体流／目录标签准入、零可见成员 404、零文件与旧 generation 集合统一、due 推进顺序、诊断过滤与 plan 断言均已在集成分支通过定向测试；42k 目标机浏览 p95 199.192 ms、5,001 文件卡拒绝 p95 0.593 ms |
+| [21 有效译文语料与严格语言搜索](issues/21-translation-corpus-and-search.md)                                                             | 有效语料、覆盖、严格搜索、短查询          | verified-local | 099/102/105、严格语言搜索、共享短查询生成器与 `failed` 终态已合入；1–2 字查询的返回条数与 `total` 共用 1000 张预算并以 `truncated` 标记，目标机卡片页与同预算总数 p95 均 ≤13 ms；最终候选复验由 24 记录 |
+| [22 个人备份父级归属](issues/22-personal-transfer-parent-identity.md)                                                                   | 空库单集与父系列恢复                      | resolved（`2ad508e8`） | 100 与 `parent_work_id`、v2 + 可选 `parent`、`parent_alias_not_imported`、多父级导出改为可审阅 `parent_conflict`；9 项验收全部勾选并有测试名；权限 403 与往返身份均有 H/R 证据                                                     |
 | [23 保留与仓库规范](issues/23-retention-and-repository-contracts.md)                                                                    | 清理保护、迁移链、模型文档、证据脱敏      | verified-local | 6 项清理回归、合成 dry-run、095 历史与 096–105 连续链、旧 095 preflight 三路径、文档与 tracked-evidence 扫描全部通过                                                                                                                |
-| [24 同候选集成与发布证据](issues/24-release-candidate-evidence.md)                                                                      | 全部修复、双轴审查、部署验收              | pending        | 待 21 的短查询达标后冻结候选；候选账本、同 SHA Full CI、迁移恢复、组合负载、LIVE、生产终态仍待执行                                                                                                                                  |
+| [24 同候选集成与发布证据](issues/24-release-candidate-evidence.md)                                                                      | 全部修复、双轴审查、部署验收              | in-progress    | 候选 `2ad508e8` 已冻结；Full CI run `40341543004` success；生产已部署 schema 105 并通过 `/health`；84→105 迁移与回滚演练完成。双轴审查、组合负载、LIVE、部署后逐项复验待终验                                                                 |
 | 17 不依赖 20–24；24 依赖 17–23。以上新票不覆盖旧 evidence 文件，原 01–19 的需求与主责继续有效。任何 `resolved` 都必须满足当前产物定义。 |
 
 ## 历史执行记录
@@ -31,8 +31,8 @@
 
 - 01–07、09–16 的历史本地 H/F/R 证据保留在各自的 evidence 文件；其中 07 的真实媒体 Range 是旧独立实例证据，当前应用代理路径仍需 24 复验。
 - 08 的完整合成树、恢复与资源限制已通过；真实 run 53 仍为 partial（约 1.4 万目录中绝大多数完成、4 失败、27 未确认空），真实全量覆盖待 24。
-- 17 的旧部署 `7ed73fa0`（schema 68→76）与 `2bae5db9`（schema 83）只作历史；当前构建未部署。
-- 18、19 的本地 H/R/F 证据保留；最终 Full CI 终态由 24 在同一 SHA 取得。
+- 17 的旧部署 `7ed73fa0`（schema 68→76）与 `2bae5db9`（schema 83）只作历史；当前候选 `2ad508e8` 已部署，见当前状态。
+- 18、19 的本地 H/R/F 证据保留；最终 Full CI 终态已由 24 在 `2ad508e8` 取得（run `40341543004`，success）。
 - 2026-10-24 前完成的目录身份、sidecar、翻译、关联与导入修复见 [20 证据](evidence/20-post-review-fixes.md)；旧 prune dry-run 只作历史，生产计数不再复述。
 
 ## 迁移协调
@@ -41,7 +41,7 @@
 - 096 已被系列暂存占用，不得把其他 DDL 塞入 096。
 - 编号：097 为固定的 095 表重建槽位；098 为目录调度；099 为译文语料契约；100 为 work 父级；101 为父级回填报告；102 为 prefill `failed` 状态与失败表 `(config_key, source_hash)` 索引；103 为短查询扫描索引；104 为每卡准入计数行；105 为译文短查询的 `browsable` 物化与 scope 触发器。任何编号变化必须同步迁移头、compat 文件和测试常量。
 - 095 曾在 `25f96c22` 首次加入（无外键），后在 `5defaa1c` 改为带 `ON DELETE CASCADE`；两个文件 SHA-256 不同。已执行旧 095 的数据库会触发 checksum 门禁，必须在 097 前提供兼容路径。是否存在旧 095 数据库仍待核实。
-- 新装、旧库升级、重复启动、并发启动和 compat 基线必须由 24 在同一 SHA 复验。
+- 84→105 升级演练已完成；新装、重复启动、并发启动和 compat 基线由 24 在同一 SHA 复验。
 
 ## 验证证据登记
 
@@ -57,7 +57,11 @@
 | 01–16 历史本地证据    | 保留         | 只证明各自旧 SHA；当前候选由 24 重跑                                                                                                    |
 | 08 真实覆盖           | partial      | run 53 未完成，失败/未确认空目录不计完整                                                                                                |
 | 17 旧部署             | 历史         | `2bae5db9`/schema 83，不是当前候选                                                                                                      |
-| 20–23 当前候选        | 通过（本地） | 20/21/22/23 的本地与目标机证据已在集成分支复验；24 的候选冻结、Full CI、迁移与部署验收待执行 |
+| Full CI               | 通过         | run `40341543004` @ `2ad508e8`，success                                                                                                 |
+| 迁移演练              | 通过         | 84→105：21 个迁移、总耗时 20,840 ms、`quick_check` ok、FK 0                                                                              |
+| 回滚演练              | 通过         | 84 快照 + 旧镜像 `/health` 200；105 库 + 旧镜像启动失败（schema newer than binary）                                                      |
+| 生产部署              | 通过         | `kikoto:next-2ad508e8`，schema 105，`/health` 200 `v0.8.3`；部署前 schema 84 / `kikoto:next-17c4e5d4`                                    |
+| 20–23 当前候选        | 通过（本地） | 20/21/22/23 的本地与目标机证据已在集成分支复验；22 记录 SHA `2ad508e8`                                                                  |
 
 ## 17 的整体验收与部署门槛
 
@@ -84,3 +88,7 @@
 | resolved       | 本票在其记录 SHA 上的全部主责与共同验收均有完整证据；24 仍需把这个记录纳入当前候选。 |
 
 文档、基础设施准备、单元测试、健康检查或代理报告都不能代替完整验收；由集成负责核对实际差异、产物版本和证据。
+
+## Comments
+
+2026-10-27：候选 `2ad508e8` 已冻结并部署；Full CI run `40341543004` 成功，84→105 迁移与回滚演练完成。24 暂记 `in-progress`，待双轴审查、组合负载、LIVE 与部署后逐项复验终验后改为 `resolved`。
