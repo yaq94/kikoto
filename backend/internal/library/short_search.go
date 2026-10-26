@@ -7,14 +7,16 @@ import (
 )
 
 // ShortSearchArm is one entity kind that a 1-2 character translation search
-// covers. Scope is an extra predicate over the content_translation alias `ct`
-// that ties a row to a still-effective entity: current source text, a live
-// entity, and the admission rules of the caller. ScopeArgs fill its
-// placeholders in order. ConfigKey selects the model rows that may answer the
-// search; an empty key keeps the caller's historical "any model row" rule.
+// covers. SourceID narrows the scan to one source; zero keeps every source,
+// which is what a local library search needs. Scope is an extra predicate over
+// the content_translation alias `ct` for the caller's remaining rules, such as
+// admission; ScopeArgs fill its placeholders in order. ConfigKey selects the
+// model rows that may answer the search; an empty key keeps the caller's
+// historical "any model row" rule.
 type ShortSearchArm struct {
 	EntityKind string
 	Fields     []string
+	SourceID   int64
 	Scope      string
 	ScopeArgs  []any
 	ConfigKey  string
@@ -25,6 +27,11 @@ type ShortSearchArm struct {
 // characters, so the needle is matched with instr() over the covering short
 // index. The scan covers the complete effective language/field range; only the
 // number of returned rows is capped.
+//
+// Effectiveness is stored on the row: `effective` says the stored source text
+// still matches the entity, and `source_id` says which source the entity
+// belongs to. Both live in the index prefix, so a per-source search does not
+// join every candidate to a wide entity row.
 //
 // A positive limit caps the returned rows and orders them by
 // (language, entity_kind, field, id), which is the keyset order a caller can
@@ -51,11 +58,18 @@ func ShortTranslationSearchSQL(targets []DisplaySearchTarget, arms []ShortSearch
 			branch := `SELECT ct.entity_id,ct.language,ct.entity_kind,ct.field,ct.id
 				FROM content_translation ct INDEXED BY idx_content_translation_short_scan
 				WHERE ct.language=? AND ct.entity_kind=? AND ct.field IN (` + placeholders + `)
-				  AND ` + shortTranslationCurrentSQL(target.Language, arm.ConfigKey) + `
-				  AND instr(ct.translated_text, ?) > 0`
+				  AND ct.effective=1`
 			branchArgs := []any{target.Language, arm.EntityKind}
+			if arm.SourceID != 0 {
+				branch += ` AND ct.source_id=?`
+			}
+			branch += ` AND ` + shortTranslationCurrentSQL(target.Language, arm.ConfigKey) + `
+				  AND instr(ct.translated_text, ?) > 0`
 			for _, field := range arm.Fields {
 				branchArgs = append(branchArgs, field)
+			}
+			if arm.SourceID != 0 {
+				branchArgs = append(branchArgs, arm.SourceID)
 			}
 			if target.Language != translation.SourceHant && arm.ConfigKey != "" {
 				branchArgs = append(branchArgs, arm.ConfigKey)
