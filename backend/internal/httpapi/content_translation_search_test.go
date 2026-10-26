@@ -475,10 +475,10 @@ func TestContentTranslationSearchRemoteExactRankUsesEffectiveRows(t *testing.T) 
 	}
 }
 
-// A 1-2 character query can match the whole source, so its card pipeline is
-// bounded. The bound is explicit and reported: the total is the size of the
-// complete effective set, a page past the budget is empty, and the flag says
-// the list stopped early instead of presenting the budget as the whole answer.
+// A 1-2 character query can match the whole source, so both the card page and
+// its total stay inside one result budget. Counting every match would run the
+// whole card pipeline on each keystroke. The flag says more cards exist, so the
+// client never presents the budget as the whole answer.
 func TestContentTranslationSearchRemoteCapsShortMatchSet(t *testing.T) {
 	db := openMigratedTestDB(t)
 	seedCatalogPlanSource(t, db)
@@ -498,18 +498,18 @@ func TestContentTranslationSearchRemoteCapsShortMatchSet(t *testing.T) {
 	}
 	refreshTestTranslationScope(t, db)
 	response := requestRemoteWorks(t, db, "q="+url.QueryEscape("作品")+"&lang=zh-cn&pageSize=100&page=10")
-	// The total is the complete effective set; the budget bounds only the cards
-	// the page builds. Page 10 still sits inside the first 1000 rows.
-	if response.Total != 5001 || len(response.Works) != 100 || !response.Truncated {
-		t.Fatalf("bounded search = total %d rows %d truncated %v, want 5001/100/true",
-			response.Total, len(response.Works), response.Truncated)
+	// Both the total and the page stay inside the budget. Page 10 still sits
+	// inside the first 1000 rows.
+	if response.Total != catalogShortSearchResultLimit || len(response.Works) != 100 || !response.Truncated {
+		t.Fatalf("bounded search = total %d rows %d truncated %v, want %d/100/true",
+			response.Total, len(response.Works), response.Truncated, catalogShortSearchResultLimit)
 	}
-	// Past the budget there are no more cards, but the reported total still
-	// describes the complete set instead of shrinking to the page limit.
+	// Past the budget there are no more cards, and the flag still says the
+	// effective set holds more than the reported total.
 	beyond := requestRemoteWorks(t, db, "q="+url.QueryEscape("作品")+"&lang=zh-cn&pageSize=100&page=11")
-	if beyond.Total != 5001 || len(beyond.Works) != 0 || !beyond.Truncated {
-		t.Fatalf("page past the budget = total %d rows %d truncated %v, want 5001/0/true",
-			beyond.Total, len(beyond.Works), beyond.Truncated)
+	if beyond.Total != catalogShortSearchResultLimit || len(beyond.Works) != 0 || !beyond.Truncated {
+		t.Fatalf("page past the budget = total %d rows %d truncated %v, want %d/0/true",
+			beyond.Total, len(beyond.Works), beyond.Truncated, catalogShortSearchResultLimit)
 	}
 	// Three characters use the trigram path, which reports the complete set.
 	fts := requestRemoteWorks(t, db, "q="+url.QueryEscape("作品1")+"&lang=zh-cn&pageSize=100&page=12")

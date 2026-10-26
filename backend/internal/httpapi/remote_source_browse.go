@@ -24,10 +24,10 @@ type remoteWorksResponse struct {
 	Sort        string              `json:"sort"`
 	Direction   string              `json:"direction"`
 	SortApplied bool                `json:"sortApplied"`
-	// Truncated says the card list stopped at the result budget while the
-	// complete effective set holds more matches. Total stays the exact size of
-	// that set, so a client can say "1000 of 4213" instead of presenting the
-	// budget as the whole answer.
+	// Truncated says the short-query result budget was reached and more cards
+	// exist. Without it Total is the exact number of matching cards; with it
+	// Total is the number inside the budget, so a client says "first 1000 of
+	// more" instead of presenting the budget as the whole answer.
 	Truncated                 bool `json:"truncated,omitempty"`
 	RecommendationUnavailable bool `json:"recommendationUnavailable,omitempty"`
 }

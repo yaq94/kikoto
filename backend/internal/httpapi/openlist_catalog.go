@@ -792,11 +792,12 @@ func (s *Server) listOpenListWorks(w http.ResponseWriter, r *http.Request, sourc
 		}
 		configKey := translation.ConfigKey(cfg)
 		short := utf8.RuneCountInString(q) < 3
-		// A 1-2 character query may match the whole source. The page builds at
-		// most one budget of cards, but the total still describes the complete
-		// effective set, so the two shapes are built separately: a bounded hit
-		// set for the page and the unbounded one for the count. Reporting the
-		// bounded size as the total would present a page limit as the truth.
+		// A 1-2 character query may match the whole source. Both the page and
+		// the count stay inside one result budget: counting every match would
+		// walk the whole card pipeline on each keystroke, which costs more than
+		// the budget allows. The bounded probe below says whether the effective
+		// set holds more cards, so the response reports "first N of more"
+		// instead of presenting the budget as the whole answer.
 		pageLimit := 0
 		if short {
 			pageLimit = catalogShortSearchResultLimit
@@ -805,7 +806,7 @@ func (s *Server) listOpenListWorks(w http.ResponseWriter, r *http.Request, sourc
 		pageArgs = append([]any{}, args...)
 		pageSQL = catalogCardPageSQL(prefix, from, short)
 		pageArgs = append(pageArgs, pageSize, (page-1)*pageSize)
-		countPrefix, countFrom, countQueryArgs := openListCatalogCardsQueryLocalized(source.ID, q, targets, configKey, 0)
+		countPrefix, countFrom, countQueryArgs := openListCatalogCardsQueryLocalized(source.ID, q, targets, configKey, pageLimit)
 		countSQL = catalogStatementPrefix(countPrefix) + `SELECT COUNT(*) ` + countFrom
 		countArgs = countQueryArgs
 		separateCount = short
@@ -872,10 +873,9 @@ func (s *Server) listOpenListWorks(w http.ResponseWriter, r *http.Request, sourc
 			return
 		}
 	}
-	// A short search reports the exact size of the effective set but builds at
-	// most one budget of cards. The probe above says whether any branch held
-	// more, so the client can render "first 1000 of N" instead of presenting
-	// the budget as the whole result.
+	// A short search reports how many cards fit the result budget. The probe
+	// above says whether any branch held more, so the client renders "first
+	// 1000 of more" instead of presenting the budget as the whole result.
 	truncated := false
 	if overflowSQL != "" {
 		rows, queryErr := s.db.QueryContext(r.Context(), overflowSQL, overflowArgs...)

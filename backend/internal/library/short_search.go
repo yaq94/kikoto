@@ -43,12 +43,18 @@ type ShortSearchArm struct {
 // `zh-tw` searches `zh-Hans` and native `zh-Hant`, and one cap over the union
 // would let Simplified matches spend the budget and hide every Traditional row.
 //
-// The cap limits returned rows, never the scanned range. Zero keeps the complete
-// effective set unordered, which is what a count or a diagnostic needs: a sort
-// there would read the whole range before returning anything. The returned
-// subquery exposes (entity_id, language, entity_kind, field, id, exact), where
-// `exact` says the stored text equals the needle. The comparison rides on the
-// row the scan already read, so exact-first ordering costs no second pass.
+// The scan walks the complete effective range in index order and stops after
+// the requested number of matches; it never starts from a fixed recent-rows
+// window. A caller that reports a total uses the same cap, so a keystroke never
+// runs the card pipeline over the whole source, and marks the response
+// truncated when the overflow probe below finds another match. Zero keeps the
+// complete effective set unordered, which is a diagnostic shape: a sort there
+// would read the whole range before returning anything.
+//
+// The returned subquery exposes (entity_id, language, entity_kind, field, id,
+// exact), where `exact` says the stored text equals the needle. The comparison
+// rides on the row the scan already read, so exact-first ordering costs no
+// second pass.
 func ShortTranslationSearchSQL(targets []DisplaySearchTarget, arms []ShortSearchArm, limit int) (string, []any) {
 	if len(arms) == 0 || len(targets) == 0 {
 		return "", nil

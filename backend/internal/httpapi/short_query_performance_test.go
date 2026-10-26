@@ -48,6 +48,7 @@ type shortQueryCase struct {
 	HitScan  shortQueryStats `json:"hitScan"`
 	HitSet   shortQueryStats `json:"hitSet"`
 	Complete shortQueryStats `json:"complete"`
+	Uncapped shortQueryStats `json:"uncapped"`
 	Page     shortQueryStats `json:"page"`
 	HitPlan  []string        `json:"hitPlan"`
 	Plan     []string        `json:"plan"`
@@ -77,11 +78,12 @@ func TestShortQueryPerformance(t *testing.T) {
 	report := shortQueryReport{
 		Label:      "short-query-complete-set",
 		StartedAt:  startedAt.UTC().Format(time.RFC3339),
-		Thresholds: map[string]float64{"completeP95Ms": 100, "pageP95Ms": 100},
+		Thresholds: map[string]float64{"totalP95Ms": 100, "pageP95Ms": 100},
 		Notes: []string{
 			"the SQL is the API's own generator, including the admission row",
 			"samples are sequential (concurrency 1) over one pooled connection set",
-			"complete is limit=0, the shape a paginated total needs; page is one card page",
+			"total is the capped card count the API reports; page is one card page",
+			"uncapped is a diagnostic that walks every match without the result budget",
 			"latency is reported, not asserted: CI never fails on the 100 ms threshold",
 			"percentiles use nearest-rank on the sorted sample: index ceil(q*n)-1",
 		},
@@ -126,20 +128,21 @@ func TestShortQueryPerformance(t *testing.T) {
 		t.Logf("report written to %s", out)
 	}
 	for _, item := range report.Cases {
-		t.Logf("%-9s %-6q matches=%d hit p95=%.1f card p95=%.1f page p95=%.1f",
-			item.Language, item.Needle, item.Matches, item.HitSet.P95Ms, item.Complete.P95Ms, item.Page.P95Ms)
+		t.Logf("%-9s %-6q matches=%d hit p95=%.1f total p95=%.1f page p95=%.1f uncapped p95=%.1f",
+			item.Language, item.Needle, item.Matches, item.HitSet.P95Ms, item.Complete.P95Ms, item.Page.P95Ms, item.Uncapped.P95Ms)
 	}
 }
 
-// shortQueryMeasure times the two shapes the API asks for: the complete hit set
-// behind a paginated total, and one page of cards.
+// shortQueryMeasure times the shapes the API asks for: the bounded hit set
+// behind the reported total, one page of cards, and the uncapped diagnostic.
 func shortQueryMeasure(t *testing.T, db *sql.DB, sourceID int64, target library.DisplaySearchTarget, configKey string, warmup, samples int) shortQueryCase {
 	t.Helper()
-	// The page builds at most one budget of cards; the complete count below
-	// uses the unbounded shape. Both are measured because they answer different
-	// questions: what a keystroke costs and how large the effective set is.
+	// The page and the reported total both build at most one budget of cards, so
+	// a keystroke never walks the whole source. The uncapped shape stays as a
+	// diagnostic: it says how much a full count would cost without a budget.
 	prefix, from, args := openListCatalogCardsQueryLocalized(sourceID, target.Query, []library.DisplaySearchTarget{target}, configKey, catalogShortSearchResultLimit)
-	completePrefix, completeFrom, completeArgs := openListCatalogCardsQueryLocalized(sourceID, target.Query, []library.DisplaySearchTarget{target}, configKey, 0)
+	completePrefix, completeFrom, completeArgs := openListCatalogCardsQueryLocalized(sourceID, target.Query, []library.DisplaySearchTarget{target}, configKey, catalogShortSearchResultLimit)
+	uncappedPrefix, uncappedFrom, uncappedArgs := openListCatalogCardsQueryLocalized(sourceID, target.Query, []library.DisplaySearchTarget{target}, configKey, 0)
 	result := shortQueryCase{Language: target.Language, Needle: target.Query}
 
 	// The hit set is the short query itself: the complete effective range with
@@ -155,10 +158,16 @@ func shortQueryMeasure(t *testing.T, db *sql.DB, sourceID int64, target library.
 			{EntityKind: "series", Fields: []string{"title"}, SourceID: sourceID, ConfigKey: configKey},
 		}, 0)
 	scanCountSQL := `SELECT count(*) FROM (` + scanSQL + `)`
+	scanRows := 0
 	result.HitScan = shortQuerySample(samples, func() error {
 		var total int
-		return db.QueryRowContext(context.Background(), scanCountSQL, scanArgs...).Scan(&total)
+		if err := db.QueryRowContext(context.Background(), scanCountSQL, scanArgs...).Scan(&total); err != nil {
+			return err
+		}
+		scanRows = total
+		return nil
 	})
+	result.HitScan.Rows = scanRows
 	hitSQL := hitPrefix + `SELECT count(*) FROM search_hits`
 	for range warmup {
 		if err := db.QueryRowContext(context.Background(), hitSQL, hitArgs...).Scan(&result.Matches); err != nil {
@@ -184,9 +193,16 @@ func shortQueryMeasure(t *testing.T, db *sql.DB, sourceID int64, target library.
 	})
 	result.Complete.Rows = result.Matches
 
+	uncappedSQL := catalogStatementPrefix(uncappedPrefix) + `SELECT count(*) ` + uncappedFrom
+	result.Uncapped = shortQuerySample(samples, func() error {
+		var total int
+		return db.QueryRowContext(context.Background(), uncappedSQL, uncappedArgs...).Scan(&total)
+	})
+
 	pageSQL := catalogStatementPrefix(prefix) + `SELECT id ` + from +
 		` ORDER BY exact DESC,updated_at DESC,series_id DESC,id DESC LIMIT ? OFFSET ?`
 	pageArgs := append(append([]any{}, args...), 200, 0)
+	pageRows := 0
 	result.Page = shortQuerySample(samples, func() error {
 		rows, err := db.QueryContext(context.Background(), pageSQL, pageArgs...)
 		if err != nil {
@@ -197,9 +213,13 @@ func shortQueryMeasure(t *testing.T, db *sql.DB, sourceID int64, target library.
 		for rows.Next() {
 			count++
 		}
-		result.Page.Rows = count
-		return rows.Err()
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		pageRows = count
+		return nil
 	})
+	result.Page.Rows = pageRows
 	result.Plan = shortQueryPlan(t, db, completeSQL, completeArgs)
 	return result
 }

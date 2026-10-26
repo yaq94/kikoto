@@ -289,10 +289,11 @@ func catalogCardScan(rows *sql.Rows, item *remoteWorkSummary, availability *stri
 // one- and two-character needles use the shared keyset generator so the
 // remote, local and benchmark paths cannot diverge again.
 // catalogShortSearchResultLimit is how many cards a 1-2 character search may
-// return. The scan and the count still cover the complete effective set, so the
-// reported total is exact and the response marks a truncated list. Building a
-// card row for every match would otherwise make one keystroke cost the whole
-// source.
+// return. The scan still covers the complete effective set in index order, but
+// both the page and the reported total stop at this budget, and the response
+// marks the list truncated when the overflow probe finds another match.
+// Building a card row for every match would otherwise make one keystroke cost
+// the whole source.
 const catalogShortSearchResultLimit = 1000
 
 func localizedCatalogSearchSQL(targets []library.DisplaySearchTarget, sourceID int64, short bool, configKey string, shortLimit int) (string, []any) {
