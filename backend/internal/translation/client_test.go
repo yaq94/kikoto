@@ -118,3 +118,61 @@ func TestOutputBudgetScalesWithInputAndKeepsFailureTaxonomy(t *testing.T) {
 		})
 	}
 }
+
+// A protected name reaches the model as a sentinel, and the model tends to
+// normalise unusual brackets. The prompt therefore names the sentinel as
+// literal text, but only when the request actually carries one: text without a
+// sentinel keeps the previous prompt, so an old cached answer still describes
+// the same request.
+func TestTranslationPromptNamesTheSentinelOnlyWhenPresent(t *testing.T) {
+	sentinel := "⟪KIKOTO_NAME_0⟫"
+	for _, tc := range []struct {
+		name       string
+		text       string
+		wantRule   bool
+		wantPrompt string
+	}{
+		{
+			name:       "plain text keeps the original prompt",
+			text:       "Example title",
+			wantPrompt: "请将以下文本翻译为简体中文，直接输出翻译结果，不要进行任何解释。\n\nExample title",
+		},
+		{
+			name:     "protected text names the sentinel",
+			text:     sentinel + " appears",
+			wantRule: true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var prompt string
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var payload struct {
+					Messages []struct {
+						Content string `json:"content"`
+					} `json:"messages"`
+				}
+				if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+					t.Errorf("decode request: %v", err)
+				}
+				if len(payload.Messages) == 1 {
+					prompt = payload.Messages[0].Content
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]any{"choices": []any{
+					map[string]any{"message": map[string]string{"content": "translated"}, "finish_reason": "stop"},
+				}})
+			}))
+			defer upstream.Close()
+			cfg := translation.Config{Limits: translation.DefaultLimits(), BaseURL: upstream.URL, Model: "Example-Model", TimeoutSeconds: 5}
+			if _, err := translation.Translate(context.Background(), upstream.Client(), cfg, translation.Input{Text: tc.text, TargetLanguage: "zh-Hans"}); err != nil {
+				t.Fatalf("translate: %v", err)
+			}
+			if tc.wantPrompt != "" && prompt != tc.wantPrompt {
+				t.Fatalf("prompt = %q, want %q", prompt, tc.wantPrompt)
+			}
+			if strings.Contains(prompt, "占位符") != tc.wantRule {
+				t.Fatalf("prompt names the sentinel = %v, want %v: %q", strings.Contains(prompt, "占位符"), tc.wantRule, prompt)
+			}
+		})
+	}
+}

@@ -94,7 +94,7 @@ func Translate(ctx context.Context, client *http.Client, cfg Config, in Input) (
 	}
 	payload := map[string]any{
 		"model":       cfg.Model,
-		"messages":    []map[string]string{{"role": "user", "content": "请将以下文本翻译为" + languageNames[in.TargetLanguage] + "，直接输出翻译结果，不要进行任何解释。\n\n" + strings.TrimSpace(in.Text)}},
+		"messages":    []map[string]string{{"role": "user", "content": translationPrompt(in)}},
 		"temperature": 0, "max_tokens": outputTokenBudget(in.Text), "stream": false,
 	}
 	if cfg.DisableThinking {
@@ -169,6 +169,21 @@ func Translate(ctx context.Context, client *http.Client, cfg Config, in Input) (
 		return Result{}, failure("translation_empty_output", "The translation service returned no translation.")
 	}
 	return Result{Text: strings.TrimSpace(response.Choices[0].Message.Content), Model: cfg.Model, TemplateVersion: TemplateVersion, ElapsedMS: time.Since(start).Milliseconds()}, nil
+}
+
+// translationPrompt adds the placeholder rule only when the text carries one.
+// Protected names are replaced by a sentinel before the request, and Restore
+// fails closed when a model changes it; models tend to normalise unusual
+// brackets, so the sentinel is named as literal text. Text without a sentinel
+// keeps the previous prompt exactly, so a cached row stays a faithful answer
+// to the same request.
+func translationPrompt(in Input) string {
+	prompt := "请将以下文本翻译为" + languageNames[in.TargetLanguage] + "，直接输出翻译结果，不要进行任何解释。\n\n"
+	if strings.Contains(in.Text, nameMarker) {
+		prompt = "请将以下文本翻译为" + languageNames[in.TargetLanguage] + "，直接输出翻译结果，不要进行任何解释。" +
+			"文本中形如 " + nameMarker + "数字⟫ 的内容是受保护名称的占位符，必须逐字原样保留，包括前后的符号，不要翻译、改写、拆分、增删或添加空格。\n\n"
+	}
+	return prompt + strings.TrimSpace(in.Text)
 }
 
 func isTimeout(err error) bool {
