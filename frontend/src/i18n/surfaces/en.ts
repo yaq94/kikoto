@@ -194,6 +194,7 @@ export const surfaceEnglish = {
       "Directories: {{completed}} complete, {{pending}} pending · {{entries}} observed entries · {{indexed}} playable cards",
     issues: "{{failed}} failed · {{restricted}} restricted · {{empty}} unconfirmed empty",
     times: "Started {{started}} · Updated {{updated}} · {{requests}} page attempts",
+    timesFinished: "Started {{started}} · Finished {{finished}} · Updated {{updated}} · {{requests}} page attempts",
     partitions: "Partitions",
     path: "Directory",
     completed: "Completed / discovered",

@@ -189,6 +189,7 @@ export const surfaceJapanese = {
     counts: "完了フォルダー {{completed}}・待機 {{pending}}・確認項目 {{entries}}・再生可能カード {{indexed}}",
     issues: "失敗 {{failed}}・アクセス制限 {{restricted}}・未確認の空フォルダー {{empty}}",
     times: "開始 {{started}}・更新 {{updated}}・ページ要求 {{requests}} 回",
+    timesFinished: "開始 {{started}}・終了 {{finished}}・更新 {{updated}}・ページ要求 {{requests}} 回",
     partitions: "区分",
     path: "フォルダー",
     completed: "完了 / 発見",

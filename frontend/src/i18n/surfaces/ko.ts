@@ -190,6 +190,7 @@ export const surfaceKorean = {
     counts: "완료 폴더 {{completed}} · 대기 {{pending}} · 관찰 항목 {{entries}} · 재생 가능 카드 {{indexed}}",
     issues: "실패 {{failed}} · 접근 제한 {{restricted}} · 미확인 빈 폴더 {{empty}}",
     times: "시작 {{started}} · 갱신 {{updated}} · 페이지 요청 {{requests}}회",
+    timesFinished: "시작 {{started}} · 종료 {{finished}} · 갱신 {{updated}} · 페이지 요청 {{requests}}회",
     partitions: "구역",
     path: "폴더",
     completed: "완료 / 발견",

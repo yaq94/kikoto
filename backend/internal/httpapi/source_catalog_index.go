@@ -127,15 +127,19 @@ type catalogIndexProgress struct {
 	// and not part of the generation this poll reports. They are only set by
 	// ?exact=1; the polling response omits them instead of reporting a zero it
 	// did not measure.
-	StagingDirectories  *int                        `json:"stagingDirectories,omitempty"`
-	StagingObservations *int                        `json:"stagingObservations,omitempty"`
-	StartedAt           string                      `json:"startedAt"`
-	UpdatedAt           string                      `json:"updatedAt"`
-	Partitions          []catalogPartitionProgress  `json:"partitions"`
-	PartitionTotal      int                         `json:"partitionTotal"`
-	Details             []catalogDirectoryProgress  `json:"details"`
-	DetailsTotal        int                         `json:"detailsTotal"`
-	SidecarFailures     catalogSidecarFailureCounts `json:"sidecarFailures"`
+	StagingDirectories  *int   `json:"stagingDirectories,omitempty"`
+	StagingObservations *int   `json:"stagingObservations,omitempty"`
+	StartedAt           string `json:"startedAt"`
+	UpdatedAt           string `json:"updatedAt"`
+	// FinishedAt is the settled end of the run. It stays empty while the run is
+	// queued or running, so an operator can tell a live pass from a partial one
+	// that already stopped.
+	FinishedAt      string                      `json:"finishedAt,omitempty"`
+	Partitions      []catalogPartitionProgress  `json:"partitions"`
+	PartitionTotal  int                         `json:"partitionTotal"`
+	Details         []catalogDirectoryProgress  `json:"details"`
+	DetailsTotal    int                         `json:"detailsTotal"`
+	SidecarFailures catalogSidecarFailureCounts `json:"sidecarFailures"`
 
 	// EncodingUnresolved counts damaged directory names the scanner recorded
 	// instead of requesting. It stays independent of failed, restricted and

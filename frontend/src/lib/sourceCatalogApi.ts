@@ -138,6 +138,8 @@ export type CatalogIndexProgress = {
   indexedEntries: number;
   startedAt: string;
   updatedAt: string;
+  // Present once the run settled; absent while it is queued or running.
+  finishedAt?: string;
   partitions: Array<{
     path: string;
     directories: number;

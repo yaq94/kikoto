@@ -1344,11 +1344,11 @@ func (s *Server) sourceCatalogProgress(ctx context.Context, sourceID int64, page
 	var options string
 	err := s.db.QueryRowContext(ctx, `SELECT scan.workflow_run_id,run.status,scan.pause_reason,scan.options_json,scan.requests,
 		scan.directories,scan.completed,scan.pending,scan.failed,scan.restricted,scan.empty,scan.observed,scan.indexed,
-		scan.publish_pending_remaining,scan.started_at,scan.updated_at
+		scan.publish_pending_remaining,scan.started_at,scan.updated_at,COALESCE(run.finished_at,'')
 		FROM source_catalog_scan scan JOIN workflow_run run ON run.id=scan.workflow_run_id WHERE scan.file_source_id=?`, sourceID).Scan(
 		&p.RunID, &p.Status, &p.PauseReason, &options, &p.Requests,
 		&p.Directories, &p.Completed, &p.Pending, &p.Failed, &p.Restricted, &p.Empty, &p.Observed, &p.Indexed, &p.PublishPending,
-		&p.StartedAt, &p.UpdatedAt)
+		&p.StartedAt, &p.UpdatedAt, &p.FinishedAt)
 	if err != nil {
 		return p, err
 	}
@@ -1410,7 +1410,7 @@ func (s *Server) sourceCatalogProgress(ctx context.Context, sourceID int64, page
 func (s *Server) sourceCatalogProgressExact(ctx context.Context, sourceID int64, page int) (catalogIndexProgress, error) {
 	p := catalogIndexProgress{Partitions: []catalogPartitionProgress{}, Details: []catalogDirectoryProgress{}}
 	var options string
-	err := s.db.QueryRowContext(ctx, `SELECT scan.workflow_run_id,run.status,scan.pause_reason,scan.options_json,scan.requests,scan.started_at,scan.updated_at FROM source_catalog_scan scan JOIN workflow_run run ON run.id=scan.workflow_run_id WHERE scan.file_source_id=?`, sourceID).Scan(&p.RunID, &p.Status, &p.PauseReason, &options, &p.Requests, &p.StartedAt, &p.UpdatedAt)
+	err := s.db.QueryRowContext(ctx, `SELECT scan.workflow_run_id,run.status,scan.pause_reason,scan.options_json,scan.requests,scan.started_at,scan.updated_at,COALESCE(run.finished_at,'') FROM source_catalog_scan scan JOIN workflow_run run ON run.id=scan.workflow_run_id WHERE scan.file_source_id=?`, sourceID).Scan(&p.RunID, &p.Status, &p.PauseReason, &options, &p.Requests, &p.StartedAt, &p.UpdatedAt, &p.FinishedAt)
 	if err != nil {
 		return p, err
 	}

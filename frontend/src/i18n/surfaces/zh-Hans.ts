@@ -186,6 +186,7 @@ export const surfaceHans = {
     counts: "目录：已完成 {{completed}}，待处理 {{pending}} · 已观察条目 {{entries}} · 可播放卡片 {{indexed}}",
     issues: "失败 {{failed}} · 访问受限 {{restricted}} · 待确认空目录 {{empty}}",
     times: "开始 {{started}} · 更新 {{updated}} · 目录页请求 {{requests}} 次",
+    timesFinished: "开始 {{started}} · 结束 {{finished}} · 更新 {{updated}} · 目录页请求 {{requests}} 次",
     partitions: "分区",
     path: "目录",
     completed: "已完成 / 已发现",

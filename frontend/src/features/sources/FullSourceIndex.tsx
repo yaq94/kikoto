@@ -174,8 +174,9 @@ export function FullSourceIndex({ sourceId, onDone }: { sourceId: number; onDone
             })}
           </p>
           <p className="text-xs text-muted-foreground">
-            {t("sourceIndex.times", {
+            {t(progress.finishedAt ? "sourceIndex.timesFinished" : "sourceIndex.times", {
               started: progress.startedAt,
+              ...(progress.finishedAt ? { finished: progress.finishedAt } : {}),
               updated: progress.updatedAt,
               requests: progress.requests,
             })}

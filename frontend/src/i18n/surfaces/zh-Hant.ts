@@ -186,6 +186,7 @@ export const surfaceHant = {
     counts: "目錄：已完成 {{completed}}，待處理 {{pending}} · 已觀察項目 {{entries}} · 可播放卡片 {{indexed}}",
     issues: "失敗 {{failed}} · 存取受限 {{restricted}} · 待確認空目錄 {{empty}}",
     times: "開始 {{started}} · 更新 {{updated}} · 目錄頁請求 {{requests}} 次",
+    timesFinished: "開始 {{started}} · 結束 {{finished}} · 更新 {{updated}} · 目錄頁請求 {{requests}} 次",
     partitions: "分區",
     path: "目錄",
     completed: "已完成 / 已發現",
