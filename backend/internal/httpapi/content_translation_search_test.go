@@ -63,9 +63,9 @@ func refreshTestTranslationScope(t *testing.T, db *sql.DB) {
 			t.Fatalf("refresh source %d admissions: %v", id, err)
 		}
 	}
-	if _, err = tx.Exec(`UPDATE content_translation SET (source_id,browsable)=(
-		SELECT scope.source_id,scope.browsable FROM content_translation_scope scope
-		WHERE scope.translation_id=content_translation.id)`); err != nil {
+	// The same statement the migration and the write paths use, so a test
+	// cannot drift into a different definition of the stored scope.
+	if _, err = tx.Exec(`UPDATE content_translation SET ` + contentTranslationScopeSQL); err != nil {
 		t.Fatalf("refresh translation scope: %v", err)
 	}
 	if err = tx.Commit(); err != nil {
@@ -476,8 +476,9 @@ func TestContentTranslationSearchRemoteExactRankUsesEffectiveRows(t *testing.T) 
 }
 
 // A 1-2 character query can match the whole source, so its card pipeline is
-// bounded. The bound is explicit and reported: the total is the capped count,
-// and a page past the cap is empty rather than a silent slice of a longer set.
+// bounded. The bound is explicit and reported: the total is the size of the
+// complete effective set, a page past the budget is empty, and the flag says
+// the list stopped early instead of presenting the budget as the whole answer.
 func TestContentTranslationSearchRemoteCapsShortMatchSet(t *testing.T) {
 	db := openMigratedTestDB(t)
 	seedCatalogPlanSource(t, db)
@@ -497,14 +498,24 @@ func TestContentTranslationSearchRemoteCapsShortMatchSet(t *testing.T) {
 	}
 	refreshTestTranslationScope(t, db)
 	response := requestRemoteWorks(t, db, "q="+url.QueryEscape("作品")+"&lang=zh-cn&pageSize=100&page=10")
-	if response.Total != catalogShortSearchResultLimit || len(response.Works) != 100 {
-		t.Fatalf("bounded search = total %d rows %d, want %d/100",
-			response.Total, len(response.Works), catalogShortSearchResultLimit)
+	// The total is the complete effective set; the budget bounds only the cards
+	// the page builds. Page 10 still sits inside the first 1000 rows.
+	if response.Total != 5001 || len(response.Works) != 100 || !response.Truncated {
+		t.Fatalf("bounded search = total %d rows %d truncated %v, want 5001/100/true",
+			response.Total, len(response.Works), response.Truncated)
+	}
+	// Past the budget there are no more cards, but the reported total still
+	// describes the complete set instead of shrinking to the page limit.
+	beyond := requestRemoteWorks(t, db, "q="+url.QueryEscape("作品")+"&lang=zh-cn&pageSize=100&page=11")
+	if beyond.Total != 5001 || len(beyond.Works) != 0 || !beyond.Truncated {
+		t.Fatalf("page past the budget = total %d rows %d truncated %v, want 5001/0/true",
+			beyond.Total, len(beyond.Works), beyond.Truncated)
 	}
 	// Three characters use the trigram path, which reports the complete set.
 	fts := requestRemoteWorks(t, db, "q="+url.QueryEscape("作品1")+"&lang=zh-cn&pageSize=100&page=12")
-	if fts.Total != 1111 || len(fts.Works) != 11 {
-		t.Fatalf("fts search = total %d rows %d, want 1111/11", fts.Total, len(fts.Works))
+	if fts.Total != 1111 || len(fts.Works) != 11 || fts.Truncated {
+		t.Fatalf("fts search = total %d rows %d truncated %v, want 1111/11/false",
+			fts.Total, len(fts.Works), fts.Truncated)
 	}
 }
 
@@ -535,5 +546,33 @@ func TestContentTranslationSearchRemoteShortQueryCoversRowsBeyondFiftyThousand(t
 		if response.Total != 1 || len(response.Works) != 1 || response.Works[0].CatalogEntryID != 1 {
 			t.Fatalf("%q total = %d ids = %v, want entry 1", query, response.Total, remoteWorkIDs(response))
 		}
+	}
+}
+
+// A series card ranks exact when a member that matched exactly belongs to it,
+// even if the series title itself only contains the needle.
+func TestContentTranslationSearchRemoteSeriesInheritsMemberExact(t *testing.T) {
+	db := openMigratedTestDB(t)
+	seedCatalogPlanSource(t, db)
+	insertCatalogPlanEntry(t, db, 1, "Episode One", "")
+	insertCatalogPlanAudio(t, db, 1, "01.mp3", "rain")
+	insertCatalogPlanEntry(t, db, 2, "Episode Two", "")
+	insertCatalogPlanAudio(t, db, 2, "02.mp3", "rain")
+	insertCatalogPlanEntry(t, db, 3, "Other Card", "")
+	insertCatalogPlanAudio(t, db, 3, "03.mp3", "rain")
+	if _, err := db.Exec(`INSERT INTO catalog_series(id,title,source_id) VALUES(1,'Rain Collection',7);
+		INSERT INTO catalog_series_member(series_id,catalog_entry_id,position,evidence) VALUES(1,1,1,'directory'),(1,2,2,'directory');`); err != nil {
+		t.Fatal(err)
+	}
+	insertTranslatedContent(t, db, "entry", 1, "title", "zh-Hans", "Episode One", "雨夜", "model")
+	insertTranslatedContent(t, db, "entry", 2, "title", "zh-Hans", "Episode Two", "雨夜物语", "model")
+	insertTranslatedContent(t, db, "entry", 3, "title", "zh-Hans", "Other Card", "雨夜别话", "model")
+	insertTranslatedContent(t, db, "series", 1, "title", "zh-Hans", "Rain Collection", "雨夜合集", "model")
+	refreshTestTranslationScope(t, db)
+
+	response := requestRemoteWorks(t, db, "q="+url.QueryEscape("雨夜")+"&lang=zh-cn&pageSize=24")
+	ids := remoteWorkIDs(response)
+	if len(ids) != 2 || ids[0] != -1 {
+		t.Fatalf("series member exact order = %v, want the series first: %#v", ids, response)
 	}
 }

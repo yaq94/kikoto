@@ -25,7 +25,7 @@ AC-25 负责翻译队列、译文缓存和低空间行为；组合负载由 17 �
 - [x] 社团、声优名称、个人标签和备注保持原文且不外发，标题或简介内的受保护名称也需保持；原文入口可用，译文按文本呈现。
 - [x] 等待或失败时保留原文和状态；成功默认显示译文；连续换语言、离页或会话变化后，旧结果不能覆盖新状态。
 - [x] 缓存区分原文、目标语言、模型与模板版本并遵守原内容权限；相同在途请求去重，变化后不误复用。
-- [ ] 翻译并发、队列、超时按配置生效，低空间暂停新增缓存；译文保留规则以 21 的软预算合同为准（当前实现仍会淘汰标题行），本票不主张该项完成。
+- [x] 翻译并发、队列、超时按配置生效，低空间暂停新增缓存；译文保留规则以 21 的软预算合同为准。`translationPersistentCorpusSQL` 把当前 title／description 行排除在淘汰之外，`translationBudgetReport` 超预算时只报告 `over_budget`；证据：`TestContentTranslationSharesBudgetDeduplicatesAndCancelsQueue`、`TestContentTranslationInvalidatesOnModelChangeAndReportsLowDiskPause`、`TestContentTranslationStoresInFlightResultsWhenTheSoftBudgetShrinks`、`TestContentTranslationRetentionKeepsCurrentCorpusOverBudget`、`TestContentTranslationRetentionKeepsCurrentCorpusUnderByteBudget`、`TestContentTranslationRetentionChecksCurrentWorkAndSeriesText`（2026-10-26 全部通过）。
 
 ## 测试与交付边界
 

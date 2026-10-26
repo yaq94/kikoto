@@ -960,12 +960,19 @@ func (s *Server) applyCatalogSyncListing(ctx context.Context, sourceID, generati
 			// deleted audio playable through the split card. A file published
 			// from a folded format copy also carries its own directory, so the
 			// comparison uses the resolved path instead of one card-wide base.
+			affected, selectErr := catalogExclusionEntries(ctx, tx.Tx, sourceID, childPath)
+			if selectErr != nil {
+				return 0, 0, selectErr
+			}
 			if _, err = tx.ExecContext(ctx, `DELETE FROM source_catalog_file WHERE catalog_entry_id IN (
 					SELECT id FROM source_catalog_entry WHERE file_source_id=? AND `+catalogExclusionBaseRootSQL+`=?)
 				AND (CASE WHEN source_root='' THEN
 					(CASE WHEN ?='/' THEN '/' || relative_path ELSE ? || '/' || relative_path END)
 					ELSE (CASE WHEN source_root='/' THEN '/' || relative_path ELSE source_root || '/' || relative_path END) END)=?`,
 				sourceID, root, root, root, childPath); err != nil {
+				return 0, 0, err
+			}
+			if err = refreshContentTranslationBrowsableTx(ctx, tx.Tx, affected); err != nil {
 				return 0, 0, err
 			}
 		}

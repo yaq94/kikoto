@@ -200,8 +200,8 @@ func assertTranslationShortScanIndexes(t *testing.T, db *sql.DB) {
 		AND name LIKE 'content_translation_scope_%'`).Scan(&scopeTriggers); err != nil {
 		t.Fatal(err)
 	}
-	if scopeTriggers != 13 {
-		t.Fatalf("content_translation scope triggers=%d, want 13", scopeTriggers)
+	if scopeTriggers != 20 {
+		t.Fatalf("content_translation scope triggers=%d, want 20", scopeTriggers)
 	}
 }
 

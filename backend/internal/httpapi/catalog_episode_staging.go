@@ -205,7 +205,7 @@ func (s *Server) clearCatalogEpisodePendingFilesBatch(ctx context.Context, sourc
 		return 0, err
 	}
 	defer release()
-	rows, err := tx.QueryContext(ctx, `SELECT f.rowid FROM source_catalog_file f
+	rows, err := tx.QueryContext(ctx, `SELECT f.rowid,f.catalog_entry_id FROM source_catalog_file f
 		JOIN source_catalog_episode_pending p ON p.catalog_entry_id=f.catalog_entry_id
 		WHERE p.source_id=? AND p.parent_root=?
 			AND NOT EXISTS(SELECT 1 FROM source_catalog_episode_publication publication
@@ -217,12 +217,18 @@ func (s *Server) clearCatalogEpisodePendingFilesBatch(ctx context.Context, sourc
 		return 0, err
 	}
 	ids := []int64{}
+	affected := []int64{}
+	seen := map[int64]bool{}
 	for rows.Next() {
-		var id int64
-		if err = rows.Scan(&id); err != nil {
+		var id, entryID int64
+		if err = rows.Scan(&id, &entryID); err != nil {
 			break
 		}
 		ids = append(ids, id)
+		if !seen[entryID] {
+			seen[entryID] = true
+			affected = append(affected, entryID)
+		}
 	}
 	readErr := rows.Err()
 	_ = rows.Close()
@@ -237,6 +243,12 @@ func (s *Server) clearCatalogEpisodePendingFilesBatch(ctx context.Context, sourc
 			strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")+`)`, int64Args(ids)...); err != nil {
 			return 0, err
 		}
+	}
+	// The purge clears the stored scope of every staged card whose files it
+	// removed. Recompute those cards in the same transaction so a card that
+	// keeps audio elsewhere stays searchable.
+	if err = refreshContentTranslationBrowsableTx(ctx, tx.Tx, affected); err != nil {
+		return 0, err
 	}
 	if err = tx.Commit(); err != nil {
 		return 0, err

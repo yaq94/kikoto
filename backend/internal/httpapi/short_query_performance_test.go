@@ -135,12 +135,16 @@ func TestShortQueryPerformance(t *testing.T) {
 // behind a paginated total, and one page of cards.
 func shortQueryMeasure(t *testing.T, db *sql.DB, sourceID int64, target library.DisplaySearchTarget, configKey string, warmup, samples int) shortQueryCase {
 	t.Helper()
-	prefix, from, args := openListCatalogCardsQueryLocalized(sourceID, target.Query, []library.DisplaySearchTarget{target}, configKey)
+	// The page builds at most one budget of cards; the complete count below
+	// uses the unbounded shape. Both are measured because they answer different
+	// questions: what a keystroke costs and how large the effective set is.
+	prefix, from, args := openListCatalogCardsQueryLocalized(sourceID, target.Query, []library.DisplaySearchTarget{target}, configKey, catalogShortSearchResultLimit)
+	completePrefix, completeFrom, completeArgs := openListCatalogCardsQueryLocalized(sourceID, target.Query, []library.DisplaySearchTarget{target}, configKey, 0)
 	result := shortQueryCase{Language: target.Language, Needle: target.Query}
 
 	// The hit set is the short query itself: the complete effective range with
 	// the current-row and admission predicates, capped only at the return.
-	hitPrefix, hitArgs := localizedCatalogSearchSQL([]library.DisplaySearchTarget{target}, sourceID, true, configKey)
+	hitPrefix, hitArgs := localizedCatalogSearchSQL([]library.DisplaySearchTarget{target}, sourceID, true, configKey, 0)
 	// The raw scan is the same generator without the catalog id mapping, so the
 	// difference between it and the hit set is the cost of turning a translation
 	// row into a card id.
@@ -168,15 +172,15 @@ func shortQueryMeasure(t *testing.T, db *sql.DB, sourceID int64, target library.
 	result.HitSet.Rows = result.Matches
 	result.HitPlan = shortQueryPlan(t, db, hitSQL, hitArgs)
 
-	completeSQL := catalogStatementPrefix(prefix) + `SELECT count(*) ` + from
+	completeSQL := catalogStatementPrefix(completePrefix) + `SELECT count(*) ` + completeFrom
 	for range warmup {
-		if err := db.QueryRowContext(context.Background(), completeSQL, args...).Scan(&result.Matches); err != nil {
+		if err := db.QueryRowContext(context.Background(), completeSQL, completeArgs...).Scan(&result.Matches); err != nil {
 			t.Fatalf("%s warm complete: %v", target.Language, err)
 		}
 	}
 	result.Complete = shortQuerySample(samples, func() error {
 		var total int
-		return db.QueryRowContext(context.Background(), completeSQL, args...).Scan(&total)
+		return db.QueryRowContext(context.Background(), completeSQL, completeArgs...).Scan(&total)
 	})
 	result.Complete.Rows = result.Matches
 
@@ -196,7 +200,7 @@ func shortQueryMeasure(t *testing.T, db *sql.DB, sourceID int64, target library.
 		result.Page.Rows = count
 		return rows.Err()
 	})
-	result.Plan = shortQueryPlan(t, db, completeSQL, args)
+	result.Plan = shortQueryPlan(t, db, completeSQL, completeArgs)
 	return result
 }
 

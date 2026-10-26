@@ -31,17 +31,24 @@ func refreshContentTranslationScopeTx(ctx context.Context, tx *sql.Tx, keys []st
 }
 
 // refreshContentTranslationBrowsableTx recomputes the scope of every
-// translation row of the given cards. A publish batch refreshes admission
-// counts after writing files, and both change what a short search may return;
-// one statement keeps the two answers in the same transaction.
+// translation row of the given cards and of the series that contain them. A
+// publish batch refreshes admission counts after writing files, and both
+// change what a short search may return; the two statements keep every answer
+// in the same transaction.
 func refreshContentTranslationBrowsableTx(ctx context.Context, tx *sql.Tx, entryIDs []int64) error {
 	if len(entryIDs) == 0 {
 		return nil
 	}
-	_, err := tx.ExecContext(ctx, `UPDATE content_translation SET `+contentTranslationScopeSQL+`
-		WHERE entity_kind='entry' AND entity_id IN (`+sqlPlaceholders(len(entryIDs))+`)`,
-		int64Args(entryIDs)...)
-	if err != nil {
+	// A series answers a search through its members, so a member's file set
+	// decides the series' scope too. One statement covers both kinds, which
+	// keeps a publish batch's statement count flat.
+	placeholders := sqlPlaceholders(len(entryIDs))
+	args := append(int64Args(entryIDs), int64Args(entryIDs)...)
+	if _, err := tx.ExecContext(ctx, `UPDATE content_translation SET `+contentTranslationScopeSQL+`
+		WHERE (entity_kind='entry' AND entity_id IN (`+placeholders+`))
+		   OR (entity_kind='series' AND entity_id IN (
+				SELECT series_id FROM catalog_series_member WHERE catalog_entry_id IN (`+placeholders+`)))`,
+		args...); err != nil {
 		return fmt.Errorf("refresh entry translation scope: %w", err)
 	}
 	return nil

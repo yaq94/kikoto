@@ -2396,6 +2396,14 @@ SELECT e.id AS catalog_entry_id, e.title AS title,
     AND EXISTS(SELECT 1 FROM file_source src
                WHERE src.id=e.file_source_id
                  AND src.enabled=1 AND src.source_type='openlist')
+    AND NOT EXISTS(
+      SELECT 1 FROM source_catalog_episode_pending pending
+      WHERE pending.catalog_entry_id=e.id
+        AND NOT EXISTS(
+          SELECT 1 FROM source_catalog_episode_publication publication
+          WHERE publication.source_id=pending.source_id
+            AND publication.parent_root=pending.parent_root
+            AND publication.state='published'))
     AND COALESCE(
       (SELECT adm.audio>0 AND adm.files<=5000
               AND NOT (adm.non_audio>2000 AND adm.audio<5)
@@ -2571,6 +2579,9 @@ AFTER DELETE ON source_catalog_file
 BEGIN
   UPDATE content_translation SET browsable=0
   WHERE entity_kind='entry' AND entity_id=OLD.catalog_entry_id;
+  UPDATE content_translation SET browsable=0
+  WHERE entity_kind='series' AND entity_id IN (
+    SELECT series_id FROM catalog_series_member WHERE catalog_entry_id=OLD.catalog_entry_id);
 END;
 
 CREATE TRIGGER content_translation_scope_file_insert
@@ -2578,6 +2589,9 @@ AFTER INSERT ON source_catalog_file
 BEGIN
   UPDATE content_translation SET browsable=0
   WHERE entity_kind='entry' AND entity_id=NEW.catalog_entry_id;
+  UPDATE content_translation SET browsable=0
+  WHERE entity_kind='series' AND entity_id IN (
+    SELECT series_id FROM catalog_series_member WHERE catalog_entry_id=NEW.catalog_entry_id);
 END;
 
 CREATE TRIGGER content_translation_scope_file_update
@@ -2587,6 +2601,10 @@ BEGIN
   WHERE entity_kind='entry' AND entity_id=OLD.catalog_entry_id;
   UPDATE content_translation SET browsable=0
   WHERE entity_kind='entry' AND entity_id=NEW.catalog_entry_id;
+  UPDATE content_translation SET browsable=0
+  WHERE entity_kind='series' AND entity_id IN (
+    SELECT series_id FROM catalog_series_member WHERE catalog_entry_id=OLD.catalog_entry_id
+    UNION SELECT series_id FROM catalog_series_member WHERE catalog_entry_id=NEW.catalog_entry_id);
 END;
 
 CREATE TRIGGER content_translation_scope_insert
@@ -2597,6 +2615,59 @@ BEGIN
     FROM content_translation_scope scope
     WHERE scope.translation_id=NEW.id)
   WHERE id=NEW.id;
+END;
+
+CREATE TRIGGER content_translation_scope_pending_delete
+AFTER DELETE ON source_catalog_episode_pending
+BEGIN
+  UPDATE content_translation SET (source_id,browsable)=(
+    SELECT scope.source_id,scope.browsable
+    FROM content_translation_scope scope
+    WHERE scope.translation_id=content_translation.id)
+  WHERE entity_kind='entry' AND entity_id=OLD.catalog_entry_id;
+END;
+
+CREATE TRIGGER content_translation_scope_pending_insert
+AFTER INSERT ON source_catalog_episode_pending
+BEGIN
+  UPDATE content_translation SET (source_id,browsable)=(
+    SELECT scope.source_id,scope.browsable
+    FROM content_translation_scope scope
+    WHERE scope.translation_id=content_translation.id)
+  WHERE entity_kind='entry' AND entity_id=NEW.catalog_entry_id;
+END;
+
+CREATE TRIGGER content_translation_scope_publication_insert
+AFTER INSERT ON source_catalog_episode_publication
+WHEN NEW.state='published'
+BEGIN
+  UPDATE content_translation SET (source_id,browsable)=(
+    SELECT scope.source_id,scope.browsable
+    FROM content_translation_scope scope
+    WHERE scope.translation_id=content_translation.id)
+  WHERE entity_kind='entry' AND entity_id IN (
+    SELECT pending.catalog_entry_id FROM source_catalog_episode_pending pending
+    WHERE pending.source_id=NEW.source_id AND pending.parent_root=NEW.parent_root);
+END;
+
+CREATE TRIGGER content_translation_scope_publication_update
+AFTER UPDATE OF state ON source_catalog_episode_publication
+WHEN OLD.state IS NOT NEW.state
+BEGIN
+  UPDATE content_translation SET (source_id,browsable)=(
+    SELECT scope.source_id,scope.browsable
+    FROM content_translation_scope scope
+    WHERE scope.translation_id=content_translation.id)
+  WHERE entity_kind='entry' AND entity_id IN (
+    SELECT pending.catalog_entry_id FROM source_catalog_episode_pending pending
+    WHERE pending.source_id=NEW.source_id AND pending.parent_root=NEW.parent_root);
+END;
+
+CREATE TRIGGER content_translation_scope_series_delete
+AFTER DELETE ON catalog_series
+BEGIN
+  UPDATE content_translation SET browsable=0
+  WHERE entity_kind='series' AND entity_id=OLD.id;
 END;
 
 CREATE TRIGGER content_translation_scope_series_member_delete
@@ -2617,6 +2688,24 @@ BEGIN
     FROM content_translation_scope scope
     WHERE scope.translation_id=content_translation.id)
   WHERE entity_kind='series' AND entity_id=NEW.series_id;
+END;
+
+CREATE TRIGGER content_translation_scope_series_member_update
+AFTER UPDATE OF series_id,catalog_entry_id ON catalog_series_member
+WHEN OLD.series_id IS NOT NEW.series_id OR OLD.catalog_entry_id IS NOT NEW.catalog_entry_id
+BEGIN
+  UPDATE content_translation SET (source_id,browsable)=(
+    SELECT scope.source_id,scope.browsable
+    FROM content_translation_scope scope
+    WHERE scope.translation_id=content_translation.id)
+  WHERE entity_kind='series' AND entity_id IN (OLD.series_id,NEW.series_id);
+  UPDATE content_translation SET browsable=0
+  WHERE entity_kind='entry' AND entity_id=OLD.catalog_entry_id;
+  UPDATE content_translation SET (source_id,browsable)=(
+    SELECT scope.source_id,scope.browsable
+    FROM content_translation_scope scope
+    WHERE scope.translation_id=content_translation.id)
+  WHERE entity_kind='entry' AND entity_id=NEW.catalog_entry_id;
 END;
 
 CREATE TRIGGER content_translation_scope_series_update
@@ -2660,6 +2749,13 @@ BEGIN
     FROM content_translation_scope scope
     WHERE scope.translation_id=content_translation.id)
   WHERE source_id=NEW.id;
+END;
+
+CREATE TRIGGER content_translation_scope_work_delete
+AFTER DELETE ON work
+BEGIN
+  UPDATE content_translation SET browsable=0
+  WHERE entity_kind='work' AND entity_id=OLD.id;
 END;
 
 CREATE TRIGGER content_translation_scope_work_update

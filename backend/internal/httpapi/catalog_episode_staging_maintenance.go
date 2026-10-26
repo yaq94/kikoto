@@ -212,6 +212,13 @@ func (s *Server) deleteCatalogEntryFiles(ctx context.Context, entryID int64) err
 			release()
 			return err
 		}
+		// The deletes clear the stored search scope of this card. Its remaining
+		// files decide whether it is still searchable, so the same transaction
+		// recomputes the row; a card left without audio stays cleared.
+		if err = refreshContentTranslationBrowsableTx(ctx, tx.Tx, []int64{entryID}); err != nil {
+			release()
+			return err
+		}
 		if err = tx.Commit(); err != nil {
 			release()
 			return err

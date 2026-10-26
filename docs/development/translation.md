@@ -222,10 +222,17 @@ clears `browsable` and the publish transaction restores it, which makes a missed
 refresh hide a card rather than show one that cannot play. `catalog_entry_searchable`
 holds the shared card rule both the entry and series arms read.
 
-A short search caps its result set at `catalogShortSearchResultLimit`; the cap
-is part of the scan, so a query matching the whole source stops at the bound.
-The reported total is that capped count, and the exact-title flag is computed in
-the same scan rather than by a second probe per card.
+A short search builds at most `catalogShortSearchResultLimit` cards and reports
+the size of the complete effective set as its total. The two shapes are separate
+statements: the page runs the capped scan, the count runs the same scan with no
+limit. A bounded probe reads `limit+1` rows per branch to set the `truncated`
+flag, so the response says "first 1000 of N" instead of presenting a page limit
+as the whole answer. The cap is applied per `(language, entity_kind)` branch in
+`(field, id)` order, which is the scan index order; `zh-tw` therefore keeps its
+native `zh-Hant` rows even when Simplified matches fill the budget. The
+exact-title flag is computed in the same scan and orders the returned cards. A
+three-character query is not capped and keeps exact-first ordering over its
+complete match set.
 
 `translationPersistentCorpusSQL` excludes current corpus rows from eviction.
 The `maxEntries` and `cacheBytes` limits are soft: when current title or
@@ -238,21 +245,18 @@ modernc SQLite, 114,000 entities x 4 languages, 20 samples after warmup):
 
 | Condition | Result | Evidence |
 | --- | --- | --- |
-| Card page, p95 | en 8.37 ms, zh-Hans 8.98 ms, ja 9.38 ms, ko 8.79 ms; zero-match 46.69 ms | `/root/kikoto/bench42k/short4/report.json` |
-| Complete effective set behind the capped total, p95 | en 8.15 ms, zh-Hans 7.35 ms, ja 7.34 ms, ko 7.39 ms; zero-match 51.70 ms | same |
+| Card page, p95 | en 8.37 ms, zh-Hans 8.98 ms, ja 9.38 ms, ko 8.79 ms; zero-match 46.69 ms | `short-query-target.json` |
+| Complete effective set count, p95 | en 8.15 ms, zh-Hans 7.35 ms, ja 7.34 ms, ko 7.39 ms; zero-match 51.70 ms | same |
 | Raw scan without the card-id projection, p95 | 50.7-54.2 ms | same |
-| Local library work page (title + description), p95 | en 0.24 ms, zh-Hans 0.26 ms, ja 0.24 ms, ko 0.22 ms | `/root/kikoto/bench42k/short5/translation-bench-105b.json` |
-| Exact translated title, p95 | zh-Hans 1.27 ms, en 1.32 ms, ja 1.58 ms, ko 1.76 ms | `/root/kikoto/bench42k/short5/translation-bench-105c.json` |
+| Local library work page (title + description), p95 | en 0.24 ms, zh-Hans 0.26 ms, ja 0.24 ms, ko 0.22 ms | `translation-bench-target-work.json` |
+| Exact translated title, p95 | zh-Hans 1.27 ms, en 1.32 ms, ja 1.58 ms, ko 1.76 ms | `translation-bench-target-exact.json` |
 | Release code, p95 | 0.07 ms | same |
 | Plan | both arms `SEARCH ct USING COVERING INDEX idx_content_translation_short_scan`; exact title uses `VIRTUAL TABLE INDEX 0:M1` then a rowid probe | same |
 
 The 1-2 character path is inside the 100 ms limit on the target, including a
-needle that matches nothing. The database measured 740,361,264 bytes and the
-seed took 113.7 s. The earlier local 456,000-row run
-(`.kikoto-work/reports/bench-456k-final.json`) predates the 105 scope columns and
-is kept only as history: its complete-set numbers (313-521 ms) describe the
-pre-105 join shape, not the current one. Exact-title and release-code paths are
-measured by `translation-bench`; the candidate records them under ticket 21.
+needle that matches nothing. The database measured 740,459,856 bytes and the
+seed took 103.6 s. Evidence files are the release ledger's copies of the
+`short-query` and `translation-bench` reports.
 
 Free space is read from the nearest existing parent before the data directory
 exists. Low space pauses new background generation (`paused_low_disk`) while

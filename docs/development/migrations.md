@@ -198,9 +198,8 @@ Schema 105 is `105_translation_search_scope.sql`. It adds `source_id` and
 `browsable` to `content_translation`, backfills them, replaces
 `idx_content_translation_short_scan` with the scoped covering shape, and creates
 the `content_translation_scope` and `catalog_entry_searchable` views plus the
-triggers that keep the stored scope current. The number was used by an
-unpublished draft that was reverted before any database received it; no released
-105 exists.
+triggers that keep the stored scope current. The released baseline is 068, so
+no earlier schema carries these columns.
 
 ## Fresh Installs And Upgrades
 

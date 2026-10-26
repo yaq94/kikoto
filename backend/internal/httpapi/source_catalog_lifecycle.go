@@ -871,6 +871,12 @@ func (s *Server) cleanupCatalogPublishBatch(ctx context.Context, job workflowJob
 		}
 		removed += n
 	}
+	// The deletes above cleared the stored search scope of every card in this
+	// batch. Their surviving file set is what the scope must describe, so one
+	// statement restores the whole batch before the cursor advances.
+	if err = refreshContentTranslationBrowsableTx(ctx, tx.Tx, cleanIDs); err != nil {
+		return 0, 0, err
+	}
 	cursor = cards[len(cards)-1].id
 	if _, err = tx.ExecContext(ctx, `UPDATE source_catalog_scan SET publish_cleanup_cursor=?,updated_at=CURRENT_TIMESTAMP WHERE file_source_id=?`, cursor, sourceID); err != nil {
 		return 0, 0, err

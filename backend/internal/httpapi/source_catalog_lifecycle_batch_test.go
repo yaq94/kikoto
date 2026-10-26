@@ -198,7 +198,12 @@ func TestCatalogCleanupBatchMatchesPerCardSemantics(t *testing.T) {
 	assertCatalogFileRows(22, "old.mp3")
 	assertCatalogFileRows(23, "new.mp3", "other")
 	assertCatalogFileRows(24, "new.mp3")
-	if len(statements) > 9 {
+	// The budget guards against per-card growth, not an exact statement count:
+	// a fixed prologue, one delete per shape, one batch scope refresh and the
+	// cursor advance stay flat as the batch grows. The scope refresh is one
+	// statement for the whole batch, so it does not reintroduce the N+1 this
+	// test exists to prevent.
+	if len(statements) > 12 {
 		t.Fatalf("cleanup used %d statements for 5 cards; batch regressed:\n%s", len(statements), strings.Join(statements, "\n"))
 	}
 }

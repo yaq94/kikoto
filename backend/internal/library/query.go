@@ -676,9 +676,9 @@ func translatedTextClause(display, needle string, identity TranslationIdentity) 
 				  AND translated.entity_kind = 'work'
 				  AND translated.field = ?
 					  AND translated.language = ?
-					  AND translated.browsable=1`+translationIdentitySQL("translated", identity)+`)`)
+					  AND translated.browsable=1`+translationIdentitySQL("translated", target.Language, identity)+`)`)
 				args = append(args, `"`+strings.ReplaceAll(query, `"`, `""`)+`"`, field, target.Language)
-				args = append(args, translationIdentityArgs(identity)...)
+				args = append(args, translationIdentityArgs(target.Language, identity)...)
 			}
 			continue
 		}
@@ -699,15 +699,21 @@ func translatedTextClause(display, needle string, identity TranslationIdentity) 
 	return "(" + strings.Join(branches, " OR ") + ")", args
 }
 
-func translationIdentitySQL(alias string, identity TranslationIdentity) string {
+// translationIdentitySQL accepts a native row, or a model row produced by the
+// current output-shaping configuration. zh-Hant is native-only: the model
+// writes Simplified and the Traditional text is derived locally.
+func translationIdentitySQL(alias, language string, identity TranslationIdentity) string {
+	if language == translation.SourceHant {
+		return ` AND ` + alias + `.origin='native'`
+	}
 	if identity.ConfigKey == "" {
 		return ""
 	}
 	return ` AND (` + alias + `.origin='native' OR (` + alias + `.origin='model' AND ` + alias + `.config_key=?))`
 }
 
-func translationIdentityArgs(identity TranslationIdentity) []any {
-	if identity.ConfigKey == "" {
+func translationIdentityArgs(language string, identity TranslationIdentity) []any {
+	if language == translation.SourceHant || identity.ConfigKey == "" {
 		return nil
 	}
 	return []any{identity.ConfigKey}
@@ -725,6 +731,8 @@ func translatedExactRankSQL(display, queryText string, identity TranslationIdent
 	if !ok {
 		return "", nil
 	}
+	// Each target carries its own current-row rule: a Simplified target may use
+	// a model row, while the native Traditional target may not.
 	pairs := []string{}
 	args := []any{}
 	for _, target := range targets {
@@ -732,20 +740,21 @@ func translatedExactRankSQL(display, queryText string, identity TranslationIdent
 		if query == "" {
 			continue
 		}
-		pairs = append(pairs, `(translated.language = ? AND translated.translated_text = ? AND translated.field IN ('title','description'))`)
+		pairs = append(pairs, `(translated.language = ? AND translated.translated_text = ? AND translated.field IN ('title','description')`+
+			translationIdentitySQL("translated", target.Language, identity)+`)`)
 		args = append(args, target.Language, query)
+		args = append(args, translationIdentityArgs(target.Language, identity)...)
 	}
 	if len(pairs) == 0 {
 		return "", nil
 	}
-	args = append(args, translationIdentityArgs(identity)...)
 	return `EXISTS (
 		SELECT 1 FROM content_translation AS translated
 		JOIN work AS current_work ON current_work.id=translated.entity_id
 		  AND (CASE WHEN translated.field='title' THEN translated.source_text=current_work.title
 		            ELSE translated.source_text=current_work.description END)
 		WHERE translated.entity_kind = 'work' AND translated.entity_id = work.id
-		  AND (` + strings.Join(pairs, " OR ") + `)` + translationIdentitySQL("translated", identity) + `)`, args
+		  AND (` + strings.Join(pairs, " OR ") + `))`, args
 }
 
 func searchWhereClause(clause SearchClause, userID int64) (string, []any) {
