@@ -61,10 +61,10 @@ func (s *Server) testTranslation(w http.ResponseWriter, r *http.Request) {
 func writeTranslationTrialError(w http.ResponseWriter, err error) {
 	public := translation.PublicError(err)
 	status := http.StatusUnprocessableEntity
-	if public.Code == "translation_invalid_input" {
+	switch public.Code {
+	case "translation_invalid_input", "translation_empty_text", "translation_text_too_long", "translation_unsupported_language":
 		status = http.StatusBadRequest
-	}
-	if public.Code == "translation_busy" || public.Code == "translation_queue_full" {
+	case "translation_busy", "translation_queue_full":
 		status = http.StatusTooManyRequests
 	}
 	writeAPIError(w, status, public.Code, public.Message, false)

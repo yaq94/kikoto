@@ -56,9 +56,12 @@ func (s *Server) updateTranslationSettings(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusOK, settings)
 }
 
-// translationBodyLimit bounds the single-field translation endpoints. A batch
-// page is much larger and uses decodeTranslationBodyLimit with its own budget.
-const translationBodyLimit = 16 << 10
+// translationBodyLimit bounds the single-field translation endpoints. It sits
+// above the text limit on purpose: a request that carries too much text must
+// reach the field check and be told the text is too long, not fail as an
+// unreadable body. A batch page is much larger and uses
+// decodeTranslationBodyLimit with its own budget.
+const translationBodyLimit = 64 << 10
 
 func decodeTranslationBody(w http.ResponseWriter, r *http.Request, target any) error {
 	return decodeTranslationBodyLimit(w, r, target, translationBodyLimit)

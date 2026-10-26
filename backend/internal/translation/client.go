@@ -53,8 +53,14 @@ func failure(code, message string) error { return &Error{Code: code, Message: me
 var languageNames = map[string]string{"en": "英语", "zh-Hans": "简体中文", "ja": "日语", "ko": "韩语"}
 
 func (in Input) Validate() error {
-	if strings.TrimSpace(in.Text) == "" || len(in.Text) > MaxInputBytes || languageNames[in.TargetLanguage] == "" {
-		return failure("translation_invalid_input", "Enter a short text and a supported target language.")
+	if strings.TrimSpace(in.Text) == "" {
+		return failure("translation_empty_text", "Enter text to translate.")
+	}
+	if len(in.Text) > MaxInputBytes {
+		return failure("translation_text_too_long", "The text is longer than the translation input limit.")
+	}
+	if languageNames[in.TargetLanguage] == "" {
+		return failure("translation_unsupported_language", "Choose a supported target language.")
 	}
 	return nil
 }
