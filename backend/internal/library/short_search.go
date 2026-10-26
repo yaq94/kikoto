@@ -73,6 +73,12 @@ func ShortTranslationSearchSQL(targets []DisplaySearchTarget, arms []ShortSearch
 			if arm.SourceID != 0 {
 				branch += ` AND ct.source_id=?`
 				branchArgs = append(branchArgs, arm.SourceID)
+			} else if arm.EntityKind == "work" {
+				// A work row never belongs to a source; the scope view stores
+				// NULL there. Naming that constant is not a filter change, but
+				// it lets the scan read (field,id) straight from the index
+				// instead of sorting the range.
+				branch += ` AND ct.source_id IS NULL`
 			}
 			branch += ` AND ` + shortTranslationCurrentSQL(target.Language, arm.ConfigKey)
 			if target.Language != translation.SourceHant && arm.ConfigKey != "" {

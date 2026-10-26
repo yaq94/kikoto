@@ -334,3 +334,40 @@ func TestContentTranslationScopeShortQueryUsesCoveringIndex(t *testing.T) {
 		t.Fatalf("short query sorts its whole range:\n%s", joined)
 	}
 }
+
+// The local library searches works, and a work row has no source. Naming that
+// constant lets the same covering index answer the order without sorting the
+// whole language range.
+func TestContentTranslationScopeWorkShortQueryUsesCoveringIndex(t *testing.T) {
+	db := openMigratedTestDB(t)
+	if _, err := db.Exec(`INSERT INTO work(id,primary_code,title,description) VALUES(1,'RJ00000001','Rain','A quiet night')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO content_translation(
+		cache_key,entity_kind,entity_id,field,language,source_text,translated_text,origin)
+		VALUES('work-title','work',1,'title',?,'Rain','雨','native'),
+		      ('work-desc','work',1,'description',?,'A quiet night','安静的夜','native')`,
+		translation.SourceHans, translation.SourceHans); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE content_translation SET browsable=1`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`ANALYZE`); err != nil {
+		t.Fatal(err)
+	}
+	arm := library.ShortSearchArm{EntityKind: "work", Fields: []string{"title", "description"}}
+	query, args := library.ShortTranslationSearchSQL(
+		[]library.DisplaySearchTarget{{Language: translation.SourceHans, Query: "雨"}},
+		[]library.ShortSearchArm{arm}, 1000)
+	if query == "" {
+		t.Fatal("short query is empty")
+	}
+	plan := strings.Join(shortQueryPlan(t, db, query, args), "\n")
+	if !strings.Contains(plan, "COVERING INDEX idx_content_translation_short_scan") {
+		t.Fatalf("work short query does not use the covering scan index:\n%s", plan)
+	}
+	if strings.Contains(plan, "USE TEMP B-TREE") {
+		t.Fatalf("work short query sorts its whole range:\n%s", plan)
+	}
+}
