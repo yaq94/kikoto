@@ -138,6 +138,7 @@
 - 个人记录：评分/备注独立更新、清评分保备注、跨源共享、用户隔离，`source_catalog_file`/`media_file_location`/`workflow_run` 零增量。
 - prefill 提示规则：原 3 条 `Protected names could not be preserved.` 条目已全部翻译成功，失败表清零。
 - 索引 run 53 仍为 `partial`（14,463 complete = 14,494 − 4 failed − 27 unconfirmed empty），未称 complete。
+- 列表 total 41,179 与“有音频且通过准入的 41,181 张卡”差 2：其中两张是同一作品被重复发布的副本，已建立共享身份并合并为一张卡片。逐项核对：16 张已登记卡落在 15 个身份上，去重后正好 41,179。重复副本仍可单独打开，作品身份与个人记录归属不变。
 
 ## 7. 未覆盖项
 
