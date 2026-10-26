@@ -45,34 +45,38 @@ const (
 )
 
 type remoteWorkSummary struct {
-	SeriesID        int64             `json:"seriesId,omitempty"`
-	CatalogEntryID  int64             `json:"catalogEntryId,omitempty"`
-	RemoteID        string            `json:"remoteId"`
-	PrimaryCode     string            `json:"primaryCode"`
-	RemoteCode      string            `json:"remoteCode"`
-	Title           string            `json:"title"`
-	ReleaseDate     string            `json:"releaseDate"`
-	UpdatedAt       string            `json:"updatedAt"`
-	CoverURL        string            `json:"coverUrl"`
-	Circle          string            `json:"circle"`
-	CircleRef       *remoteEntityRef  `json:"circleRef,omitempty"`
-	AgeRating       string            `json:"ageRating"`
-	Rating          *float64          `json:"rating"`
-	RatingCount     *int64            `json:"ratingCount"`
-	Sales           *int64            `json:"sales"`
-	HasLyrics       bool              `json:"hasLyrics,omitempty"`
-	Price           *int64            `json:"price"`
-	Tags            []string          `json:"tags"`
-	VoiceActors     []string          `json:"voiceActors"`
-	VoiceRefs       []remoteEntityRef `json:"voiceRefs"`
-	ImportStatus    string            `json:"importStatus"`
-	RemotePlayable  bool              `json:"remotePlayable"`
-	WorkID          *int64            `json:"workId"`
-	Favorite        bool              `json:"favorite"`
-	ListeningStatus string            `json:"listeningStatus"`
-	RecommendScore  int               `json:"recommendScore"`
-	DurationSeconds *int64            `json:"-"`
-	SearchUserTags  []string          `json:"-"`
+	SeriesID       int64             `json:"seriesId,omitempty"`
+	CatalogEntryID int64             `json:"catalogEntryId,omitempty"`
+	RemoteID       string            `json:"remoteId"`
+	PrimaryCode    string            `json:"primaryCode"`
+	RemoteCode     string            `json:"remoteCode"`
+	Title          string            `json:"title"`
+	ReleaseDate    string            `json:"releaseDate"`
+	UpdatedAt      string            `json:"updatedAt"`
+	CoverURL       string            `json:"coverUrl"`
+	Circle         string            `json:"circle"`
+	CircleRef      *remoteEntityRef  `json:"circleRef,omitempty"`
+	AgeRating      string            `json:"ageRating"`
+	Rating         *float64          `json:"rating"`
+	RatingCount    *int64            `json:"ratingCount"`
+	Sales          *int64            `json:"sales"`
+	HasLyrics      bool              `json:"hasLyrics,omitempty"`
+	Price          *int64            `json:"price"`
+	Tags           []string          `json:"tags"`
+	VoiceActors    []string          `json:"voiceActors"`
+	VoiceRefs      []remoteEntityRef `json:"voiceRefs"`
+	ImportStatus   string            `json:"importStatus"`
+	RemotePlayable bool              `json:"remotePlayable"`
+	// Availability is the last observed source verdict, which is a separate
+	// answer from playability: a failed or unconfirmed range keeps its
+	// published files and stays playable.
+	Availability    string   `json:"availability"`
+	WorkID          *int64   `json:"workId"`
+	Favorite        bool     `json:"favorite"`
+	ListeningStatus string   `json:"listeningStatus"`
+	RecommendScore  int      `json:"recommendScore"`
+	DurationSeconds *int64   `json:"-"`
+	SearchUserTags  []string `json:"-"`
 }
 
 func (s *Server) listRemoteSourceWorks(w http.ResponseWriter, r *http.Request) {

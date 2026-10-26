@@ -50,6 +50,9 @@ export type RemoteWork = {
   voiceRefs: RemoteEntityRef[];
   importStatus: string;
   remotePlayable: boolean;
+  // The last observed verdict for this card. Playability is a separate answer:
+  // a failed or unconfirmed range keeps its published files and stays playable.
+  availability?: string;
   workId: number | null;
   favorite: boolean;
   listeningStatus: ListeningStatus;

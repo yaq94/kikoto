@@ -98,7 +98,8 @@ func TestOpenListCatalogOmitsCardsWithoutAudio(t *testing.T) {
 
 // A retained card keeps its identity, personal records and search entry after
 // the source confirms the directory is gone, but the card must not claim it can
-// play. The flag follows the last completed availability verdict.
+// play. The verdict travels beside the playability flag, because a failed or
+// unconfirmed range is not the same answer as a confirmed absence.
 func TestOpenListCatalogMarksRetainedCardsUnplayable(t *testing.T) {
 	remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"code":200,"data":{"content":[],"total":0}}`))
@@ -109,10 +110,14 @@ func TestOpenListCatalogMarksRetainedCardsUnplayable(t *testing.T) {
 		INSERT INTO file_source_endpoint(file_source_id,api_url,base_url) VALUES(7,?,?);
 		INSERT INTO source_catalog_entry(id,file_source_id,root_path,title,availability_status) VALUES
 			(1,7,'/Example Work','Example Work','available'),
-			(2,7,'/Example Removed','Example Removed','missing');
+			(2,7,'/Example Removed','Example Removed','missing'),
+			(3,7,'/Example Failed','Example Failed','unavailable'),
+			(4,7,'/Example Empty','Example Empty','unconfirmed_empty');
 		INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes) VALUES
 			(1,'track.mp3','track.mp3','audio',16),
-			(2,'track.mp3','track.mp3','audio',16);`, remote.URL, remote.URL)
+			(2,'track.mp3','track.mp3','audio',16),
+			(3,'track.mp3','track.mp3','audio',16),
+			(4,'track.mp3','track.mp3','audio',16);`, remote.URL, remote.URL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,16 +127,31 @@ func TestOpenListCatalogMarksRetainedCardsUnplayable(t *testing.T) {
 	handler := server.Routes()
 	cookie := loginTestSession(t, handler, "synthetic-user", "synthetic-password")
 	list := reviewRequest(t, handler, cookie, http.MethodGet, "/api/remote-sources/7/works", "", http.StatusOK)
-	playable := map[string]bool{}
+	type cardState struct {
+		playable     bool
+		availability string
+	}
+	state := map[string]cardState{}
 	for _, raw := range list["works"].([]any) {
 		card := raw.(map[string]any)
-		playable[card["title"].(string)] = card["remotePlayable"].(bool)
+		availability, _ := card["availability"].(string)
+		state[card["title"].(string)] = cardState{card["remotePlayable"].(bool), availability}
 	}
-	if !playable["Example Work"] {
-		t.Fatalf("available card is not playable: %#v", playable)
+	if !state["Example Work"].playable || state["Example Work"].availability != "available" {
+		t.Fatalf("available card = %#v, want playable and available", state["Example Work"])
 	}
-	if playable["Example Removed"] {
-		t.Fatalf("missing card still advertises playback: %#v", playable)
+	// A confirmed missing card keeps its record but loses its files, so it is
+	// the verdict that also removes playback.
+	if state["Example Removed"].playable || state["Example Removed"].availability != "missing" {
+		t.Fatalf("missing card = %#v, want unplayable and missing", state["Example Removed"])
+	}
+	// A failed or unconfirmed range proves nothing about the files. The card
+	// still serves its last published set, so it stays playable while the
+	// verdict stays visible.
+	for _, title := range []string{"Example Failed", "Example Empty"} {
+		if !state[title].playable || state[title].availability == "available" {
+			t.Fatalf("%s = %#v, want playable with a non-available verdict", title, state[title])
+		}
 	}
 }
 

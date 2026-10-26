@@ -273,6 +273,20 @@ func catalogEntryAdmissionRequired(entry catalogEntry) bool {
 	return entry.SourceID != 0 && entry.Status != "missing"
 }
 
+// catalogVerdictPlayable reports whether a card with a current audio file can
+// still be opened. A failed, restricted, maintenance or unconfirmed range keeps
+// its last published file set, and the detail, track and media endpoints judge
+// that set; only a confirmed absence, an operator exclusion or a disabled
+// source removes playback.
+func catalogVerdictPlayable(status string) bool {
+	switch status {
+	case "missing", "excluded", "disabled":
+		return false
+	default:
+		return true
+	}
+}
+
 // catalogEntryHasAudioSQL answers whether a card can play anything, using the
 // same stored counts the admission filter reads. A browse page evaluates this
 // for every candidate, so the live file probe would add one index lookup per

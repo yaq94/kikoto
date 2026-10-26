@@ -19,6 +19,7 @@ import i18n from "@/i18n";
 import type { LibrarySource, ListeningStatus, RemoteWork } from "@/lib/api";
 
 import { libraryCoverSourceBadges } from "./libraryCoverSources";
+import { remoteSourceBadges } from "./remoteWorkBadges";
 
 export function RemoteWorkCard({
   work,
@@ -163,14 +164,6 @@ function remoteWorkCardView(
     recommended: scored && Number.isFinite(work.recommendScore),
     recommendationHighlighted: work.recommendScore >= threshold,
     recommendationScore: work.recommendScore,
-    sourceBadges: work.remotePlayable
-      ? [{ key: `source:remote:${source.id}`, label: sourceLabel, variant: "outline" }]
-      : [
-          {
-            key: `source:remote:${source.id}:unavailable`,
-            label: i18n.t("workCard.namedSourceUnavailable", { name: sourceLabel }),
-            variant: "warning",
-          },
-        ],
+    sourceBadges: remoteSourceBadges(work, source.id, sourceLabel),
   };
 }

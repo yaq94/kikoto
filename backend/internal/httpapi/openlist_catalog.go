@@ -848,7 +848,13 @@ func (s *Server) listOpenListWorks(w http.ResponseWriter, r *http.Request, sourc
 		if item.WorkID != nil {
 			item.ImportStatus = "imported"
 		}
-		item.RemotePlayable = availability == "available" && hasAudio
+		// The verdict travels separately from the playability flag: a failed,
+		// restricted or unconfirmed range is not the same answer as a confirmed
+		// absence. Only a verdict that removes the published file set also
+		// removes playback, which is the same rule the detail and track
+		// endpoints apply.
+		item.Availability = availability
+		item.RemotePlayable = catalogVerdictPlayable(availability) && hasAudio
 		works = append(works, item)
 	}
 	if err == nil {
