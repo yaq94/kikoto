@@ -1,7 +1,7 @@
 # Release Rollback
 
 This page gives the operator procedure for rolling back a Kikoto deployment
-whose schema reached `103`. It states which image can read which schema, how to
+whose schema reached `105`. It states which image can read which schema, how to
 take and restore a database snapshot, and what to check afterwards. It records
 no deployment result; run the commands on the target host and keep their output
 with the release record.
@@ -13,20 +13,22 @@ a database snapshot and starts a binary whose packaged migration catalog ends
 at that snapshot's schema. The image names are the ones used by the current
 next-release deployment; prefer a digest when the deployment recorded one.
 
-| Image | Highest packaged migration | `094` | `095` | `096` | `097` | `098` | `099` | `100` | `101` | `102` | `103` |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| current build | `103` | to `103` | to `103` | to `103` | to `103` | to `103` | to `103` | to `103` | to `103` | to `103` | Keeps `103` |
-| 102 image | `102` | to `102` | to `102` | to `102` | to `102` | to `102` | to `102` | to `102` | to `102` | Keeps `102` | Refuses |
-| 101 image | `101` | to `101` | to `101` | to `101` | to `101` | to `101` | to `101` | to `101` | Keeps `101` | Refuses | Refuses |
-| 100 image | `100` | to `100` | to `100` | to `100` | to `100` | to `100` | to `100` | Keeps `100` | Refuses | Refuses | Refuses |
-| 099 image | `099` | to `099` | to `099` | to `099` | to `099` | to `099` | Keeps `099` | Refuses | Refuses | Refuses | Refuses |
-| 098 image | `098` | to `098` | to `098` | to `098` | to `098` | Keeps `098` | Refuses | Refuses | Refuses | Refuses | Refuses |
-| 097 image | `097` | to `097` | to `097` | to `097` | Keeps `097` | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses |
-| 095 image | `095` | to `095` | Keeps `095` | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses |
-| 094 image | `094` | Keeps `094` | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses |
-| 092 image | `092` | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses |
-| 084 image | `084` | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses |
-| 083 image | `083` | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses |
+| Image | Highest packaged migration | `094` | `095` | `096` | `097` | `098` | `099` | `100` | `101` | `102` | `103` | `104` | `105` |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| current build | `105` | to `105` | to `105` | to `105` | to `105` | to `105` | to `105` | to `105` | to `105` | to `105` | to `105` | to `105` | Keeps `105` |
+| 104 image | `104` | to `104` | to `104` | to `104` | to `104` | to `104` | to `104` | to `104` | to `104` | to `104` | to `104` | Keeps `104` | Refuses |
+| 103 image | `103` | to `103` | to `103` | to `103` | to `103` | to `103` | to `103` | to `103` | to `103` | to `103` | Keeps `103` | Refuses | Refuses |
+| 102 image | `102` | to `102` | to `102` | to `102` | to `102` | to `102` | to `102` | to `102` | to `102` | Keeps `102` | Refuses | Refuses | Refuses |
+| 101 image | `101` | to `101` | to `101` | to `101` | to `101` | to `101` | to `101` | to `101` | Keeps `101` | Refuses | Refuses | Refuses | Refuses |
+| 100 image | `100` | to `100` | to `100` | to `100` | to `100` | to `100` | to `100` | Keeps `100` | Refuses | Refuses | Refuses | Refuses | Refuses |
+| 099 image | `099` | to `099` | to `099` | to `099` | to `099` | to `099` | Keeps `099` | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses |
+| 098 image | `098` | to `098` | to `098` | to `098` | to `098` | Keeps `098` | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses |
+| 097 image | `097` | to `097` | to `097` | to `097` | Keeps `097` | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses |
+| 095 image | `095` | to `095` | Keeps `095` | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses |
+| 094 image | `094` | Keeps `094` | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses |
+| 092 image | `092` | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses |
+| 084 image | `084` | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses |
+| 083 image | `083` | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses | Refuses |
 
 Numbered migrations have no down path. A rollback restores a snapshot taken
 before the upgrade and starts an image whose packaged catalog ends at that

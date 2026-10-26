@@ -148,13 +148,12 @@ the source text unchanged and never increment model usage. There is no
 and `catalog_series`, plus `field='description'` rows for `work`, are required
 for language-specific search and are never eviction candidates. `tag` and
 `directory` rows remain display-only; `source_catalog_entry` has no description
-column, so entry descriptions are not invented. Migration 099 adds a
-`config_key` covering the model, base URL, template version and reasoning
-switch; a row with another config key is stale and is not part of current
-coverage, while pre-099 rows remain legacy candidates until re-prefilled. Only
-`tag`/`directory` model rows and all `source_field_translation` rows are
-rebuildable display cache; they may be evicted within the configured budgets.
-`source_field_translation` has no FTS table and is never read by content search.
+column, so entry descriptions are not invented. `config_key` covers the model,
+base URL, template version and reasoning switch; a model row with another key
+is stale and is not part of current coverage. Only `tag`/`directory` model rows
+and all `source_field_translation` rows are rebuildable display cache; they may
+be evicted within the configured budgets. `source_field_translation` has no FTS
+table and is never read by content search.
 
 Two administrator budgets bound the rebuildable display cache in a maintenance
 pass that runs beside the prefill worker: `maxEntries` limits the number of
@@ -204,40 +203,34 @@ release code or another structured identifier remains searchable regardless of
 display language. `origin` searches the original source index and never reads
 `content_translation`; target-language text searches never merge original-title
 FTS hits as a fallback. One- and two-character queries use the complete
-effective set. Migration 099 added `idx_content_translation_short` and
-`idx_content_translation_short_current`; migration 103 replaces both with
-`idx_content_translation_short_scan` on
-`(language, entity_kind, field, id, origin, config_key, translated_text)`. The
-099 order placed `origin` and `config_key` before `id`, so an ordered page over
-one language/kind/field range needed a temporary b-tree. The 103 order keeps
-`id` adjacent to the range prefix and still covers the current-row predicate
-and the text. The short query matches the covered column with `instr()`, so a
-candidate row needs no per-row `lower()` call or table lookup.
+effective set. `idx_content_translation_short_scan` is
+`(language, entity_kind, field, source_id, effective, id, origin, config_key,
+translated_text)`. The `source_id` and `effective` prefix lets a per-source
+short scan read one index range; the trailing columns cover the current-row
+predicate and the text. The short query matches the covered column with
+`instr()`, so a candidate row needs no per-row `lower()` call or table lookup.
 
-The 45.6 万行 `translation-bench` run (114,000 entities × 4 languages, local
-machine, not the target hardware) measured:
+`translationPersistentCorpusSQL` excludes current corpus rows from eviction.
+The `maxEntries` and `cacheBytes` limits are soft: when current title or
+description rows alone exceed them, the coverage status reports `over_budget`
+and keeps those rows. Only `tag`/`directory` model rows and
+`source_field_translation` rows are eviction candidates.
 
-| Query | p95 |
-| --- | --- |
-| Card-page short query, `limit=200` | en 1.094 ms, zh-Hans 0.575 ms, ja 1.316 ms, ko 1.506 ms |
-| Complete-set short query, `limit=0` (used for the total) | en 313.119 ms, zh-Hans 317.013 ms, ja 520.704 ms, ko 478.139 ms |
-| Target-language title exact match | 1.58–2.505 ms |
-| FTS (three characters and longer) | 0.573–1.506 ms |
-| Numbered exact match | below timer resolution (0.00 ms, max 0.53 ms) |
+The local `translation-bench` measurement conditions and results:
 
-The card-page query meets the 100 ms target. The complete-set short query does
-not: all four languages exceed 100 ms, with ja at 520.704 ms. This run did not
-include the D-16 admission join, so it does not by itself prove the target
-corpus behavior. The database measured 425.6 MB (`dbBytes` 446,291,968), the
-FTS index 35.9 MB, and 404.5 MB after `VACUUM`; insert time was 131–147 s and
-the WAL peak 23.3 MB.
+| Condition | Result | Evidence |
+| --- | --- | --- |
+| 456,000 corpus rows (114,000 entities × 4 languages), local machine, card-page short query `limit=200`, p95 | en 1.094 ms, zh-Hans 0.575 ms, ja 1.316 ms, ko 1.506 ms | `.kikoto-work/reports/bench-456k-final.json` |
+| Same corpus, complete-set short query `limit=0` for the total, p95 | en 313.119 ms, zh-Hans 317.013 ms, ja 520.704 ms, ko 478.139 ms | `.kikoto-work/reports/bench-456k-final.json` |
+| Same corpus, target-language title exact match, p95 | 1.58–2.505 ms | `.kikoto-work/reports/bench-456k-final.json` |
+| Same corpus, FTS three characters and longer, p95 | 0.573–1.506 ms | `.kikoto-work/reports/bench-456k-final.json` |
+| Same corpus, numbered exact match | below timer resolution (0.00 ms, max 0.53 ms) | `.kikoto-work/reports/bench-456k-final.json` |
 
-`translationPersistentCorpusSQL` excludes current corpus rows from eviction,
-`idx_content_translation_short_scan` serves the keyset walk, and the short
-query reads the complete effective range rather than a newest-row window. The
-45.6 万行 numbers above come from the local `translation-bench` run on this
-machine; the target-hardware run and the admission join at that corpus size
-are not yet measured.
+The card-page short query meets the 100 ms limit; the complete-set short query
+does not. The run excludes the D-16 admission join and does not use the target
+hardware. The database measured 425.6 MB (`dbBytes` 446,291,968), the FTS index
+35.9 MB and 404.5 MB after `VACUUM`; insert time was 131–147 s and the WAL peak
+23.3 MB.
 
 Free space is read from the nearest existing parent before the data directory
 exists. Low space pauses new background generation (`paused_low_disk`) while
@@ -301,9 +294,9 @@ content failures retain the verified original text.
 
 HTTP and restart tests use production routes, real sessions and migrated SQLite:
 
-The real numbered chain currently ends at 103; 097 through 103 are committed
-and `compat/103_dev.sql` is generated. Local Go tests and
-`cmd/translation-bench` still use `internal/migrationfixture`, which copies the
+The numbered chain ends at the current migration head, and the matching
+`compat/<head>_dev.sql` development baseline is packaged. Local Go tests and
+`cmd/translation-bench` use `internal/migrationfixture`, which copies the
 packaged catalog and injects no-op placeholders only when a version is absent
 from the packaged chain. Those files are test fixtures only and are not
 committed. Regenerate a development compat baseline with

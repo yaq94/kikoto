@@ -39,7 +39,8 @@ ledger must satisfy all of these:
   baseline the mode reads, or a retained checksum-only baseline entry (see
   [Accepted And Refused Ledgers](#accepted-and-refused-ledgers)).
 - Every recorded checksum matches the catalog's checksum for that filename, with
-  only the one-time legacy 095 preflight described below as an exception.
+  only the one-time [legacy 095 preflight](#legacy-095-checksum-preflight) as an
+  exception.
 - Each version appears once, and at most one row is a baseline.
 - Rows are contiguous from the baseline row, or from `001` when the ledger has
   no baseline.
@@ -78,9 +79,9 @@ lookups by parent, entry and episode root. It also creates
 complete staged split between `pending` and `published`. Both source and entry
 references cascade; `catalog_series_member` retains its restrictive entry
 reference, so episode compensation removes pending-only membership explicitly
-before deleting an entry. Its snapshot is `compat/096_dev.sql`; with `103` at
+before deleting an entry. Its snapshot is `compat/096_dev.sql`; with `105` at
 the chain head, `cd backend && go run ./cmd/schema-baseline -migrations
-./migrations -version-file ../VERSION` writes `compat/103_dev.sql`.
+./migrations -version-file ../VERSION` writes `compat/105_dev.sql`.
 The numbered migration does not alter 095 or reconstruct an existing database
 from a baseline. See [Catalog series](catalog-series.md) for the staging,
 activation and recovery semantics.
@@ -115,9 +116,11 @@ already recorded that value needs no preflight. Only the older
 `70933dd4...` ledger value is conditional on the exact no-foreign-key table
 shape.
 
-The migration entry point runs the preflight before it loads the catalog or
-validates the ledger, so every caller that reaches `MigrateFS` is covered. It
-compares `PRAGMA table_xinfo`, `index_list`,
+`MigrateFSWithOptions` calls `PreflightLegacyMigration095` before it calls
+`prepareMigrationCatalog`, and therefore before `prepareMigrationState`
+validates the ledger (`storage/migration.go:167`). `MigrateFS` delegates to
+that function, so every migration caller is covered. The preflight compares
+`PRAGMA table_xinfo`, `index_list`,
 `index_xinfo`, `foreign_key_list`, and the table's trigger list with the
 historical fingerprint. Column order and definitions, all indexes including
 SQLite's unique autoindex, triggers, and foreign-key actions must match
@@ -130,7 +133,7 @@ For a matching database the preflight writes a verified pre-migration snapshot
 beside the other database backups, then updates only that ledger checksum in a
 transaction. It writes a JSON audit record containing the old and new
 checksums, historical schema fingerprint and details, UTC execution time,
-backup path, and result. Startup then continues through `096` and `097`.
+backup path, and result. Startup then continues through the numbered chain.
 
 An instance that cannot start can run the same operation offline without
 migrating:
@@ -156,7 +159,7 @@ Schema 101 is `101_work_parent_backfill_report.sql`. It creates
 `work_parent_backfill_report`, one row per work whose parent evidence is
 missing, contradictory or has more than one candidate, then repeats the
 unambiguous backfill. The update is idempotent: it only fills rows whose
-`parent_work_id` is still null, and a row that now has a parent disappears from
+`parent_work_id` is still null, and a row that has a parent disappears from
 the report. The report keeps the reason and detail queryable instead of leaving
 the decision only in a startup log.
 
@@ -180,6 +183,26 @@ stay in the covering tail: an ordered page is an index read and the
 complete-set count needs no table lookup. The two dropped indexes served only
 the short path, so keeping them would add write cost to every prefill insert.
 
+Schema 104 is `104_source_catalog_entry_admission.sql`. It creates
+`source_catalog_entry_admission`, one row per card keyed by
+`catalog_entry_id` with `generation`, `files`, `audio`, `non_audio` and
+`updated_at`. The backfill counts each card's published file set for its
+`last_seen_generation`, capped one row past each admission bound. Insert,
+delete and relevant update triggers on `source_catalog_file` set the stored
+generation to `-1`, so a reader falls back to live counting instead of trusting
+a count from an older file set. The publish transaction rewrites the row after
+the card's files commit.
+
+Schema 105 is `105_translation_short_scan_scope.sql`. It adds
+`content_translation.source_id` and `effective`, backfills `source_id` from the
+entry's file source or the series' source, marks entry rows whose
+`source_text` no longer matches the current title as ineffective, replaces the
+103 short-scan index with
+`(language, entity_kind, field, source_id, effective, id, origin, config_key,
+translated_text)`, and adds triggers that keep `source_id` and `effective`
+current for work title/description changes and entry title/source changes and
+deletions.
+
 ## Fresh Installs And Upgrades
 
 The single-row `schema_state` table records the current schema version, the
@@ -201,8 +224,9 @@ backup directory (see [Database](../operations/database.md)) and, for a
 database below schema 035, preserves user-authored workflow definitions for
 review (see [Preset Workflows](../architecture/workflows.md#preset-workflows)).
 A hook failure stops startup before the schema changes. The hook does not run
-for an empty database. The legacy 095 preflight runs earlier, at the migration
-entry point described above.
+for an empty database. The legacy 095 preflight runs earlier, inside
+`MigrateFSWithOptions`, as described in
+[Legacy 095 Checksum Preflight](#legacy-095-checksum-preflight).
 
 Each migration's SQL, a foreign-key check, the ledger row, and the
 schema-state advance commit in one SQLite transaction. The state is marked
@@ -373,19 +397,18 @@ matches the backup.
 | v0.8.0 | `059` | `059_v0.8.0.sql` |
 | v0.8.1, v0.8.2 | `066` | `066_v0.8.1.sql` |
 | v0.8.3 | `068` | `068_v0.8.3.sql` |
-| development build (unreleased) | `103` | Development baseline only; `compat/103_dev.sql` |
+| development build (unreleased) | `105` | Development baseline only; `compat/105_dev.sql` |
 
-`096_catalog_episode_pending.sql` through
-`103_translation_short_scan_index.sql` are committed; `104` is the next
-numbered migration and must not be created out of sequence. `compat/103_dev.sql`
-is the current development baseline; `compat/102_dev.sql` remains the 102
-baseline, and there is no separate `compat/101_dev.sql`.
+The numbered chain runs `096` through `105` without a gap.
+`compat/105_dev.sql` is the current development baseline; `compat/104_dev.sql`,
+`compat/103_dev.sql` and `compat/102_dev.sql` remain as earlier development
+baselines, and there is no separate `compat/101_dev.sql`.
 
 Per-release upgrade steps are in the [release notes](../history/index.md).
 
 ## Kikoto-next Schema Additions
 
-Migrations `069` through `103` extend the source catalog, shared associations,
+Migrations `069` through `105` extend the source catalog, shared associations,
 personal transfer, and the recoverable index. Pending release notes and upgrade
 steps are in
 [Unreleased](../history/unreleased.md).
@@ -427,6 +450,8 @@ steps are in
 | `101_work_parent_backfill_report.sql` | `work_parent_backfill_report` and an idempotent parent backfill | Unresolved parents are queryable by reason; a repeated run reports the same rows |
 | `102_translation_prefill_status.sql` | Rebuild `translation_prefill_state` with `failed`; index the failure table by `(config_key, source_hash)` | The cursor row survives the rebuild; triggers are recreated, and bounded failure cleanup uses the index |
 | `103_translation_short_scan_index.sql` | Replace the 099 short-query indexes with `idx_content_translation_short_scan` | An ordered short page reads the index in keyset order; the complete-set count needs no table lookup |
+| `104_source_catalog_entry_admission.sql` | `source_catalog_entry_admission`, one count row per card and generation | A matching generation answers admission from the primary key; a file write invalidates the row and the reader counts live rows |
+| `105_translation_short_scan_scope.sql` | `content_translation.source_id` and `effective`; replace the 103 short-scan index with the source-scoped form | A per-source short scan reads one index range; entity triggers keep the source and effectiveness flags current |
 
 The Release To Schema Map above lists every numbered file. `069` rebuilds `work`
 and `logical_work` to relax code uniqueness and creates the catalog entry and
@@ -476,18 +501,22 @@ to add its source foreign key and remove unreachable rows. `098` adds the
 persisted schedule; `099` adds the translation config key and prefill cursor;
 `100` adds the work parent; `101` adds the backfill report; `102` rebuilds the
 prefill state to allow `failed` and indexes the failure table; `103` replaces
-the two 099 short-query indexes with one keyset-ordered covering index.
+the two 099 short-query indexes with one keyset-ordered covering index. `104`
+adds the per-card admission count row and its invalidation triggers. `105` adds
+the short-scan scope columns, replaces the 103 index, and adds the triggers
+that keep the scope current.
 
-The `084` through `103` changes retain existing rows. `087`, `097` and `102`
+The `084` through `105` changes retain existing rows. `087`, `097` and `102`
 rebuild tables; `087` copies every entry column and recreates its indexes,
 triggers and view, `097` copies only display-cache rows with a live source and
 recreates both cache indexes, and `102` copies the single prefill-state row and
-recreates its reset triggers. `103` only replaces indexes. `085`, `088`, `090`,
-`091` and `092` add tables or columns with defaults, `093` adds an index, `094`
-adds one column default and `095` adds a rebuildable cache table. Startup
-refuses a database newer than the binary before running a handler. Rolling back
-any of these schemas requires a database snapshot, not a reverse migration; see
-[Release rollback](release-rollback.md).
+recreates its reset triggers. `103` and `105` only replace indexes, and `105`
+adds two columns with defaults. `085`, `088`, `090`, `091` and `092` add tables
+or columns with defaults, `093` adds an index, `094` adds one column default,
+`095` adds a rebuildable cache table, and `104` adds a derived count table.
+Startup refuses a database newer than the binary before running a handler.
+Rolling back any of these schemas requires a database snapshot, not a reverse
+migration; see [Release rollback](release-rollback.md).
 
 `077` does not change entry identity. It lets a generation remove stale file
 rows left by an older generation without touching an entry that the current

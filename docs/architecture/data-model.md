@@ -591,69 +591,84 @@ merged name never replaces the target's display name.
 
 ## Translation Corpus
 
-Under the issue 21 target, `content_translation` is the durable, searchable
-translated-content corpus. A row is keyed by the unique `cache_key`, which
-separates entity kind and id,
-field, language, source text, origin (`native` or `model`), model, base URL,
-template version and reasoning switch. Migration 099 adds a
-`config_key` covering the output-shaping configuration; a row with another key
-is stale and is not current coverage, while rows from before 099 are treated as
-legacy candidates until re-prefilled. Native rows store the source text
-unchanged; model rows store successful generated text. Under the issue 21 target,
-current title rows for `work`, `source_catalog_entry` and `catalog_series`, plus
-description rows for `work`, are required for language-specific search and are
-never eviction candidates for the `cacheBytes` or `maxEntries` budgets. `tag`
-and `directory` translations remain display-only.
+`content_translation` is the durable, searchable translated-content corpus.
+Each row is keyed by the unique `cache_key`, which separates entity kind and
+id, field, language, source text, origin, model, base URL, template version and
+reasoning switch. The row stores `entity_kind` (`entry`, `series` or `work`),
+`entity_id`, `entity_key`, `field` (`title`, `description`, `tag` or
+`directory`), `language`, `source_text`, `translated_text`, `origin`
+(`native` or `model`), `config_key`, `model`, `template_version`, `source_id`
+and `effective`.
+
+`config_key` covers the output-shaping configuration: model, base URL,
+template version and reasoning switch. A native row is current for its
+language. A model row is current only while its `config_key` equals the
+configured key; a row with an empty or different key stays readable and does
+not satisfy current coverage.
+
+`source_id` records the entry's `file_source_id` or the series' `source_id`.
+`effective` is 1 while `source_text` still equals the entity's current title or
+description. Triggers recompute both columns when a work title or description
+changes, when an entry title or file source changes, and when an entry is
+deleted. A NULL `source_id` means the source is unknown. The short-scan index is
+`idx_content_translation_short_scan` on `(language, entity_kind, field,
+source_id, effective, id, origin, config_key, translated_text)`. Its prefix
+separates one source's rows from another's, so a per-source short scan reads a
+single index range instead of joining every candidate to the entity row.
+
+The effective entity set is:
+
+- entry: `relocated_to_id IS NULL`, nonempty title, enabled `openlist` source,
+  and admitted by the D-16 bounds; the only searchable field is `title`.
+- series: nonempty title, at least two members, and at least one admitted
+  member; the only searchable field is `title`.
+- work: nonempty title or description, excluding a work named by
+  `catalog_series.work_id`; searchable fields are `title` and `description`.
+
+`source_catalog_entry` has no description column and a remote listing supplies
+no introduction, so entry descriptions are not part of the corpus. `tag` and
+`directory` rows remain display-only.
 
 `content_translation_search` is an FTS5 trigram index over
 `content_translation.translated_text`, maintained by insert, update and delete
-triggers. A display-language text search reads only rows for the requested
-language and current configuration; an `origin` search reads the original
-source index. Release codes and other structured identifiers remain searchable
-regardless of display language. Three-character and longer text queries use the
-trigram index. One- and two-character queries page over the complete effective
-set with `idx_content_translation_short_scan` and `instr`; they must not stop at
-a fixed newest-row window. Migration 103 creates that index on
-`(language, entity_kind, field, id, origin, config_key, translated_text)` and
-drops the 099 `idx_content_translation_short` and
-`idx_content_translation_short_current`. The 099 order put `origin` and
-`config_key` before `id`, which forced a temporary b-tree for a keyset page over
-one language/kind/field range. The 103 order keeps `id` next to the range prefix
-and leaves the current-row predicate and text in the covering tail, so an
-ordered page is an index read and the complete-set count needs no table lookup.
-If the measured p95 exceeds 100 ms at the target corpus size, a short-term
-n-gram index or an equivalent indexed structure is required rather than
-accepting an unbounded scan.
+triggers. A display-language text search reads only native rows for that
+language or model rows with the current `config_key`; it never merges original
+title hits as a fallback. `origin` searches the original source index and never
+reads `content_translation`. Release codes and other structured identifiers
+remain searchable regardless of display language.
 
-Display-language text search covers `title` for entries and series, and
-`title` plus `description` for works; `tag` and `directory` translations are
-not search inputs. `source_catalog_entry` has no description column, so entry
-descriptions are not invented. `zh-cn`, `en-us`, `ja-jp` and `ko-kr` map to
-the stored tokens `zh-Hans`, `en`, `ja` and `ko` respectively. `zh-tw` reads `zh-Hans`
-and applies OpenCC `s2t`, while native `zh-Hant` rows remain separate and are
-also searchable. `origin` searches the original source index and never reads
-`content_translation`.
+Three-character and longer queries use the trigram index. One- and
+two-character queries scan the complete effective set in
+`(language, entity_kind, field, id)` order through the covering short-scan
+index and match `translated_text` with `instr()`. The limit caps returned rows,
+not scanned rows. `zh-cn`, `en-us`, `ja-jp` and `ko-kr` map to `zh-Hans`, `en`,
+`ja` and `ko`; `zh-tw` reads `zh-Hans` with OpenCC `s2t` and also reads native
+`zh-Hant` rows.
+
+Current `field='title'` rows for entries, series and works, plus
+`field='description'` rows for works, are required for display-language search
+and are never eviction candidates. The `maxEntries` and `cacheBytes` budgets
+are soft: when current title or description rows alone exceed them, the status
+reports `over_budget` and keeps those rows. Only `tag`/`directory` model rows
+and all `source_field_translation` rows are rebuildable display cache and may
+be evicted. Superseded rows and rows for retired entities are removed by a
+low-frequency cleanup and never count as current coverage.
+
+The prefill worker enumerates entry title, series title, and work title and
+description. Its durable cursor carries kind, field, id and language in that
+order. Existing target-language text is written as a native row before a model
+call is queued. A failed item is stored in `translation_prefill_failure` with
+its source hash, attempt count and next retry time; `NULL` next retry means no
+attempt is scheduled. `complete` requires a nonempty effective corpus with no
+missing, stale, failed or retry item. A scan that ends with no continuable
+item, no due retry and an exhausted failure writes `failed`; a later due retry
+or new item resumes the worker.
 
 `source_field_translation` is a rebuildable display cache for source-level
-fields such as a remote title, tag or directory name. It has no FTS table and is
-never read by content search. `tag`/`directory` model rows and all
-`source_field_translation` rows may be evicted within the configured budgets.
-Superseded and retired rows are removed by a low-frequency cleanup;
-they do not count as current coverage. See
+fields such as a remote title, tag or directory name. It has no FTS table and
+is never read by content search. See
 [ADR-0006](../decisions/ADR-0006-catalog-remediation-and-translation-consistency.md)
 and [ADR-0007](../decisions/ADR-0007-source-field-translation-cache.md).
-
-The configuration-key, persistent title/description, strict display-language
-search and complete short-query behavior above is the current contract:
-`translationPersistentCorpusSQL` keeps current corpus rows out of the eviction
-pool, and one- and two-character searches walk the complete effective set
-through `idx_content_translation_short_scan` instead of a newest-row window.
-The local 45.6 万行 benchmark (114,000 entities × 4 languages, not the target
-hardware) measured card-page short queries at p95 0.575–1.506 ms, but the
-complete-set short query at p95 313.119–520.704 ms. The card-page target is met;
-the complete-set target of 100 ms is not. That run did not include the D-16
-admission join. The target-hardware measurement and the admission join at that
-corpus size remain open in ticket 21 and ticket 24.
 
 ## File Availability
 
@@ -1076,6 +1091,24 @@ until a generation observes that subtree. `source_catalog_file_title`
 is an index on `source_catalog_file(catalog_entry_id, title)`: file-title
 search tests one candidate at a time, and the covered entry id lets the lookup
 answer from the index instead of reading the table row.
+
+### Catalog entry admission counts
+
+`source_catalog_entry_admission` stores the D-16 decision inputs once per
+card so a browse or search page answers admission from one primary-key
+lookup. Its columns are `catalog_entry_id` (primary key, references
+`source_catalog_entry(id)` with `ON DELETE CASCADE`), `generation`, `files`,
+`audio`, `non_audio` and `updated_at`.
+
+`generation` is the entry's `last_seen_generation` when the counts were taken.
+A reader accepts the row only while it matches the entry; otherwise it counts
+the live published file rows. The three counts are capped one row past their
+threshold, so a stored value is only compared with the bound and never
+reported as an exact size. The publish transaction refreshes the row after
+writing the card's files. Triggers on `source_catalog_file` insert, delete and
+relevant update mark the row with generation `-1`, which forces the live
+fallback until the next refresh. The same counts answer whether a card has
+audio.
 
 ### Catalog schedule state
 
