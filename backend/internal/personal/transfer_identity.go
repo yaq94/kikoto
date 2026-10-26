@@ -7,17 +7,22 @@ import (
 	"strings"
 )
 
+// errExportParentConflict marks a persisted episode parent that cannot be
+// expressed as one minimal series identity. The episode itself is still
+// exportable; the caller reports the relation instead of failing the backup.
+var errExportParentConflict = errors.New("personal: episode parent is ambiguous")
+
 // exportIdentity names one evaluation object. An episode's parent is a
 // separate minimal series identity: it never carries the episode's aliases,
 // review, note, progress or statistics.
-func exportIdentity(ctx context.Context, tx *sql.Tx, work int64, includeParent bool, exported map[int64]bool) (*BackupIdentity, error) {
+func exportIdentity(ctx context.Context, tx *sql.Tx, work int64, includeParent bool, exported map[int64]bool) (*BackupIdentity, []ImportIssue, error) {
 	i := &BackupIdentity{}
 	kind, parentWork, err := transferWorkKind(ctx, tx, work)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if err = tx.QueryRowContext(ctx, `SELECT r.ref,w.title FROM work w JOIN personal_transfer_ref r ON r.work_id=w.id AND r.is_primary=1 WHERE w.id=?`, work).Scan(&i.Ref, &i.Title); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	i.Kind = kind
 	err = scanRows(ctx, tx, `SELECT r.ref FROM personal_transfer_ref r
@@ -32,23 +37,28 @@ func exportIdentity(ctx context.Context, tx *sql.Tx, work int64, includeParent b
 		return nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if len(i.References) > 100 {
-		return nil, ErrLimit
+		return nil, nil, ErrLimit
 	}
 	if kind != "episode" || !includeParent {
-		return i, nil
+		return i, nil, nil
 	}
 	parent, err := exportEpisodeParent(ctx, tx, work, parentWork)
 	if err != nil {
-		return nil, err
+		if errors.Is(err, errExportParentConflict) {
+			// The review is still portable. Leave the relation empty and make the
+			// ambiguity visible so a restore cannot silently pick a series.
+			return i, []ImportIssue{{Ref: i.Ref, Title: i.Title, Reason: "parent_conflict"}}, nil
+		}
+		return nil, nil, err
 	}
 	if parent == nil {
 		// No persisted relation exists to carry. The entry is still exported so
 		// the review is not lost; the import reports that the parent was not
 		// restored rather than inventing a series from the title.
-		return i, nil
+		return i, nil, nil
 	}
 	i.Parent = parent
 	// Parent aliases belong to the parent field, never to the episode object.
@@ -59,7 +69,7 @@ func exportIdentity(ctx context.Context, tx *sql.Tx, work int64, includeParent b
 		}
 	}
 	i.References = filtered
-	return i, nil
+	return i, nil, nil
 }
 
 func parentReference(parent *BackupIdentity, ref string) bool {
@@ -80,26 +90,29 @@ func exportEpisodeParent(ctx context.Context, tx *sql.Tx, work, parentWork int64
 	var title, ref string
 	if parentWork != 0 {
 		if parentWork == work {
-			return nil, ErrConflict
+			return nil, errExportParentConflict
 		}
 		var parentOfParent sql.NullInt64
 		if err := tx.QueryRowContext(ctx, `SELECT parent_work_id FROM work WHERE id=?`, parentWork).Scan(&parentOfParent); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
-				return nil, ErrConflict
+				return nil, errExportParentConflict
 			}
 			return nil, err
 		}
 		if parentOfParent.Valid {
-			return nil, ErrConflict
+			return nil, errExportParentConflict
 		}
 		if err := transferParentCycleProblemRead(ctx, tx, work, parentWork); err != nil {
+			if errors.Is(err, ErrConflict) {
+				return nil, errExportParentConflict
+			}
 			return nil, err
 		}
 		err := tx.QueryRowContext(ctx, `SELECT s.id,s.title,r.ref FROM catalog_series s
 			JOIN personal_transfer_ref r ON r.series_id=s.id
 			WHERE s.work_id=? ORDER BY s.id LIMIT 2`, parentWork).Scan(&seriesID, &title, &ref)
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, ErrConflict
+			return nil, errExportParentConflict
 		}
 		if err != nil {
 			return nil, err
@@ -140,7 +153,7 @@ func exportEpisodeParent(ctx context.Context, tx *sql.Tx, work, parentWork int64
 			if found == 0 {
 				seriesID, parentWork, title, ref = nextSeries, nextWork, nextTitle, nextRef
 			} else if nextSeries != seriesID {
-				return nil, ErrConflict
+				return nil, errExportParentConflict
 			}
 			found++
 		}
@@ -154,14 +167,17 @@ func exportEpisodeParent(ctx context.Context, tx *sql.Tx, work, parentWork int64
 			var parentOfParent sql.NullInt64
 			if err = tx.QueryRowContext(ctx, `SELECT parent_work_id FROM work WHERE id=?`, parentWork).Scan(&parentOfParent); err != nil {
 				if errors.Is(err, sql.ErrNoRows) {
-					return nil, ErrConflict
+					return nil, errExportParentConflict
 				}
 				return nil, err
 			}
 			if parentOfParent.Valid {
-				return nil, ErrConflict
+				return nil, errExportParentConflict
 			}
 			if err = transferParentCycleProblemRead(ctx, tx, work, parentWork); err != nil {
+				if errors.Is(err, ErrConflict) {
+					return nil, errExportParentConflict
+				}
 				return nil, err
 			}
 		}

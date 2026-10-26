@@ -209,6 +209,20 @@ func TestTransferV2ParentReferenceConflicts(t *testing.T) {
 				return &BackupIdentity{Ref: owned, Kind: "series", Title: "Example Series"}
 			},
 		},
+		{
+			name:  "alias owned by another series",
+			setup: `INSERT INTO catalog_series(id,title) VALUES(601,'First Series'),(602,'Second Series');`,
+			build: func(t *testing.T, s Store, parentRef string) *BackupIdentity {
+				var firstRef, secondRef string
+				if err := s.DB.QueryRow(`SELECT ref FROM personal_transfer_ref WHERE series_id=601`).Scan(&firstRef); err != nil {
+					t.Fatal(err)
+				}
+				if err := s.DB.QueryRow(`SELECT ref FROM personal_transfer_ref WHERE series_id=602`).Scan(&secondRef); err != nil {
+					t.Fatal(err)
+				}
+				return &BackupIdentity{Ref: firstRef, Kind: "series", Title: "First Series", References: []string{secondRef}}
+			},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s := emptyTransferStore(t)
@@ -382,6 +396,256 @@ func TestTransferV2TwoEmptyCodeSeriesDoNotCollide(t *testing.T) {
 	}
 	if works != 2 || series != 2 {
 		t.Fatalf("works=%d series=%d", works, series)
+	}
+}
+
+// A work reachable from two different series has no single parent. The export
+// keeps the episode, its exact catalog references and its review, leaves the
+// relation empty and reports the ambiguity instead of failing the whole backup.
+func TestTransferExportReportsMultipleSeriesParentInsteadOfFailing(t *testing.T) {
+	s := emptyTransferStore(t)
+	execFixture(t, s.DB, `INSERT INTO work(id,primary_code,title) VALUES
+		(301,'','Series A'),(302,'','Episode One'),(303,'','Series B'),(304,'','Episode Two');
+		INSERT INTO catalog_series(id,title,work_id) VALUES
+		(201,'Series A',301),(202,'Series B',303);
+		INSERT INTO source_catalog_entry(id,root_path,title,work_id) VALUES
+		(101,'/A/Episode One','Episode One',302),
+		(102,'/B/Episode One','Episode One',302),
+		(103,'/A/Episode Two','Episode Two',304);
+		INSERT INTO catalog_series_member(series_id,catalog_entry_id,position,evidence) VALUES
+		(201,101,1,'directory'),(202,102,1,'directory'),(201,103,2,'directory');
+		UPDATE work SET parent_work_id=301 WHERE id=304;
+		INSERT INTO user_work_state(user_id,work_id,rating,note) VALUES
+			(1,302,4,'Episode private note'),(1,304,5,'Second episode note');`)
+
+	raw, err := s.Export(context.Background(), 1)
+	if err != nil {
+		t.Fatalf("export failed on an ambiguous parent: %v", err)
+	}
+	exported, err := ParseImport(ImportRequest{Format: "kikoto", Data: raw, Conflict: "keep"})
+	if err != nil {
+		t.Fatalf("parse exported backup: %v", err)
+	}
+	if len(exported.Works) != 2 {
+		t.Fatalf("exported works = %+v, want both reviewed episodes", exported.Works)
+	}
+	byTitle := map[string]BackupWork{}
+	for _, w := range exported.Works {
+		if w.Identity != nil {
+			byTitle[w.Identity.Title] = w
+		}
+	}
+	ambiguous, ok := byTitle["Episode One"]
+	if !ok {
+		t.Fatalf("exported works = %+v, want Episode One", exported.Works)
+	}
+	if ambiguous.Identity.Kind != "episode" || ambiguous.Identity.Parent != nil {
+		t.Fatalf("ambiguous identity = %#v, want an episode with no parent", ambiguous.Identity)
+	}
+	if ambiguous.Rating == nil || *ambiguous.Rating != 4 || ambiguous.Note != "Episode private note" {
+		t.Fatalf("ambiguous review = %v/%q, want it preserved", ambiguous.Rating, ambiguous.Note)
+	}
+	catalogRefs := 0
+	for _, ref := range ambiguous.Identity.References {
+		if strings.HasPrefix(ref, "c:") {
+			catalogRefs++
+		}
+	}
+	if catalogRefs != 2 {
+		t.Fatalf("references = %v, want both retained catalog references", ambiguous.Identity.References)
+	}
+	unique, ok := byTitle["Episode Two"]
+	if !ok {
+		t.Fatalf("exported works = %+v, want Episode Two", exported.Works)
+	}
+	if unique.Identity.Kind != "episode" || unique.Identity.Parent == nil || unique.Identity.Parent.Title != "Series A" {
+		t.Fatalf("unique identity = %#v, want the unaffected episode with its parent", unique.Identity)
+	}
+	if unique.Rating == nil || *unique.Rating != 5 || unique.Note != "Second episode note" {
+		t.Fatalf("unique review = %v/%q, want it preserved", unique.Rating, unique.Note)
+	}
+	found := false
+	for _, issue := range exported.Issues {
+		if issue.Reason == "parent_conflict" && issue.Ref == ambiguous.Identity.Ref {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("issues = %+v, want parent_conflict for %s", exported.Issues, ambiguous.Identity.Ref)
+	}
+	if len(exported.Issues) != 1 {
+		t.Fatalf("issues = %+v, want exactly one parent conflict", exported.Issues)
+	}
+}
+
+// Exactly one series membership is a usable parent even when the entry's work
+// is registered, and it must not be reported as a conflict.
+func TestTransferExportWritesSingleMembershipParent(t *testing.T) {
+	s := emptyTransferStore(t)
+	execFixture(t, s.DB, `INSERT INTO work(id,primary_code,title) VALUES(301,'','Series A'),(302,'','Episode One');
+		INSERT INTO catalog_series(id,title,work_id) VALUES(201,'Series A',301);
+		INSERT INTO source_catalog_entry(id,root_path,title,work_id) VALUES(101,'/A/Episode One','Episode One',302);
+		INSERT INTO catalog_series_member(series_id,catalog_entry_id,position,evidence) VALUES(201,101,1,'directory');
+		INSERT INTO user_work_state(user_id,work_id,rating,note) VALUES(1,302,5,'Episode note');`)
+	var seriesRef string
+	if err := s.DB.QueryRow(`SELECT ref FROM personal_transfer_ref WHERE series_id=201`).Scan(&seriesRef); err != nil {
+		t.Fatal(err)
+	}
+	exported := exportBackup(t, s, 1)
+	if len(exported.Works) != 1 {
+		t.Fatalf("exported works = %+v", exported.Works)
+	}
+	identity := exported.Works[0].Identity
+	if identity == nil || identity.Kind != "episode" || identity.Parent == nil {
+		t.Fatalf("identity = %#v, want an episode with its unique parent", identity)
+	}
+	if identity.Parent.Ref != seriesRef || identity.Parent.Kind != "series" || identity.Parent.Title != "Series A" {
+		t.Fatalf("parent = %#v, want the single membership series", identity.Parent)
+	}
+	if len(exported.Issues) != 0 {
+		t.Fatalf("issues = %+v, want no conflict for one parent", exported.Issues)
+	}
+}
+
+// A restored episode and its series keep distinct evaluation levels, and each
+// reference stays with the object class that owns it. No media is invented.
+func TestTransferEmptyLibraryRoundTripKeepsKindsAndRefOwners(t *testing.T) {
+	s := emptyTransferStore(t)
+	episodeRef, parentRef := refWith("w", '1'), refWith("s", '2')
+	rating := 3
+	backup := Backup{Format: "kikoto-user-data", Version: 2, Works: []BackupWork{{
+		Identity: &BackupIdentity{
+			Ref: episodeRef, Kind: "episode", Title: "Example Episode",
+			Parent: &BackupIdentity{Ref: parentRef, Kind: "series", Title: "Example Series"},
+		},
+		Rating: &rating,
+		Note:   "Episode note",
+	}}}
+	if result := importBackup(t, s, 1, backup); result.ImportedWorks != 1 || result.SkippedWorks != 0 {
+		t.Fatalf("restore = %+v", result)
+	}
+	// The parent keeps its own review too, so both levels appear in the export.
+	execFixture(t, s.DB, `INSERT INTO user_work_state(user_id,work_id,rating,note)
+		SELECT 1,work_id,5,'Series note' FROM catalog_series WHERE title='Example Series'`)
+	exported := exportBackup(t, s, 1)
+	if len(exported.Works) != 2 {
+		t.Fatalf("exported works = %+v", exported.Works)
+	}
+	var episode, series *BackupWork
+	for index := range exported.Works {
+		switch {
+		case exported.Works[index].Identity != nil && exported.Works[index].Identity.Kind == "episode":
+			episode = &exported.Works[index]
+		case exported.Works[index].Identity != nil && exported.Works[index].Identity.Kind == "series":
+			series = &exported.Works[index]
+		}
+	}
+	if episode == nil || series == nil {
+		t.Fatalf("exported kinds = %+v, want one episode and one series", exported.Works)
+	}
+	identity := episode.Identity
+	if identity.Parent == nil || identity.Parent.Kind != "series" || identity.Parent.Ref != parentRef {
+		t.Fatalf("parent identity = %#v, want kind=series with the retained s: ref", identity.Parent)
+	}
+	if series.Identity.Parent != nil {
+		t.Fatalf("series identity carries parent %#v", series.Identity.Parent)
+	}
+	var workID, seriesID sql.NullInt64
+	if err := s.DB.QueryRow(`SELECT work_id,series_id FROM personal_transfer_ref WHERE ref=?`, identity.Ref).Scan(&workID, &seriesID); err != nil {
+		t.Fatal(err)
+	}
+	if !workID.Valid || seriesID.Valid {
+		t.Fatalf("episode ref owner = work %v, series %v; want a work reference", workID, seriesID)
+	}
+	if err := s.DB.QueryRow(`SELECT work_id,series_id FROM personal_transfer_ref WHERE ref=?`, series.Identity.Ref).Scan(&workID, &seriesID); err != nil {
+		t.Fatal(err)
+	}
+	if !workID.Valid || seriesID.Valid {
+		t.Fatalf("series w: ref owner = work %v, series %v; want a work reference", workID, seriesID)
+	}
+	if err := s.DB.QueryRow(`SELECT work_id,series_id FROM personal_transfer_ref WHERE ref=?`, parentRef).Scan(&workID, &seriesID); err != nil {
+		t.Fatal(err)
+	}
+	if workID.Valid || !seriesID.Valid {
+		t.Fatalf("parent ref owner = work %v, series %v; want a catalog_series reference", workID, seriesID)
+	}
+	var media, runs int
+	if err := s.DB.QueryRow(`SELECT (SELECT count(*) FROM media_item),(SELECT count(*) FROM workflow_run)`).Scan(&media, &runs); err != nil {
+		t.Fatal(err)
+	}
+	if media != 0 || runs != 0 {
+		t.Fatalf("restore created media=%d runs=%d", media, runs)
+	}
+}
+
+// Two series works in one backup are numberless identities. Neither the import
+// nor the follow-up export may collide on the partial primary/canonical code
+// indexes or leak an internal code into the user-visible identity.
+func TestTransferTwoSeriesWorksWithEmptyCodesRoundTrip(t *testing.T) {
+	s := emptyTransferStore(t)
+	firstRating, secondRating := 4, 2
+	backup := Backup{Format: "kikoto-user-data", Version: 2, Works: []BackupWork{
+		{Identity: &BackupIdentity{Ref: refWith("w", '1'), Kind: "series", Title: "First Series"},
+			Rating: &firstRating, Note: "First note"},
+		{Identity: &BackupIdentity{Ref: refWith("w", '2'), Kind: "series", Title: "Second Series"},
+			Rating: &secondRating, Note: "Second note"},
+	}}
+	if result := importBackup(t, s, 1, backup); result.ImportedWorks != 2 || result.SkippedWorks != 0 {
+		t.Fatalf("restore = %+v", result)
+	}
+	var codes int
+	if err := s.DB.QueryRow(`SELECT COUNT(*) FROM work WHERE primary_code<>''`).Scan(&codes); err != nil || codes != 0 {
+		t.Fatalf("restored series gained %d visible codes, %v", codes, err)
+	}
+	if err := s.DB.QueryRow(`SELECT COUNT(*) FROM logical_work WHERE canonical_code<>''`).Scan(&codes); err != nil || codes != 0 {
+		t.Fatalf("restored series gained %d canonical codes, %v", codes, err)
+	}
+	exported := exportBackup(t, s, 1)
+	if len(exported.Works) != 2 {
+		t.Fatalf("exported works = %+v", exported.Works)
+	}
+	for _, w := range exported.Works {
+		if w.Identity == nil || w.Identity.Kind != "series" || w.PrimaryCode != "" {
+			t.Fatalf("series identity = %#v code=%q", w.Identity, w.PrimaryCode)
+		}
+	}
+}
+
+// A restored series and its episode can be reviewed independently after the
+// empty-library restore; neither review overwrites the other.
+func TestTransferRestoredSeriesAndEpisodeHaveIndependentReviews(t *testing.T) {
+	s := emptyTransferStore(t)
+	episodeRating := 2
+	backup := Backup{Format: "kikoto-user-data", Version: 2, Works: []BackupWork{{
+		Identity: &BackupIdentity{Ref: refWith("w", '1'), Kind: "episode", Title: "Example Episode",
+			Parent: &BackupIdentity{Ref: refWith("s", '2'), Kind: "series", Title: "Example Series"}},
+		Rating: &episodeRating, Note: "Episode note",
+	}}}
+	if result := importBackup(t, s, 1, backup); result.ImportedWorks != 1 {
+		t.Fatalf("restore = %+v", result)
+	}
+	var seriesWork, episodeWork int64
+	if err := s.DB.QueryRow(`SELECT work_id FROM catalog_series WHERE title='Example Series'`).Scan(&seriesWork); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DB.QueryRow(`SELECT id FROM work WHERE parent_work_id=?`, seriesWork).Scan(&episodeWork); err != nil {
+		t.Fatal(err)
+	}
+	execFixture(t, s.DB, `INSERT INTO user_work_state(user_id,work_id,rating,note) VALUES(1,?,5,'Series note')
+		ON CONFLICT(user_id,work_id) DO UPDATE SET rating=excluded.rating,note=excluded.note`, seriesWork)
+	var episodeRatingAfter, seriesRating int
+	var episodeNote, seriesNote string
+	if err := s.DB.QueryRow(`SELECT COALESCE(rating,0),COALESCE(note,'') FROM user_work_state WHERE user_id=1 AND work_id=?`, episodeWork).Scan(&episodeRatingAfter, &episodeNote); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DB.QueryRow(`SELECT COALESCE(rating,0),COALESCE(note,'') FROM user_work_state WHERE user_id=1 AND work_id=?`, seriesWork).Scan(&seriesRating, &seriesNote); err != nil {
+		t.Fatal(err)
+	}
+	if episodeRatingAfter != 2 || episodeNote != "Episode note" {
+		t.Fatalf("episode review = %d/%q, want 2/Episode note", episodeRatingAfter, episodeNote)
+	}
+	if seriesRating != 5 || seriesNote != "Series note" {
+		t.Fatalf("series review = %d/%q, want 5/Series note", seriesRating, seriesNote)
 	}
 }
 

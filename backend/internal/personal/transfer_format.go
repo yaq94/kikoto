@@ -24,6 +24,10 @@ type Backup struct {
 	Works      []BackupWork     `json:"works"`
 	Playlists  []BackupPlaylist `json:"playlists"`
 	Tags       []BackupTag      `json:"tags"`
+	// Issues are export-side observations about the source library, such as an
+	// episode whose persisted parent cannot be expressed. They never block the
+	// rest of the backup and are ignored on import.
+	Issues []ImportIssue `json:"issues,omitempty"`
 }
 
 type BackupWork struct {

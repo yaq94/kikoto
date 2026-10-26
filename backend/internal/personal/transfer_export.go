@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"sort"
 	"time"
 )
 
@@ -41,6 +42,7 @@ func (s Store) Export(ctx context.Context, user int64) ([]byte, error) {
 		return nil
 	}
 	workIndex := map[int64]int{}
+	var issues []ImportIssue
 	err = scanRows(ctx, tx, `WITH personal_work AS (
 	 SELECT work_id FROM user_work_state WHERE user_id = ?
 	 UNION SELECT work_id FROM user_work_tag WHERE user_id = ?
@@ -75,9 +77,15 @@ func (s Store) Export(ctx context.Context, user int64) ([]byte, error) {
 		exportedWorks[id] = true
 	}
 	for id, index := range workIndex {
-		identity, err := exportIdentity(ctx, tx, id, true, exportedWorks)
+		identity, identityIssues, err := exportIdentity(ctx, tx, id, true, exportedWorks)
 		if err != nil {
 			return nil, err
+		}
+		for _, issue := range identityIssues {
+			if err = reserveText(issue.Ref, issue.Title, issue.Reason); err != nil {
+				return nil, err
+			}
+			issues = append(issues, issue)
 		}
 		if err = reserveText(identity.Title, identity.Ref); err != nil {
 			return nil, err
@@ -170,7 +178,7 @@ func (s Store) Export(ctx context.Context, user int64) ([]byte, error) {
 		return nil, err
 	}
 	for work, mediaWork := range mediaIdentities {
-		identity, err := exportIdentity(ctx, tx, mediaWork, false, nil)
+		identity, _, err := exportIdentity(ctx, tx, mediaWork, false, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -240,6 +248,15 @@ func (s Store) Export(ctx context.Context, user int64) ([]byte, error) {
 	if err = tx.Commit(); err != nil {
 		return nil, err
 	}
+	// Map iteration above is unordered; keep the report stable for review and
+	// for comparing two exports of the same library.
+	sort.Slice(issues, func(a, b int) bool {
+		if issues[a].Ref != issues[b].Ref {
+			return issues[a].Ref < issues[b].Ref
+		}
+		return issues[a].Reason < issues[b].Reason
+	})
+	b.Issues = issues
 	data, err := json.Marshal(b)
 	if len(data) > MaxTransferBytes {
 		return nil, ErrLimit
