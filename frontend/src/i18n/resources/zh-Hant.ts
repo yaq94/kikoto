@@ -291,6 +291,7 @@ const workCardHant = {
   noSource: "沒有來源",
   remoteSource: "遠端來源",
   namedSourceUnavailable: "{{name}}無法使用",
+  namedSourceVerdict: "{{name}}（{{verdict}}）",
   local: "本機",
   tracked: "已追蹤",
 } as const;

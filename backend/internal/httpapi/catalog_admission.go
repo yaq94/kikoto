@@ -276,11 +276,12 @@ func catalogEntryAdmissionRequired(entry catalogEntry) bool {
 // catalogVerdictPlayable reports whether a card whose admission passed can
 // still be opened. A failed, restricted, maintenance or unconfirmed range
 // proves nothing about its files, and the detail, track and media endpoints
-// keep serving the last published set; only a confirmed absence, an operator
-// exclusion or a disabled source removes playback.
+// keep serving the last published set; only a confirmed absence or an operator
+// exclusion removes playback. A disabled source never reaches this rule: its
+// cards are not listed at all.
 func catalogVerdictPlayable(status string) bool {
 	switch status {
-	case "missing", "excluded", "disabled":
+	case "missing", "excluded":
 		return false
 	default:
 		return true
@@ -291,7 +292,7 @@ func catalogVerdictPlayable(status string) bool {
 // and its member cards read the same rule, so a series of failed-but-playable
 // episodes cannot report itself unplayable while each episode stays playable.
 func catalogVerdictPlayableSQL(status string) string {
-	return `(` + status + ` NOT IN ('missing','excluded','disabled'))`
+	return `(` + status + ` NOT IN ('missing','excluded'))`
 }
 
 // catalogEntryHasAudioSQL answers whether a card can play anything, using the

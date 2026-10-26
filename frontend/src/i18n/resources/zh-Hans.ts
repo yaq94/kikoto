@@ -290,6 +290,7 @@ export const workCardHans = {
   noSource: "暂无来源",
   remoteSource: "远程来源",
   namedSourceUnavailable: "{{name}}不可用",
+  namedSourceVerdict: "{{name}}（{{verdict}}）",
   local: "本地",
   tracked: "已跟踪",
 } as const;

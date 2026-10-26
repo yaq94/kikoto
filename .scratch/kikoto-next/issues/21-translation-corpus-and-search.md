@@ -97,10 +97,10 @@ prefill 必须按 `entity_kind × field` 枚举：entry 的 title、series 的 t
 - [x] 本地与远程搜索、简繁归一化、动态内容、重启和失败恢复 H/R/F 覆盖。
 - [x] modernc SQLite、45.6 万行基准。`bc880d91` 已重写语料与采样：每个实体写四种模型语言、按 id 确定性取样、默认 `--rows 456000`，短查询调用共享生成器。本机基准（`.kikoto-work/reports/bench-456k-final.json`，114,000 实体 × 4 语言，非目标硬件）结果：
   - 卡片页短查询 `limit=200` p95：en 1.094 ms、zh-Hans 0.575 ms、ja 1.316 ms、ko 1.506 ms，达标（≤100 ms）。
-  - 完整集合短查询 `limit=0`（用于总数）p95：en 313.119 ms、zh-Hans 317.013 ms、ja 520.704 ms、ko 478.139 ms，**未达标**。
+  - 完整集合短查询 `limit=0`（无预算诊断）p95：en 313.119 ms、zh-Hans 317.013 ms、ja 520.704 ms、ko 478.139 ms。这是引入 1000 张结果预算之前的历史本机数字，只说明为何不采用无预算总数；当前总数与卡片页共用预算。
   - 目标语言标题整串等值 p95 1.58–2.505 ms；FTS p95 0.573–1.506 ms；编号等值低于计时器分辨率（0.00 ms，max 0.53 ms）。
   - DB 425.6 MB（`dbBytes` 446,291,968）、FTS 35.9 MB、VACUUM 后 404.5 MB；插入 131–147 s，WAL 峰值 23.3 MB。
-  - 该运行未包含 D-16 准入 join；目标硬件（2 vCPU／2 GiB、warm、≥20 样本）结果仍缺。
+  - 该运行未包含 D-16 准入 join；目标硬件复测见下方 2026-10-27 条目。
 - [x] “精确命中”按两条用户路径分别测量并留证。`translation-bench` 用 `primary_code` 等值与目标语言标题整串等值两条查询，不读 `cache_key`。目标机（2 vCPU、456,000 行、20 样本）结果：标题整串等值 p95 1.393/1.367/1.593/1.725 ms（zh-Hans/en/ja/ko），计划为 `SCAN content_translation_search VIRTUAL TABLE INDEX 0:M1` 加 rowid 主键探测；编号等值 p95 0.018 ms。均低于 5 ms 门槛。证据为发布记录中的 `translation-bench.json`。
 
 **测试入口:** H、R、少量 F、必要 U；真实模型与规模证据由 24 汇总。

@@ -282,6 +282,7 @@ export const workCardEnglish = {
   noSource: "No source",
   remoteSource: "remote source",
   namedSourceUnavailable: "{{name}} unavailable",
+  namedSourceVerdict: "{{name}} · {{verdict}}",
   local: "Local",
   tracked: "Tracked",
 } as const;

@@ -290,6 +290,7 @@ const workCardJapanese = {
   noSource: "ソースなし",
   remoteSource: "リモートソース",
   namedSourceUnavailable: "{{name}}を利用できません",
+  namedSourceVerdict: "{{name}}（{{verdict}}）",
   local: "ローカル",
   tracked: "追跡済み",
 } as const;

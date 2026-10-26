@@ -20,11 +20,9 @@ import (
 const translationCoverageCacheTTL = 15 * time.Second
 
 type translationCoverageCacheEntry struct {
-	configKey   string
-	at          time.Time
-	coverage    translationCorpusCoverage
-	overBudget  bool
-	budgetBytes int64
+	configKey string
+	at        time.Time
+	snapshot  translationOperatorSnapshot
 }
 
 // translationOperatorSnapshot is the expensive half of the operator view: the
@@ -46,7 +44,7 @@ func (s *Server) cachedTranslationOperatorSnapshot(ctx context.Context, cfg tran
 	defer s.translationCoverageMu.Unlock()
 	if cached := s.translationCoverage; cached != nil &&
 		cached.configKey == configKey && time.Since(cached.at) < translationCoverageCacheTTL {
-		return translationOperatorSnapshot{coverage: cached.coverage, overBudget: cached.overBudget, budgetBytes: cached.budgetBytes}, nil
+		return cached.snapshot, nil
 	}
 	coverage, err := s.translationCorpusCoverageFor(ctx, cfg)
 	if err != nil {
@@ -56,11 +54,9 @@ func (s *Server) cachedTranslationOperatorSnapshot(ctx context.Context, cfg tran
 	if err != nil {
 		return translationOperatorSnapshot{coverage: coverage}, err
 	}
-	s.translationCoverage = &translationCoverageCacheEntry{
-		configKey: configKey, at: time.Now(), coverage: coverage,
-		overBudget: overBudget, budgetBytes: budget,
-	}
-	return translationOperatorSnapshot{coverage: coverage, overBudget: overBudget, budgetBytes: budget}, nil
+	snapshot := translationOperatorSnapshot{coverage: coverage, overBudget: overBudget, budgetBytes: budget}
+	s.translationCoverage = &translationCoverageCacheEntry{configKey: configKey, at: time.Now(), snapshot: snapshot}
+	return snapshot, nil
 }
 
 // invalidateTranslationCoverageCache drops the operator snapshot after a write

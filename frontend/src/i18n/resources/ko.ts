@@ -290,6 +290,7 @@ const workCardKorean = {
   noSource: "소스 없음",
   remoteSource: "원격 소스",
   namedSourceUnavailable: "{{name}} 사용 불가",
+  namedSourceVerdict: "{{name}} ({{verdict}})",
   local: "로컬",
   tracked: "추적됨",
 } as const;

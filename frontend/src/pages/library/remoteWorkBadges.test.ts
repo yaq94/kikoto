@@ -8,12 +8,13 @@ describe("remote source badges", () => {
     expect(badges).toEqual([{ key: "source:remote:7", label: "Example Remote", variant: "outline" }]);
   });
 
-  it("keeps a failed range playable and names the verdict", () => {
+  it("keeps a failed range playable and states the verdict in the label", () => {
     const badges = remoteSourceBadges({ remotePlayable: true, availability: "unavailable" }, 7, "Example Remote");
     expect(badges).toHaveLength(1);
     expect(badges[0].key).toBe("source:remote:7");
     expect(badges[0].variant).toBe("outline");
-    expect(badges[0].title).toBeTruthy();
+    expect(badges[0].label).toContain("Example Remote");
+    expect(badges[0].label).toContain("unavailable");
   });
 
   it("warns when the source can no longer open the card", () => {
