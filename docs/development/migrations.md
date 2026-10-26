@@ -79,9 +79,10 @@ lookups by parent, entry and episode root. It also creates
 complete staged split between `pending` and `published`. Both source and entry
 references cascade; `catalog_series_member` retains its restrictive entry
 reference, so episode compensation removes pending-only membership explicitly
-before deleting an entry. Its snapshot is `compat/096_dev.sql`; with `105` at
-the chain head, `cd backend && go run ./cmd/schema-baseline -migrations
-./migrations -version-file ../VERSION` writes `compat/105_dev.sql`.
+before deleting an entry. Its snapshot is `compat/096_dev.sql`. Regenerate a
+development baseline at the current head with `cd backend && go run
+./cmd/schema-baseline -migrations ./migrations -version-file ../VERSION`; it
+writes `compat/<head>_dev.sql`.
 The numbered migration does not alter 095 or reconstruct an existing database
 from a baseline. See [Catalog series](catalog-series.md) for the staging,
 activation and recovery semantics.
@@ -192,16 +193,6 @@ delete and relevant update triggers on `source_catalog_file` set the stored
 generation to `-1`, so a reader falls back to live counting instead of trusting
 a count from an older file set. The publish transaction rewrites the row after
 the card's files commit.
-
-Schema 105 is `105_translation_short_scan_scope.sql`. It adds
-`content_translation.source_id` and `effective`, backfills `source_id` from the
-entry's file source or the series' source, marks entry rows whose
-`source_text` no longer matches the current title as ineffective, replaces the
-103 short-scan index with
-`(language, entity_kind, field, source_id, effective, id, origin, config_key,
-translated_text)`, and adds triggers that keep `source_id` and `effective`
-current for work title/description changes and entry title/source changes and
-deletions.
 
 ## Fresh Installs And Upgrades
 
@@ -397,18 +388,18 @@ matches the backup.
 | v0.8.0 | `059` | `059_v0.8.0.sql` |
 | v0.8.1, v0.8.2 | `066` | `066_v0.8.1.sql` |
 | v0.8.3 | `068` | `068_v0.8.3.sql` |
-| development build (unreleased) | `105` | Development baseline only; `compat/105_dev.sql` |
+| development build (unreleased) | `104` | Development baseline only; `compat/104_dev.sql` |
 
-The numbered chain runs `096` through `105` without a gap.
-`compat/105_dev.sql` is the current development baseline; `compat/104_dev.sql`,
-`compat/103_dev.sql` and `compat/102_dev.sql` remain as earlier development
+The numbered chain runs `096` through `104` without a gap.
+`compat/104_dev.sql` is the current development baseline; `compat/103_dev.sql`,
+`compat/102_dev.sql` and `compat/096_dev.sql` remain as earlier development
 baselines, and there is no separate `compat/101_dev.sql`.
 
 Per-release upgrade steps are in the [release notes](../history/index.md).
 
 ## Kikoto-next Schema Additions
 
-Migrations `069` through `105` extend the source catalog, shared associations,
+Migrations `069` through `104` extend the source catalog, shared associations,
 personal transfer, and the recoverable index. Pending release notes and upgrade
 steps are in
 [Unreleased](../history/unreleased.md).
@@ -451,7 +442,6 @@ steps are in
 | `102_translation_prefill_status.sql` | Rebuild `translation_prefill_state` with `failed`; index the failure table by `(config_key, source_hash)` | The cursor row survives the rebuild; triggers are recreated, and bounded failure cleanup uses the index |
 | `103_translation_short_scan_index.sql` | Replace the 099 short-query indexes with `idx_content_translation_short_scan` | An ordered short page reads the index in keyset order; the complete-set count needs no table lookup |
 | `104_source_catalog_entry_admission.sql` | `source_catalog_entry_admission`, one count row per card and generation | A matching generation answers admission from the primary key; a file write invalidates the row and the reader counts live rows |
-| `105_translation_short_scan_scope.sql` | `content_translation.source_id` and `effective`; replace the 103 short-scan index with the source-scoped form | A per-source short scan reads one index range; entity triggers keep the source and effectiveness flags current |
 
 The Release To Schema Map above lists every numbered file. `069` rebuilds `work`
 and `logical_work` to relax code uniqueness and creates the catalog entry and
@@ -502,16 +492,14 @@ persisted schedule; `099` adds the translation config key and prefill cursor;
 `100` adds the work parent; `101` adds the backfill report; `102` rebuilds the
 prefill state to allow `failed` and indexes the failure table; `103` replaces
 the two 099 short-query indexes with one keyset-ordered covering index. `104`
-adds the per-card admission count row and its invalidation triggers. `105` adds
-the short-scan scope columns, replaces the 103 index, and adds the triggers
-that keep the scope current.
+adds the per-card admission count row and its invalidation triggers.
 
-The `084` through `105` changes retain existing rows. `087`, `097` and `102`
+The `084` through `104` changes retain existing rows. `087`, `097` and `102`
 rebuild tables; `087` copies every entry column and recreates its indexes,
 triggers and view, `097` copies only display-cache rows with a live source and
 recreates both cache indexes, and `102` copies the single prefill-state row and
-recreates its reset triggers. `103` and `105` only replace indexes, and `105`
-adds two columns with defaults. `085`, `088`, `090`, `091` and `092` add tables
+recreates its reset triggers. `103` only replaces indexes. `085`, `088`, `090`,
+`091` and `092` add tables
 or columns with defaults, `093` adds an index, `094` adds one column default,
 `095` adds a rebuildable cache table, and `104` adds a derived count table.
 Startup refuses a database newer than the binary before running a handler.
