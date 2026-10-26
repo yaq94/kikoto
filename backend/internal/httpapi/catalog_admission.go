@@ -273,11 +273,11 @@ func catalogEntryAdmissionRequired(entry catalogEntry) bool {
 	return entry.SourceID != 0 && entry.Status != "missing"
 }
 
-// catalogVerdictPlayable reports whether a card with a current audio file can
-// still be opened. A failed, restricted, maintenance or unconfirmed range keeps
-// its last published file set, and the detail, track and media endpoints judge
-// that set; only a confirmed absence, an operator exclusion or a disabled
-// source removes playback.
+// catalogVerdictPlayable reports whether a card whose admission passed can
+// still be opened. A failed, restricted, maintenance or unconfirmed range
+// proves nothing about its files, and the detail, track and media endpoints
+// keep serving the last published set; only a confirmed absence, an operator
+// exclusion or a disabled source removes playback.
 func catalogVerdictPlayable(status string) bool {
 	switch status {
 	case "missing", "excluded", "disabled":
