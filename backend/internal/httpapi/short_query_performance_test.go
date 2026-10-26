@@ -50,7 +50,6 @@ type shortQueryCase struct {
 	HitPage   shortQueryStats `json:"hitPage"`
 	Complete  shortQueryStats `json:"complete"`
 	Page      shortQueryStats `json:"page"`
-	Floor     shortQueryStats `json:"floor"`
 	HitPlan   []string        `json:"hitPlan"`
 	Plan      []string        `json:"plan"`
 }
@@ -128,8 +127,8 @@ func TestShortQueryPerformance(t *testing.T) {
 		t.Logf("report written to %s", out)
 	}
 	for _, item := range report.Cases {
-		t.Logf("%-9s %-6q matches=%d floor p95=%.1f hit p95=%.1f capped p95=%.1f hitpage p95=%.1f card p95=%.1f page p95=%.1f",
-			item.Language, item.Needle, item.Matches, item.Floor.P95Ms, item.HitSet.P95Ms, item.HitCapped.P95Ms, item.HitPage.P95Ms, item.Complete.P95Ms, item.Page.P95Ms)
+		t.Logf("%-9s %-6q matches=%d hit p95=%.1f capped p95=%.1f hitpage p95=%.1f card p95=%.1f page p95=%.1f",
+			item.Language, item.Needle, item.Matches, item.HitSet.P95Ms, item.HitCapped.P95Ms, item.HitPage.P95Ms, item.Complete.P95Ms, item.Page.P95Ms)
 	}
 }
 
@@ -177,19 +176,6 @@ func shortQueryMeasure(t *testing.T, db *sql.DB, sourceID int64, target library.
 		return rows.Err()
 	})
 	result.HitPlan = shortQueryPlan(t, db, hitSQL, hitArgs)
-
-	// The floor is the same range walk with no entity scope at all: language,
-	// kind, field, current row and instr over the covering index. It is the
-	// cheapest any index-only design can reach, so a floor above the threshold
-	// means no added index can satisfy the requirement.
-	floorSQL := `SELECT count(*) FROM content_translation ct INDEXED BY idx_content_translation_short_scan
-		WHERE ct.language=? AND ct.entity_kind='entry' AND ct.field='title'
-		  AND (ct.origin='native' OR (ct.origin='model' AND ct.config_key=?))
-		  AND instr(ct.translated_text, ?)>0`
-	result.Floor = shortQuerySample(samples, func() error {
-		var total int
-		return db.QueryRowContext(context.Background(), floorSQL, target.Language, configKey, target.Query).Scan(&total)
-	})
 
 	completeSQL := prefix + `SELECT count(*) ` + from
 	for range warmup {

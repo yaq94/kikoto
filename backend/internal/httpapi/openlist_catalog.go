@@ -1054,18 +1054,18 @@ func localizedCatalogSearchSQL(targets []library.DisplaySearchTarget, sourceID i
 		{
 			EntityKind: "entry",
 			Fields:     []string{"title"},
-			SourceID:   sourceID,
 			ConfigKey:  configKey,
 			Scope: `EXISTS(SELECT 1 FROM source_catalog_entry e
-				WHERE e.id=ct.entity_id AND e.relocated_to_id IS NULL
-				  AND ` + catalogEntryAdmittedSQL("e") + `)`,
+				WHERE e.id=ct.entity_id AND e.file_source_id=? AND e.relocated_to_id IS NULL
+				  AND ct.source_text=e.title AND ` + catalogEntryAdmittedSQL("e") + `)`,
+			ScopeArgs: []any{sourceID},
 		},
 		{
 			EntityKind: "series",
 			Fields:     []string{"title"},
 			ConfigKey:  configKey,
 			Scope: `EXISTS(SELECT 1 FROM catalog_series s
-				WHERE s.id=ct.entity_id AND s.source_id=?
+				WHERE s.id=ct.entity_id AND s.source_id=? AND ct.source_text=s.title
 				  AND (SELECT COUNT(*) FROM catalog_series_member sm WHERE sm.series_id=s.id)>=2
 				  AND EXISTS(SELECT 1 FROM catalog_series_member sm JOIN source_catalog_entry se ON se.id=sm.catalog_entry_id
 					WHERE sm.series_id=s.id AND se.relocated_to_id IS NULL AND ` + catalogEntryAdmittedSQL("se") + `))`,
