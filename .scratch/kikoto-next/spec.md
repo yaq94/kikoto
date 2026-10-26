@@ -2,7 +2,7 @@
 
 **Status:** ready-for-agent
 **设计状态:** 已确认（Q31）；用户故事、验收要求与测试边界作为实施合同。
-**Implementation:** in-progress；01–19 的历史证据按对应产物保留。20–24 承接审查发现的目录、译文、个人恢复、保留与发布缺口；当前迁移头为 105，候选 `2ad508e8` 已冻结并部署（schema 105，`/health` 200 `v0.8.3`），Full CI run `40341543004` success，20–24 的证据由 24 汇总，见[执行记录](execution.md)与[24 候选账本](evidence/24-candidate-2ad508e8.md)。
+**Implementation:** resolved；01–19 的历史证据按对应产物保留。20–24 承接审查发现的目录、译文、个人恢复、保留与发布缺口；当前迁移头为 105，候选 `f727feee` 已冻结并部署（schema 105，`/health` 200 `v0.8.3`），Full CI run `40409566661` success，20–24 的证据由 24 汇总，见[执行记录](execution.md)与[24 候选账本](evidence/24-candidate-f727feee.md)。
 **执行授权:** 用户已授权本规格全部功能实现、必要依赖安装、测试、数据库迁移、部署与回滚；进度及证据见[执行记录](execution.md)。
 **领域依据:** [GLOSSARY](../../GLOSSARY.md) · [作品身份与个人记录 ADR](../../docs/decisions/ADR-0004-work-identity-and-personal-state.md) · [整改一致性 ADR](../../docs/decisions/ADR-0006-catalog-remediation-and-translation-consistency.md)
 
@@ -252,5 +252,5 @@
 - 本规格继承已经确认的 Q1–Q31 决定与“少量浏览器纯功能测试、无真实浏览器视觉验证”边界；当前阶段按已授权的全范围实现、测试、迁移、部署与回滚推进。
 - 真实来源的访问证据按时间与路径分别记录：IAB 匿名网页可播放；程序 fs/get 在早期诊断中失败，后续声明 Kikoto 身份后取得两段真实媒体 Range（206×2 + sha256）。这些证据属于对应旧产物，当前候选仍需由 24 重新验证；详见 [07 证据](evidence/07-openlist.md#真实媒体-live-结果)。
 - Index 官方资料中的权重仓库为 IndexTeam/Index-Translate-35B-A3B-preview，公共客户端示例的 model 为 Index-Translate-35B-A3B；实际服务调用名由管理员配置。中文简体、英语、日语和韩语有官方条目，繁体路线按已确认转换方案验收。
-- 各项验收状态以[执行记录](execution.md)及对应票据为准。01–16 的历史本地证据按对应产物保留；08、18、19、20、21、23 为 verified-local，22 在记录 SHA `2ad508e8` 上为 resolved，17 为 in-progress，24 汇总当前候选并待终验。候选 `2ad508e8` 已取得 Full CI run `40341543004` success，完成 84→105 迁移与回滚演练并部署到生产；真实媒体 Range/定位读取、真实索引覆盖与组合负载的部署后复验仍待 24 记录。
+- 各项验收状态以[执行记录](execution.md)及对应票据为准。01–16 的历史本地证据按对应产物保留；08、18、19、20、21、23 为 verified-local，22 与 24 在记录 SHA `f727feee` 上为 resolved，17 为 in-progress。候选 `f727feee` 已取得 Full CI run `40409566661` success（26/26），迁移链四项与旧 095 preflight 在本候选通过，并部署到生产；部署后真实媒体 Range、真实索引覆盖（run 53 partial）与组合负载（16,162 请求）已由 24 记录。17 仍为 in-progress：其原始组合验收由 24 的候选证据与部署验收共同支撑，但该票自身尚未改写状态。
 - 参考：[OpenList 目录接口](https://github.com/OpenListTeam/OpenList/blob/main/server/handles/fsread.go)、[OpenList 搜索实现](https://github.com/OpenListTeam/OpenList/blob/main/internal/search/search.go)、[Index 模型卡](https://huggingface.co/IndexTeam/Index-Translate-35B-A3B-preview)、[Index 调用客户端](https://github.com/bilibili/Index-Translate/blob/main/inference/llm/call_api.py)、[Index 语言清单](https://arxiv.org/html/2609.40181)。

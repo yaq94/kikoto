@@ -5,7 +5,7 @@
 **Blocked by:** [16：个人数据导入导出](16-personal-data-transfer-compatibility.md)；迁移 100 已在 099 之后落地，不再阻塞。
 
 **Status:** ready-for-agent
-**Implementation:** resolved（记录 SHA `2ad508e8`）；迁移 100 增加 `work.parent_work_id`，父级导入与系列详情回退（`catalogEntryId=0`）已落地。导出格式为 `version: 2` 加可选 `parent`（`transfer_export.go:30`），v3 按未知版本拒绝；父级别名冲突报告 `parent_alias_not_imported`（`transfer_import.go:246`）。导出遇多父系列不再致命：`exportIdentity` 把冲突降级为 `issues[].reason=parent_conflict`，条目保留 ref 与评分备注、`parent` 留空（`transfer_identity.go:10-75`）。`go test ./internal/personal/ ./internal/httpapi/ -run 'Personal|Transfer' -count=1` 在记录 SHA 上通过。
+**Implementation:** resolved（记录 SHA `f727feee`）；迁移 100 增加 `work.parent_work_id`，父级导入与系列详情回退（`catalogEntryId=0`）已落地。导出格式为 `version: 2` 加可选 `parent`（`transfer_export.go:30`），v3 按未知版本拒绝；父级别名冲突报告 `parent_alias_not_imported`（`transfer_import.go:246`）。导出遇多父系列不再致命：`exportIdentity` 把冲突降级为 `issues[].reason=parent_conflict`，条目保留 ref 与评分备注、`parent` 留空（`transfer_identity.go:10-75`）。`go test ./internal/personal/ ./internal/httpapi/ -run 'Personal|Transfer' -count=1` 在记录 SHA 上通过。
 
 **依据:** [正式规格](../spec.md)、[ADR-0004](../../../docs/decisions/ADR-0004-work-identity-and-personal-state.md)、[ADR-0006](../../../docs/decisions/ADR-0006-catalog-remediation-and-translation-consistency.md)。
 
@@ -98,4 +98,4 @@ CREATE INDEX idx_work_parent_work ON work(parent_work_id);
 
 `relationships_not_imported` 不能成为已确认父级静默丢失的完成状态。当前 `registerTransferWork` 对未知 episode 只创建独立 work；必须先完成父级数据模型和备份字段，再改导入路径。迁移编号在 096 落地后按连续链分配，不能抢占或跳号。
 
-2026-10-27：`Status` 由无效值 `in-review` 修正为 `ready-for-agent`；`Implementation` 记为 `resolved`，记录 SHA `2ad508e8`。证据文件的测试名已与当前分支对齐，旧分支测试名不再作为完成依据。
+2026-10-27：`Status` 由无效值 `in-review` 修正为 `ready-for-agent`；`Implementation` 记为 `resolved`，记录 SHA 随候选推进更新为 `f727feee`。证据文件的测试名已与当前分支对齐，旧分支测试名不再作为完成依据。
