@@ -102,29 +102,33 @@ export function mergeVoiceWorks(knownWorks: VoiceKnownWork[], sourceSets: VoiceR
 }
 
 export function voiceWorkRemoteTarget(work: VoiceWorkView): { sourceId: number; code: string } | null {
-  // A known work carries its own source tags rather than a single sourceId. An
-  // unknown observation is still a reference the reader can open and check;
-  // only a settled negative answer is withheld.
+  // A confirmed answer wins. A known work can have several source tags, so an
+  // available tag is preferred over an unknown observation.
   const observations = work.remoteObservations ?? [];
-  const observation =
-    observations.find((item) => item.status === "available") ??
-    observations.find((item) => item.status === "unknown");
-  if (observation) return { sourceId: observation.sourceId, code: observation.remoteCode };
+  const availableObservation = observations.find((item) => item.status === "available");
+  if (availableObservation) {
+    return { sourceId: availableObservation.sourceId, code: availableObservation.remoteCode };
+  }
+  const code = (work.remoteCode || work.primaryCode).trim();
+  if ("sourceTags" in work) {
+    const source = work.sourceTags.find(
+      (tag) => validSourceID(tag.sourceId) && tag.key !== "cache" && tag.status === "available",
+    );
+    if (source?.sourceId && code) return { sourceId: source.sourceId, code };
+  }
+  // Unknown is a pending answer, not a refusal: opening the source runs the
+  // check that resolves it. A settled negative answer is withheld unless a
+  // stored presence row keeps the reference visible.
+  const unknownObservation = observations.find((item) => item.status === "unknown");
+  if (unknownObservation) {
+    return { sourceId: unknownObservation.sourceId, code: unknownObservation.remoteCode };
+  }
   if ("sourceId" in work && validSourceID(work.sourceId)) {
-    // Unknown is a pending answer, not a refusal: opening the source runs the
-    // check that resolves it. A negative answer without other evidence blocks
-    // the card instead of promising a directory the source no longer lists.
     if (!work.remotePlayable && work.availability !== "available" && work.availability !== "unknown" && !work.hasRemote)
       return null;
-    const code = (work.remoteCode || work.primaryCode).trim();
     return code ? { sourceId: work.sourceId, code } : null;
   }
-  if (!("sourceTags" in work)) return null;
-  const source = work.sourceTags.find(
-    (tag) => validSourceID(tag.sourceId) && tag.key !== "cache" && tag.status === "available",
-  );
-  const code = (work.remoteCode || work.primaryCode).trim();
-  return source?.sourceId && code ? { sourceId: source.sourceId, code } : null;
+  return null;
 }
 
 export function voiceWorkObservedSourceTags(work: VoiceWorkView) {

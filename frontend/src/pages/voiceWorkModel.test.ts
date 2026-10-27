@@ -158,6 +158,26 @@ describe("mergeVoiceWorks", () => {
     expect(voiceWorkHasRemoteReference(unknown)).toBe(true);
   });
 
+  it("prefers an available source tag over an unknown observation", () => {
+    const known: VoiceKnownWork = {
+      ...knownWork(),
+      remote: true,
+      sourceTags: [{ key: "source:7", sourceId: 7, displayName: "Available Source", status: "available", count: 1 }],
+      remoteObservations: [
+        {
+          sourceId: 9,
+          sourceCode: "other-source",
+          sourceName: "Other Source",
+          remoteCode: "SAMPLE-UNKNOWN",
+          status: "unknown",
+        },
+      ],
+    };
+
+    expect(voiceWorkRemoteTarget(known)).toEqual({ sourceId: 7, code: "SAMPLE-ORIGIN" });
+    expect(voiceWorkHasRemoteAvailability(known)).toBe(true);
+  });
+
   it("opens a known work's unknown observation without claiming availability", () => {
     const known: VoiceKnownWork = {
       ...knownWork(),
