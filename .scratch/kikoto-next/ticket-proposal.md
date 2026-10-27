@@ -20,7 +20,7 @@
 | 21 | verified-local | 099/102/105、严格语言搜索、共享短查询生成器与 `failed` 终态已合入；1–2 字查询的返回条数与 `total` 共用 1000 张预算并以 `truncated` 标记还有更多，目标机卡片页与同预算总数 p95 均 ≤13 ms；最终候选复验由 24 记录。 |
 | 22 | resolved（记录 SHA `f727feee`，历史） | 迁移 100、`work.parent_work_id`、v2 + 可选 `parent`、`parent_alias_not_imported` 与多父级 `parent_conflict` 已落地；9 项验收勾选并有测试名。 |
 | 23 | verified-local | 095–105 已合入，`compat/105_dev.sql` 已生成；文档与证据收口完成。 |
-| 24 | resolved | 候选 `c9449653` 已部署；Full CI run `40463449636` 记录状态为进行中（终态 TODO）；迁移链四项沿用上一候选证据，LIVE 与部署后逐项验收完成。 |
+| 24 | resolved | 候选 `c9449653` 已部署；Full CI run `40463449636` 终态 success（27/27 job）；迁移链四项沿用上一候选证据，LIVE 与部署后逐项验收完成。 |
 
 11 的历史 `resolved` 只证明其记录 SHA；AC-14 的单集、格式副本、Bonus 和成员上限必须在 24 的当前候选上重新通过，不能由未提交系列修复替代。
 
@@ -407,7 +407,7 @@
 
 ## 发布状态
 
-24 张正式工单使用项目规定模板。每票链接到规格、总览和直接前置工单；当前 01–07、09–16 的历史本地证据为 resolved，但不自动作为当前候选证据；08、18、19、20、21、23 为 verified-local，22 在记录 SHA `f727feee`（历史）上为 resolved，24 在 `c9449653` 上为 resolved，17 为 in-progress。分诊 `Status` 保持 `ready-for-agent`，上表只记录独立 `Implementation` 字段。验收清单仅随实际证据更新。候选 `c9449653` 已部署，Full CI run `40463449636` 记录状态为进行中、终态 TODO；真实全量覆盖仍为 partial，不以 partial 冒充完整覆盖。
+24 张正式工单使用项目规定模板。每票链接到规格、总览和直接前置工单；当前 01–07、09–16 的历史本地证据为 resolved，但不自动作为当前候选证据；08、18、19、20、21、23 为 verified-local，22 在记录 SHA `f727feee`（历史）上为 resolved，24 在 `c9449653` 上为 resolved，17 为 in-progress。分诊 `Status` 保持 `ready-for-agent`，上表只记录独立 `Implementation` 字段。验收清单仅随实际证据更新。候选 `c9449653` 已部署，Full CI run `40463449636` 终态 success（27/27 job）；真实全量覆盖仍为 partial，不以 partial 冒充完整覆盖。
 
 ## Comments
 

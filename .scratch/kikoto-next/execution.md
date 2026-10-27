@@ -1,12 +1,12 @@
 # Kikoto 下一阶段执行记录
 
 **Status:** ready-for-agent
-**Implementation:** resolved；01–19 的历史证据按对应产物保留；20–24 的整改已汇总到候选 `c9449653`，门禁、部署与部署后验收已完成；双轴审查报告见 [24 候选账本](evidence/24-candidate-c9449653.md) 第 3 节；Full CI run `40463449636` 终态 TODO。
+**Implementation:** resolved；01–19 的历史证据按对应产物保留；20–24 的整改已汇总到候选 `c9449653`，门禁、部署与部署后验收已完成；双轴审查结论见 [24 候选账本](evidence/24-candidate-c9449653.md) 第 3 节；Full CI run `40463449636` 终态 success（27/27 job）。
 
 ## 当前状态
 
 **当前部署：** 生产运行 `kikoto:next-c9449653`（schema 105，`/health` 200 `v0.8.3`）；部署前为同 schema 的上一候选（已由 `c9449653` 取代）。部署脚本在切换前完成一致性快照，健康门禁 2 秒通过，未触发回滚。部署版本、备份与回滚路径见 [24 候选账本](evidence/24-candidate-c9449653.md)。
-**集成状态（2026-10-27 复核）：** 集成分支 `codex/kikoto-catalog-remediation` 已推进到 `c9449653`（相对上一部署 `88498e94` 共 22 个提交，相对上一候选 `f727feee` 共 28 个提交）。迁移头 `105`：`101_work_parent_backfill_report.sql` 增加父级回填报告表并幂等重跑回填，`102_translation_prefill_status.sql` 为 prefill 增加 `failed` 状态并给失败表补 `(config_key, source_hash)` 索引，`103_translation_short_scan_index.sql` 用 `idx_content_translation_short_scan` 替换 099 的两个短查询索引，`104_source_catalog_entry_admission.sql` 为每卡准入计数建表并在文件写入事务内失效、发布事务内刷新，`105_translation_search_scope.sql` 把 `source_id`／`browsable` 物化到译文行并建立 scope 视图与触发器；`compat/105_dev.sql` 已生成。`migration_chain_105_test.go` 覆盖新装到 105、68→105、84→105、重复启动幂等与 `foreign_key_check` 0 行。20 的 098 状态机、系列准入、publication 事务内删 mapping、其余准入入口、零可见成员 404、零文件与旧 generation 集合统一、due 推进顺序、诊断过滤与 plan 断言全部并入并通过定向测试；目标机 42k 卡浏览与 5,001 文件卡拒绝路径的 p95 达标（数值见 20 号票）。21 的 099/102/105、严格语言搜索、共享短查询生成器与 `failed` 终态已合入；1–2 字查询的返回条数与 `total` 共用 1000 张预算并以 `truncated` 标记，目标机卡片页与同预算总数均在 100 ms 内（数值见 21 号票与 docs/development/translation.md）。22 的 100、`work.parent_work_id`、v2 + 可选 `parent`、`parent_alias_not_imported`、多父级导出改为可审阅 `parent_conflict` 均已合入并通过测试。23 的文档与保留回归已收口。候选 `c9449653` 已部署：Full CI run `40463449636`（记录状态进行中，终态 TODO），生产运行 `kikoto:next-c9449653` / schema 105，`/health` 200 `v0.8.3`。本候选新增试译按键拒绝反馈、试译等待 prefill 让出槽位、未完成翻译的措辞、播放位置文案与 verdict 标记配色、行内操作触控目标与缓存读取隔离，以及短查询注释与 gofmt 修正。部署后实测：试译 200 返回目标文本（`elapsedMs=616`，model `Index-Translate-35B-A3B`），空文本、不支持语言与超长文本均 400 分类，媒体 Range 206，短查询 1000 命中返回 `total=1000`/`truncated=true`。本候选未改迁移，迁移链四项（新装、068→105、084→105、重复启动）沿用上一候选 `f727feee` 的证据。
+**集成状态（2026-10-27 复核）：** 集成分支 `codex/kikoto-catalog-remediation` 已推进到 `c9449653`（相对上一部署 `88498e94` 共 22 个提交，相对上一候选 `f727feee` 共 28 个提交）。迁移头 `105`：`101_work_parent_backfill_report.sql` 增加父级回填报告表并幂等重跑回填，`102_translation_prefill_status.sql` 为 prefill 增加 `failed` 状态并给失败表补 `(config_key, source_hash)` 索引，`103_translation_short_scan_index.sql` 用 `idx_content_translation_short_scan` 替换 099 的两个短查询索引，`104_source_catalog_entry_admission.sql` 为每卡准入计数建表并在文件写入事务内失效、发布事务内刷新，`105_translation_search_scope.sql` 把 `source_id`／`browsable` 物化到译文行并建立 scope 视图与触发器；`compat/105_dev.sql` 已生成。`migration_chain_105_test.go` 覆盖新装到 105、68→105、84→105、重复启动幂等与 `foreign_key_check` 0 行。20 的 098 状态机、系列准入、publication 事务内删 mapping、其余准入入口、零可见成员 404、零文件与旧 generation 集合统一、due 推进顺序、诊断过滤与 plan 断言全部并入并通过定向测试；目标机 42k 卡浏览与 5,001 文件卡拒绝路径的 p95 达标（数值见 20 号票）。21 的 099/102/105、严格语言搜索、共享短查询生成器与 `failed` 终态已合入；1–2 字查询的返回条数与 `total` 共用 1000 张预算并以 `truncated` 标记，目标机卡片页与同预算总数均在 100 ms 内（数值见 21 号票与 docs/development/translation.md）。22 的 100、`work.parent_work_id`、v2 + 可选 `parent`、`parent_alias_not_imported`、多父级导出改为可审阅 `parent_conflict` 均已合入并通过测试。23 的文档与保留回归已收口。候选 `c9449653` 已部署：Full CI run `40463449636` 终态 success（27/27 job），生产运行 `kikoto:next-c9449653` / schema 105，`/health` 200 `v0.8.3`。本候选新增试译按键拒绝反馈、试译等待 prefill 让出槽位、未完成翻译的措辞、播放位置文案与 verdict 标记配色、行内操作触控目标与缓存读取隔离，以及短查询注释与 gofmt 修正。部署后实测：试译 200 返回目标文本（`elapsedMs=616`，model `Index-Translate-35B-A3B`），空文本、不支持语言与超长文本均 400 分类，媒体 Range 206，短查询 1000 命中返回 `total=1000`/`truncated=true`。本候选未改迁移，迁移链四项（新装、068→105、084→105、重复启动）沿用上一候选 `f727feee` 的证据。
 
 **审查快照：** 审查时文档基线 `6122b7bf`；代码审查基线 `301e6c63`。`6b4a02ec`（096 与系列暂存）、`728651a6`（v2 可选 `parent`）、`47df9c11`（wall-clock/partial 调度）均已并入当前分支，但仍需在当前候选上重新验收；不要把它们当作已签收的外部交付。历史 run 53 为 partial，不能当作完整覆盖。2026-10-25 的逐项审查见 [audit-20261025-review.md](audit-20261025-review.md)。
 
@@ -22,7 +22,7 @@
 | [21 有效译文语料与严格语言搜索](issues/21-translation-corpus-and-search.md)                                                             | 有效语料、覆盖、严格搜索、短查询          | verified-local | 099/102/105、严格语言搜索、共享短查询生成器与 `failed` 终态已合入；1–2 字查询的返回条数与 `total` 共用 1000 张预算并以 `truncated` 标记，目标机卡片页与同预算总数达标（数值见 21 号票与 docs/development/translation.md）；最终候选复验由 24 记录 |
 | [22 个人备份父级归属](issues/22-personal-transfer-parent-identity.md)                                                                   | 空库单集与父系列恢复                      | resolved（记录 SHA `f727feee`，历史） | 100 与 `parent_work_id`、v2 + 可选 `parent`、`parent_alias_not_imported`、多父级导出改为可审阅 `parent_conflict`；9 项验收全部勾选并有测试名；权限 403 与往返身份均有 H/R 证据                                                     |
 | [23 保留与仓库规范](issues/23-retention-and-repository-contracts.md)                                                                    | 清理保护、迁移链、模型文档、证据脱敏      | verified-local | 6 项清理回归、合成 dry-run、095 历史与 096–105 连续链、旧 095 preflight 三路径、文档与 tracked-evidence 扫描全部通过                                                                                                                |
-| [24 同候选集成与发布证据](issues/24-release-candidate-evidence.md)                                                                      | 全部修复、双轴审查、部署验收              | resolved       | 候选 `c9449653`：Full CI run `40463449636`（记录状态进行中，终态 TODO）；迁移链四项沿用上一候选 `f727feee` 的证据，后端定向与前端全量门禁、部署后 LIVE 翻译与媒体 Range 通过；证据见 [24 候选账本](evidence/24-candidate-c9449653.md) |
+| [24 同候选集成与发布证据](issues/24-release-candidate-evidence.md)                                                                      | 全部修复、双轴审查、部署验收              | resolved       | 候选 `c9449653`：Full CI run `40463449636` 终态 success（27/27 job）；迁移链四项沿用上一候选 `f727feee` 的证据，后端定向与前端全量门禁、部署后 LIVE 翻译与媒体 Range 通过；证据见 [24 候选账本](evidence/24-candidate-c9449653.md) |
 | 17 不依赖 20–24；24 依赖 17–23。以上新票不覆盖旧 evidence 文件，原 01–19 的需求与主责继续有效。任何 `resolved` 都必须满足当前产物定义。 |
 
 ## 历史执行记录
@@ -57,7 +57,7 @@
 | 01–16 历史本地证据    | 保留         | 只证明各自旧 SHA；当前候选由 24 重跑                                                                                                    |
 | 08 真实覆盖           | partial      | run 53 未完成，失败/未确认空目录不计完整                                                                                                |
 | 17 旧部署             | 历史         | `2bae5db9`/schema 83，不是当前候选                                                                                                      |
-| Full CI               | 进行中       | run `40463449636` @ `c9449653`，终态 TODO；上一候选 `f727feee` 的 run `40409566661` success（26/26 job，历史）                         |
+| Full CI               | 通过         | run `40463449636` @ `c9449653` success（27/27 job）；上一候选 `f727feee` 的 run `40409566661` success（26/26 job，历史）                    |
 | 迁移演练              | 通过         | 上一候选 `f727feee`（历史）：84→105 共 21 个迁移、总耗时 20,840 ms、`quick_check` ok、FK 0；本候选未改迁移                              |
 | 回滚演练              | 通过         | 105 库 + 旧镜像启动失败（schema newer than binary）；`rollback.sh` 可执行，快照 `sha256sum -c` 全部 OK                                   |
 | 生产部署              | 通过         | `kikoto:next-c9449653`，schema 105，`/health` 200 `v0.8.3`；`schema_before=105`、`schema_after=105`，健康门禁 2 秒，未回滚            |
@@ -91,4 +91,4 @@
 
 ## Comments
 
-2026-10-27：候选 `c9449653` 已部署；Full CI run `40463449636` 记录状态为进行中（终态 TODO），迁移链四项沿用上一候选 `f727feee` 的证据，LIVE 翻译与媒体 Range、部署后逐项复验完成。24 记为 `resolved`，证据见 [24 候选账本](evidence/24-candidate-c9449653.md)。
+2026-10-27：候选 `c9449653` 已部署；Full CI run `40463449636` 终态 success（27/27 job），迁移链四项沿用上一候选 `f727feee` 的证据，LIVE 翻译与媒体 Range、部署后逐项复验完成。24 记为 `resolved`，证据见 [24 候选账本](evidence/24-candidate-c9449653.md)。

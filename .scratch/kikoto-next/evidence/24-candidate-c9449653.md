@@ -19,7 +19,7 @@
 
 ## 2. 提交清单
 
-候选相对上一部署 `88498e94` 共 22 个提交；相对上一候选 `f727feee` 共 28 个提交。下表按 `git log --oneline 88498e94..c9449653` 逐条对齐。
+候选相对上一部署 `88498e94` 共 23 个提交；相对上一候选 `f727feee` 共 29 个提交。下表按 `git log --oneline 88498e94..c9449653` 逐条对齐。
 
 | 工单 | 提交 | 说明 |
 | --- | --- | --- |
@@ -51,11 +51,11 @@
 
 | 门禁 | 命令 | 退出码 | 证据 | 结论 |
 | --- | --- | --- | --- | --- |
-| 双轴审查 Standards | `git diff f727feee...0c822ef3` | — | `.kikoto-work/reports/final-standards-review.md` | 硬违规已修；报告覆盖到 `0c822ef3`，其后 12 个提交（含试译、播放与 queue 修复）未另出双轴审查报告 |
-| 双轴审查 Spec | `git diff 2ad508e8...f727feee` | — | `.kikoto-work/reports/review-spec-delta.md` | 上一候选的 Spec 轴报告；本候选未重开该轴 |
+| 双轴审查 Standards | `git diff 88498e94...3df404bc` | — | 本轮审查报告（受限记录） | 4 条硬违规与 5 条判断项均已处理：证据脱敏、短查询预算与文档、文档重复陈述、CI 终态、`needsLabel`、测试专用导出、联合类型 |
+| 双轴审查 Spec | `git diff 88498e94...3df404bc` | — | 同上 | 1 blocker 与 5 major 均已处理：CI 终态与 AC 矩阵、AC-02 失败分类、语音卡可播判定、标记排序真实链路、提交计数与证据引用 |
 | 后端构建 | `cd backend && go build ./...` | 0 | 本地执行 | 通过 |
 | 后端静态检查 | `cd backend && go vet ./...` | 0 | 本地执行 | 通过 |
-| 后端全量测试 | `cd backend && go test ./...` | 0 | 本地执行 | 全部包通过；`internal/httpapi` 656s |
+| 后端全量测试 | `cd backend && go test ./...` | 0 | 本地执行 | 全部包通过；`internal/httpapi` 约 11 分钟 |
 | 后端竞态测试 | `cd backend && go test ./internal/translation -race` | 0 | 本地执行 | 通过 |
 | 前端类型检查 | `npx tsc -b` | 0 | 本地执行 | 通过 |
 | 前端 E2E 类型检查 | `npm run typecheck:e2e` | 0 | 本地执行 | 通过 |
@@ -68,17 +68,17 @@
 | 翻译浏览器用例 | `node scripts/run-e2e-fixtures.mjs --group=content-translation` | 0 | `.kikoto-work/e2e-logs/final-*` | 7 + 2 通过 |
 | 试译设置浏览器用例 | `--group=translation-settings` | 0 | 同上 | 3 通过 |
 | 播放失败浏览器用例 | Playwright `player.spec.ts` 定向 | 0 | 同上 | 3 通过 |
-| Full CI | `workflow_dispatch` run `40463449636` | TODO | GitHub Actions | 记录状态为进行中，终态 TODO |
+| Full CI | `workflow_dispatch` run `40463449636` | 0 | GitHub Actions | 27/27 job success；含 Gate、Backend coverage 与 race 1–4 |
 | 迁移：新装 | `TestMigrationChain105FreshInstall` | 0 | 上一候选 `f727feee` 记录（历史） | 本候选未改迁移，沿用上一候选证据 |
 | 迁移：068 升级 | `TestMigrationChain105Upgrades068AndKeepsUserData` | 0 | 同上（历史） | 本候选未改迁移，沿用上一候选证据 |
 | 迁移：084 升级 | `TestMigrationChain105Upgrades084ToCurrentShape` | 0 | 同上（历史） | 本候选未改迁移，沿用上一候选证据 |
 | 迁移：重复启动 | `TestMigrationChain105RestartIsIdempotent` | 0 | 同上（历史） | 本候选未改迁移，沿用上一候选证据 |
 | `PRAGMA foreign_key_check` | 部署后脚本校验 | 0 | 部署记录 | 0 行 |
 | 备份与恢复演练 | 部署脚本快照 + `sha256sum -c` | — | 部署记录 | 快照含 DB/WAL/SHM、`.env`、compose、SHA256SUMS 与 `rollback.sh`，校验全部 OK |
-| 回滚演练（隔离目录） | 105 库 + 旧镜像 | 预期失败 | 部署记录 | schema newer than binary，符合回滚矩阵 |
+| 回滚演练（隔离容器） | 快照库 + 该快照指向的镜像 | 0 | 部署记录 | 容器启动、`/health` 200，快照库 schema 105 可被旧镜像读取；回滚路径实测可用 |
 | 回滚脚本 | `rollback.sh` 可执行 + 快照校验 | 0 | 部署记录 | 可执行，`sha256sum -c` 全部 OK |
-| 组合负载 | `scripts/mixed-load.mjs` 60 秒、并发 8 | 见 20 号票 | [20 号票](../issues/20-catalog-sync-and-admission.md) | 通过；数值与逐项结果只在 20 号票与 [translation.md](../../../docs/development/translation.md) 记录 |
-| 真实完整索引 | 生产索引运行 | partial | 来源目录索引进度接口 | 见第 6 节 |
+| 组合负载 | `scripts/mixed-load.mjs` 60 秒、并发 8 | 见 20 号票 | [20 号票](../issues/20-catalog-sync-and-admission.md) | 通过；数值与逐项结果只在 20 号票与 21 号票记录 |
+| 真实完整索引 | 生产索引运行 | partial | 来源目录索引进度接口 | 见第 6 节；按量级记录，真实计数只在受限运维记录 |
 | LIVE 翻译 | 生产真实模型 | 200 | 部署验收记录 | 见第 6 节 |
 | LIVE 媒体 Range | 生产真实音频 | 206 | 部署验收记录 | 见第 6 节 |
 | 非视觉 F | 前端单元与 E2E | 0 | 同上 | 通过 |
@@ -90,7 +90,7 @@
 | --- | --- | --- | --- | --- | --- |
 | 42k 卡浏览 | 2 vCPU / 3.5 GiB, warm | 30 | ≤300 / ≤800 ms | 通过 | [20 号票](../issues/20-catalog-sync-and-admission.md) |
 | 5,001 文件卡拒绝 | 同上 | 30 | ≤300 / ≤800 ms | 通过 | 同上 |
-| 译文 3 字以上 | modernc SQLite, 456k 行 | 20 | ≤100 ms | 通过 | [translation.md](../../../docs/development/translation.md) |
+| 译文 3 字以上 | modernc SQLite, 456k 行 | 20 | ≤100 ms | 通过 | [21 号票](../issues/21-translation-corpus-and-search.md) |
 | 译文 1–2 字 | 114,000 实体，全部标题命中 | 20 | ≤100 ms | 通过 | 同上 |
 | 编号等值 | 同上 | 20 | <5 ms | 通过 | 同上 |
 | 目标语言标题整串等值 | 同上 | 20 | <5 ms | 通过 | 同上 |
@@ -104,7 +104,7 @@
 | AC | 原始主责 | 整改子项 | 当前证据 | 结论 |
 | --- | --- | --- | --- | --- |
 | AC-01 | 01 | — | 配置读写与掩码 H 测试；生产试译使用已保存配置 | 通过（本地 H + 生产 LIVE） |
-| AC-02 | 01 | 21 错误分类 | 空/超长/不支持语言 400 分类，生产实测；成功试译 200 | 通过 |
+| AC-02 | 01 | 21 错误分类 | 空/超长/不支持语言 400 分类，生产实测；成功试译 200；截断/鉴权/限流/超时/格式错由 `TestTranslationTrialFailuresAreClassifiedWithoutLeakingOrRetrying` 覆盖 14 种分类且不重试、不回显上游细节 | 通过（生产 LIVE + 本地分类） |
 | AC-03 | 02 | 21 显示语言搜索 | 两用户偏好 H/R；严格语言搜索 H | 通过（本地） |
 | AC-04 | 02 | — | 保护名称不外发 H/F | 通过（本地） |
 | AC-05 | 02 | — | 延迟、失败、取消 H/F；未完成提示与 20 秒上限有浏览器用例 | 通过（本地） |
@@ -127,9 +127,9 @@
 | AC-22 | 09 | 20 固定调度 | 每日与周日调度时间可见，无重叠任务 | 通过 |
 | AC-23 | 10 | 23 清理保留 | 清理保护回归 H | 通过（本地） |
 | AC-24 | 16 | 22 父级归属 | `TestTransferV2RestoresPersonalOnlyParentAndRoundTrips`、`TestTransferV2ParentCycleIsReported` | 通过（本地） |
-| AC-25 | 02 / 08 / 17 | — | 播放中音轨/队列/进度 H/F | 本地证据；未在本候选取得组合 LIVE |
+| AC-25 | 02 / 08 / 17 | 20 低空间组合 | `TestLowDiskPausesScanAndPrefillWithoutStoppingPlayback`：播放中触发低空间，扫描与 prefill 同时 paused，媒体 Range 仍 206、目录与个人备注仍可读；恢复空间后两者自动续跑 | 通过（本地 H；生产组合未构造） |
 | AC-26 | 17 | 23 文档/证据 | 本账本与部署验收；进度证据仅本地 | 本地证据；发布级进度证据未取得 |
-| AC-27 | 01 | — | 出站边界 H | 本地证据；未在本候选重跑 |
+| AC-27 | 01 | — | 出站边界 H（非法 URL、越界重定向、超大响应、凭据剥离、取消） | 通过（本地） |
 | AC-28 | 17 | — | 截图关闭与既有视觉测试不改写 | 本地 F 证据 |
 
 ## 6. 部署与回滚
@@ -156,16 +156,16 @@
 - 试译错误分类：空文本 400 `translation_empty_text`；不支持语言 400 `translation_unsupported_language`；超长 400 `translation_text_too_long`。
 - 媒体 Range：206，`Content-Range: bytes 0-1023/19105977`。
 - 短查询：`q=的&lang=zh-cn` 返回 `total=1000`、`truncated=true`，24 条。
-- 来源卡：`total=41179`。
-- 真实完整索引仍为 `partial`：`directories=14494`、`completed=14463`、`failed=4`、`restricted=0`、`empty=27`（未确认为空）、`pending=0`。4 个失败目录名本身含 U+FFFD 与异常码位，上游父目录 200、子目录名已损坏，属上游数据问题，不是 Kikoto 故障；27 个空目录未被确认为空，因此不标 complete。
-- 回滚：`rollback.sh` 可执行，快照校验通过；105 库 + 旧镜像的回滚预期失败（schema newer than binary），符合 [release-rollback.md](../../../docs/development/release-rollback.md) 的矩阵。
+- 来源卡：约 4.1 万张（量级，真实计数在受限运维记录）。
+- 真实完整索引仍为 `partial`：约 1.45 万个目录中绝大多数完成，源侧失败的只有个位数，剩余为未确认空目录，没有待处理项。失败目录名本身含 U+FFFD 与异常码位，上游父目录可读、子目录名在传输中已损坏，属上游数据问题，不是 Kikoto 故障；空目录未被确认为空，因此不标 complete。逐项计数在受限运维记录。
+- 回滚：`rollback.sh` 可执行，快照 `sha256sum -c` 通过。回滚链已在隔离容器实测：用快照库启动该快照指向的镜像，`/health` 返回 200。`pre-c9449653` → 上一候选镜像、`pre-88498e94` → 再上一候选镜像，两者镜像都在主机上。
 
 ## 7. 未覆盖项
 
-- AC-25 播放中音轨/队列/进度、AC-26 进度证据、AC-27 出站边界、AC-28 截图关闭仍只按本地 H/F 证据记录，未在本候选上取得生产 LIVE 组合证据；`issues/24` 的对应两项保持未勾选。
+- AC-25 的组合行为、AC-27 出站边界与 AC-28 截图关闭只按本地 H/F 证据记录；生产上未构造"播放中同时低空间"的场景，故不写生产 LIVE。AC-26 的进度证据同样只有本地口径。
 - `/health` 是唯一健康门禁；生产 Compose 没有 healthcheck，`docker compose ps` 只要求 `running`。
-- 20 秒显示上限短于 60 秒请求上限；点重试会中止当前请求，属显示层取舍。
-- 真实完整索引未达 complete：4 个上游目录名损坏、27 个空目录未确认为空，均如实计数。
+- 20 秒显示上限短于 60 秒请求上限；点重试会中止当前请求，属显示层取舍。该上限只在字段进入视口后计时，因此隐藏标签页里不会自然触发；证据是带假时钟的浏览器用例，不是生产观察。
+- 真实完整索引未达 complete：少量上游目录名损坏、数十个空目录未被确认为空，均如实计数（逐项数字在受限运维记录）。
 - 全部卡片未逐页遍历；抽样覆盖首页、无码、系列、unavailable 与 unconfirmed 卡片。
 - 前端渲染以单元与既有 E2E 覆盖，未在生产浏览器逐页人工核对。
 

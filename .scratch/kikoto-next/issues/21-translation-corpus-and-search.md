@@ -93,11 +93,11 @@ prefill 必须按 `entity_kind × field` 枚举：entry 的 title、series 的 t
 - [x] prefill 游标包含语言维度；失败先持久化再推进，重启后 retry 队列仍会重试该语言，不能被后续实体推进掩盖；永久失败不会阻塞其他实体。扫到末尾且无新条目、无 due retry 时写 `failed`，该状态不是终态，下一批仍处理 due retry（`a2a84617`）。
 - [x] 目标语言搜索严格只返回目标语言译文或原生同语言内容；`origin` 才出现原文；编号查询不受语言过滤。
 - [x] work 的标题与简介、entry/series 的标题都参与目标语言搜索与覆盖；entry 不伪造 description；标签、目录名不进入搜索索引。
-- [x] 1–2 字查询覆盖完整有效集合，明确结果数上限和 p95，不再只扫描每语言最新 50,000 行。`bc880d91` 把本地、远程与 bench 统一到 `library.ShortTranslationSearchSQL`；`6f39e888` 的 103 索引让有序取页走 keyset 顺序；`0ec8cda0` 的 105 把 `source_id` 与 `browsable` 物化到译文行，短查询不再逐行回查实体；`48c12395` 让返回总数与卡片页共用同一结果预算，超出预算时以 `truncated` 标记“还有更多”。卡片页与总数最多处理 `catalogShortSearchResultLimit=1000` 张，`truncated` 由每分支读 `limit+1` 行的有界探测给出；上限按 `(language, entity_kind)` 分支应用，`zh-tw` 的原生 `zh-Hant` 行不会被简体命中挤掉。`After` 只用于单字段 arm 的 keyset 续扫（多字段 arm 在设置 `After` 时跳过，避免跨字段游标漏行）。目标机（2 vCPU，114,000 实体 × 4 语言，20 样本，全部标题命中）卡片页 p95 8.91/8.86/9.63/12.59 ms、零命中 48.29 ms；同预算的总数 p95 8.9/8.9/9.6/12.6 ms、零命中 48.3 ms，均在 100 ms 内；无预算全量计数仅作诊断，p95 667–693 ms，正是它被预算替代的原因。证据为发布记录中的 `short-query.json`。
+- [x] 1–2 字查询覆盖完整有效集合，明确结果数上限和 p95，不再只扫描每语言最新 50,000 行。`bc880d91` 把本地、远程与 bench 统一到 `library.ShortTranslationSearchSQL`；`6f39e888` 的 103 索引让有序取页走 keyset 顺序；`0ec8cda0` 的 105 把 `source_id` 与 `browsable` 物化到译文行，短查询不再逐行回查实体；`48c12395` 让返回总数与卡片页共用同一结果预算，超出预算时以 `truncated` 标记“还有更多”。一次响应最多返回 `catalogShortSearchResultLimit=1000` 张卡片，entry 与 series、以及 `zh-tw` 读取的两套语料共用这一个预算；每个分支另有自己的扫描上界，只限制工作量。合并去重后按展示顺序 `exact DESC,updated_at DESC,series_id DESC,id DESC` 裁剪到预算；总数读同一语句多一行，超过预算即 `truncated=true`，页面与总数因此描述同一批卡。`After` 只用于单字段 arm 的 keyset 续扫（多字段 arm 在设置 `After` 时跳过，避免跨字段游标漏行）。目标机（2 vCPU，114,000 实体 × 4 语言，20 样本，全部标题命中）卡片页 p95 8.91/8.86/9.63/12.59 ms、零命中 48.29 ms；同预算的总数 p95 8.9/8.9/9.6/12.6 ms、零命中 48.3 ms，均在 100 ms 内；无预算全量计数仅作诊断，p95 667–693 ms，正是它被预算替代的原因。证据为发布记录中的 `short-query.json`。
 - [x] 本地与远程搜索、简繁归一化、动态内容、重启和失败恢复 H/R/F 覆盖。
 - [x] modernc SQLite、45.6 万行基准。`bc880d91` 已重写语料与采样：每个实体写四种模型语言、按 id 确定性取样、默认 `--rows 456000`，短查询调用共享生成器。本机基准（`.kikoto-work/reports/bench-456k-final.json`，114,000 实体 × 4 语言，非目标硬件）结果：
   - 卡片页短查询 `limit=200` p95：en 1.094 ms、zh-Hans 0.575 ms、ja 1.316 ms、ko 1.506 ms，达标（≤100 ms）。
-  - 完整集合短查询 `limit=0`（无预算诊断）p95：en 313.119 ms、zh-Hans 317.013 ms、ja 520.704 ms、ko 478.139 ms。这是引入 1000 张结果预算之前的历史本机数字，只说明为何不采用无预算总数；当前总数与卡片页共用预算。
+  - 完整集合短查询 `limit=0`（无预算诊断）p95：en 313.119 ms、zh-Hans 317.013 ms、ja 520.704 ms、ko 478.139 ms。这是引入 1000 张结果预算之前的历史本机数字，只说明为何不采用无预算总数；当前总数与卡片页共用同一预算。
   - 目标语言标题整串等值 p95 1.58–2.505 ms；FTS p95 0.573–1.506 ms；编号等值低于计时器分辨率（0.00 ms，max 0.53 ms）。
   - DB 425.6 MB（`dbBytes` 446,291,968）、FTS 35.9 MB、VACUUM 后 404.5 MB；插入 131–147 s，WAL 峰值 23.3 MB。
   - 该运行未包含 D-16 准入 join；目标硬件复测见下方 2026-10-27 条目。
