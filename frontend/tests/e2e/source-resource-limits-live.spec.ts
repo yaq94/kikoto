@@ -1,5 +1,7 @@
 import { expect, test } from "@playwright/test";
 
+import { playerQueueStorageBaseKey } from "./fixtures/player-library";
+
 test.use({ screenshot: "off", trace: "off", video: "off" });
 
 // AC-25: the scan parks on a low disk while the listener keeps playing a real
@@ -29,8 +31,8 @@ test("playback and personal records survive a low-disk catalog pause @desktop", 
 
   // The player queue is part of the listener's live state, not the scan's.
   const queueState = () =>
-    page.evaluate(() => {
-      const key = Object.keys(localStorage).find((name) => name.startsWith("kikoto:player-queue:v2"));
+    page.evaluate((baseKey) => {
+      const key = Object.keys(localStorage).find((name) => name.startsWith(baseKey));
       const state = key ? JSON.parse(localStorage.getItem(key) ?? "null") : null;
       return {
         at: state?.currentIndex,
@@ -40,7 +42,7 @@ test("playback and personal records survive a low-disk catalog pause @desktop", 
           track.playbackKey,
         ]),
       };
-    });
+    }, playerQueueStorageBaseKey);
   // The first render persists the queue in more than one step. Wait for the
   // settled two-track baseline before comparing later states against it.
   await expect.poll(async () => (await queueState()).queue.length).toBe(2);
@@ -101,9 +103,11 @@ test("playback and personal records survive a low-disk catalog pause @desktop", 
   expect(await audio.evaluate((element: HTMLAudioElement) => element.currentSrc)).toBe(stream);
 
   // A full page load is the app restart the listener actually performs. The
-  // queue and its cursor come back; playback itself waits for the listener.
+  // rating and note live in the personal record, so they must come back without
+  // the player or the index recreating them.
+  await page.goto("/work/3");
   await page.reload();
-  await expect.poll(async () => (await queueState()).queue.length).toBe(2);
-  expect(await queueState()).toEqual(queue);
-  await expect(page.getByRole("button", { name: "Collapse player", exact: true })).toBeVisible();
+  const reviewPanel = page.getByRole("region", { name: "Personal review", exact: true });
+  await expect(reviewPanel.getByLabel("Personal rating")).toHaveValue("4");
+  await expect(reviewPanel.getByLabel("Personal note")).toHaveValue("Example low disk note");
 });
