@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { availabilityDotClassName } from "./WorkCardShell";
 import { visibleBadgeCountForRows } from "./tagLayout";
 
 describe("work card tag measurement", () => {
@@ -13,5 +14,22 @@ describe("work card tag measurement", () => {
 
   it("clamps an oversized tag to one row without hiding tags that fit on the second", () => {
     expect(visibleBadgeCountForRows([320, 68, 68], 176, 38)).toBe(3);
+  });
+});
+
+describe("work card source dot", () => {
+  it("keeps a healthy source mark green", () => {
+    expect(availabilityDotClassName({ key: "source:remote:7", label: "Example Remote" })).toBe("bg-success");
+  });
+
+  it("does not paint a verdict mark green", () => {
+    // The chip reads "unavailable"; a success dot next to it states the
+    // opposite of the label.
+    expect(availabilityDotClassName({ key: "source:remote:7:verdict", label: "Example Remote (unavailable)" })).toBe(
+      "bg-warning",
+    );
+    expect(
+      availabilityDotClassName({ key: "source:remote:7:unavailable", label: "Example Remote", variant: "warning" }),
+    ).toBe("bg-warning");
   });
 });

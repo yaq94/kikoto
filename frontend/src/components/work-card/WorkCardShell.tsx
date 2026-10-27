@@ -511,6 +511,10 @@ export function coverSourceIcon(badge: WorkCardBadge) {
 
 export function availabilityDotClassName(badge: WorkCardBadge) {
   if (badge.variant === "warning") return "bg-warning";
+  // A verdict mark is an exception the reader has to notice, not a healthy
+  // source mark: the chip says "unavailable" while a green dot would contradict
+  // it.
+  if (badge.key?.endsWith(":verdict")) return "bg-warning";
   if (badge.key?.startsWith("source:")) return "bg-success";
   return "bg-muted-foreground";
 }
