@@ -243,3 +243,68 @@ func TestQueueRejectsWhenTheInteractiveLaneIsFull(t *testing.T) {
 	close(release)
 	wg.Wait()
 }
+
+// A prefill pass fills the configured slots for hours. A trial is interactive
+// work, so it must wait for one slot instead of reporting that a translation
+// is already running forever.
+func TestQueueTrialWaitsForBackgroundInsteadOfReportingBusy(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	q := NewQueue(ctx, Limits{Concurrency: 1, QueueLimit: 8}, queueTestRun)
+	release := make(chan struct{})
+	backgroundStarted := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		_, _ = q.DoBackground(ctx, "prefill", 10*time.Second, func(context.Context) (Result, error) {
+			close(backgroundStarted)
+			<-release
+			return Result{Text: "prefill"}, nil
+		})
+	}()
+	<-backgroundStarted
+	waitQueueState(t, "the background call to hold the only slot", func() bool { return q.Stats().Active == 1 })
+
+	trialDone := make(chan error, 1)
+	go func() {
+		_, err := q.Do(ctx, "trial", 10*time.Second, true, func(context.Context) (Result, error) {
+			return Result{Text: "trial"}, nil
+		})
+		trialDone <- err
+	}()
+	waitQueueState(t, "the trial to wait for a slot", func() bool { return q.Stats().Queued == 1 })
+	close(release)
+	wg.Wait()
+	if err := <-trialDone; err != nil {
+		t.Fatalf("trial was refused while only background work ran: %v", err)
+	}
+}
+
+// Two trials still conflict: the second must be refused rather than queued
+// behind the first, because a trial is a one-shot operator action.
+func TestQueueRefusesASecondTrial(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	q := NewQueue(ctx, Limits{Concurrency: 4, QueueLimit: 8}, queueTestRun)
+	release := make(chan struct{})
+	started := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		_, _ = q.Do(ctx, "trial-1", 10*time.Second, true, func(context.Context) (Result, error) {
+			close(started)
+			<-release
+			return Result{Text: "one"}, nil
+		})
+	}()
+	<-started
+	if _, err := q.Do(ctx, "trial-2", 10*time.Second, true, func(context.Context) (Result, error) {
+		return Result{Text: "two"}, nil
+	}); err == nil || PublicError(err).Code != "translation_busy" {
+		t.Fatalf("second trial error = %v", err)
+	}
+	close(release)
+	wg.Wait()
+}

@@ -34,6 +34,7 @@ type Queue struct {
 	pendingInteractive []*queuedCall
 	pendingBackground  []*queuedCall
 	active             int
+	interactiveActive  int
 	backgroundActive   int
 	readers            int
 	// Now is the clock used for the day/night window; tests replace it.
@@ -126,7 +127,11 @@ func (q *Queue) enqueue(ctx context.Context, key string, timeout time.Duration, 
 		q.promoteLocked(call)
 	}
 	if call == nil {
-		if trial && (q.active >= q.limits.Concurrency || len(q.pendingInteractive) > 0) {
+		// A trial refuses a second trial, not a busy background pass. Prefill
+		// fills the configured slots continuously; judging by `active` made a
+		// trial impossible to run at concurrency 1. Waiting interactive work
+		// still counts, because the trial would only queue behind it.
+		if trial && (q.interactiveActive > 0 || len(q.pendingInteractive) > 0) {
 			q.mu.Unlock()
 			return Result{}, failure("translation_busy", "A translation is already running.")
 		}
@@ -237,6 +242,8 @@ func (q *Queue) launchLocked(call *queuedCall) {
 	q.active++
 	if call.background {
 		q.backgroundActive++
+	} else {
+		q.interactiveActive++
 	}
 	background := call.background
 	if !q.run(func() {
@@ -248,6 +255,8 @@ func (q *Queue) launchLocked(call *queuedCall) {
 		q.active--
 		if background {
 			q.backgroundActive--
+			} else {
+				q.interactiveActive--
 		}
 		if q.jobs[call.key] == call {
 			delete(q.jobs, call.key)
@@ -260,6 +269,8 @@ func (q *Queue) launchLocked(call *queuedCall) {
 		q.active--
 		if background {
 			q.backgroundActive--
+		} else {
+			q.interactiveActive--
 		}
 		delete(q.jobs, call.key)
 		close(call.done)
