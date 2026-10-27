@@ -50,7 +50,7 @@ type shortQueryCase struct {
 	// Total is the bounded count the API reports. The JSON key stays `complete`
 	// so older reports remain comparable; Uncapped is the diagnostic that walks
 	// every match without the result budget.
-	Complete shortQueryStats `json:"complete"`
+	Total    shortQueryStats `json:"complete"`
 	Uncapped shortQueryStats `json:"uncapped"`
 	Page     shortQueryStats `json:"page"`
 	HitPlan  []string        `json:"hitPlan"`
@@ -132,7 +132,7 @@ func TestShortQueryPerformance(t *testing.T) {
 	}
 	for _, item := range report.Cases {
 		t.Logf("%-9s %-6q matches=%d hit p95=%.1f total p95=%.1f page p95=%.1f uncapped p95=%.1f",
-			item.Language, item.Needle, item.Matches, item.HitSet.P95Ms, item.Complete.P95Ms, item.Page.P95Ms, item.Uncapped.P95Ms)
+			item.Language, item.Needle, item.Matches, item.HitSet.P95Ms, item.Total.P95Ms, item.Page.P95Ms, item.Uncapped.P95Ms)
 	}
 }
 
@@ -185,17 +185,17 @@ func shortQueryMeasure(t *testing.T, db *sql.DB, sourceID int64, target library.
 	result.HitSet.Rows = result.Matches
 	result.HitPlan = shortQueryPlan(t, db, hitSQL, hitArgs)
 
-	completeSQL := catalogStatementPrefix(prefix) + `SELECT count(*) ` + from
+	totalSQL := catalogStatementPrefix(prefix) + `SELECT count(*) ` + from
 	for range warmup {
-		if err := db.QueryRowContext(context.Background(), completeSQL, args...).Scan(&result.Matches); err != nil {
-			t.Fatalf("%s warm complete: %v", target.Language, err)
+		if err := db.QueryRowContext(context.Background(), totalSQL, args...).Scan(&result.Matches); err != nil {
+			t.Fatalf("%s warm total: %v", target.Language, err)
 		}
 	}
-	result.Complete = shortQuerySample(samples, func() error {
+	result.Total = shortQuerySample(samples, func() error {
 		var total int
-		return db.QueryRowContext(context.Background(), completeSQL, args...).Scan(&total)
+		return db.QueryRowContext(context.Background(), totalSQL, args...).Scan(&total)
 	})
-	result.Complete.Rows = result.Matches
+	result.Total.Rows = result.Matches
 
 	uncappedSQL := catalogStatementPrefix(uncappedPrefix) + `SELECT count(*) ` + uncappedFrom
 	result.Uncapped = shortQuerySample(samples, func() error {
@@ -224,7 +224,7 @@ func shortQueryMeasure(t *testing.T, db *sql.DB, sourceID int64, target library.
 		return nil
 	})
 	result.Page.Rows = pageRows
-	result.Plan = shortQueryPlan(t, db, completeSQL, args)
+	result.Plan = shortQueryPlan(t, db, totalSQL, args)
 	return result
 }
 
