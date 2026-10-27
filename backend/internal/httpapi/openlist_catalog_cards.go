@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"database/sql"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -19,19 +20,23 @@ func openListCatalogCardsQuery(sourceID int64, query string) (string, string, []
 // openListCatalogCardsQueryLocalized restricts text search to the reader's
 // display-language corpus. It never falls back to the original title.
 //
-// shortLimit bounds how many cards a 1-2 character query may return. The scan
-// still walks the complete effective range in index order, so the budget covers
-// the oldest rows instead of a newest window; zero keeps every match, which the
+// limit is the card budget of a 1-2 character query. It bounds each branch's
+// scan and then trims the merged, deduplicated cards to that many rows in
+// display order, so entry and series cards and every corpus language the
+// display language reads share one number. Zero keeps every match, which the
 // trigram path and the diagnostic readers use.
-func openListCatalogCardsQueryLocalized(sourceID int64, query string, targets []library.DisplaySearchTarget, configKey string, shortLimit int) (string, string, []any) {
-	return openListCatalogCardsQueryFiltered(sourceID, query, nil, nil, targets, configKey, shortLimit)
+//
+// A caller that reports "more than the budget" builds the same statement twice:
+// once at the budget for the page, once one row past it for the count.
+func openListCatalogCardsQueryLocalized(sourceID int64, query string, targets []library.DisplaySearchTarget, configKey string, limit int) (string, string, []any) {
+	return openListCatalogCardsQueryFiltered(sourceID, query, nil, nil, targets, configKey, limit)
 }
 
 func openListCatalogCardsQueryForEntries(sourceID int64, entryIDs []int64) (string, string, []any) {
 	return openListCatalogCardsQueryFiltered(sourceID, "", entryIDs, nil, nil, "", 0)
 }
 
-func openListCatalogCardsQueryFiltered(sourceID int64, query string, entryIDs, seriesIDs []int64, localized []library.DisplaySearchTarget, configKey string, shortLimit int) (string, string, []any) {
+func openListCatalogCardsQueryFiltered(sourceID int64, query string, entryIDs, seriesIDs []int64, localized []library.DisplaySearchTarget, configKey string, limit int) (string, string, []any) {
 	query = strings.TrimSpace(query)
 	prefix := ""
 	args := []any{}
@@ -86,12 +91,12 @@ func openListCatalogCardsQueryFiltered(sourceID int64, query string, entryIDs, s
 		if len(localized) > 0 {
 			// A display language searches only its own corpus. Original-title
 			// matches are not a fallback for a missing translation.
-			prefix, args = localizedCatalogSearchSQL(localized, sourceID, utf8.RuneCountInString(query) < 3, configKey, shortLimit)
+			prefix, args = localizedCatalogSearchSQL(localized, sourceID, utf8.RuneCountInString(query) < 3, configKey, limit)
 			// The hit set already names the cards. Driving the pipeline from it
 			// keeps the work proportional to the matches instead of scanning
 			// every entry of the source and filtering afterwards. A 1-2
-			// character query can match the whole source, so its candidate set
-			// is capped; the reported total is capped with it.
+			// character query can match the whole source, so each branch's scan
+			// is bounded, and the merged union is trimmed to one card budget.
 			short := utf8.RuneCountInString(query) < 3
 			// The cap lives inside each arm, so SQLite stops scanning at the
 			// bound instead of materializing a full-source match first.
@@ -234,6 +239,15 @@ func openListCatalogCardsQueryFiltered(sourceID int64, query string, entryIDs, s
 	args = append(args, entryArgs...)
 	args = append(args, sourceID)
 	args = append(args, seriesArgs...)
+	if limit > 0 {
+		// One card budget covers the whole response: entries, series and every
+		// corpus language the display language reads. The trim sits outside the
+		// identity dedup so no identity group is cut in half. The order repeats
+		// the page order exactly; otherwise the trimmed prefix and the paged
+		// cards would be different sets.
+		from = `FROM (SELECT * ` + rankSuffix + ` ORDER BY exact DESC,updated_at DESC,series_id DESC,id DESC LIMIT ` +
+			strconv.Itoa(limit) + `) AS budgeted`
+	}
 	return prefix, from, args
 }
 
@@ -283,12 +297,12 @@ func catalogCardScan(rows *sql.Rows, item *remoteWorkSummary, availability *stri
 		&item.UpdatedAt, availability, exact, hasAudio, total)
 }
 
-// catalogShortSearchResultLimit is how many cards a 1-2 character search may
-// return. The scan still covers the complete effective set in index order, but
-// both the page and the reported total stop at this budget, and the response
-// marks the list truncated when the overflow probe finds another match.
-// Building a card row for every match would otherwise make one keystroke cost
-// the whole source.
+// catalogShortSearchResultLimit is the card limit of one whole 1-2 character
+// search response, counting entry and series cards together and every corpus
+// language the display language reads. Each branch also uses it as the bound of
+// its own scan, which is only a work limit: the merged, deduplicated union is
+// then trimmed to this many cards in display order. Building a card row for
+// every match would otherwise make one keystroke cost the whole source.
 const catalogShortSearchResultLimit = 1000
 
 // localizedCatalogSearchSQL builds the translated hit set for a display
@@ -367,15 +381,4 @@ func localizedCatalogSearchSQL(targets []library.DisplaySearchTarget, sourceID i
 	}
 	prefix := `WITH search_hits AS MATERIALIZED (` + strings.Join(branches, " UNION ALL ") + `) `
 	return prefix, args
-}
-
-// shortSearchOverflowQuery reports whether any branch of a 1-2 character search
-// has more effective rows than the card budget. It is a bounded probe: the
-// result list and its total describe the effective set, and this flag says
-// whether the list stopped early.
-func shortSearchOverflowQuery(targets []library.DisplaySearchTarget, sourceID int64, configKey string) (string, []any) {
-	return library.ShortTranslationSearchOverflowSQL(targets, []library.ShortSearchArm{
-		{EntityKind: "entry", Fields: []string{"title"}, SourceID: sourceID, ConfigKey: configKey},
-		{EntityKind: "series", Fields: []string{"title"}, SourceID: sourceID, ConfigKey: configKey},
-	}, catalogShortSearchResultLimit)
 }

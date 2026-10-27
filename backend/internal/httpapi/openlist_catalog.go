@@ -770,13 +770,10 @@ func (s *Server) listOpenListWorks(w http.ResponseWriter, r *http.Request, sourc
 		pageArgs  []any
 		countSQL  string
 		countArgs []any
-		// A short translated search builds a bounded page and reports the count
-		// from the same bounded set, so the page query carries no window total.
+		// A short translated search builds a page from the trimmed card set and
+		// reports the count of that same set, so the page query carries no
+		// window total and the count is one cheap statement.
 		separateCount bool
-		// overflowSQL answers whether the effective set holds more cards than
-		// the budget. It is a bounded probe, not a count.
-		overflowSQL  string
-		overflowArgs []any
 	)
 	// An empty query stays on the browse path: there is nothing to match, so
 	// the display language must not narrow the list.
@@ -792,28 +789,35 @@ func (s *Server) listOpenListWorks(w http.ResponseWriter, r *http.Request, sourc
 		}
 		configKey := translation.ConfigKey(cfg)
 		short := utf8.RuneCountInString(q) < 3
-		// A 1-2 character query may match the whole source. Both the page and
-		// the count stay inside one result budget: counting every match would
-		// walk the whole card pipeline on each keystroke, which costs more than
-		// the budget allows. The bounded probe below says whether the effective
-		// set holds more cards, so the response reports "first N of more"
-		// instead of presenting the budget as the whole answer.
-		pageLimit := 0
+		// A 1-2 character query may match the whole source. Each branch's scan is
+		// bounded, then the merged, deduplicated cards are trimmed once to
+		// catalogShortSearchResultLimit in display order: entry and series cards
+		// and every corpus language share one budget, so a keystroke never walks
+		// the whole card pipeline. The count reads the same statement one row
+		// further, which is how it tells "exactly the budget" from "more than the
+		// budget".
+		limit := 0
 		if short {
-			pageLimit = catalogShortSearchResultLimit
+			limit = catalogShortSearchResultLimit
 		}
-		prefix, from, args := openListCatalogCardsQueryLocalized(source.ID, q, targets, configKey, pageLimit)
+		prefix, from, args := openListCatalogCardsQueryLocalized(source.ID, q, targets, configKey, limit)
 		pageArgs = append([]any{}, args...)
 		pageSQL = catalogCardPageSQL(prefix, from, short)
 		pageArgs = append(pageArgs, pageSize, (page-1)*pageSize)
-		// The page and the total are the same statement shape: both read the
-		// bounded candidate set, so one build answers both and cannot drift.
-		countSQL = catalogStatementPrefix(prefix) + `SELECT COUNT(*) ` + from
+		// The count reads the same cards one row past the budget, so the reported
+		// total is the number of cards a reader can actually reach and one extra
+		// row proves more exist without a second shape of query.
+		countPrefix, countFrom := prefix, from
 		countArgs = args
-		separateCount = short
 		if short {
-			overflowSQL, overflowArgs = shortSearchOverflowQuery(targets, source.ID, configKey)
+			// The count reads one row past the budget, on the same statement
+			// shape. A row beyond the budget proves the set holds more, which is
+			// cheaper than a separate overflow probe per branch.
+			countPrefix, countFrom, countArgs = openListCatalogCardsQueryLocalized(
+				source.ID, q, targets, configKey, limit+1)
 		}
+		countSQL = catalogStatementPrefix(countPrefix) + `SELECT COUNT(*) ` + countFrom
+		separateCount = short
 	} else {
 		prefix, from, args := openListCatalogCardsQuery(source.ID, q)
 		pageSQL = catalogCardPageSQL(prefix, from, false)
@@ -880,32 +884,14 @@ func (s *Server) listOpenListWorks(w http.ResponseWriter, r *http.Request, sourc
 			return
 		}
 	}
-	// A short search reports how many cards fit the result budget. The probe
-	// above says whether any branch held more, so the client renders "first
-	// 1000 of more" instead of presenting the budget as the whole result.
+	// A short search reports how many cards fit the result budget. The count read
+	// one row past the budget, so a value above it proves more cards exist; the
+	// client then renders "first N of more" instead of presenting the budget as
+	// the whole result.
 	truncated := false
-	if overflowSQL != "" {
-		rows, queryErr := s.db.QueryContext(r.Context(), overflowSQL, overflowArgs...)
-		if queryErr != nil {
-			writeError(w, queryErr)
-			return
-		}
-		for rows.Next() {
-			var language, entityKind string
-			var overflow bool
-			if err = rows.Scan(&language, &entityKind, &overflow); err != nil {
-				break
-			}
-			truncated = truncated || overflow
-		}
-		if err == nil {
-			err = rows.Err()
-		}
-		_ = rows.Close()
-		if err != nil {
-			writeError(w, err)
-			return
-		}
+	if separateCount && total > catalogShortSearchResultLimit {
+		total = catalogShortSearchResultLimit
+		truncated = true
 	}
 	writeJSON(w, 200, remoteWorksResponse{SourceID: source.ID, Works: works, Page: page, PageSize: pageSize, Total: total, Status: "ok", Sort: "updated", Direction: "desc", SortApplied: true, Truncated: truncated})
 }

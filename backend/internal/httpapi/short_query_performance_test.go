@@ -140,12 +140,12 @@ func TestShortQueryPerformance(t *testing.T) {
 // behind the reported total, one page of cards, and the uncapped diagnostic.
 func shortQueryMeasure(t *testing.T, db *sql.DB, sourceID int64, target library.DisplaySearchTarget, configKey string, warmup, samples int) shortQueryCase {
 	t.Helper()
-	// The page and the reported total both build at most one budget of cards, so
-	// a keystroke never walks the whole source. The uncapped shape stays as a
-	// diagnostic: it says how much a full count would cost without a budget.
-	// The page and the reported total read the same bounded statement, so one
-	// build measures both shapes.
+	// The page reads the card budget and the reported total reads the same cards
+	// one row further, so a keystroke never walks the whole source. The uncapped
+	// shape stays as a diagnostic: it says how much a full count would cost
+	// without a budget.
 	prefix, from, args := openListCatalogCardsQueryLocalized(sourceID, target.Query, []library.DisplaySearchTarget{target}, configKey, catalogShortSearchResultLimit)
+	totalPrefix, totalFrom, totalArgs := openListCatalogCardsQueryLocalized(sourceID, target.Query, []library.DisplaySearchTarget{target}, configKey, catalogShortSearchResultLimit+1)
 	uncappedPrefix, uncappedFrom, uncappedArgs := openListCatalogCardsQueryLocalized(sourceID, target.Query, []library.DisplaySearchTarget{target}, configKey, 0)
 	result := shortQueryCase{Language: target.Language, Needle: target.Query}
 
@@ -185,15 +185,15 @@ func shortQueryMeasure(t *testing.T, db *sql.DB, sourceID int64, target library.
 	result.HitSet.Rows = result.Matches
 	result.HitPlan = shortQueryPlan(t, db, hitSQL, hitArgs)
 
-	totalSQL := catalogStatementPrefix(prefix) + `SELECT count(*) ` + from
+	totalSQL := catalogStatementPrefix(totalPrefix) + `SELECT count(*) ` + totalFrom
 	for range warmup {
-		if err := db.QueryRowContext(context.Background(), totalSQL, args...).Scan(&result.Matches); err != nil {
+		if err := db.QueryRowContext(context.Background(), totalSQL, totalArgs...).Scan(&result.Matches); err != nil {
 			t.Fatalf("%s warm total: %v", target.Language, err)
 		}
 	}
 	result.Total = shortQuerySample(samples, func() error {
 		var total int
-		return db.QueryRowContext(context.Background(), totalSQL, args...).Scan(&total)
+		return db.QueryRowContext(context.Background(), totalSQL, totalArgs...).Scan(&total)
 	})
 	result.Total.Rows = result.Matches
 

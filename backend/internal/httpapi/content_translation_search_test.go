@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/yexca/kikoto/backend/internal/config"
@@ -500,6 +502,7 @@ func TestContentTranslationSearchRemoteCapsShortMatchSet(t *testing.T) {
 	response := requestRemoteWorks(t, db, "q="+url.QueryEscape("作品")+"&lang=zh-cn&pageSize=100&page=10")
 	// Both the total and the page stay inside the budget. Page 10 still sits
 	// inside the first 1000 rows.
+	t.Logf("5001 entries: total=%d rows=%d truncated=%v", response.Total, len(response.Works), response.Truncated)
 	if response.Total != catalogShortSearchResultLimit || len(response.Works) != 100 || !response.Truncated {
 		t.Fatalf("bounded search = total %d rows %d truncated %v, want %d/100/true",
 			response.Total, len(response.Works), response.Truncated, catalogShortSearchResultLimit)
@@ -575,4 +578,179 @@ func TestContentTranslationSearchRemoteSeriesInheritsMemberExact(t *testing.T) {
 	if len(ids) != 2 || ids[0] != -1 {
 		t.Fatalf("series member exact order = %v, want the series first: %#v", ids, response)
 	}
+}
+
+// The card budget is one number for the whole response, not one per entity
+// kind. Six hundred entries and six hundred series both match, the merged set is
+// trimmed once to the budget, and neither kind disappears.
+func TestContentTranslationSearchRemoteShortBudgetSpansBothArms(t *testing.T) {
+	db := openMigratedTestDB(t)
+	seedCatalogPlanSource(t, db)
+	seedBudgetCards(t, db, 600, 600, translation.SourceHans)
+	refreshTestTranslationScope(t, db)
+
+	kinds, total, truncated := budgetPages(t, db, "作品", "zh-cn")
+	t.Logf("600 entries + 600 series: total=%d truncated=%v cards=%v", total, truncated, kinds)
+	if total != catalogShortSearchResultLimit || !truncated {
+		t.Fatalf("two-arm budget = total %d truncated %v, want %d/true",
+			total, truncated, catalogShortSearchResultLimit)
+	}
+	if kinds["series"]+kinds["entry"] != catalogShortSearchResultLimit {
+		t.Fatalf("paged cards = %v, want %d in total", kinds, catalogShortSearchResultLimit)
+	}
+	// Ordering is recency, not a round robin, so one kind can fill an early page;
+	// what the budget must not do is drop a kind entirely.
+	if kinds["series"] == 0 || kinds["entry"] == 0 {
+		t.Fatalf("one arm was starved by the budget: %v", kinds)
+	}
+}
+
+// Below the budget nothing is dropped and the flag stays false.
+func TestContentTranslationSearchRemoteShortBudgetBelowLimit(t *testing.T) {
+	db := openMigratedTestDB(t)
+	seedCatalogPlanSource(t, db)
+	seedBudgetCards(t, db, 40, 40, translation.SourceHans)
+	refreshTestTranslationScope(t, db)
+
+	kinds, total, truncated := budgetPages(t, db, "作品", "zh-cn")
+	t.Logf("40 entries + 40 series: total=%d truncated=%v cards=%v", total, truncated, kinds)
+	if total != 80 || truncated {
+		t.Fatalf("below-budget search = total %d truncated %v, want 80/false", total, truncated)
+	}
+	if kinds["series"] != 40 || kinds["entry"] != 40 {
+		t.Fatalf("below-budget cards = %v, want 40 series and 40 entries", kinds)
+	}
+}
+
+// A Traditional display language reads two corpora, and both contribute to the
+// same budget. Merging them must not stop at whichever corpus matched first.
+func TestContentTranslationSearchRemoteTraditionalSharesOneBudget(t *testing.T) {
+	db := openMigratedTestDB(t)
+	seedCatalogPlanSource(t, db)
+	seedBudgetEntryRange(t, db, 1, 600, "Hans ", "作品简体", translation.SourceHans)
+	seedBudgetEntryRange(t, db, 601, 600, "Hant ", "作品繁體", translation.SourceHant)
+	refreshTestTranslationScope(t, db)
+
+	scripts := map[string]int{}
+	total, truncated, cards := 0, false, 0
+	for page := 1; page <= 12; page++ {
+		response := requestRemoteWorks(t, db,
+			"q="+url.QueryEscape("作品")+"&lang=zh-tw&pageSize=100&page="+strconv.Itoa(page))
+		total, truncated = response.Total, response.Truncated
+		cards += len(response.Works)
+		for _, work := range response.Works {
+			if strings.HasPrefix(work.Title, "Hant") {
+				scripts["traditional"]++
+				continue
+			}
+			scripts["simplified"]++
+		}
+	}
+	t.Logf("zh-tw 600+600: total=%d cards=%d truncated=%v scripts=%v", total, cards, truncated, scripts)
+	if total != catalogShortSearchResultLimit || !truncated || cards != catalogShortSearchResultLimit {
+		t.Fatalf("zh-tw budget = total %d cards %d truncated %v, want %d/%d/true",
+			total, cards, truncated, catalogShortSearchResultLimit, catalogShortSearchResultLimit)
+	}
+	for _, key := range []string{"simplified", "traditional"} {
+		if scripts[key] == 0 {
+			t.Fatalf("zh-tw starved %s rows: %v", key, scripts)
+		}
+	}
+}
+
+// seedBudgetCards writes `entries` standalone cards and `series` series cards of
+// two admitted members each, all matching the same needle in `language`.
+func seedBudgetCards(t *testing.T, db *sql.DB, entries, series int, language string) {
+	t.Helper()
+	seedBudgetEntryRange(t, db, 1, entries, "Standalone ", "作品单集", language)
+	seedBudgetSeries(t, db, int64(entries)+1, series, language)
+}
+
+// seedBudgetEntryRange writes ids first..first+count-1 as standalone cards with
+// one audio file and one native translation row each.
+func seedBudgetEntryRange(t *testing.T, db *sql.DB, first int64, count int, prefix, translated, language string) {
+	t.Helper()
+	if count <= 0 {
+		return
+	}
+	last := first + int64(count) - 1
+	statements := []struct {
+		query string
+		args  []any
+	}{
+		{`WITH RECURSIVE n(i) AS (SELECT ? UNION ALL SELECT i+1 FROM n WHERE i<?)
+			INSERT INTO source_catalog_entry(id,file_source_id,root_path,title,availability_status)
+			SELECT i,7,'/entry/'||i,?||i,'available' FROM n`, []any{first, last, prefix}},
+		{`WITH RECURSIVE n(i) AS (SELECT ? UNION ALL SELECT i+1 FROM n WHERE i<?)
+			INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes)
+			SELECT i,'01.mp3','01.mp3','audio',1 FROM n`, []any{first, last}},
+		{`WITH RECURSIVE n(i) AS (SELECT ? UNION ALL SELECT i+1 FROM n WHERE i<?)
+			INSERT INTO content_translation(cache_key,entity_kind,entity_id,field,language,source_text,translated_text,origin)
+			SELECT 'budget-entry-'||i,'entry',i,'title',?,?||i,?||i,'native' FROM n`,
+			[]any{first, last, language, prefix, translated}},
+	}
+	for _, item := range statements {
+		if _, err := db.Exec(item.query, item.args...); err != nil {
+			t.Fatalf("seed budget entries: %v", err)
+		}
+	}
+}
+
+// seedBudgetSeries writes `count` series starting at firstEntry, two admitted
+// member entries each, plus a native translation for every series title.
+func seedBudgetSeries(t *testing.T, db *sql.DB, firstEntry int64, count int, language string) {
+	t.Helper()
+	if count <= 0 {
+		return
+	}
+	lastEntry := firstEntry + int64(2*count) - 1
+	statements := []struct {
+		query string
+		args  []any
+	}{
+		// The series row must exist before its members link to it.
+		{`WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<?)
+			INSERT INTO catalog_series(id,title,source_id) SELECT i,'Series '||i,7 FROM n`, []any{count}},
+		{`WITH RECURSIVE n(i) AS (SELECT ? UNION ALL SELECT i+1 FROM n WHERE i<?)
+			INSERT INTO source_catalog_entry(id,file_source_id,root_path,title,availability_status)
+			SELECT i,7,'/member/'||i,'Member '||i,'available' FROM n`, []any{firstEntry, lastEntry}},
+		{`WITH RECURSIVE n(i) AS (SELECT ? UNION ALL SELECT i+1 FROM n WHERE i<?)
+			INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes)
+			SELECT i,'01.mp3','01.mp3','audio',1 FROM n`, []any{firstEntry, lastEntry}},
+		{`WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<?)
+			INSERT INTO catalog_series_member(series_id,catalog_entry_id,position,evidence)
+			SELECT i,?+2*(i-1),1,'directory' FROM n`, []any{count, firstEntry}},
+		{`WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<?)
+			INSERT INTO catalog_series_member(series_id,catalog_entry_id,position,evidence)
+			SELECT i,?+2*(i-1)+1,2,'directory' FROM n`, []any{count, firstEntry}},
+		{`WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<?)
+			INSERT INTO content_translation(cache_key,entity_kind,entity_id,field,language,source_text,translated_text,origin)
+			SELECT 'budget-series-'||i,'series',i,'title',?,'Series '||i,'作品系列'||i,'native' FROM n`,
+			[]any{count, language}},
+	}
+	for _, item := range statements {
+		if _, err := db.Exec(item.query, item.args...); err != nil {
+			t.Fatalf("seed budget series: %v", err)
+		}
+	}
+}
+
+// budgetPages reads every page of a budgeted set and counts cards by kind.
+func budgetPages(t *testing.T, db *sql.DB, needle, language string) (map[string]int, int, bool) {
+	t.Helper()
+	kinds := map[string]int{}
+	total, truncated := 0, false
+	for page := 1; page <= 12; page++ {
+		response := requestRemoteWorks(t, db,
+			"q="+url.QueryEscape(needle)+"&lang="+language+"&pageSize=100&page="+strconv.Itoa(page))
+		total, truncated = response.Total, response.Truncated
+		for _, work := range response.Works {
+			if work.SeriesID > 0 {
+				kinds["series"]++
+				continue
+			}
+			kinds["entry"]++
+		}
+	}
+	return kinds, total, truncated
 }
