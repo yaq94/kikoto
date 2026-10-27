@@ -10,6 +10,10 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/yexca/kikoto/backend/internal/buildinfo"
+	"github.com/yexca/kikoto/backend/internal/config"
+	"github.com/yexca/kikoto/backend/internal/storage"
 )
 
 // AC-25: a low-disk pause must stop background work without stopping playback
@@ -131,4 +135,72 @@ func TestLowDiskPausesScanAndPrefillWithoutStoppingPlayback(t *testing.T) {
 		t.Fatalf("resumed scan dropped the retained card: %#v", list)
 	}
 	assertReview(t, reviewRequest(t, f.handler, f.cookie, http.MethodGet, "/api/source-catalog/91", "", http.StatusOK), float64(4), "Example retained note")
+}
+
+// AC-25 R: the low-disk pause is durable state, not an in-memory flag. Closing
+// the application and reopening the same database must keep the pause and its
+// reason instead of reporting completion, and a personal record written while
+// paused must still be readable.
+func TestLowDiskPauseAndPersonalRecordSurviveApplicationRestart(t *testing.T) {
+	path, db := openRestartableMigrationDB(t)
+	upstream := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var input struct {
+			Path string `json:"path"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&input)
+		items := []map[string]any{{"name": "Example", "is_dir": true}}
+		if input.Path != "/" {
+			items = []map[string]any{{"name": "track.mp3", "size": 16}}
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"code": 200, "data": map[string]any{"content": items, "total": len(items)}})
+	})
+	f := newCatalogIndexFixtureWithDB(t, upstream, db)
+	metadataReviewExec(t, f.server.db, `INSERT INTO source_catalog_entry(id,file_source_id,root_path,title,availability_status)
+		VALUES(91,1,'/Retained','Example retained card','available');
+		INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes)
+		VALUES(91,'track.wav','Example track','audio',16);`)
+	reviewRequest(t, f.handler, f.cookie, http.MethodPatch, "/api/source-catalog/91/user-state",
+		`{"rating":4,"note":"Example restart note"}`, http.StatusOK)
+
+	f.server.catalogDiskSpace = func(string) (diskSpaceSnapshot, error) {
+		return diskSpaceSnapshot{Available: 0}, nil
+	}
+	f.request(t, http.MethodPost, "/catalog/index", `{"intervalMs":100,"minFreeBytes":0}`, http.StatusAccepted)
+	paused := f.drain(t)
+	if paused["status"] != "paused" || paused["pauseReason"] != "low_disk_space" || paused["indexedEntries"] != float64(0) {
+		t.Fatalf("low disk did not pause the scan: %#v", paused)
+	}
+
+	if err := f.server.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	db, err := storage.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	if err = storage.MigrateFS(db, completeMigrationFS(t), buildinfo.Version); err != nil {
+		t.Fatal(err)
+	}
+	restarted := NewServer(db, config.Config{
+		Mode:         config.ModeProduction,
+		RootUsername: "synthetic-user",
+		DataRoot:     t.TempDir(),
+		CacheRoot:    t.TempDir(),
+	})
+	t.Cleanup(func() { _ = restarted.Shutdown(context.Background()) })
+	handler := restarted.Routes()
+	cookie := loginTestSession(t, handler, "synthetic-user", "synthetic-password")
+
+	progress := reviewRequest(t, handler, cookie, http.MethodGet, "/api/remote-sources/1/catalog/index", "", http.StatusOK)
+	if progress["status"] != "paused" || progress["pauseReason"] != "low_disk_space" || progress["indexedEntries"] != float64(0) {
+		t.Fatalf("restart cleared or completed the pause: %#v", progress)
+	}
+	assertReview(t, reviewRequest(t, handler, cookie, http.MethodGet, "/api/source-catalog/91", "", http.StatusOK), float64(4), "Example restart note")
+	if list := reviewRequest(t, handler, cookie, http.MethodGet, "/api/works", "", http.StatusOK); list["total"] != float64(1) {
+		t.Fatalf("restart changed the retained catalog: %#v", list)
+	}
 }
