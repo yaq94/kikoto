@@ -2115,7 +2115,7 @@ export const surfaceJapanese = {
     alwaysEnabled: "常に有効",
     playbackFailed: "再生に失敗しました：{{title}}を再生できるソースがありません。",
     playbackFailedAlternatives:
-      "再生に失敗しました：{{title}}には別のソースがあります。設定で失敗時の切り替えを有効にしてください。",
+      "再生に失敗しました：{{title}}には別の再生可能な場所があります。設定で失敗時の切り替えを有効にしてください。",
     sourceFailed: "再生ソースに失敗したため、{{source}}に切り替えました。",
     trackFailed: "{{title}}の再生に失敗しました。",
     lyricsPreviewFailed: "歌詞のプレビューに失敗しました。",

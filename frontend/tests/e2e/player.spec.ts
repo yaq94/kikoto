@@ -847,9 +847,41 @@ test("with fallback off, a usable second location is named in the failure", asyn
   await page.goto("/");
 
   await expect(
-    page.getByText("Playback failed: Test track has another source; enable source fallback in settings to use it."),
+    page.getByText(
+      "Playback failed: Test track has another usable location; enable source fallback in settings to use it.",
+    ),
   ).toBeVisible();
   await expect(page.getByText(/no working source remains/)).toHaveCount(0);
+});
+
+test("a cached copy counts as a location, not another source", async ({ page }) => {
+  await mockApplication(page, undefined, true);
+  await seedPlaybackSourcePreferences(page, { sourceSwitching: true, sourceFallback: false });
+  await seedPlayer(page, {
+    ...persistedTrack,
+    locations: [
+      ...persistedTrack.locations,
+      {
+        locationId: 2,
+        locationType: "cache",
+        streamUrl: "/api/media/2/stream",
+        sourceId: 1,
+        sourceName: "Local",
+        availability: "available",
+      },
+    ],
+  });
+  await page.route(/\/api\/media\/1\/stream(?:\?.*)?$/, (route) => route.fulfill({ status: 404, body: "gone" }));
+  await page.goto("/");
+
+  // The cached copy belongs to the same source. Calling it "another source"
+  // would tell the listener a second provider exists when none does.
+  await expect(
+    page.getByText(
+      "Playback failed: Test track has another usable location; enable source fallback in settings to use it.",
+    ),
+  ).toBeVisible();
+  await expect(page.getByText(/has another source/)).toHaveCount(0);
 });
 
 test("failed direct playback offers compatibility before source fallback and the sleep timer survives a reload", async ({

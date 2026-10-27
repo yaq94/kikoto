@@ -76,7 +76,9 @@ export function resetTrackLocationFailures(state: TrackLocationFailureState) {
  * The next location that can actually be played, ignoring the one that just
  * failed and every location that already failed in this attempt. Both the
  * fallback switch and the failure message read this one predicate, so a toast
- * cannot claim another source is usable after every candidate has failed.
+ * cannot claim another usable location after every candidate has failed. A
+ * cache copy is a location, not a separate source, so the message it feeds
+ * says "location".
  */
 export function nextUsableTrackLocation(
   track: PlayerTrack,
