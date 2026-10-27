@@ -186,7 +186,7 @@ func (s *Server) loadVoiceCatalogMatchRows(ctx context.Context, personID int64, 
 			item.source_url, item.circle, item.age_rating, item.rating_average,
 			item.rating_count, item.sales_count, item.current_price, item.tags_json,
 			item.voice_actors_json, file_source.id, catalog_source.remote_id, catalog_source.remote_code,
-			catalog_source.source_url, catalog_source.availability, catalog_source.last_seen_at,
+			catalog_source.source_url, catalog_source.availability,
 			file_source.code, file_source.display_name
 		FROM voice_catalog_item AS item
 		INNER JOIN voice_catalog_source AS catalog_source ON catalog_source.catalog_item_id = item.id
@@ -264,7 +264,7 @@ func applyVoiceCatalogSourceState(sets []voiceRemoteSourceSet, state voiceCatalo
 type voiceCatalogMatchRow struct {
 	PrimaryCode, Title, CoverURL, ItemSourceURL, Circle, AgeRating string
 	TagsJSON, VoiceActorsJSON                                      string
-	RemoteID, RemoteCode, SourceURL, Availability, LastSeen        string
+	RemoteID, RemoteCode, SourceURL, Availability                  string
 	SourceCode, SourceName                                         string
 	ItemWorkID, SourceID                                           sql.NullInt64
 	ReleaseDate                                                    sql.NullString
@@ -276,7 +276,7 @@ func scanVoiceCatalogMatchRow(rows *sql.Rows) (voiceCatalogMatchRow, error) {
 	err := rows.Scan(
 		&row.PrimaryCode, &row.ItemWorkID, &row.Title, &row.ReleaseDate, &row.CoverURL, &row.ItemSourceURL, &row.Circle,
 		&row.AgeRating, &row.Rating, &row.RatingCount, &row.Sales, &row.Price, &row.TagsJSON, &row.VoiceActorsJSON,
-		&row.SourceID, &row.RemoteID, &row.RemoteCode, &row.SourceURL, &row.Availability, &row.LastSeen, &row.SourceCode, &row.SourceName,
+		&row.SourceID, &row.RemoteID, &row.RemoteCode, &row.SourceURL, &row.Availability, &row.SourceCode, &row.SourceName,
 	)
 	return row, err
 }

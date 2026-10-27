@@ -111,6 +111,7 @@ import { openLibraryTagSearch } from "@/lib/libraryTagSearch";
 import {
   mergeVoiceWorks,
   voiceWorkHasRemoteAvailability,
+  voiceWorkHasRemoteReference,
   voiceWorkObservedSourceTags,
   voiceWorkRemoteTarget,
   type VoiceWorkView,
@@ -563,6 +564,7 @@ function VoiceDetailPage({ personId, active }: { personId: number; active: boole
       if (!matchesQuery) return false;
       const local = "local" in work ? work.local : work.hasLocal;
       const remote = voiceWorkHasRemoteAvailability(work);
+      const remoteReference = voiceWorkHasRemoteReference(work);
       const cache = "cache" in work ? work.cache : work.hasCache;
       switch (filter) {
         case "available":
@@ -570,7 +572,7 @@ function VoiceDetailPage({ personId, active }: { personId: number; active: boole
         case "local":
           return local;
         case "remote":
-          return remote;
+          return remoteReference;
         case "missing":
           return voiceWorkIsExplicitlyUnavailable(work);
         default:

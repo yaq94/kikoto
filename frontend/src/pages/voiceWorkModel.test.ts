@@ -3,7 +3,13 @@ import { describe, expect, it } from "vitest";
 import type { VoiceKnownWork, VoiceRemoteSourceSet, VoiceRemoteWork } from "@/lib/api";
 import { workDetailRoute } from "../app/workDetailNavigation";
 
-import { mergeVoiceWorks, sortVoiceWorks, voiceWorkRemoteTarget } from "./voiceWorkModel";
+import {
+  mergeVoiceWorks,
+  sortVoiceWorks,
+  voiceWorkHasRemoteAvailability,
+  voiceWorkHasRemoteReference,
+  voiceWorkRemoteTarget,
+} from "./voiceWorkModel";
 
 describe("mergeVoiceWorks", () => {
   it("keeps known identity while retaining the exact live remote observation", () => {
@@ -120,6 +126,21 @@ describe("mergeVoiceWorks", () => {
     expect(result.primaryCode).toBe("RJ00000009");
     expect(result.remoteObservations).toContainEqual(expect.objectContaining({ status: "not_found" }));
     expect(voiceWorkRemoteTarget(result)).toBeNull();
+  });
+
+  it("keeps an unknown catalog row openable and checkable without claiming playback", () => {
+    const unknown = {
+      ...remoteWork(),
+      primaryCode: "RJ00000010",
+      remoteCode: "RJ00000010",
+      remotePlayable: false,
+      hasRemote: false,
+      availability: "unknown",
+    };
+
+    expect(voiceWorkRemoteTarget(unknown)).toEqual({ sourceId: 7, code: "RJ00000010" });
+    expect(voiceWorkHasRemoteAvailability(unknown)).toBe(false);
+    expect(voiceWorkHasRemoteReference(unknown)).toBe(true);
   });
 });
 

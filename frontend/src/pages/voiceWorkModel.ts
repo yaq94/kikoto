@@ -105,7 +105,11 @@ export function voiceWorkRemoteTarget(work: VoiceWorkView): { sourceId: number; 
   const observation = work.remoteObservations?.find((item) => item.status === "available");
   if (observation) return { sourceId: observation.sourceId, code: observation.remoteCode };
   if ("sourceId" in work && validSourceID(work.sourceId)) {
-    if (!work.remotePlayable && work.availability !== "available" && !work.hasRemote) return null;
+    // Unknown is a pending answer, not a refusal: opening the source runs the
+    // check that resolves it. A negative answer without other evidence blocks
+    // the card instead of promising a directory the source no longer lists.
+    if (!work.remotePlayable && work.availability !== "available" && work.availability !== "unknown" && !work.hasRemote)
+      return null;
     const code = (work.remoteCode || work.primaryCode).trim();
     return code ? { sourceId: work.sourceId, code } : null;
   }
@@ -120,6 +124,16 @@ export function voiceWorkRemoteTarget(work: VoiceWorkView): { sourceId: number; 
 export function voiceWorkObservedSourceTags(work: VoiceWorkView) {
   if ("sourceTags" in work) return work.sourceTags;
   return mergeObservedSourceTags([], work.remoteObservations ?? []);
+}
+
+/**
+ * A catalog row whose latest answer is unknown still belongs to its source even
+ * though it is not confirmed playable. The Remote filter lists source
+ * references; the Available filter stays limited to confirmed availability.
+ */
+export function voiceWorkHasRemoteReference(work: VoiceWorkView) {
+  if (voiceWorkHasRemoteAvailability(work)) return true;
+  return "sourceId" in work && validSourceID(work.sourceId) && work.availability === "unknown";
 }
 
 export function voiceWorkHasRemoteAvailability(work: VoiceWorkView) {
