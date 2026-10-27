@@ -5,7 +5,7 @@
 **Blocked by:** [17：组合验收与部署回退](17-integrated-acceptance-release-plan.md)、[18](18-ci-migration-completion-state.md)、[19](19-ci-browser-reliability.md)、[20](20-catalog-sync-and-admission.md)、[21](21-translation-corpus-and-search.md)、[22](22-personal-transfer-parent-identity.md)、[23](23-retention-and-repository-contracts.md)。
 
 **Status:** ready-for-agent
-**Implementation:** resolved；候选 fd37dc4c 已部署，Full CI run 40460123865（终态 TODO），schema 105，/health 200。候选账本见 [24-candidate-fd37dc4c.md](../evidence/24-candidate-fd37dc4c.md)，模板为 [24-candidate-ledger.md](../evidence/24-candidate-ledger.md)。
+**Implementation:** resolved；候选 c9449653 已部署，Full CI run 40463449636（终态 TODO），schema 105，/health 200。候选账本见 [24-candidate-c9449653.md](../evidence/24-candidate-c9449653.md)，模板为 [24-candidate-ledger.md](../evidence/24-candidate-ledger.md)。
 
 **依据:** [正式规格](../spec.md)、[整改计划](../review-remediation-plan.md)、[执行记录](../execution.md)。
 
@@ -24,7 +24,7 @@
 ## 发布门禁
 
 - [x] Standards 与 Spec 双轴审查闭环；Standards 发现项已提交修复或记录理由，Spec 报告见 `.kikoto-work/reports/review-spec-delta.md`。
-- [x] 同一 SHA 的 Full CI、类型检查、构建、H/R/F/U 与必要 race 证据。Full CI run `40460123865` @ `fd37dc4c` 记录状态为进行中，终态 TODO；类型检查、构建、H/R/F/U 与 race 已在本候选取得。上一候选 `f727feee`（历史）的 run `40409566661` 为 26/26 job success。
+- [x] 同一 SHA 的 Full CI、类型检查、构建、H/R/F/U 与必要 race 证据。Full CI run `40463449636` @ `c9449653` 记录状态为进行中，终态 TODO；类型检查、构建、H/R/F/U 与 race 已在本候选取得。上一候选 `f727feee`（历史）的 run `40409566661` 为 26/26 job success。
 - [x] 原始 AC-14 的系列证据、单集格式副本、Bonus/轨道容器和成员上限回归保留在 11 号票的本地记录；本候选未改动系列逻辑。后端全量测试 `go test ./...` 在上一候选 `f727feee`（历史）通过；本候选重跑 `go build ./...`、`go vet ./internal/httpapi ./internal/translation` 与 `go test ./internal/translation -race`。
 - [x] 迁移链：095–105 连续、`compat/105_dev.sql` 与迁移后 schema 一致。本候选未改迁移，新装、068→105、084→105、重复启动四项沿用上一候选 `f727feee` 的记录；旧 095 preflight 全组亦在该记录中通过。
 - [x] 备份、恢复和可执行回滚路径演练；部署脚本在切换前生成 DB/WAL/SHM、`.env`、compose 与 SHA256SUMS 快照并校验，健康门禁失败会自动回滚。

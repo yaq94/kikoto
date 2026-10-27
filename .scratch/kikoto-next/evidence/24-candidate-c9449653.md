@@ -1,16 +1,16 @@
-# 24 候选账本：fd37dc4c
+# 24 候选账本：c9449653
 
-> 本文件记录部署候选 `fd37dc4c` 的取得证据。仓库只写镜像 tag；digest、主机路径与备份位置留在受限运维记录。
+> 本文件记录部署候选 `c9449653` 的取得证据。仓库只写镜像 tag；digest、主机路径与备份位置留在受限运维记录。
 
 ## 1. 候选标识
 
 | 项 | 值 |
 | --- | --- |
-| 候选 SHA | `fd37dc4c`（完整值见 Git 分支头 `codex/kikoto-catalog-remediation`） |
+| 候选 SHA | `c9449653`（完整值见 Git 分支头 `codex/kikoto-catalog-remediation`） |
 | 分支 | `codex/kikoto-catalog-remediation` |
 | 冻结时间（Asia/Shanghai） | 2026-10-27T14:20:00+08:00（候选冻结，部署前后均未再改代码） |
 | 集成负责人 | 主会话（Codex） |
-| 镜像 tag | `kikoto:next-fd37dc4c` |
+| 镜像 tag | `kikoto:next-c9449653` |
 | 镜像 digest（受限记录，不写仓库） | 只留在受限运维记录；仓库只写 tag |
 | schema 版本 | `105` |
 | 迁移链 | `095 → 096 → 097 → 098 → 099 → 100 → 101 → 102 → 103 → 104 → 105`（本候选未新增迁移） |
@@ -19,7 +19,7 @@
 
 ## 2. 提交清单
 
-候选相对上一部署 `88498e94` 共 21 个提交；相对上一候选 `f727feee` 共 27 个提交。下表按 `git log --oneline 88498e94..fd37dc4c` 逐条对齐。
+候选相对上一部署 `88498e94` 共 22 个提交；相对上一候选 `f727feee` 共 28 个提交。下表按 `git log --oneline 88498e94..c9449653` 逐条对齐。
 
 | 工单 | 提交 | 说明 |
 | --- | --- | --- |
@@ -44,6 +44,8 @@
 | 20 | `1cb0176b` | voice 目录卡按统一的 verdict 规则判断可播放性 |
 | 20 | `a93cdc66` | 标记用 `readable` 声明需阅读，同类内排到健康标记之前 |
 | 21 | `fd37dc4c` | 短查询基准的 Go 名称与它实际测量的有界总数一致 |
+| 02 | `ce642084` | 状态页与账本指向已部署候选，参考文档删去带日期的测量表 |
+| 02 | `c9449653` | 翻译显示状态改用真实联合类型，不再字符串强转 |
 
 ## 3. 门禁结果
 
@@ -59,14 +61,14 @@
 | 前端 E2E 类型检查 | `npm run typecheck:e2e` | 0 | 本地执行 | 通过 |
 | 前端 lint | `npx oxlint src --deny-warnings` | 0 | 本地执行 | 718 文件 0 warning |
 | 前端格式 | `npm run format:check` | 0 | 本地执行 | 通过 |
-| 前端单元测试 | `npm run test:unit` | 0 | 本地执行 | 164 文件 / 941 测试 |
+| 前端单元测试 | `npm run test:unit` | 0 | 本地执行 | 164 文件 / 942 测试 |
 | 文档链接 | `node scripts/check-doc-links.mjs` | 0 | 本地执行 | 134 份 Markdown |
 | 文档 locale | `node scripts/check-doc-locales.mjs` | 0 | 本地执行 | 5 locale / 11 页 |
 | tracked-evidence | `node scripts/check-tracked-evidence.mjs` | 0 | 本地执行 | 53 个文件 |
 | 翻译浏览器用例 | `node scripts/run-e2e-fixtures.mjs --group=content-translation` | 0 | `.kikoto-work/e2e-logs/final-*` | 7 + 2 通过 |
 | 试译设置浏览器用例 | `--group=translation-settings` | 0 | 同上 | 3 通过 |
 | 播放失败浏览器用例 | Playwright `player.spec.ts` 定向 | 0 | 同上 | 3 通过 |
-| Full CI | `workflow_dispatch` run `40460123865` | TODO | GitHub Actions | 记录状态为进行中，终态 TODO |
+| Full CI | `workflow_dispatch` run `40463449636` | TODO | GitHub Actions | 记录状态为进行中，终态 TODO |
 | 迁移：新装 | `TestMigrationChain105FreshInstall` | 0 | 上一候选 `f727feee` 记录（历史） | 本候选未改迁移，沿用上一候选证据 |
 | 迁移：068 升级 | `TestMigrationChain105Upgrades068AndKeepsUserData` | 0 | 同上（历史） | 本候选未改迁移，沿用上一候选证据 |
 | 迁移：084 升级 | `TestMigrationChain105Upgrades084ToCurrentShape` | 0 | 同上（历史） | 本候选未改迁移，沿用上一候选证据 |
@@ -135,13 +137,13 @@
 | 项 | 值 |
 | --- | --- |
 | 部署主机 | 既有生产主机（受限记录） |
-| 部署时间（Asia/Shanghai） | 2026-10-27（精确时刻见受限运维记录） |
-| 部署前备份路径（受限记录） | `rollbacks/pre-fd37dc4c-<stamp>/`，含 DB、WAL/SHM、`.env`、compose、SHA256SUMS 与 `rollback.sh` |
-| 部署前 schema / 镜像 | schema 105 / 上一候选（已由 `fd37dc4c` 取代） |
-| 回滚镜像 tag | 上一候选（已由 `fd37dc4c` 取代） |
+| 部署时间（Asia/Shanghai） | 2026-10-27 14:50（部署脚本 UTC 06:50） |
+| 部署前备份路径（受限记录） | `rollbacks/pre-c9449653-<stamp>/`，含 DB、WAL/SHM、`.env`、compose、SHA256SUMS 与 `rollback.sh` |
+| 部署前 schema / 镜像 | schema 105 / 上一候选（已由 `c9449653` 取代） |
+| 回滚镜像 tag | 上一候选（已由 `c9449653` 取代） |
 | 回滚 schema 兼容矩阵 | 见 [release-rollback.md](../../../docs/development/release-rollback.md) |
 | 健康门禁 | `GET /health` 200 `{"status":"ok","version":"v0.8.3"}`，2 秒就绪 |
-| 部署脚本记录 | `schema_before=105`、`schema_after=105`、`health_seconds=2`、`git_sha=fd37dc4c` |
+| 部署脚本记录 | `schema_before=105`、`schema_after=105`、`health_seconds=2`、`git_sha=c9449653` |
 | 快照校验 | `sha256sum -c` 全部 OK |
 | 部署后数据库 | `schema_state=105`、`migration_max=105`、`quick_check=ok`、FK 0 |
 | 部署后验证结果 | 见本节下方逐项验收 |
