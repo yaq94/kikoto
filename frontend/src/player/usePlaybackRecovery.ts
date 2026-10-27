@@ -9,7 +9,7 @@ import type { PlaybackCompatibilityScope, PlayerTrack } from "./playerTypes";
 import {
   applyTrackLocation,
   createTrackLocationFailureState,
-  orderedTrackLocations,
+  nextUsableTrackLocation,
   recordTrackLocationFailure,
   resetTrackLocationFailures,
 } from "./trackLocations";
@@ -72,11 +72,11 @@ export function usePlaybackRecovery(
         // "No source remains" is only true when nothing else is usable. With
         // fallback switched off the same stop happens while another location
         // exists, and the message must say so instead of claiming none does.
-        const alternativeExists = orderedTrackLocations(activeTrack).some(
-          (location) =>
-            location.locationId !== activeTrack.locationId &&
-            (location.availability === "available" || location.availability === "remote"),
-        );
+        // Locations that already failed in this attempt are excluded by the
+        // same predicate the fallback uses, so a fully exhausted track never
+        // tells the reader to enable a setting that is already on.
+        const alternativeExists =
+          nextUsableTrackLocation(activeTrack, locationFailures.failedLocationIds) !== undefined;
         toast.notify({
           kind: "error",
           message: alternativeExists

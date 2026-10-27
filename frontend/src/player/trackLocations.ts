@@ -72,6 +72,24 @@ export function resetTrackLocationFailures(state: TrackLocationFailureState) {
   state.terminal = false;
 }
 
+/**
+ * The next location that can actually be played, ignoring the one that just
+ * failed and every location that already failed in this attempt. Both the
+ * fallback switch and the failure message read this one predicate, so a toast
+ * cannot claim another source is usable after every candidate has failed.
+ */
+export function nextUsableTrackLocation(
+  track: PlayerTrack,
+  failedLocationIds: ReadonlySet<number>,
+): PlayerTrackLocation | undefined {
+  return orderedTrackLocations(track).find(
+    (location) =>
+      location.locationId !== track.locationId &&
+      !failedLocationIds.has(location.locationId) &&
+      (location.availability === "available" || location.availability === "remote"),
+  );
+}
+
 /** Without `allowFallback`, the first failure is terminal even when another location exists. */
 export function recordTrackLocationFailure(
   track: PlayerTrack,
@@ -80,14 +98,7 @@ export function recordTrackLocationFailure(
 ): TrackLocationFailureResult {
   if (state.terminal || state.failedLocationIds.has(track.locationId)) return { kind: "ignored" };
   state.failedLocationIds.add(track.locationId);
-  const nextLocation = allowFallback
-    ? orderedTrackLocations(track).find(
-        (location) =>
-          location.locationId !== track.locationId &&
-          !state.failedLocationIds.has(location.locationId) &&
-          (location.availability === "available" || location.availability === "remote"),
-      )
-    : undefined;
+  const nextLocation = allowFallback ? nextUsableTrackLocation(track, state.failedLocationIds) : undefined;
   if (nextLocation) return { kind: "switch", location: nextLocation };
   state.terminal = true;
   return { kind: "terminal" };

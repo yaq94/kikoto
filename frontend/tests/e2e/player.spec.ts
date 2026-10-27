@@ -800,6 +800,62 @@ test("source switching and fallback stay off until the listener enables them", a
   await expect(page.getByRole("button", { name: "Choose playback source" })).toHaveCount(0);
 });
 
+test("an exhausted fallback does not tell the listener to enable it", async ({ page }) => {
+  await mockApplication(page, undefined, true);
+  await seedPlaybackSourcePreferences(page, { sourceSwitching: true, sourceFallback: true });
+  await seedPlayer(page, {
+    ...persistedTrack,
+    locations: [
+      ...persistedTrack.locations,
+      {
+        locationId: 2,
+        locationType: "remote_stream",
+        streamUrl: "/api/media/2/stream",
+        sourceId: 2,
+        sourceName: "Remote",
+        availability: "remote",
+      },
+    ],
+  });
+  // Both published files are gone. Fallback is already on and has now tried
+  // every location, so the message must not point at that setting again.
+  await page.route(/\/api\/media\/[12]\/stream(?:\?.*)?$/, (route) =>
+    route.fulfill({ status: 404, body: "gone" }),
+  );
+  await page.goto("/");
+
+  await expect(page.getByText("Playback failed: no working source remains for Test track.")).toBeVisible();
+  await expect(page.getByText(/enable source fallback in settings/)).toHaveCount(0);
+});
+
+test("with fallback off, a usable second location is named in the failure", async ({ page }) => {
+  await mockApplication(page, undefined, true);
+  await seedPlaybackSourcePreferences(page, { sourceSwitching: true, sourceFallback: false });
+  await seedPlayer(page, {
+    ...persistedTrack,
+    locations: [
+      ...persistedTrack.locations,
+      {
+        locationId: 2,
+        locationType: "remote_stream",
+        streamUrl: "/api/media/2/stream",
+        sourceId: 2,
+        sourceName: "Remote",
+        availability: "remote",
+      },
+    ],
+  });
+  await page.route(/\/api\/media\/1\/stream(?:\?.*)?$/, (route) =>
+    route.fulfill({ status: 404, body: "gone" }),
+  );
+  await page.goto("/");
+
+  await expect(
+    page.getByText("Playback failed: Test track has another source; enable source fallback in settings to use it."),
+  ).toBeVisible();
+  await expect(page.getByText(/no working source remains/)).toHaveCount(0);
+});
+
 test("failed direct playback offers compatibility before source fallback and the sleep timer survives a reload", async ({
   page,
 }) => {

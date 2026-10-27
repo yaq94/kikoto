@@ -4,6 +4,7 @@ import type { PlayerTrack, PlayerTrackLocation } from "./playerTypes";
 import {
   applyTrackLocation,
   createTrackLocationFailureState,
+  nextUsableTrackLocation,
   recordTrackLocationFailure,
   resetTrackLocationFailures,
 } from "./trackLocations";
@@ -88,5 +89,26 @@ describe("track location fallback", () => {
 
     expect(recordTrackLocationFailure(track, state, { allowFallback: false })).toEqual({ kind: "terminal" });
     expect(recordTrackLocationFailure(track, state, { allowFallback: false })).toEqual({ kind: "ignored" });
+  });
+
+  it("reports no alternative after every candidate has failed", () => {
+    const state = createTrackLocationFailureState();
+    const first = recordTrackLocationFailure(track, state, fallback);
+    const secondTrack = first.kind === "switch" ? applyTrackLocation(track, first.location) : track;
+    // The first failure still leaves the cache copy usable.
+    expect(nextUsableTrackLocation(track, state.failedLocationIds)).toMatchObject({ locationId: 12 });
+    expect(recordTrackLocationFailure(secondTrack, state, fallback)).toEqual({ kind: "terminal" });
+    // The message and the fallback read the same predicate: once both
+    // locations failed, neither may offer the other as still usable.
+    expect(nextUsableTrackLocation(track, state.failedLocationIds)).toBeUndefined();
+    expect(nextUsableTrackLocation(secondTrack, state.failedLocationIds)).toBeUndefined();
+  });
+
+  it("offers an unused location while one is still playable", () => {
+    const state = createTrackLocationFailureState();
+    recordTrackLocationFailure(track, state, { allowFallback: false });
+
+    // Fallback off: the first location failed, but the cache copy never ran.
+    expect(nextUsableTrackLocation(track, state.failedLocationIds)).toMatchObject({ locationId: 12 });
   });
 });
