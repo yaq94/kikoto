@@ -102,7 +102,13 @@ export function mergeVoiceWorks(knownWorks: VoiceKnownWork[], sourceSets: VoiceR
 }
 
 export function voiceWorkRemoteTarget(work: VoiceWorkView): { sourceId: number; code: string } | null {
-  const observation = work.remoteObservations?.find((item) => item.status === "available");
+  // A known work carries its own source tags rather than a single sourceId. An
+  // unknown observation is still a reference the reader can open and check;
+  // only a settled negative answer is withheld.
+  const observations = work.remoteObservations ?? [];
+  const observation =
+    observations.find((item) => item.status === "available") ??
+    observations.find((item) => item.status === "unknown");
   if (observation) return { sourceId: observation.sourceId, code: observation.remoteCode };
   if ("sourceId" in work && validSourceID(work.sourceId)) {
     // Unknown is a pending answer, not a refusal: opening the source runs the
@@ -135,15 +141,19 @@ export function voiceWorkHasRemoteReference(work: VoiceWorkView) {
   return voiceWorkRemoteTarget(work) !== null;
 }
 
+/**
+ * Whether a source says the work is playable now. A stored presence row only
+ * proves the source held the work at some point, so it cannot answer this
+ * question; it still keeps the card visible through voiceWorkRemoteTarget.
+ */
 export function voiceWorkHasRemoteAvailability(work: VoiceWorkView) {
   if (work.remoteObservations?.some((observation) => observation.status === "available")) return true;
   if ("sourceTags" in work) {
-    return (
-      work.remote ||
-      work.sourceTags.some((tag) => tag.key !== "cache" && validSourceID(tag.sourceId) && tag.status === "available")
+    return work.sourceTags.some(
+      (tag) => tag.key !== "cache" && validSourceID(tag.sourceId) && tag.status === "available",
     );
   }
-  return work.hasRemote || work.remotePlayable;
+  return "remotePlayable" in work && work.remotePlayable;
 }
 
 function groupRemoteWorks(remoteWorks: VoiceRemoteWork[]) {

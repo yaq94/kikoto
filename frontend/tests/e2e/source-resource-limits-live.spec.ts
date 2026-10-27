@@ -102,9 +102,27 @@ test("playback and personal records survive a low-disk catalog pause @desktop", 
     .toBeGreaterThan(pausedAt + 1);
   expect(await audio.evaluate((element: HTMLAudioElement) => element.currentSrc)).toBe(stream);
 
-  // A full page load is the app restart the listener actually performs. The
-  // rating and note live in the personal record, so they must come back without
-  // the player or the index recreating them.
+  // A local two-track queue is the listener's app state, not fixture data that
+  // revalidation can rebuild. Pause it, reload the whole app, and require the
+  // queue and cursor to come back without the player starting on its own.
+  await page.goto("/RJ00000000");
+  await expect(page.getByText("local-a.wav", { exact: true })).toBeVisible();
+  await page.getByText("local-a.wav", { exact: true }).click();
+  await expect(audio).toHaveJSProperty("paused", false);
+  await expect.poll(async () => (await queueState()).queue.length).toBe(2);
+  await expect.poll(async () => (await queueState()).at).toBe(0);
+  await page.getByRole("button", { name: "Pause", exact: true }).click();
+  const localQueue = await queueState();
+  const localStream = await audio.evaluate((element: HTMLAudioElement) => element.currentSrc);
+  await page.reload();
+  await expect(page.getByRole("button", { name: "Resume", exact: true })).toBeVisible();
+  await expect.poll(async () => (await queueState()).queue.length).toBe(2);
+  expect(await queueState()).toEqual(localQueue);
+  expect(await audio.evaluate((element: HTMLAudioElement) => element.currentSrc)).toBe(localStream);
+  expect(await audio.evaluate((element: HTMLAudioElement) => element.paused)).toBe(true);
+
+  // The personal record also survives the app restart, without the player or
+  // the index recreating it.
   await page.goto("/work/3");
   await page.reload();
   const reviewPanel = page.getByRole("region", { name: "Personal review", exact: true });

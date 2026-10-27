@@ -142,6 +142,42 @@ describe("mergeVoiceWorks", () => {
     expect(voiceWorkHasRemoteAvailability(unknown)).toBe(false);
     expect(voiceWorkHasRemoteReference(unknown)).toBe(true);
   });
+
+  it("does not let a stored presence turn an unknown catalog row into an available answer", () => {
+    const unknown = {
+      ...remoteWork(),
+      primaryCode: "RJ00000010",
+      remoteCode: "RJ00000010",
+      remotePlayable: false,
+      hasRemote: true,
+      availability: "unknown",
+    };
+
+    expect(voiceWorkRemoteTarget(unknown)).toEqual({ sourceId: 7, code: "RJ00000010" });
+    expect(voiceWorkHasRemoteAvailability(unknown)).toBe(false);
+    expect(voiceWorkHasRemoteReference(unknown)).toBe(true);
+  });
+
+  it("opens a known work's unknown observation without claiming availability", () => {
+    const known: VoiceKnownWork = {
+      ...knownWork(),
+      remote: true,
+      sourceTags: [{ key: "source:7", sourceId: 7, displayName: "Sample Source", status: "unknown", count: 0 }],
+      remoteObservations: [
+        {
+          sourceId: 7,
+          sourceCode: "sample-source",
+          sourceName: "Sample Source",
+          remoteCode: "SAMPLE-UNKNOWN",
+          status: "unknown",
+        },
+      ],
+    };
+
+    expect(voiceWorkRemoteTarget(known)).toEqual({ sourceId: 7, code: "SAMPLE-UNKNOWN" });
+    expect(voiceWorkHasRemoteAvailability(known)).toBe(false);
+    expect(voiceWorkHasRemoteReference(known)).toBe(true);
+  });
 });
 
 describe("sortVoiceWorks", () => {

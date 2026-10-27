@@ -1247,7 +1247,7 @@ function voiceWorkCardView(work: VoiceWorkView, t: TFunction): WorkCardViewModel
     ? circleSourceBadges({ local: work.local, remote: work.remote, cache: work.cache, sourceTags: observedSourceTags })
     : circleSourceBadges({
         local: work.hasLocal,
-        remote: work.hasRemote || work.remotePlayable,
+        remote: work.remotePlayable,
         cache: work.hasCache,
         sourceTags: observedSourceTags,
       });
