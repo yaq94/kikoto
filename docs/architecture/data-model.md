@@ -571,9 +571,9 @@ exists, `work_id` links the projection to that same work.
 observed through a `metadata_provider`, using the same source-derived provider
 identity as the circle catalog. A complete successful source refresh marks
 older observations from that provider `not_found`; a failed or cancelled source
-refresh leaves its previous observations intact. Playability follows the
-recorded availability alone: `unknown` stays unplayable and open to a new check
-even when the row carries a last-seen timestamp. The configured `file_source`
+refresh leaves its previous observations intact. Playability reads the recorded
+availability, not the last-seen timestamp: `unknown` stays unplayable and open
+to a new check even when the row carries one. The configured `file_source`
 is mapped separately when Kikoto projects known-work availability into
 `work_source_presence`; concrete playable paths still belong in
 `media_file_location`.

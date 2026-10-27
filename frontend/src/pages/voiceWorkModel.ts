@@ -127,13 +127,12 @@ export function voiceWorkObservedSourceTags(work: VoiceWorkView) {
 }
 
 /**
- * A catalog row whose latest answer is unknown still belongs to its source even
- * though it is not confirmed playable. The Remote filter lists source
- * references; the Available filter stays limited to confirmed availability.
+ * Whether the card has a source reference it can open and check. A catalog row
+ * whose latest answer is unknown still qualifies even though it is not
+ * playable, so the Remote filter lists it while Available does not.
  */
 export function voiceWorkHasRemoteReference(work: VoiceWorkView) {
-  if (voiceWorkHasRemoteAvailability(work)) return true;
-  return "sourceId" in work && validSourceID(work.sourceId) && work.availability === "unknown";
+  return voiceWorkRemoteTarget(work) !== null;
 }
 
 export function voiceWorkHasRemoteAvailability(work: VoiceWorkView) {
