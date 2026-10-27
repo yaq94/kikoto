@@ -34,7 +34,7 @@ export const translationAdmin = {
   trial: "번역 테스트",
   trialHint: "저장된 설정으로 민감한 정보가 없는 짧은 글을 번역합니다. 테스트마다 한 번만 요청합니다.",
   inputBytes: "{{used}} / {{limit}}바이트 입력됨",
-  inputTooLong: "입력 한도({{limit}}바이트)에 도달하여 추가 내용은 입력되지 않았습니다.",
+  inputTooLong: "이 변경은 추가되지 않았습니다. {{limit}}바이트 입력 한도를 넘습니다.",
   text: "테스트 글",
   target: "번역 대상 언어",
   test: "저장된 설정 테스트",

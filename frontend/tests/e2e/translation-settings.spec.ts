@@ -210,10 +210,16 @@ test("a trial keystroke past the input limit is refused with an inline note @des
   // One keystroke past 8 KiB must leave the accepted text in place and say so;
   // silently dropping the edit looks like the input was lost.
   await field.fill("x".repeat(8193));
-  await expect(page.getByText("The input limit of 8192 bytes is reached; extra text was not added.")).toBeVisible();
+  await expect(page.getByText("That edit was not added: it would exceed the 8192-byte input limit.")).toBeVisible();
   await expect(field).toHaveValue("Short text.");
   // The next accepted edit clears the note; the field is usable again.
   await field.fill("Short.");
   await expect(field).toHaveValue("Short.");
-  await expect(page.getByText("The input limit of 8192 bytes is reached; extra text was not added.")).toHaveCount(0);
+  await expect(page.getByText("That edit was not added: it would exceed the 8192-byte input limit.")).toHaveCount(0);
+  // Choosing a target clears the note too, so a rejected keystroke cannot
+  // outlive the input it described.
+  await field.fill("x".repeat(8193));
+  await expect(page.getByText("That edit was not added: it would exceed the 8192-byte input limit.")).toBeVisible();
+  await page.getByLabel("Translation target", { exact: true }).selectOption("en");
+  await expect(page.getByText("That edit was not added: it would exceed the 8192-byte input limit.")).toHaveCount(0);
 });

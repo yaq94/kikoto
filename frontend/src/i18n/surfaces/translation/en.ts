@@ -35,7 +35,7 @@ export const translationAdmin = {
   trial: "Translation trial",
   trialHint: "Send a short, non-sensitive text using the saved configuration. Each trial makes one request.",
   inputBytes: "{{used}} of {{limit}} bytes used",
-  inputTooLong: "The input limit of {{limit}} bytes is reached; extra text was not added.",
+  inputTooLong: "That edit was not added: it would exceed the {{limit}}-byte input limit.",
   text: "Trial text",
   target: "Translation target",
   test: "Test saved configuration",

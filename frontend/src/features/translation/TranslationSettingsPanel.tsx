@@ -107,6 +107,7 @@ export function TranslationSettingsPanel({ readOnly = false }: { readOnly?: bool
     if (disabled || dirty || !text.trim()) return;
     const controller = new AbortController();
     trial.current = controller;
+    setInputRejected(false);
     setBusy("test");
     setErrorCode(null);
     setResult(null);
@@ -345,6 +346,7 @@ export function TranslationSettingsPanel({ readOnly = false }: { readOnly?: bool
               onChange={(event) => {
                 setTarget(event.target.value as TranslationTarget);
                 setResult(null);
+                setInputRejected(false);
               }}
               disabled={disabled}
             >

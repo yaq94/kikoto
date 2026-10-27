@@ -35,7 +35,7 @@ export const translationAdmin = {
   trial: "翻訳テスト",
   trialHint: "保存済みの設定で機密情報を含まない短い文章を翻訳します。テストごとにリクエストを 1 回送信します。",
   inputBytes: "{{used}} / {{limit}} バイト入力済み",
-  inputTooLong: "入力上限（{{limit}} バイト）に達したため、それ以上は追加されていません。",
+  inputTooLong: "この変更は追加されていません。{{limit}} バイトの入力上限を超えます。",
   text: "テスト文章",
   target: "翻訳先言語",
   test: "保存済み設定をテスト",

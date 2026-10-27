@@ -34,7 +34,7 @@ export const translationAdmin = {
   trial: "试译",
   trialHint: "使用已保存的配置翻译一段不含敏感信息的短文本。每次试译只发送一次请求。",
   inputBytes: "已输入 {{used}} / {{limit}} 字节",
-  inputTooLong: "已到输入上限（{{limit}} 字节），多出的内容没有加入。",
+  inputTooLong: "这次修改没有加入：它会超过 {{limit}} 字节的输入上限。",
   text: "试译文本",
   target: "翻译目标语言",
   test: "测试已保存的配置",

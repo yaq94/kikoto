@@ -34,7 +34,7 @@ export const translationAdmin = {
   trial: "試譯",
   trialHint: "使用已儲存的設定翻譯一段不含敏感資訊的短文字。每次試譯只傳送一次請求。",
   inputBytes: "已輸入 {{used}} / {{limit}} 位元組",
-  inputTooLong: "已達輸入上限（{{limit}} 位元組），多出的內容沒有加入。",
+  inputTooLong: "這次修改沒有加入：它會超過 {{limit}} 位元組的輸入上限。",
   text: "試譯文字",
   target: "翻譯目標語言",
   test: "測試已儲存的設定",
