@@ -50,6 +50,7 @@ import { ageRatingPresentation } from "@/lib/ageRating";
 import { openLibraryAgeRatingSearch } from "@/lib/libraryAgeRatingSearch";
 import { NAVIGATION_EVENT, historyStateWithReturn } from "@/lib/browserHistory";
 import { cn } from "@/lib/tailwindClassNames";
+import { badgeNeedsText } from "./sourceBadges";
 import { visibleBadgeCountForRows } from "./tagLayout";
 
 export type WorkCardBadge = {
@@ -521,7 +522,7 @@ export function availabilityDotClassName(badge: WorkCardBadge) {
   // healthy source mark: the chip may say "unavailable" while a green dot
   // would contradict it. The badge states that itself; the key is only an
   // identity.
-  if (badge.variant === "warning" || badge.needsLabel) return "bg-warning";
+  if (badgeNeedsText(badge)) return "bg-warning";
   if (badge.key?.startsWith("source:")) return "bg-success";
   return "bg-muted-foreground";
 }

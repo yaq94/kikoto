@@ -60,9 +60,12 @@ an icon on a dense grid; a remote card whose marks include a verdict or a
 warning switches that card to labeled chips. A verdict keeps its own badge key
 so the Library scope, which hides the mark for the source being browsed, cannot
 hide the exception with it. The mark declares that it has to be read with a
-`needsLabel` field; the key spelling does not decide the style. Within its own
-class a mark that must be read sorts before the healthy one, so the single chip
-a compact card shows is the one that carries the verdict.
+`needsLabel` field or the `warning` variant; chip-versus-icon, the dot colour
+and the leading slot inside a class all read that one predicate. The key stays
+an identity: the Library scope hides by it and the icon picks its glyph from it,
+but it never decides whether the mark is read as text. Within its own class a
+mark that must be read sorts before the healthy one, so the single chip a
+compact card shows is the one that carries the verdict.
 
 ## Directory exclusions
 

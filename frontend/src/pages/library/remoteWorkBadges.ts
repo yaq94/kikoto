@@ -1,4 +1,5 @@
 import type { WorkCardBadge } from "@/components/work-card/WorkCardShell";
+import { badgeNeedsText } from "@/components/work-card/sourceBadges";
 import i18n from "@/i18n";
 import type { RemoteWork } from "@/lib/api";
 
@@ -42,7 +43,7 @@ export function remoteSourceBadges(
  * itself, so a new mark cannot inherit the answer from its key spelling.
  */
 export function sourceBadgesNeedLabel(badges: WorkCardBadge[]): boolean {
-  return badges.some((badge) => badge.needsLabel === true || badge.variant === "warning");
+  return badges.some(badgeNeedsText);
 }
 
 function verdictLabel(availability: string): string {

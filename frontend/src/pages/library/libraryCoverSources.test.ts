@@ -67,6 +67,21 @@ describe("library cover source marks", () => {
     ).toBe(true);
   });
 
+  it("leads a class with a warning that carries no needsLabel flag", () => {
+    // The warning variant is already read as text, so it has to take the same
+    // leading slot as a verdict. A mark that states the exception but sorts
+    // behind the healthy one would be folded into the compact card's "+N".
+    const warningOnly: WorkCardBadge = {
+      key: "source:remote:7:unavailable",
+      label: "Example Remote unavailable",
+      variant: "warning",
+    };
+    expect(labels(libraryCoverSourceBadges([remote, warningOnly], { kind: "remote", sourceId: 7 }, "always"))).toEqual([
+      "Example Remote unavailable",
+      "Example Remote",
+    ]);
+  });
+
   it("keeps the class order and only moves the mark that needs a label inside its class", () => {
     // `always` is the mode that shows every mark, so this is the one place the
     // full ordering is visible. A verdict must lead its own source class but

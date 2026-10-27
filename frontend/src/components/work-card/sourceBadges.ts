@@ -155,8 +155,17 @@ export function sortSourceBadges(badges: WorkCardBadge[]) {
   );
 }
 
+/**
+ * A mark a touch reader has to be able to read: a stated verdict, an absence or
+ * a warning. Chip-versus-icon, the dot colour and the leading slot inside a
+ * class all consult this one predicate, so the three surfaces cannot drift.
+ */
+export function badgeNeedsText(badge: WorkCardBadge): boolean {
+  return badge.needsLabel === true || badge.variant === "warning";
+}
+
 function labelRank(badge: WorkCardBadge) {
-  return badge.needsLabel === true ? 0 : 1;
+  return badgeNeedsText(badge) ? 0 : 1;
 }
 
 function sourceBadgeRank(badge: WorkCardBadge) {

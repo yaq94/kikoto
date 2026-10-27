@@ -218,14 +218,9 @@ clears `browsable` and the publish transaction restores it, which makes a missed
 refresh hide a card rather than show one that cannot play. `catalog_entry_searchable`
 holds the shared card rule both the entry and series arms read.
 
-A short search builds at most `catalogShortSearchResultLimit` cards for the
-whole response, entry and series arms together, and the card page and the
-reported total share that budget; see
-[the data model](../architecture/data-model.md#translation-corpus). Each arm
-still scans with its own row bound, so a keystroke never materializes a
-whole-source match set. The exact-title flag is computed in the same scan and
-orders the returned cards. A three-character query is not capped and keeps
-exact-first ordering over its complete match set.
+The short-query card budget, the scan order and the `truncated` rule are
+stated once in
+[the data model](../architecture/data-model.md#translation-corpus).
 
 `translationPersistentCorpusSQL` excludes current corpus rows from eviction.
 The `maxEntries` and `cacheBytes` limits are soft: when current title or
