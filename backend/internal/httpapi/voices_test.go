@@ -254,6 +254,44 @@ func TestLoadVoiceKnownWorksProjectsTheCodeEachSourceHolds(t *testing.T) {
 	}
 }
 
+// One source can hold two editions of the same work. A single tag cannot name
+// both codes, so the projection stays empty and the card keeps its own code.
+func TestLoadVoiceKnownWorksWithholdsAnAmbiguousSourceCode(t *testing.T) {
+	db := openMigratedTestDB(t)
+	statements := []string{
+		"INSERT INTO work (id, primary_code, title) VALUES (1, 'RJ00000000', 'Edition one'), (2, 'RJ00000001', 'Edition two')",
+		"INSERT INTO logical_work(id, canonical_work_id, canonical_code) VALUES (1, 1, 'RJ00000000')",
+		"INSERT INTO work_edition(work_id, logical_work_id, primary_code, is_canonical) VALUES (1, 1, 'RJ00000000', 1), (2, 1, 'RJ00000001', 0)",
+		"INSERT INTO person (id, display_name) VALUES (1, 'Example voice')",
+		"INSERT INTO work_credit (work_id, person_id, role, source) VALUES (1, 1, 'voice_actor', 'test')",
+		"INSERT INTO work_credit (work_id, person_id, role, source) VALUES (2, 1, 'voice_actor', 'test')",
+		"INSERT INTO file_source (id, code, display_name, source_type, priority, enabled) VALUES (11, 'example_remote_a', 'Example Remote A', 'kikoeru_compatible', 10, 1)",
+		"INSERT INTO media_item (id, work_id, kind, title) VALUES (21, 1, 'audio', 'Track 1'), (22, 2, 'audio', 'Track 2')",
+		"INSERT INTO media_file_location (id, media_item_id, file_source_id, location_type, stream_url, availability) VALUES (31, 21, 11, 'remote_stream', '/stream/31', 'available'), (32, 22, 11, 'remote_stream', '/stream/32', 'available')",
+	}
+	for _, statement := range statements {
+		if _, err := db.Exec(statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	server := &Server{db: db}
+	works, err := server.loadVoiceKnownWorks(context.Background(), 0, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(works) != 1 {
+		t.Fatalf("works = %+v, want one known work", works)
+	}
+	tag, ok := voiceSourceTagForID(works[0].SourceTags, 11)
+	if !ok || tag.Count != 2 {
+		t.Fatalf("source tag = %+v (present %t), want both editions counted", tag, ok)
+	}
+	if tag.Code != "" {
+		t.Fatalf("source tag code = %q, want empty for two editions", tag.Code)
+	}
+}
+
 func voiceSourceTagForID(tags []circleSourceStat, sourceID int64) (circleSourceStat, bool) {
 	for _, tag := range tags {
 		if tag.SourceID != nil && *tag.SourceID == sourceID && tag.Key != "cache" {

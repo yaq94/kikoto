@@ -32,10 +32,15 @@ func (s *Server) workSourceStateByCode(ctx context.Context, code string) ([]circ
 	return tags, remoteObservations, nil
 }
 
+// availableVoiceSourceTags projects the code a source holds so a fetch or fork
+// target does not have to guess from the card's canonical code. When editions
+// of one work live in the same source, one tag cannot name a single code, so
+// the projection stays empty and the caller keeps the card's code.
 func (s *Server) availableVoiceSourceTags(ctx context.Context, code string) ([]circleSourceStat, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT source.id, source.display_name, location.location_type, COUNT(*),
-			COALESCE(MIN(NULLIF(held_work.primary_code, '')), '')
+			CASE WHEN MIN(COALESCE(held_work.primary_code, '')) = MAX(COALESCE(held_work.primary_code, ''))
+				THEN COALESCE(MIN(held_work.primary_code), '') ELSE '' END
 		FROM media_file_location AS location
 		INNER JOIN media_item AS item ON item.id = location.media_item_id
 		INNER JOIN work AS held_work ON held_work.id = item.work_id
