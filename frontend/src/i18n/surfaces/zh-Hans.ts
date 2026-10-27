@@ -2023,6 +2023,7 @@ export const surfaceHans = {
     currentQueue: "当前队列",
     alwaysEnabled: "始终启用",
     playbackFailed: "播放失败：没有可用的来源播放 {{title}}。",
+    playbackFailedAlternatives: "播放失败：{{title}} 还有其他来源可用，可在设置中开启失败时切换。",
     sourceFailed: "播放来源失败，已切换到 {{source}}。",
     trackFailed: "播放 {{title}} 失败。",
     lyricsPreviewFailed: "歌词预览失败。",

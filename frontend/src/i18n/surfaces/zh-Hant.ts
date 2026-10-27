@@ -2024,6 +2024,7 @@ export const surfaceHant = {
     currentQueue: "目前佇列",
     alwaysEnabled: "一律啟用",
     playbackFailed: "播放失敗：沒有可用的來源播放 {{title}}。",
+    playbackFailedAlternatives: "播放失敗：{{title}} 還有其他來源可用，可在設定中開啟失敗時切換。",
     sourceFailed: "播放來源失敗，已切換到 {{source}}。",
     trackFailed: "播放 {{title}} 失敗。",
     lyricsPreviewFailed: "歌詞預覽失敗。",

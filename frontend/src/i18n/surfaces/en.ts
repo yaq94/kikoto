@@ -2106,6 +2106,8 @@ export const surfaceEnglish = {
     currentQueue: "Current queue",
     alwaysEnabled: "Always enabled",
     playbackFailed: "Playback failed: no working source remains for {{title}}.",
+    playbackFailedAlternatives:
+      "Playback failed: {{title}} has another source; enable source fallback in settings to use it.",
     sourceFailed: "Playback source failed. Switched to {{source}}.",
     trackFailed: "Playback failed for {{title}}.",
     lyricsPreviewFailed: "Lyrics preview failed.",

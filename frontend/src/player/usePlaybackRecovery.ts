@@ -9,6 +9,7 @@ import type { PlaybackCompatibilityScope, PlayerTrack } from "./playerTypes";
 import {
   applyTrackLocation,
   createTrackLocationFailureState,
+  orderedTrackLocations,
   recordTrackLocationFailure,
   resetTrackLocationFailures,
 } from "./trackLocations";
@@ -68,9 +69,19 @@ export function usePlaybackRecovery(
         refs.sourceLoadingRef.current = false;
         updatePlayingState(false);
         const failureSequence = refs.playbackErrorSequenceRef.current;
+        // "No source remains" is only true when nothing else is usable. With
+        // fallback switched off the same stop happens while another location
+        // exists, and the message must say so instead of claiming none does.
+        const alternativeExists = orderedTrackLocations(activeTrack).some(
+          (location) =>
+            location.locationId !== activeTrack.locationId &&
+            (location.availability === "available" || location.availability === "remote"),
+        );
         toast.notify({
           kind: "error",
-          message: t("player.playbackFailed", { title: activeTrack.title }),
+          message: alternativeExists
+            ? t("player.playbackFailedAlternatives", { title: activeTrack.title })
+            : t("player.playbackFailed", { title: activeTrack.title }),
           actionLabel: t("common.retry"),
           onAction: () => {
             if (

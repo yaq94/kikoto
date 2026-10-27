@@ -17,7 +17,9 @@ Playback is handled by a global browser audio player.
   normal end-of-track queue advancement. A confirmed missing file does not
   offer conversion: with **Switch sources on failure** enabled in Settings it
   continues through the normal source fallback order, and otherwise playback
-  stops with a Retry action.
+  stops with a Retry action. When the track still has another usable location,
+  that stop says so and points at the setting instead of claiming no source is
+  left.
 - Local and cached video is inspected before playback. Incompatible video first
   returns its probed total duration and a complete HLS VOD playlist. Six-second
   H.264/AAC segments are generated independently on

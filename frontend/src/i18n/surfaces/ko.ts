@@ -2108,6 +2108,7 @@ export const surfaceKorean = {
     currentQueue: "현재 대기열",
     alwaysEnabled: "항상 활성화",
     playbackFailed: "재생 실패: {{title}}을(를) 재생할 수 있는 소스가 없습니다.",
+    playbackFailedAlternatives: "재생 실패: {{title}}에 다른 소스가 있습니다. 설정에서 실패 시 전환을 켜세요.",
     sourceFailed: "재생 소스에 실패하여 {{source}}(으)로 전환했습니다.",
     trackFailed: "{{title}} 재생에 실패했습니다.",
     lyricsPreviewFailed: "가사 미리 보기에 실패했습니다.",
