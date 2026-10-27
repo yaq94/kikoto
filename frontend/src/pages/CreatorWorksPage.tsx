@@ -115,6 +115,7 @@ import {
   voiceWorkHasRemoteReference,
   voiceWorkObservedSourceTags,
   voiceWorkRemoteTarget,
+  voiceWorkTranslationResource,
   type VoiceWorkView,
   sortVoiceWorks,
 } from "@/pages/voiceWorkModel";
@@ -1262,6 +1263,9 @@ function voiceWorkCardView(work: VoiceWorkView, t: TFunction): WorkCardViewModel
           },
         ];
   return {
+    // The default card scope names only the printed code, which cannot resolve
+    // a remote-only card to a stored work. Name the object the text belongs to.
+    translationResource: voiceWorkTranslationResource(work),
     code: work.primaryCode || sourceName || t("detailActions.source"),
     title: work.title,
     circle: work.circle || sourceName || t("workCard.unknownCircle"),

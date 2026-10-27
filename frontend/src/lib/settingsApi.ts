@@ -163,6 +163,8 @@ export type RuntimeSettings = {
   demoMode: boolean;
   directoryRoutingRules: DirectoryRoutingRule[];
   recommendationThreshold: number;
+  /** Score that carries no personal evidence; badges start above it. */
+  recommendationBaseline?: number;
 };
 
 export type AppUpdate = {

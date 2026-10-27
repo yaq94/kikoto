@@ -216,6 +216,11 @@ type CoalescedEntry = {
 // A page renders many fields in one frame. Queueing for one short window turns
 // them into a single batch instead of one request per card.
 const COALESCE_DELAY_MS = 16;
+// A page is split into small requests so a title does not wait for every tag
+// badge behind it. Two requests may run at once, which keeps the model lane
+// busy without letting one page occupy the whole interactive queue.
+const CONTENT_TRANSLATION_CHUNK_SIZE = 16;
+const CONTENT_TRANSLATION_CHUNK_CONCURRENCY = 2;
 const coalesced = new Map<string, CoalescedEntry>();
 const coalescedInflight = new Map<string, Promise<ContentTranslationResult>>();
 let coalesceTimer: ReturnType<typeof setTimeout> | null = null;
@@ -259,14 +264,20 @@ async function flushCoalesced() {
     coalescedInflight.set(key, promise);
   }
 
-  const fail = (error: unknown) => {
-    for (const [key, entry] of entries) {
-      coalescedInflight.delete(key);
-      deferred.get(key)?.reject(error);
-      for (const waiter of entry.waiters) {
-        waiter.cleanup();
-        waiter.reject(error);
-      }
+  const settle = (key: string, entry: CoalescedEntry, result: ContentTranslationResult) => {
+    coalescedInflight.delete(key);
+    deferred.get(key)?.resolve(result);
+    for (const waiter of entry.waiters) {
+      waiter.cleanup();
+      waiter.resolve(result);
+    }
+  };
+  const failEntry = (key: string, entry: CoalescedEntry, error: unknown) => {
+    coalescedInflight.delete(key);
+    deferred.get(key)?.reject(error);
+    for (const waiter of entry.waiters) {
+      waiter.cleanup();
+      waiter.reject(error);
     }
   };
 
@@ -276,37 +287,72 @@ async function flushCoalesced() {
       if (entries.every(([, item]) => item.waiters.size === 0)) controller.abort();
     };
   }
-  try {
-    const results = await contentTranslationApi.translateBatch(
-      entries.map(([key, entry]) => ({ ...entry.input, key })),
-      controller.signal,
-    );
-    for (const [key, entry] of entries) {
-      const result = results.get(key);
-      if (!result) {
-        const missing = new ContentTranslationBatchError(
-          `translation batch response is missing ${key}`,
-          "translation_batch_incomplete",
+
+  // A page asks for its titles, its descriptions and then a badge for every
+  // tag. Model calls are the slow part, so the first chunk carries the text a
+  // reader is looking at, and each chunk paints as soon as its own answer
+  // arrives instead of waiting for the whole page.
+  const byRank = new Map<number, Array<[string, CoalescedEntry]>>();
+  for (const entry of entries) {
+    const rank = translationFieldRank(entry[1].input.field);
+    const group = byRank.get(rank);
+    if (group) group.push(entry);
+    else byRank.set(rank, [entry]);
+  }
+  const chunks: Array<Array<[string, CoalescedEntry]>> = [];
+  for (const rank of [...byRank.keys()].sort((left, right) => left - right)) {
+    const group = byRank.get(rank) ?? [];
+    for (let index = 0; index < group.length; index += CONTENT_TRANSLATION_CHUNK_SIZE) {
+      chunks.push(group.slice(index, index + CONTENT_TRANSLATION_CHUNK_SIZE));
+    }
+  }
+  let nextChunk = 0;
+  const runChunkWorker = async () => {
+    while (nextChunk < chunks.length) {
+      const chunk = chunks[nextChunk++];
+      try {
+        const results = await contentTranslationApi.translateBatch(
+          chunk.map(([key, entry]) => ({ ...entry.input, key })),
+          controller.signal,
         );
-        coalescedInflight.delete(key);
-        deferred.get(key)?.reject(missing);
-        for (const waiter of entry.waiters) {
-          waiter.cleanup();
-          waiter.reject(missing);
+        for (const [key, entry] of chunk) {
+          const result = results.get(key);
+          if (result) {
+            settle(key, entry, result);
+          } else {
+            failEntry(
+              key,
+              entry,
+              new ContentTranslationBatchError(
+                `translation batch response is missing ${key}`,
+                "translation_batch_incomplete",
+              ),
+            );
+          }
         }
-        continue;
-      }
-      coalescedInflight.delete(key);
-      deferred.get(key)?.resolve(result);
-      for (const waiter of entry.waiters) {
-        waiter.cleanup();
-        waiter.resolve(result);
+      } catch (error) {
+        for (const [key, entry] of chunk) failEntry(key, entry, error);
+        if (error instanceof DOMException && error.name === "AbortError") return;
       }
     }
-  } catch (error) {
-    fail(error);
-  }
+  };
+  const workers = Math.min(CONTENT_TRANSLATION_CHUNK_CONCURRENCY, chunks.length);
+  await Promise.all(Array.from({ length: workers }, runChunkWorker));
   if (coalesced.size > 0) scheduleCoalescedFlush();
+}
+
+/** Fields whose text a reader is actually reading come first. */
+function translationFieldRank(field: ContentTranslationInput["field"]) {
+  switch (field) {
+    case "title":
+      return 0;
+    case "description":
+      return 1;
+    case "tag":
+      return 2;
+    default:
+      return 3;
+  }
 }
 
 /** Batch-coalesced translation used by visible fields. */

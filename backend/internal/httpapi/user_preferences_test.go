@@ -81,12 +81,15 @@ func TestUserPreferencesIsolationAndRecommendationSessions(t *testing.T) {
 	server.getRuntimeSettings(runtime, requestFor(firstID, ""))
 	var visible struct {
 		RecommendationThreshold int             `json:"recommendationThreshold"`
+		RecommendationBaseline  int             `json:"recommendationBaseline"`
 		DirectoryRoutingRules   []directoryRule `json:"directoryRoutingRules"`
 	}
 	if err := json.Unmarshal(runtime.Body.Bytes(), &visible); err != nil {
 		t.Fatal(err)
 	}
-	if visible.RecommendationThreshold != 73 || len(visible.DirectoryRoutingRules) != 0 {
+	// The client hides a badge whose score is only the baseline, so the
+	// effective baseline of this account must be part of the runtime settings.
+	if visible.RecommendationThreshold != 73 || visible.RecommendationBaseline != updated.AffinityBase || len(visible.DirectoryRoutingRules) != 0 {
 		t.Fatalf("runtime preferences: %+v", visible)
 	}
 	for _, invalid := range []string{`{"userId":2}`, `{"recommendationThreshold":101}`, `{"recommendationConfig":{"unmarkedSlots":0}}`} {

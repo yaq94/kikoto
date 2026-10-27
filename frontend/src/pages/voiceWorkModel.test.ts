@@ -10,6 +10,7 @@ import {
   voiceWorkHasRemoteAvailability,
   voiceWorkHasRemoteReference,
   voiceWorkRemoteTarget,
+  voiceWorkTranslationResource,
 } from "./voiceWorkModel";
 
 describe("mergeVoiceWorks", () => {
@@ -327,6 +328,33 @@ function knownWork(): VoiceKnownWork {
     },
   };
 }
+
+describe("voiceWorkTranslationResource", () => {
+  it("names the stored work for a known card", () => {
+    expect(voiceWorkTranslationResource(knownWork())).toEqual({ workId: 11 });
+  });
+
+  it("names the source and exact edition for a remote card, even when a work id exists", () => {
+    expect(voiceWorkTranslationResource(remoteWork())).toEqual({ sourceId: 7, code: "SAMPLE-TRANSLATION" });
+  });
+
+  it("names the stored work when the card has no usable source", () => {
+    expect(voiceWorkTranslationResource({ ...remoteWork(), sourceId: 0 })).toEqual({ workId: 11 });
+  });
+
+  it("uses the remote id when an entry has no printed code", () => {
+    expect(voiceWorkTranslationResource({ ...remoteWork(), remoteCode: "", primaryCode: "" })).toEqual({
+      sourceId: 7,
+      code: "501",
+    });
+  });
+
+  it("falls back to a bare code only when neither a source nor a work is known", () => {
+    expect(voiceWorkTranslationResource({ ...remoteWork(), sourceId: 0, workId: null })).toEqual({
+      code: "sample-origin",
+    });
+  });
+});
 
 function remoteWork(): VoiceRemoteWork {
   return {

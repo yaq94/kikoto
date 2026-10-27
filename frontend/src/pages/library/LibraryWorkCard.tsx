@@ -6,6 +6,7 @@ import { useAuth } from "@/auth/AuthProvider";
 import type { SourceVisibilityMode } from "@/components/source-visibility/sourceVisibility";
 import { AnchoredPopover } from "@/components/ui/anchored-popover";
 import { CompactWorkCardShell, type CompactWorkCardLayout } from "@/components/work-card/CompactWorkCard";
+import { showsRecommendationBadge } from "@/components/work-card/recommendationBadge";
 import { sourcePresenceBadges } from "@/components/work-card/sourceBadges";
 import {
   dlsiteTagBadges,
@@ -65,7 +66,14 @@ export const LibraryWorkCard = memo(function LibraryWorkCard({
 }) {
   const { t } = useTranslation();
   const Shell = layout ? CompactWorkCardShell : WorkCardShell;
-  const baseView = libraryWorkCardView(work, onUserTagOpen, showRecommendationScore, useAuth().recommendationThreshold);
+  const { recommendationThreshold, recommendationBaseline } = useAuth();
+  const baseView = libraryWorkCardView(
+    work,
+    onUserTagOpen,
+    showRecommendationScore,
+    recommendationThreshold,
+    recommendationBaseline,
+  );
   const view: WorkCardViewModel = {
     ...baseView,
     ...libraryCoverSourceBadges(baseView.sourceBadges, { kind: coverSourceScope }, coverSourceMode),
@@ -179,6 +187,7 @@ function libraryWorkCardView(
   onUserTagOpen?: (tag: string) => void,
   showRecommendationScore = false,
   threshold = 50,
+  baseline = 35,
 ): WorkCardViewModel {
   return {
     translationResource: { workId: work.id },
@@ -205,7 +214,9 @@ function libraryWorkCardView(
     dlsiteTags: dlsiteTagBadges(work.tags),
     userTags: userTagBadges(work.userTags ?? [], onUserTagOpen),
     sourceBadges: sourcePresenceBadges(work.sourcePresence, work.availability),
-    recommended: showRecommendationScore && Number.isFinite(work.recommendScore),
+    // A baseline score says nothing personal about the work. Only a rise above
+    // it comes from a tag, cast, circle or favorite the viewer actually has.
+    recommended: showsRecommendationBadge(showRecommendationScore, work.recommendScore, baseline),
     recommendationHighlighted: work.recommendScore >= threshold,
     recommendationScore: work.recommendScore,
   };

@@ -329,3 +329,45 @@ func (s *Server) countContentTranslations(ctx context.Context, language string) 
 	}
 	return count, nil
 }
+
+// sharedTagTranslation reuses a translation of a tag name that another card
+// already obtained. A tag means the same thing on every work, so translating
+// it once per card multiplies the model calls behind a first page view without
+// changing any text. The memo keeps the second lookup from rescanning the
+// corpus for the same vocabulary on every request.
+func (s *Server) sharedTagTranslation(ctx context.Context, field, language, sourceText, configKey string) (string, bool) {
+	if field != "tag" || sourceText == "" || configKey == "" {
+		return "", false
+	}
+	key := language + "\x00" + configKey + "\x00" + sourceText
+	s.tagTranslationMu.Lock()
+	value, ok := s.tagTranslations[key]
+	s.tagTranslationMu.Unlock()
+	if ok {
+		return value, value != ""
+	}
+	var stored string
+	err := s.db.QueryRowContext(ctx, `
+		SELECT translated_text FROM content_translation
+		WHERE field = 'tag' AND language = ? AND source_text = ? AND config_key = ? AND origin = 'model'
+		LIMIT 1`, language, sourceText, configKey).Scan(&stored)
+	if err != nil || stored == "" {
+		return "", false
+	}
+	s.rememberTagTranslation(key, stored)
+	return stored, true
+}
+
+func (s *Server) rememberTagTranslation(key, value string) {
+	s.tagTranslationMu.Lock()
+	defer s.tagTranslationMu.Unlock()
+	if s.tagTranslations == nil {
+		s.tagTranslations = make(map[string]string)
+	}
+	// The vocabulary of a catalogue is small; the bound only stops a corpus
+	// with pathological tag names from growing the memo without limit.
+	if len(s.tagTranslations) >= 8192 {
+		return
+	}
+	s.tagTranslations[key] = value
+}

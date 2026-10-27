@@ -477,12 +477,16 @@ export function LibraryPage({ active = true }: { active?: boolean }) {
             contentLanguage,
           );
           return loaded.works.flatMap((work) => {
+            // A Kikoeru work has no catalog id; its title belongs to the exact
+            // edition the source publishes, addressed by source and code.
             const input = work.seriesId
               ? { seriesId: work.seriesId }
               : work.catalogEntryId
                 ? { catalogEntryId: work.catalogEntryId }
-                : null;
-            if (!input) return [];
+                : {
+                    sourceId: source.id,
+                    code: work.remoteCode || work.primaryCode || work.remoteId,
+                  };
             return [{ ...input, field: "title" as const, text: work.title, language: contentLanguage }];
           });
         },

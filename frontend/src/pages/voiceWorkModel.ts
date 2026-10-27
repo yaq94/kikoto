@@ -1,4 +1,5 @@
 import type { CreatorWorkSort } from "@/lib/creatorWorksBrowse";
+import type { ContentTranslationResource } from "@/lib/contentTranslationApi";
 import type { SortDirection } from "@/lib/libraryApi";
 import type {
   CircleSourceStat,
@@ -134,7 +135,9 @@ function voiceWorkRemoteTargetFor(
       );
       if (source?.sourceId) {
         // A source tag carries the code it actually holds, which can differ
-        // from the card's canonical code when editions share one work.
+        // from the card's canonical code when editions share one work. An
+        // empty code means the source holds several editions, so the card's
+        // own code is the only reference left.
         const code = (source.code || fallbackCode).trim();
         if (code) return { sourceId: source.sourceId, code };
       }
@@ -149,6 +152,27 @@ function voiceWorkRemoteTargetFor(
     return fallbackCode ? { sourceId: work.sourceId, code: fallbackCode } : null;
   }
   return null;
+}
+
+/**
+ * The object whose text a card shows. A known work names its work id, so the
+ * translation reads the stored title. A remote card names the source and the
+ * exact code: its title is the edition the source publishes, which may differ
+ * from the local work title, and a code alone cannot resolve to a stored work.
+ */
+export function voiceWorkTranslationResource(work: VoiceWorkView): ContentTranslationResource | undefined {
+  if ("local" in work) {
+    if (work.workId > 0) return { workId: work.workId };
+    return work.primaryCode.trim() ? { code: work.primaryCode.trim() } : undefined;
+  }
+  if (validSourceID(work.sourceId)) {
+    // remoteId always exists on a remote row, so a numberless entry still has
+    // an address the source can resolve.
+    const code = (work.remoteCode || work.primaryCode || work.remoteId).trim();
+    if (code) return { sourceId: work.sourceId, code };
+  }
+  if (work.workId && work.workId > 0) return { workId: work.workId };
+  return work.primaryCode.trim() ? { code: work.primaryCode.trim() } : undefined;
 }
 
 export function voiceWorkObservedSourceTags(work: VoiceWorkView) {

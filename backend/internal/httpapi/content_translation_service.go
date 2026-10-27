@@ -53,6 +53,26 @@ func (s *Server) translateStoredContent(ctx context.Context, in contentTranslati
 		}
 	}
 
+	if shared, ok := s.sharedTagTranslation(ctx, in.Field, target.modelLanguage, text, configKey); ok {
+		row := contentTranslationRow{
+			CacheKey: key, EntityKind: kind, EntityID: entityID, EntityKey: entityKey,
+			Field: in.Field, Language: target.modelLanguage, SourceText: text,
+			TranslatedText: shared, Origin: "model", ConfigKey: configKey, Model: cfg.Model,
+			TemplateVersion: translation.TemplateVersion,
+		}
+		// The card still needs its own row so coverage, search and the next
+		// reader of this exact field see a settled answer.
+		cacheStatus, saveErr := s.saveContentTranslations(ctx, []contentTranslationRow{row})
+		if saveErr != nil {
+			return translatedContent{}, "", saveErr
+		}
+		display, convertErr := displayText(shared, target.modelLanguage, target, field.Names)
+		if convertErr != nil {
+			return translatedContent{}, "", convertErr
+		}
+		return translatedContent{TranslatedText: display, CacheStatus: cacheStatus}, "translated", nil
+	}
+
 	// The model only writes Simplified, so the row stores the lane result
 	// unchanged. A Traditional viewer gets the conversion afterwards, inside
 	// the same name-protection boundary.

@@ -22,6 +22,8 @@ type AuthContextValue = {
   bootstrapFailed: boolean;
   retryBootstrap: () => Promise<void>;
   recommendationThreshold: number;
+  /** The score that reflects no personal signal; badges start above it. */
+  recommendationBaseline: number;
   user: CurrentUser | null;
   /** A production instance with no administrator; only initial setup can proceed. */
   setupRequired: boolean;
@@ -58,13 +60,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const userId = auth?.authenticated ? auth.user.id : null;
   const [recommendationThreshold, setRecommendationThreshold] = useState({ userId, value: 50 });
+  const [recommendationBaseline, setRecommendationBaseline] = useState({ userId, value: 35 });
   useEffect(() => {
     let cancelled = false;
     const refreshPreferences = () => {
       void api
         .getRuntimeSettings()
         .then((settings) => {
-          if (!cancelled) setRecommendationThreshold({ userId, value: settings.recommendationThreshold ?? 50 });
+          if (!cancelled) {
+            setRecommendationThreshold({ userId, value: settings.recommendationThreshold ?? 50 });
+            setRecommendationBaseline({ userId, value: settings.recommendationBaseline ?? 35 });
+          }
         })
         .catch(() => undefined);
     };
@@ -114,6 +120,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       bootstrapFailed,
       retryBootstrap: bootstrap,
       recommendationThreshold: recommendationThreshold.userId === userId ? recommendationThreshold.value : 50,
+      recommendationBaseline: recommendationBaseline.userId === userId ? recommendationBaseline.value : 35,
       user: auth?.authenticated ? auth.user : null,
       setupRequired: auth?.authenticated === false && auth.setupRequired === true,
       login: async (username, password) => {
@@ -164,6 +171,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       refreshRuntime,
       runtimeMode,
       recommendationThreshold,
+      recommendationBaseline,
       setAuth,
       userId,
     ],

@@ -1414,6 +1414,9 @@ function catalogWorkCardView(work: CircleCatalogWork, t: TFunction): WorkCardVie
     ...sourceBadges,
   ];
   return {
+    // A known work translates its stored title; a card without one keeps the
+    // bare code, which the server resolves only when that code is known.
+    translationResource: work.workId ? { workId: work.workId } : undefined,
     code: work.primaryCode,
     title: work.title,
     circle: work.circle || t("workCard.unknownCircle"),
@@ -1698,27 +1701,36 @@ function normalizeListeningStatus(status: string): ListeningStatus {
   return listeningStatusOptions.some((option) => option.value === status) ? (status as ListeningStatus) : "none";
 }
 
-function availableSourceTags(sources: CircleSourceStat[] | null | undefined) {
+/** Source tags that can carry an action; an unknown one can only be opened. */
+function sourceTagsFor(sources: CircleSourceStat[] | null | undefined, availability: "openable" | "available") {
   const seen = new Set<string>();
   return (sources ?? []).filter((source) => {
-    if (source.status !== "available" && source.count <= 0) return false;
     if (source.key === "cache") return false;
-    const key = source.key;
-    if (seen.has(key)) return false;
-    seen.add(key);
+    if (availability === "available" && source.status !== "available") return false;
+    if (seen.has(source.key)) return false;
+    seen.add(source.key);
     return true;
   });
 }
 
+function availableSourceTags(sources: CircleSourceStat[] | null | undefined) {
+  return sourceTagsFor(sources, "available");
+}
+
+function openableSourceTags(sources: CircleSourceStat[] | null | undefined) {
+  return sourceTagsFor(sources, "openable");
+}
+
 function preferredDirectoryTarget(work: CircleCatalogWork) {
-  const tags = availableSourceTags(work.sourceTags);
+  // Opening is a check, so a source whose last answer is unknown still counts.
+  const tags = openableSourceTags(work.sourceTags);
   const local = tags.find((tag) => tag.key === "local");
   if (local && work.workId !== null) {
     return { kind: "known", canonicalCode: work.primaryCode } satisfies WorkDetailIntent;
   }
   const remote = tags.find((tag) => tag.sourceId !== undefined && tag.sourceId !== null);
   if (remote?.sourceId) {
-    const remoteCode = work.remoteCode || work.primaryCode;
+    const remoteCode = remote.code || work.remoteCode || work.primaryCode;
     return work.workId !== null
       ? ({
           kind: "known",
@@ -1745,11 +1757,17 @@ function circleRemoteTargets(works: readonly CircleCatalogWork[]): RemoteWorkTar
 function circleWorkRemoteTarget(
   work: CircleCatalogWork,
 ): { sourceId: number; code: string; sourceDisplayName: string } | null {
+  // Fetch, fork and mark all write to the source, so they need a confirmed
+  // answer. Opening the directory is a check and uses the openable tags.
   const remote = availableSourceTags(work.sourceTags).find(
     (tag) => tag.sourceId !== undefined && tag.sourceId !== null,
   );
   return remote?.sourceId
-    ? { sourceId: remote.sourceId, code: work.remoteCode || work.primaryCode, sourceDisplayName: remote.displayName }
+    ? {
+        sourceId: remote.sourceId,
+        code: remote.code || work.remoteCode || work.primaryCode,
+        sourceDisplayName: remote.displayName,
+      }
     : null;
 }
 

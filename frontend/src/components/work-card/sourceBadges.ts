@@ -88,6 +88,8 @@ export function circleSourceBadges({
       title: i18n.t("workCard.localSource"),
     });
 
+  // A chip is informational: a source that still holds media but currently
+  // reports a problem stays visible, marked as a warning rather than playable.
   const availableSources = (sourceTags ?? []).filter((source) => source.status === "available" || source.count > 0);
   for (const source of availableSources) {
     if (source.key === "local" || source.key === "cache" || source.key === "remote") continue;
@@ -95,7 +97,7 @@ export function circleSourceBadges({
       badges.push({
         key: `source:remote:${source.sourceId}`,
         label: source.displayName || source.key,
-        variant: "outline",
+        variant: source.status === "available" ? "outline" : "warning",
       });
     }
   }
