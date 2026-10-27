@@ -249,7 +249,7 @@ export function TranslatedText({
   const [settled, setSettled] = useState<{ key: string; result: ContentTranslationResult } | null>(null);
   // A translation that never settles must not read as progress forever. The
   // wait is bounded so the original text and a retry action appear even when a
-  // queued request is never answered.
+  // request is never answered.
   const [timedOut, setTimedOut] = useState(false);
   const readable = Boolean(
     canRead &&
