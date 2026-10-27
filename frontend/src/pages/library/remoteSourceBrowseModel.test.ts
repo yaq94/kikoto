@@ -154,5 +154,4 @@ describe("remote row identity", () => {
 
     expect(model.selectedWorks).toEqual([]);
   });
-
 });
