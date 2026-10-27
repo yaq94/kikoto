@@ -18,6 +18,7 @@ func TestVoiceCatalogRemoteWorkPlayableRequiresCurrentAvailability(t *testing.T)
 	cases := []struct {
 		name         string
 		availability string
+		lastSeen     string
 		workID       sql.NullInt64
 		wantStatus   string
 		wantPlayable bool
@@ -26,6 +27,7 @@ func TestVoiceCatalogRemoteWorkPlayableRequiresCurrentAvailability(t *testing.T)
 		{name: "unavailable", availability: "unavailable", wantStatus: "unavailable", wantPlayable: false},
 		{name: "error", availability: "error", wantStatus: "error", wantPlayable: false},
 		{name: "unknown", availability: "unknown", wantStatus: "unknown", wantPlayable: false},
+		{name: "unknown with last seen", availability: "unknown", lastSeen: "2026-10-01 00:00:00", wantStatus: "unknown", wantPlayable: false},
 		{name: "missing", availability: "missing", wantStatus: "not_found", wantPlayable: false},
 		{name: "not_found", availability: "not_found", wantStatus: "not_found", wantPlayable: false},
 		{name: "disabled", availability: "disabled", wantStatus: "disabled", wantPlayable: false},
@@ -34,7 +36,7 @@ func TestVoiceCatalogRemoteWorkPlayableRequiresCurrentAvailability(t *testing.T)
 		t.Run(testCase.name, func(t *testing.T) {
 			row := voiceCatalogMatchRow{
 				PrimaryCode: "RJ00000021", RemoteCode: "RJ00000021", Title: "Example Voice Work",
-				Availability: testCase.availability, ItemWorkID: testCase.workID,
+				Availability: testCase.availability, ItemWorkID: testCase.workID, LastSeen: testCase.lastSeen,
 			}
 			work, err := server.buildVoiceCatalogRemoteWork(ctx, row, "RJ00000021", "ok", map[string]canonicalWorkRef{}, map[string]sourceAvailabilityState{})
 			if err != nil {

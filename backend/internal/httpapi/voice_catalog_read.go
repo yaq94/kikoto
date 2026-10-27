@@ -322,9 +322,6 @@ func (s *Server) buildVoiceCatalogRemoteWork(ctx context.Context, row voiceCatal
 	}
 	status := voiceSourceAvailabilityStatus(row.Availability)
 	status = voiceCatalogObservationStatus(status, sourceStatus)
-	if status == "unknown" && strings.TrimSpace(row.LastSeen) != "" {
-		status = "available"
-	}
 	return voiceRemoteWork{
 		SourceID: row.SourceID.Int64, SourceCode: row.SourceCode, SourceName: row.SourceName,
 		RemoteID: row.RemoteID, PrimaryCode: code, RemoteCode: strings.TrimSpace(row.RemoteCode),
@@ -349,9 +346,8 @@ func (s *Server) buildVoiceCatalogRemoteWork(ctx context.Context, row voiceCatal
 // playable verdict keeps an unavailable, errored or disabled row from offering
 // an action the source has no evidence for.
 //
-// The caller resolves the status before asking: an `unknown` row that carries a
-// last-seen timestamp is promoted to `available` above, so this function never
-// reads the raw column default.
+// An `unknown` row stays unknown even when it carries a last-seen timestamp:
+// the timestamp records that the source answered once, not that it answers now.
 func voiceCatalogPlayable(status string) bool {
 	return status == "available"
 }
