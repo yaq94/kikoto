@@ -800,7 +800,10 @@ func (s *Server) listOpenListWorks(w http.ResponseWriter, r *http.Request, sourc
 		if short {
 			limit = catalogShortSearchResultLimit
 		}
-		prefix, from, args := openListCatalogCardsQueryLocalized(source.ID, q, targets, configKey, limit, limit)
+		// The page reads one row past the arm bound so a saturated branch is
+		// visible to the same set the count reads, while the card budget still
+		// trims the merged set to the response limit.
+		prefix, from, args := openListCatalogCardsQueryLocalized(source.ID, q, targets, configKey, limit+1, limit)
 		pageArgs = append([]any{}, args...)
 		pageSQL = catalogCardPageSQL(prefix, from, short)
 		pageArgs = append(pageArgs, pageSize, (page-1)*pageSize)
@@ -817,7 +820,13 @@ func (s *Server) listOpenListWorks(w http.ResponseWriter, r *http.Request, sourc
 			countPrefix, countFrom, countArgs = openListCatalogCardsQueryLocalized(
 				source.ID, q, targets, configKey, limit+1, limit+1)
 		}
-		countSQL = catalogStatementPrefix(countPrefix) + `SELECT COUNT(*) ` + countFrom
+		// A saturated branch means the work bound, not the card budget, ended the
+		// scan. The merged set can then be smaller than the budget while more
+		// cards exist, so the count reports both facts: cards reachable inside the
+		// bound, and whether any branch was cut.
+		countSQL = catalogStatementPrefix(countPrefix) + `SELECT COUNT(*),
+			(SELECT EXISTS(SELECT 1 FROM search_hits GROUP BY language,entity_kind HAVING COUNT(*)>` +
+			strconv.Itoa(limit) + `)) ` + countFrom
 		separateCount = short
 	} else {
 		prefix, from, args := openListCatalogCardsQuery(source.ID, q)
@@ -871,8 +880,9 @@ func (s *Server) listOpenListWorks(w http.ResponseWriter, r *http.Request, sourc
 		writeError(w, err)
 		return
 	}
+	saturated := false
 	if separateCount {
-		if err = s.db.QueryRowContext(r.Context(), countSQL, countArgs...).Scan(&total); err != nil {
+		if err = s.db.QueryRowContext(r.Context(), countSQL, countArgs...).Scan(&total, &saturated); err != nil {
 			writeError(w, err)
 			return
 		}
@@ -890,8 +900,10 @@ func (s *Server) listOpenListWorks(w http.ResponseWriter, r *http.Request, sourc
 	// client then renders "first N of more" instead of presenting the budget as
 	// the whole result.
 	truncated := false
-	if separateCount && total > catalogShortSearchResultLimit {
-		total = catalogShortSearchResultLimit
+	if separateCount && (total > catalogShortSearchResultLimit || saturated) {
+		if total > catalogShortSearchResultLimit {
+			total = catalogShortSearchResultLimit
+		}
 		truncated = true
 	}
 	writeJSON(w, 200, remoteWorksResponse{SourceID: source.ID, Works: works, Page: page, PageSize: pageSize, Total: total, Status: "ok", Sort: "updated", Direction: "desc", SortApplied: true, Truncated: truncated})

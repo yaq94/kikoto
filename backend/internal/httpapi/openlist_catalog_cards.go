@@ -376,11 +376,11 @@ func localizedCatalogSearchSQL(targets []library.DisplaySearchTarget, sourceID i
 	branches := []string{}
 	args := []any{}
 	if entrySQL != "" {
-		branches = append(branches, `SELECT entity_id AS catalog_entry_id,0 AS series_id,exact FROM (`+entrySQL+`)`)
+		branches = append(branches, `SELECT entity_id AS catalog_entry_id,0 AS series_id,exact,language,entity_kind FROM (`+entrySQL+`)`)
 		args = append(args, entryArgs...)
 	}
 	if seriesSQL != "" {
-		branches = append(branches, `SELECT 0 AS catalog_entry_id,entity_id AS series_id,exact FROM (`+seriesSQL+`)`)
+		branches = append(branches, `SELECT 0 AS catalog_entry_id,entity_id AS series_id,exact,language,entity_kind FROM (`+seriesSQL+`)`)
 		args = append(args, seriesArgs...)
 	}
 	prefix := `WITH search_hits AS MATERIALIZED (` + strings.Join(branches, " UNION ALL ") + `) `

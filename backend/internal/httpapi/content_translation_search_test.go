@@ -605,6 +605,45 @@ func TestContentTranslationSearchRemoteShortBudgetSpansBothArms(t *testing.T) {
 	}
 }
 
+// A saturated branch can fold into fewer cards than the budget: a series with
+// a thousand matching members is one card, while other matches sit past the
+// branch bound. The response must not present those few cards as the whole
+// answer, so a cut branch sets `truncated` even when the merged set is small.
+func TestContentTranslationSearchRemoteShortBranchSaturationIsReported(t *testing.T) {
+	db := openMigratedTestDB(t)
+	seedCatalogPlanSource(t, db)
+	// Members come first in id order so the eldest thousand rows of the entry
+	// branch are all one series, the shape that folds hardest.
+	seedBudgetEntryRange(t, db, 1, 1, "Member ", "作品成员", translation.SourceHans)
+	if _, err := db.Exec(`
+		WITH RECURSIVE n(i) AS (SELECT 2 UNION ALL SELECT i+1 FROM n WHERE i<1000)
+		INSERT INTO source_catalog_entry(id,file_source_id,root_path,title,availability_status)
+		SELECT i,7,'/member/'||i,'Member '||i,'available' FROM n;
+		WITH RECURSIVE n(i) AS (SELECT 2 UNION ALL SELECT i+1 FROM n WHERE i<1000)
+		INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes)
+		SELECT i,'01.mp3','01.mp3','audio',1 FROM n;
+		WITH RECURSIVE n(i) AS (SELECT 2 UNION ALL SELECT i+1 FROM n WHERE i<1000)
+		INSERT INTO content_translation(cache_key,entity_kind,entity_id,field,language,source_text,translated_text,origin)
+		SELECT 'fold-member-'||i,'entry',i,'title','zh-Hans','Member '||i,'作品成员'||i,'native' FROM n;
+		INSERT INTO catalog_series(id,title,source_id) VALUES(1,'Folded Series',7);
+		WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<1000)
+		INSERT INTO catalog_series_member(series_id,catalog_entry_id,position,evidence)
+		SELECT 1,i,i,'directory' FROM n;`); err != nil {
+		t.Fatal(err)
+	}
+	seedBudgetEntryRange(t, db, 1001, 100, "Standalone ", "作品单集", translation.SourceHans)
+	refreshTestTranslationScope(t, db)
+
+	response := requestRemoteWorks(t, db, "q="+url.QueryEscape("作品")+"&lang=zh-cn&pageSize=100")
+	t.Logf("folded branch: total=%d rows=%d truncated=%v", response.Total, len(response.Works), response.Truncated)
+	if response.Total >= catalogShortSearchResultLimit {
+		t.Fatalf("folded branch total = %d, want fewer cards than the budget", response.Total)
+	}
+	if !response.Truncated {
+		t.Fatal("a saturated branch was reported as the complete answer")
+	}
+}
+
 // Below the budget nothing is dropped and the flag stays false.
 func TestContentTranslationSearchRemoteShortBudgetBelowLimit(t *testing.T) {
 	db := openMigratedTestDB(t)
