@@ -277,8 +277,12 @@ export function TranslatedText({
       if (!cancelled && !controller.signal.aborted) setTimedOut(true);
     }, CONTENT_TRANSLATION_PENDING_TIMEOUT_MS);
     void (async () => {
-      // A cached display language paints without touching the network.
-      const cached = await contentTranslationCache.get(accountScope, translationInput, cacheVersion || undefined);
+      // A cached display language paints without touching the network. A
+      // storage failure must not surface as an unhandled rejection, so the
+      // lookup is contained here rather than trusted to stay non-throwing.
+      const cached = await contentTranslationCache
+        .get(accountScope, translationInput, cacheVersion || undefined)
+        .catch(() => undefined);
       if (cancelled || controller.signal.aborted) return;
       if (cached) {
         setSettled({
@@ -324,7 +328,6 @@ export function TranslatedText({
   const result = settled?.key === key ? settled.result : null;
   const success =
     enabled && result && (result.status === "translated" || result.status === "existing" || result.status === "native");
-  const waiting = enabled && !result && !timedOut;
   const status = contentTranslationDisplayState({ enabled, status: result?.status, timedOut });
   const shown = success && !scope.original ? result.text : (result?.original ?? text);
   const failure = result?.code
@@ -342,11 +345,11 @@ export function TranslatedText({
           className="ml-1 inline-flex flex-wrap items-center gap-1 text-xs font-normal text-muted-foreground"
           onClick={(event) => event.stopPropagation()}
         >
-          {waiting && <span role="status">{t("translationAdmin.content.pending")}</span>}
+          {status === "pending" && <span role="status">{t("translationAdmin.content.pending")}</span>}
           {status === "timeout" && (
             <>
               <span role="status">{t("translationAdmin.content.pendingTooLong")}</span>
-              <button type="button" className="underline" onClick={scope.retry}>
+              <button type="button" className="touch-target relative underline" onClick={scope.retry}>
                 {t("translationAdmin.content.retry")}
               </button>
             </>
@@ -354,18 +357,18 @@ export function TranslatedText({
           {status === "failed" && (
             <>
               <span role="status">{failure}</span>
-              <button type="button" className="underline" onClick={scope.retry}>
+              <button type="button" className="touch-target relative underline" onClick={scope.retry}>
                 {t("translationAdmin.content.retry")}
               </button>
             </>
           )}
           {success && (
-            <button type="button" className="underline" onClick={scope.toggle}>
+            <button type="button" className="touch-target relative underline" onClick={scope.toggle}>
               {t(scope.original ? "translationAdmin.content.translated" : "translationAdmin.content.original")}
             </button>
           )}
           {success && field === "title" && (
-            <button type="button" className="underline" onClick={scope.retry}>
+            <button type="button" className="touch-target relative underline" onClick={scope.retry}>
               {t("translationAdmin.content.retry")}
             </button>
           )}
@@ -375,7 +378,7 @@ export function TranslatedText({
         </span>
       )}
       {enabled && !controls && (status === "failed" || status === "timeout") && (
-        <span role="img" aria-label={status === "timeout" ? t("translationAdmin.content.pendingTooLong") : failure}>
+        <span role="status" aria-label={status === "timeout" ? t("translationAdmin.content.pendingTooLong") : failure}>
           {" "}
           !
         </span>
