@@ -770,8 +770,8 @@ func (s *Server) listOpenListWorks(w http.ResponseWriter, r *http.Request, sourc
 		pageArgs  []any
 		countSQL  string
 		countArgs []any
-		// A short translated search builds a bounded page and counts the full
-		// candidate set separately, so the page query carries no window total.
+		// A short translated search builds a bounded page and reports the count
+		// from the same bounded set, so the page query carries no window total.
 		separateCount bool
 		// overflowSQL answers whether the effective set holds more cards than
 		// the budget. It is a bounded probe, not a count.

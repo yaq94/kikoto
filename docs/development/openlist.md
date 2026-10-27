@@ -52,6 +52,13 @@ the detail, track and media endpoints keep serving the last published set and
 `remotePlayable` stays true. Only a confirmed `missing` card, an operator
 exclusion or a disabled source removes playback.
 
+The card states that verdict as text rather than in a hover title alone, because
+a touch reader cannot hover and a screenshot of the grid would lose it. The
+healthy mark stays an icon on a dense grid; a card whose marks include a verdict
+or a warning switches that card to labeled chips. A verdict keeps its own badge
+key so the Library scope, which hides the mark for the source being browsed,
+cannot hide the exception with it.
+
 ## Directory exclusions
 
 `GET` and `POST /api/remote-sources/{id}/catalog/exclusions` require

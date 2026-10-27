@@ -28,7 +28,19 @@ export function remoteSourceBadges(
   const verdict = work.availability && work.availability !== "available" ? verdictLabel(work.availability) : "";
   if (verdict === "") return [{ key, label: sourceLabel, variant: "outline" }];
   const label = i18n.t("workCard.namedSourceVerdict", { name: sourceLabel, verdict });
-  return [{ key, label, variant: "outline", title: label }];
+  // A distinct key keeps this exception visible when the Library scope would
+  // otherwise hide the healthy mark for the same source, and lets a card choose
+  // a readable chip for it instead of the compact icon.
+  return [{ key: `${key}:verdict`, label, variant: "outline", title: label }];
+}
+
+/**
+ * Whether these marks must be readable as text. A healthy mark may stay an
+ * icon on a dense grid; a verdict or a warning is the reason to look at the
+ * card, and a hover-only title is unreadable on touch.
+ */
+export function sourceBadgesNeedLabel(badges: Array<{ key?: string; variant?: string }>): boolean {
+  return badges.some((badge) => badge.variant === "warning" || badge.key?.endsWith(":verdict") === true);
 }
 
 function verdictLabel(availability: string): string {

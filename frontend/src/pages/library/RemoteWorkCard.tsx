@@ -19,7 +19,7 @@ import i18n from "@/i18n";
 import type { LibrarySource, ListeningStatus, RemoteWork } from "@/lib/api";
 
 import { libraryCoverSourceBadges } from "./libraryCoverSources";
-import { remoteSourceBadges } from "./remoteWorkBadges";
+import { remoteSourceBadges, sourceBadgesNeedLabel } from "./remoteWorkBadges";
 
 export function RemoteWorkCard({
   work,
@@ -65,10 +65,17 @@ export function RemoteWorkCard({
 }) {
   const Shell = layout ? CompactWorkCardShell : WorkCardShell;
   const baseView = remoteWorkCardView(work, source, recommendationScored, useAuth().recommendationThreshold);
+  const sourceBadges = libraryCoverSourceBadges(
+    baseView.sourceBadges,
+    { kind: "remote", sourceId: source.id },
+    coverSourceMode,
+  );
   const view: WorkCardViewModel = {
     ...baseView,
-    ...libraryCoverSourceBadges(baseView.sourceBadges, { kind: "remote", sourceId: source.id }, coverSourceMode),
-    sourceBadgeStyle: "icon",
+    ...sourceBadges,
+    // A verdict is the reason to look at the card; an icon plus a tooltip hides
+    // it on touch and in a screenshot. Healthy marks keep the compact style.
+    sourceBadgeStyle: sourceBadgesNeedLabel(sourceBadges.sourceBadges) ? "label" : "icon",
     recommendationRevealDelay: revealDelay,
   };
 

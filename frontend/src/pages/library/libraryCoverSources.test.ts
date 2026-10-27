@@ -9,6 +9,11 @@ const missingLocal: WorkCardBadge = { key: "source:local", label: "Local", varia
 const tracked: WorkCardBadge = { key: "source:tracked:7", label: "Tracked", variant: "outline" };
 const unforked: WorkCardBadge = { key: "source:tracked:7", label: "Unforked", variant: "warning" };
 const remote: WorkCardBadge = { key: "source:remote:7", label: "Example Remote", variant: "outline" };
+const remoteVerdict: WorkCardBadge = {
+  key: "source:remote:7:verdict",
+  label: "Example Remote (unavailable)",
+  variant: "outline",
+};
 const remoteUnavailable: WorkCardBadge = {
   key: "source:remote:7:unavailable",
   label: "Example Remote unavailable",
@@ -33,6 +38,17 @@ describe("library cover source marks", () => {
     expect(labels(libraryCoverSourceBadges([remote], { kind: "remote", sourceId: 7 }, "auto"))).toEqual([]);
     expect(labels(libraryCoverSourceBadges([remoteUnavailable], { kind: "remote", sourceId: 7 }, "auto"))).toEqual([
       "Example Remote unavailable",
+    ]);
+  });
+
+  it("keeps a source verdict visible in its own scope", () => {
+    // The healthy mark for this source is implied by the scope; the verdict is
+    // the exception that still has to be readable.
+    expect(labels(libraryCoverSourceBadges([remoteVerdict], { kind: "remote", sourceId: 7 }, "auto"))).toEqual([
+      "Example Remote (unavailable)",
+    ]);
+    expect(labels(libraryCoverSourceBadges([remote, remoteVerdict], { kind: "remote", sourceId: 7 }, "auto"))).toEqual([
+      "Example Remote (unavailable)",
     ]);
   });
 
