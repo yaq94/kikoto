@@ -36,7 +36,7 @@
 - [ ] AC-25 播放中音轨／队列／进度、AC-26 进度证据、AC-27 出站边界、AC-28 截图关闭与既有视觉测试不改写全部列入矩阵。
 - [x] 部署后真实服务验收：`/health` 200 `v0.8.3`；试译三类 400 分类、prefill 快照并发、短查询 `truncated`、目录 `finishedAt`、个人记录跨源与隔离、媒体 Range 均已实测，逐项结果见候选账本第 6 节。
 - [x] 性能门禁：42k 卡浏览 p95 199.192 ms（p99 226.981 ms）；5,001 文件卡拒绝 p95 0.593 ms；1–2 字卡片页与同预算总数 p95 ≤13 ms、零命中 48 ms；编号等值 0.018 ms、目标语言标题整串等值 1.37–1.73 ms。
-- [x] AC-08 搜索范围口径：统一卡片与搜索指库页同一组件在两个范围工作——本地范围查 `/api/works` 的已登记作品，来源范围查 `/api/remote-sources/{id}/works` 的全部索引卡片（含未登记）。库级 `/api/works` 不联结来源索引是既有边界，已在 spec 的 D-04 写明；`TestOpenListCatalogListsNumberedAndNumberless` 断言发现卡片后库 total=0。
+- [x] AC-08 搜索范围口径：统一卡片与搜索指库页同一组件在两个范围工作——本地范围查 `/api/works` 的已登记作品，来源范围查 `/api/remote-sources/{id}/works` 的全部索引卡片（含未登记）。库级 `/api/works` 不联结来源索引是既有边界，已在 spec 的 D-04 写明；`TestOpenListFiniteCatalogDiscoversWithoutRegisteringWorks`（`openlist_catalog_test.go:17`，断言在 `:92-95`）证明来源范围发现卡片后库 total=0。
 
 ## AC 子项矩阵
 

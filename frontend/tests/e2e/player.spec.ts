@@ -819,9 +819,7 @@ test("an exhausted fallback does not tell the listener to enable it", async ({ p
   });
   // Both published files are gone. Fallback is already on and has now tried
   // every location, so the message must not point at that setting again.
-  await page.route(/\/api\/media\/[12]\/stream(?:\?.*)?$/, (route) =>
-    route.fulfill({ status: 404, body: "gone" }),
-  );
+  await page.route(/\/api\/media\/[12]\/stream(?:\?.*)?$/, (route) => route.fulfill({ status: 404, body: "gone" }));
   await page.goto("/");
 
   await expect(page.getByText("Playback failed: no working source remains for Test track.")).toBeVisible();
@@ -845,9 +843,7 @@ test("with fallback off, a usable second location is named in the failure", asyn
       },
     ],
   });
-  await page.route(/\/api\/media\/1\/stream(?:\?.*)?$/, (route) =>
-    route.fulfill({ status: 404, body: "gone" }),
-  );
+  await page.route(/\/api\/media\/1\/stream(?:\?.*)?$/, (route) => route.fulfill({ status: 404, body: "gone" }));
   await page.goto("/");
 
   await expect(
