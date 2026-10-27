@@ -186,8 +186,8 @@ func TestContentTranslationBatchIsolatesItemFailures(t *testing.T) {
 }
 
 // A production page carries titles near the 20.3-character average, not the
-// single character used by the compact bound test. The shared request decoder
-// caps every translation body at 16 KiB, which a full page exceeds.
+// single character used by the compact bound test. The batch has its own
+// budget so a full page of long titles still fits.
 func TestContentTranslationBatchFitsProductionTitles(t *testing.T) {
 	s, host, admin, listener := translationHTTPFixture(t)
 	tx, err := s.db.Begin()
