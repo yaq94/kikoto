@@ -13,13 +13,13 @@ const remoteVerdict: WorkCardBadge = {
   key: "source:remote:7:verdict",
   label: "Example Remote (unavailable)",
   variant: "outline",
-  readable: true,
+  needsLabel: true,
 };
 const remoteUnavailable: WorkCardBadge = {
   key: "source:remote:7:unavailable",
   label: "Example Remote unavailable",
   variant: "warning",
-  readable: true,
+  needsLabel: true,
 };
 
 const catalog: WorkCardBadge = { key: "source:2", label: "Example Remote", variant: "outline" };
@@ -52,6 +52,31 @@ describe("library cover source marks", () => {
     expect(labels(libraryCoverSourceBadges([remote, remoteVerdict], { kind: "remote", sourceId: 7 }, "auto"))).toEqual([
       "Example Remote (unavailable)",
     ]);
+  });
+
+  it("puts the verdict before the healthy mark of the same source when both are shown", () => {
+    // The compact card renders only the first mark, so the exception has to
+    // lead its class. Both marks come from the production builder; the ordering
+    // is what a one-chip layout depends on.
+    expect(
+      labels(libraryCoverSourceBadges([remote, remoteVerdict], { kind: "remote", sourceId: 7 }, "always")),
+    ).toEqual(["Example Remote (unavailable)", "Example Remote"]);
+    expect(
+      libraryCoverSourceBadges([remote, remoteVerdict], { kind: "remote", sourceId: 7 }, "always").sourceBadges[0]
+        .needsLabel,
+    ).toBe(true);
+  });
+
+  it("keeps the class order and only moves the mark that needs a label inside its class", () => {
+    // `always` is the mode that shows every mark, so this is the one place the
+    // full ordering is visible. A verdict must lead its own source class but
+    // must never jump ahead of Local or Cache.
+    const cache: WorkCardBadge = { key: "source:cache", label: "Cache", variant: "secondary" };
+    expect(
+      labels(
+        libraryCoverSourceBadges([cache, remote, remoteVerdict, local], { kind: "remote", sourceId: 7 }, "always"),
+      ),
+    ).toEqual(["Local", "Example Remote (unavailable)", "Example Remote", "Cache"]);
   });
 
   it("automatically leaves remote catalog listings off Local and Tracked covers", () => {

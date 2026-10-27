@@ -196,14 +196,10 @@ from the global missing total and does not block completion because the
 
 Display-language search applies only to text clauses and covers `title` for
 entries and series, plus `title` and `description` for works; `tag` and
-`directory` translations are not search inputs.
-`zh-cn`, `en-us`, `ja-jp` and `ko-kr` map to the stored tokens `zh-Hans`, `en`,
-`ja` and `ko`; `zh-tw` reads `zh-Hans` with OpenCC `s2t` and native `zh-Hant`. A
-release code or another structured identifier remains searchable regardless of
-display language. `origin` searches the original source index and never reads
-`content_translation`; target-language text searches never merge original-title
-FTS hits as a fallback. One- and two-character queries scan the complete
-effective set. `idx_content_translation_short_scan` is
+`directory` translations are not search inputs. The language mapping, the
+`origin` boundary and the short-query scan order are in
+[the data model](../architecture/data-model.md#translation-corpus).
+`idx_content_translation_short_scan` is
 `(language, entity_kind, field, source_id, browsable, id, origin, config_key,
 translated_text, entity_id)`.
 
@@ -222,15 +218,12 @@ clears `browsable` and the publish transaction restores it, which makes a missed
 refresh hide a card rather than show one that cannot play. `catalog_entry_searchable`
 holds the shared card rule both the entry and series arms read.
 
-A short search builds at most `catalogShortSearchResultLimit` cards, and the
-card page and the reported total share that budget. Counting every match would
-run the whole card pipeline on each keystroke, so the total is capped rather
-than counted. A bounded probe reads `limit+1` rows per branch to set the
-`truncated` flag, so the response says "first 1000 of more" instead of
-presenting the budget as the whole answer. The cap is applied per
-`(language, entity_kind)` branch in `(field, id)` order, which is the scan index
-order; `zh-tw` therefore keeps its native `zh-Hant` rows even when Simplified
-matches fill the budget. The exact-title flag is computed in the same scan and
+A short search builds at most `catalogShortSearchResultLimit` cards for the
+whole response, entry and series arms together, and the card page and the
+reported total share that budget; see
+[the data model](../architecture/data-model.md#translation-corpus). Each arm
+still scans with its own row bound, so a keystroke never materializes a
+whole-source match set. The exact-title flag is computed in the same scan and
 orders the returned cards. A three-character query is not capped and keeps
 exact-first ordering over its complete match set.
 
@@ -242,8 +235,7 @@ and keeps those rows. Only `tag`/`directory` model rows and
 
 A 1-2 character query stays inside the 100 ms budget, including a needle that
 matches nothing. Counting the complete match set without a budget is diagnostic
-only and never serves a request path. Evidence is the `short-query` and
-`translation-bench` reports copied into the release ledger.
+only and never serves a request path.
 
 Free space is read from the nearest existing parent before the data directory
 exists. Low space pauses new background generation (`paused_low_disk`) while

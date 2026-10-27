@@ -644,12 +644,14 @@ Three-character and longer queries use the trigram index. One- and
 two-character queries scan the effective set in
 `(language, entity_kind, field, source_id, browsable, id)` order through the
 covering short-scan index and match `translated_text` with `instr()`. The scan
-starts from the oldest effective row rather than a recent window; the cap
-bounds the returned cards and is applied inside the scan, so a query that
-matches the whole source stops at the bound. The reported `total` shares that
-budget, and a bounded overflow probe sets `truncated` when more effective rows
-exist. An unbounded count of a whole-source match set is too slow for a
-keystroke, which is why the budget covers the total as well.
+starts from the oldest effective row rather than a recent window. One response
+returns at most `catalogShortSearchResultLimit` cards across every arm and every
+corpus language the display language reads, ordered by exact match, update time,
+series and id; the reported `total` stops at the same bound and `truncated` says
+more cards exist. Each arm scans with its own row bound, so a query that matches
+the whole source still stops early. An unbounded count of a whole-source match
+set is too slow for a keystroke, which is why the budget covers the total as
+well.
 `zh-cn`, `en-us`, `ja-jp` and `ko-kr` map to `zh-Hans`, `en`,
 `ja` and `ko`; `zh-tw` reads `zh-Hans` with OpenCC `s2t` and also reads native
 `zh-Hant` rows.

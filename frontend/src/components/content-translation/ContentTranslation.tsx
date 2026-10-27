@@ -31,11 +31,13 @@ export const CONTENT_TRANSLATION_PENDING_TIMEOUT_MS = 20_000;
  * `timeout` means the bound passed without one, so the reader gets the original
  * text plus a retry instead of an endless progress note.
  */
+export type ContentTranslationDisplayState = ContentTranslationStatus | "pending" | "timeout";
+
 export function contentTranslationDisplayState(input: {
   enabled: boolean;
   status?: ContentTranslationStatus;
   timedOut: boolean;
-}): "original" | "pending" | "timeout" | ContentTranslationStatus {
+}): ContentTranslationDisplayState {
   if (!input.enabled) return "original";
   // A settled answer, including the batch route's `native`, outranks the
   // bound: the note stops claiming progress as soon as text arrives.

@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 
+import type { ContentTranslationStatus } from "@/lib/contentTranslationApi";
+
 import { contentTranslationDisplayState, createCacheVersionNotifier } from "./ContentTranslation";
 
 /**
@@ -64,7 +66,8 @@ describe("contentTranslationDisplayState", () => {
   });
 
   it("passes every settled status through unchanged", () => {
-    for (const status of ["original", "existing", "native"] as const) {
+    const settled: ContentTranslationStatus[] = ["original", "existing", "native", "translated", "failed"];
+    for (const status of settled) {
       expect(contentTranslationDisplayState({ enabled: true, status, timedOut: true })).toBe(status);
     }
   });

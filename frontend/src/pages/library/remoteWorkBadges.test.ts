@@ -13,7 +13,7 @@ describe("remote source badges", () => {
     expect(badges).toHaveLength(1);
     expect(badges[0].key).toBe("source:remote:7:verdict");
     expect(badges[0].variant).toBe("outline");
-    expect(badges[0].readable).toBe(true);
+    expect(badges[0].needsLabel).toBe(true);
     expect(badges[0].label).toContain("Example Remote");
     expect(badges[0].label).toContain("unavailable");
   });
@@ -25,12 +25,12 @@ describe("remote source badges", () => {
         key: "source:remote:7:unavailable",
         label: "Example Remote unavailable",
         variant: "warning",
-        readable: true,
+        needsLabel: true,
       },
     ]);
   });
 
-  it("asks for a readable mark only when a verdict or warning needs one", () => {
+  it("asks for text only when a verdict or warning needs it", () => {
     const healthy = remoteSourceBadges({ remotePlayable: true, availability: "available" }, 7, "Example Remote");
     expect(sourceBadgesNeedLabel(healthy)).toBe(false);
     const verdict = remoteSourceBadges(
@@ -46,7 +46,7 @@ describe("remote source badges", () => {
   it("reads the badge field instead of the key spelling", () => {
     // A mark whose key says nothing about a verdict still needs a label when it
     // asks for one, and a key ending in `:verdict` alone is not a reason.
-    expect(sourceBadgesNeedLabel([{ key: "source:local", label: "Local", variant: "outline", readable: true }])).toBe(
+    expect(sourceBadgesNeedLabel([{ key: "source:local", label: "Local", variant: "outline", needsLabel: true }])).toBe(
       true,
     );
     expect(

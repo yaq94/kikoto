@@ -140,23 +140,23 @@ function dedupeBadges(badges: WorkCardBadge[]) {
 }
 
 /**
- * Orders the cover marks of one card. Exported for its own test only; callers
- * inside this module are `sourcePresenceBadges` and `circleSourceBadges`.
- * A readable mark leads its own class, so a one-chip layout (the compact card)
- * shows the mark that carries text the reader needs instead of folding it into
- * a count.
+ * Orders the cover marks of one card. A mark that must be read leads its own
+ * class, so a one-chip layout (the compact card) shows the mark carrying text
+ * the reader needs instead of folding it into a count when a class holds more
+ * than one mark. Callers that merge marks from separate builders sort through
+ * this function so the rule has one definition.
  */
 export function sortSourceBadges(badges: WorkCardBadge[]) {
   return [...badges].sort(
     (left, right) =>
       sourceBadgeRank(left) - sourceBadgeRank(right) ||
-      readableRank(left) - readableRank(right) ||
+      labelRank(left) - labelRank(right) ||
       left.label.localeCompare(right.label),
   );
 }
 
-function readableRank(badge: WorkCardBadge) {
-  return badge.readable === true ? 0 : 1;
+function labelRank(badge: WorkCardBadge) {
+  return badge.needsLabel === true ? 0 : 1;
 }
 
 function sourceBadgeRank(badge: WorkCardBadge) {

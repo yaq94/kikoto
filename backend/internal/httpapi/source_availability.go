@@ -360,11 +360,19 @@ func (s *Server) attachSourceAvailabilityFlags(ctx context.Context, result *sour
 	// An unnumbered work cannot be found by its release code. Its stored
 	// presence for this source is the directory evidence, so it counts as a
 	// remote result even though the code lookup has no work id.
-	result.HasRemote = flags.HasRemote || result.Status == "available"
+	result.HasRemote = remotePresence(flags.HasRemote, result.Status)
 	result.HasTracked = flags.HasTracked
 	result.HasCache = flags.HasCache
 	result.HasLocal = flags.HasLocal
 	return nil
+}
+
+// remotePresence answers whether a source counts as holding the work. A stored
+// presence row is evidence on its own; otherwise the last observation has to
+// say the source currently lists it. Both answers are read by the availability
+// summary and by the voice catalog card, so the rule lives here once.
+func remotePresence(hasRemote bool, status string) bool {
+	return hasRemote || status == "available"
 }
 
 func (s *Server) loadRemoteSourcesForAvailability(ctx context.Context) ([]remoteSourceForUse, error) {

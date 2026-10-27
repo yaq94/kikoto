@@ -59,10 +59,11 @@ export type WorkCardBadge = {
   title?: string;
   /**
    * The label carries information a touch reader cannot get from a hover
-   * title, so the mark must be shown as text rather than as an icon. It also
-   * takes the first slot of its own class in a one-chip layout.
+   * title: a source verdict, an absence. Such a mark is shown as text rather
+   * than as an icon, takes the first slot of its own class in a one-chip
+   * layout, and stops using the healthy source dot.
    */
-  readable?: boolean;
+  needsLabel?: boolean;
   onClick?: () => void;
 };
 
@@ -400,8 +401,8 @@ export const coverChipClassName =
 // File availability rides on the cover so it reads at a glance without a
 // dedicated row. Only availability badges get a status dot; other badges a
 // view model adds (catalog state, for example) stay neutral. A regular card
-// shows two badges; a narrow card shows only the first so its label stays
-// readable beside the price, and counts the rest.
+// shows two badges; a narrow card shows only the first so its label still fits
+// beside the price, and counts the rest.
 function CoverAvailability({
   badges,
   style,
@@ -516,10 +517,11 @@ export function coverSourceIcon(badge: WorkCardBadge) {
 }
 
 export function availabilityDotClassName(badge: WorkCardBadge) {
-  // A readable mark is an exception the reader has to notice, not a healthy
-  // source mark: the chip may say "unavailable" while a green dot would
-  // contradict it. The badge states that itself; the key is only an identity.
-  if (badge.variant === "warning" || badge.readable) return "bg-warning";
+  // A mark that must be read is an exception the reader has to notice, not a
+  // healthy source mark: the chip may say "unavailable" while a green dot
+  // would contradict it. The badge states that itself; the key is only an
+  // identity.
+  if (badge.variant === "warning" || badge.needsLabel) return "bg-warning";
   if (badge.key?.startsWith("source:")) return "bg-success";
   return "bg-muted-foreground";
 }

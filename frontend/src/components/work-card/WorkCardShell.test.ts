@@ -29,7 +29,7 @@ describe("work card source dot", () => {
       availabilityDotClassName({
         key: "source:remote:7:verdict",
         label: "Example Remote (unavailable)",
-        readable: true,
+        needsLabel: true,
       }),
     ).toBe("bg-warning");
     expect(
@@ -39,7 +39,7 @@ describe("work card source dot", () => {
 
   it("keeps a source mark green when only its key spells a verdict", () => {
     // The key is an identity for the Library scope, not a statement about the
-    // mark; a card that forgets `readable` must not silently get the warning dot.
+    // mark; a card that forgets `needsLabel` must not silently get the warning dot.
     expect(availabilityDotClassName({ key: "source:remote:7:verdict", label: "Example Remote" })).toBe("bg-success");
   });
 });

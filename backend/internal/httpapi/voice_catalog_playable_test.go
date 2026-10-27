@@ -8,13 +8,10 @@ import (
 	"github.com/yexca/kikoto/backend/internal/config"
 )
 
-// A voice catalog row keeps its last published file set through a failed,
-// restricted or unconfirmed observation, so only a confirmed absence removes
-// playback. The voice vocabulary spells that absence "not_found", and a
-// disabled source keeps its rows visible as "disabled"; both must be
-// unplayable even though catalogVerdictPlayable only knows "missing" and
-// "excluded".
-func TestVoiceCatalogRemoteWorkPlayableFollowsCatalogVerdict(t *testing.T) {
+// A voice catalog row is a metadata observation: the audio only exists at the
+// remote source, so there is no last published file set to fall back on. Only a
+// row the source currently answers for may offer an import or playback action.
+func TestVoiceCatalogRemoteWorkPlayableRequiresCurrentAvailability(t *testing.T) {
 	db := openMigratedTestDB(t)
 	server := NewServer(db, config.Config{})
 	ctx := context.Background()
@@ -26,9 +23,9 @@ func TestVoiceCatalogRemoteWorkPlayableFollowsCatalogVerdict(t *testing.T) {
 		wantPlayable bool
 	}{
 		{name: "available", availability: "available", wantStatus: "available", wantPlayable: true},
-		{name: "unavailable", availability: "unavailable", wantStatus: "unavailable", wantPlayable: true},
-		{name: "error", availability: "error", wantStatus: "error", wantPlayable: true},
-		{name: "unknown", availability: "unknown", wantStatus: "unknown", wantPlayable: true},
+		{name: "unavailable", availability: "unavailable", wantStatus: "unavailable", wantPlayable: false},
+		{name: "error", availability: "error", wantStatus: "error", wantPlayable: false},
+		{name: "unknown", availability: "unknown", wantStatus: "unknown", wantPlayable: false},
 		{name: "missing", availability: "missing", wantStatus: "not_found", wantPlayable: false},
 		{name: "not_found", availability: "not_found", wantStatus: "not_found", wantPlayable: false},
 		{name: "disabled", availability: "disabled", wantStatus: "disabled", wantPlayable: false},

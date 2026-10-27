@@ -335,25 +335,21 @@ func (s *Server) buildVoiceCatalogRemoteWork(ctx context.Context, row voiceCatal
 		Price: nullableInt64FromFloatNull(row.Price), Tags: tags, VoiceActors: voiceActors,
 		ImportStatus: remoteImportStatus(nullableWorkID(workID)), RemotePlayable: voiceCatalogPlayable(status),
 		WorkID: nullableWorkID(workID), HasLocal: flags.HasLocal, HasCache: flags.HasCache,
-		HasRemote: flags.HasRemote || status == "available", Availability: status,
+		HasRemote: remotePresence(flags.HasRemote, status), Availability: status,
 	}, nil
 }
 
-// voiceCatalogPlayable adapts the voice observation vocabulary to
-// catalogVerdictPlayable. Voice spells a confirmed absence "not_found" and keeps
-// a disabled source's rows visible instead of withholding them, so those two
-// verdicts are handed to the shared rule as "missing" and "excluded". Every
-// other voice verdict (available, unavailable, error, unknown) still has its
-// last published file set and stays playable, the same answer the catalog
-// detail and media endpoints give.
+// voiceCatalogPlayable answers whether the source observation says the work can
+// be opened there right now.
+//
+// A voice catalog row is a metadata observation, not a card with a published
+// file set: the audio only exists at the remote source. So the catalog rule —
+// which keeps a failed or unconfirmed range playable because its last published
+// files are still servable — does not carry over. Spelling out the one
+// playable verdict keeps an unavailable, errored or disabled row from offering
+// an action the source has no evidence for.
 func voiceCatalogPlayable(status string) bool {
-	switch status {
-	case "not_found":
-		status = "missing"
-	case "disabled":
-		status = "excluded"
-	}
-	return catalogVerdictPlayable(status)
+	return status == "available"
 }
 
 func decodeVoiceCatalogStrings(raw string) []string {

@@ -1,4 +1,5 @@
 import type { SourceVisibilityMode } from "@/components/source-visibility/sourceVisibility";
+import { sortSourceBadges } from "@/components/work-card/sourceBadges";
 import type { WorkCardBadge } from "@/components/work-card/WorkCardShell";
 
 export type LibraryCoverSourceScope = { kind: "local" } | { kind: "tracked" } | { kind: "remote"; sourceId: number };
@@ -30,9 +31,9 @@ export function libraryCoverSourceBadges(
   scope: LibraryCoverSourceScope,
   mode: SourceVisibilityMode,
 ): { sourceBadges: WorkCardBadge[]; sourceUnavailableFallback: boolean } {
-  if (mode === "always") return { sourceBadges: badges, sourceUnavailableFallback: true };
+  if (mode === "always") return { sourceBadges: sortSourceBadges(badges), sourceUnavailableFallback: true };
   if (mode === "never") return { sourceBadges: [], sourceUnavailableFallback: false };
-  const sourceBadges = badges.filter((badge) => !hiddenAutomatically(badge, scope));
+  const sourceBadges = sortSourceBadges(badges.filter((badge) => !hiddenAutomatically(badge, scope)));
   // An originally empty list still reports the missing source, which is itself an exception.
   return { sourceBadges, sourceUnavailableFallback: badges.length === 0 };
 }
