@@ -23,7 +23,7 @@
 
 ## 发布门禁
 
-- [x] Standards 与 Spec 双轴审查闭环；两轴覆盖 `88498e94...3df404bc`，4 条硬违规与 5 条判断项、1 blocker 与 5 major 均已修复，逐项见候选账本第 3 节。
+- [x] Standards 与 Spec 双轴审查闭环；两轴覆盖 `88498e94...ce0586cc` 与其后的审查修复，4 条硬违规与 5 条判断项、1 blocker 与 5 major 均已修复，逐项见候选账本第 3 节。
 - [x] 同一 SHA 的 Full CI、类型检查、构建、H/R/F/U 与必要 race 证据。Full CI run `40463449636` @ `c9449653` 终态 success（27/27 job）；类型检查、构建、H/R/F/U 与 race 已在本候选取得。上一候选 `f727feee`（历史）的 run `40409566661` 为 26/26 job success。
 - [x] 原始 AC-14 的系列证据、单集格式副本、Bonus/轨道容器和成员上限回归保留在 11 号票的本地记录；本候选未改动系列逻辑。后端全量测试 `go test ./...` 在上一候选 `f727feee`（历史）通过；本候选重跑 `go build ./...`、`go vet ./internal/httpapi ./internal/translation` 与 `go test ./internal/translation -race`。
 - [x] 迁移链：095–105 连续、`compat/105_dev.sql` 与迁移后 schema 一致。本候选未改迁移，新装、068→105、084→105、重复启动四项沿用上一候选 `f727feee` 的记录；旧 095 preflight 全组亦在该记录中通过。
@@ -32,7 +32,7 @@
 - [x] 组合负载：`scripts/mixed-load.mjs` 60 秒、并发 8，全部请求匹配，无 5xx、无超时；各项 p95 见 [20 号票](20-catalog-sync-and-admission.md) 与 [translation.md](../../../docs/development/translation.md)。
 - [x] 真实完整索引：生产索引运行为 `partial`；未称 complete，失败与未确认空目录已分别计数，量级见候选账本。
 - [x] 有限 LIVE：真实 Index 试译 200 并返回目标文本，匿名媒体 Range 206；空文本、不支持语言与超长文本 400 分类已实测。
-- [x] 少量非视觉 F：前端 164 文件 / 937 单元测试、翻译与播放定向 E2E 通过；截图采集未改动。
+- [x] 少量非视觉 F：前端 164 文件 / 942 单元测试、翻译与播放定向 E2E 通过；截图采集未改动。
 - [ ] AC-25 播放中音轨／队列／进度、AC-26 进度证据、AC-27 出站边界、AC-28 截图关闭与既有视觉测试不改写全部列入矩阵。
 - [x] 部署后真实服务验收：`/health` 200 `v0.8.3`；试译 200 与三类 400 分类、短查询 `truncated`、来源卡 total、媒体 Range 均已实测，逐项结果见候选账本第 6 节。
 - [x] 性能门禁：42k 卡浏览、5,001 文件卡拒绝、1–2 字卡片页与同预算总数、编号等值与目标语言标题整串等值全部达标；数值见候选账本第 4 节所列出处。
