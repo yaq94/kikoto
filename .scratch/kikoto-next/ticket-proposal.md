@@ -16,7 +16,7 @@
 | 08 | verified-local | 完整合成树、恢复与资源限制已验收；run 53 仍为 partial，真实全量覆盖与 095–105 迁移链待 24。 |
 | 17 | in-progress | 历史组合证据保留；当前候选验收未完成，20–24 不阻塞本票。 |
 | 18、19 | verified-local | 历史本地 H/R、F 证据保留；最终候选 Full CI 由 24 汇总。 |
-| 20 | verified-local | `531acdf4` 落地 098 状态机与系列准入；`9f3d82f0` 补资源重查。单卡评价／播放／媒体流／目录标签准入、零可见成员 404、零文件与旧 generation 集合统一、due 推进顺序、诊断过滤与真实 plan 断言已并入集成分支；42k 目标机浏览 p95 199.192 ms、5,001 文件卡拒绝 p95 0.593 ms。 |
+| 20 | verified-local | `531acdf4` 落地 098 状态机与系列准入；`9f3d82f0` 补资源重查。单卡评价／播放／媒体流／目录标签准入、零可见成员 404、零文件与旧 generation 集合统一、due 推进顺序、诊断过滤与真实 plan 断言已并入集成分支；42k 卡浏览与 5,001 文件卡拒绝路径的 p95 已在目标机达标。 |
 | 21 | verified-local | 099/102/105、严格语言搜索、共享短查询生成器与 `failed` 终态已合入；1–2 字查询的返回条数与 `total` 共用 1000 张预算并以 `truncated` 标记还有更多，目标机卡片页与同预算总数 p95 均 ≤13 ms；最终候选复验由 24 记录。 |
 | 22 | resolved（`f727feee`） | 迁移 100、`work.parent_work_id`、v2 + 可选 `parent`、`parent_alias_not_imported` 与多父级 `parent_conflict` 已落地；9 项验收勾选并有测试名，本候选重跑后端全量通过。 |
 | 23 | verified-local | 095–105 已合入，`compat/105_dev.sql` 已生成；文档与证据收口完成。 |

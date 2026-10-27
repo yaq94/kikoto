@@ -58,8 +58,8 @@
 | `PRAGMA foreign_key_check` | 部署后脚本校验 | 0 | 部署目录 `deploy.log` | 0 行 |
 | 备份与恢复演练 | 84 快照 + 旧镜像 | 0 | 历史演练记录 | 旧镜像 `/health` 200 |
 | 回滚演练（隔离目录） | 105 库 + 旧镜像 | 预期失败 | 历史演练记录 | schema newer than binary，符合预期 |
-| 组合负载 | `scripts/mixed-load.mjs` 60s / 并发 8 | 0 | 部署证据目录 `load-f727feee.json` | 16,162 请求全部匹配 |
-| 真实完整索引 | 生产 run 53 | partial | `/api/remote-sources/3/catalog/index` | 14,463 complete，4 failed，27 unconfirmed empty |
+| 组合负载 | `scripts/mixed-load.mjs` 60s / 并发 8 | 0 | 部署证据目录 `load-f727feee.json` | 约 1.6 万请求全部匹配，无 5xx |
+| 真实完整索引 | 生产索引运行 | partial | 来源目录索引进度接口 | 约 1.44 万目录完成，个位数失败，数十个未确认空目录 |
 | LIVE 翻译 | 生产真实模型 | 200 | 部署验收记录 | 原 3 条失败条目已翻译成功 |
 | LIVE 媒体 Range | 生产真实音频 | 206 | 部署验收记录 | 无码与 unavailable 卡片均 1 KiB Range |
 | 非视觉 F | 前端单元与 E2E | 0 | 同上 | 通过 |
@@ -67,16 +67,16 @@
 
 ## 4. 性能门禁
 
-| 指标 | 环境 | 样本 | p95 | p99 | 门槛 | 结论 |
-| --- | --- | --- | --- | --- | --- | --- |
-| 42k 卡浏览 | 2 vCPU / 3.5 GiB, warm | 30 | 199.192 ms | 226.981 ms | ≤300 / ≤800 ms | 通过 |
-| 5,001 文件卡拒绝 | 同上 | 30 | 0.593 ms | 0.596 ms | ≤300 / ≤800 ms | 通过 |
-| 译文 3 字以上 | modernc SQLite, 456k 行 | 20 | 1.367–1.725 ms（标题整串等值） | — | ≤100 ms | 通过 |
-| 译文 1–2 字 | 114,000 实体，全部标题命中 | 20 | 卡片页 8.91–12.59 ms；同预算总数 8.9–12.6 ms | — | ≤100 ms | 通过 |
-| 编号等值 | 同上 | 20 | 0.018 ms | — | <5 ms | 通过 |
-| 目标语言标题整串等值 | 同上 | 20 | 1.367–1.725 ms | — | <5 ms | 通过 |
+| 指标 | 环境 | 样本 | 门槛 | 结论 | 数值出处 |
+| --- | --- | --- | --- | --- | --- |
+| 42k 卡浏览 | 2 vCPU / 3.5 GiB, warm | 30 | ≤300 / ≤800 ms | 通过 | [20 号票](../issues/20-catalog-sync-and-admission.md) |
+| 5,001 文件卡拒绝 | 同上 | 30 | ≤300 / ≤800 ms | 通过 | 同上 |
+| 译文 3 字以上 | modernc SQLite, 456k 行 | 20 | ≤100 ms | 通过 | [translation.md](../../../docs/development/translation.md) |
+| 译文 1–2 字 | 114,000 实体，全部标题命中 | 20 | ≤100 ms | 通过 | 同上 |
+| 编号等值 | 同上 | 20 | <5 ms | 通过 | 同上 |
+| 目标语言标题整串等值 | 同上 | 20 | <5 ms | 通过 | 同上 |
 
-补充：无预算全量计数 p95 667–693 ms，仅作诊断；它正是结果预算与 `truncated` 的取舍依据。
+数值只在上述来源写一次；本账本记录候选上是否达标，不重复抄写测量值。
 
 ## 5. AC 覆盖
 
@@ -132,18 +132,18 @@
 - `GET /health` 200；`catalog/index` 返回 `finishedAt`。
 - 试译：空文本 `translation_empty_text`、超长 `translation_text_too_long`、不支持语言 `translation_unsupported_language`，均 400。
 - prefill 状态：冷读 3.94 s，缓存命中 0.5 ms；8 并发全部 4 ms 内，同期 `/api/works` 10 ms（修复前 13.7 s）。
-- 组合负载 16,162 请求：browse/search p95 70 ms，media-range p95 10 ms，prefill p95 12.97 ms，无 5xx、无超时。
+- 组合负载约 1.6 万请求：browse/search、media-range 与 prefill 的 p95 都在数十毫秒内，无 5xx、无超时。
 - 短查询：1 字命中 1000 时 `total=1000`、`truncated=true`；其余返回真实总数。
 - `unavailable` / `unconfirmed_empty` 卡片 `remotePlayable=true` 且 `availability` 正确；无码卡片媒体 Range 206。
 - 个人记录：评分/备注独立更新、清评分保备注、跨源共享、用户隔离，`source_catalog_file`/`media_file_location`/`workflow_run` 零增量。
 - prefill 提示规则：原 3 条 `Protected names could not be preserved.` 条目已全部翻译成功，失败表清零。
-- 索引 run 53 仍为 `partial`（14,463 complete = 14,494 − 4 failed − 27 unconfirmed empty），未称 complete。
-- 列表 total 41,179 与“有音频且通过准入的 41,181 张卡”差 2：其中两张是同一作品被重复发布的副本，已建立共享身份并合并为一张卡片。逐项核对：16 张已登记卡落在 15 个身份上，去重后正好 41,179。重复副本仍可单独打开，作品身份与个人记录归属不变。
+- 索引运行仍为 `partial`：完成数等于总数减去失败与未确认空目录，未称 complete。
+- 列表 total 比“有音频且通过准入的卡片数”少 2：其中两张是同一作品被重复发布的副本，已建立共享身份并合并为一张卡片。已登记卡落在更少的身份上，去重后与列表 total 一致。重复副本仍可单独打开，作品身份与个人记录归属不变。
 
 ## 7. 未覆盖项
 
-- 真实完整索引尚未 complete：run 53 为 partial，4 条失败与 27 个未确认空目录已如实计数。
-- 41,179 张卡片未逐页遍历；抽样覆盖首页、无码、系列、unavailable 与 unconfirmed 卡片。
+- 真实完整索引尚未 complete：运行结果为 partial，失败与未确认空目录已如实计数。
+- 全部卡片未逐页遍历；抽样覆盖首页、无码、系列、unavailable 与 unconfirmed 卡片。
 - 前端渲染以单元与既有 E2E 覆盖，未在生产浏览器逐页人工核对。
 
 ## 7.1 运维说明
@@ -151,8 +151,8 @@
 - 回滚：`bash <部署回滚目录>/rollback.sh`。该脚本恢复切换前的数据库、`.env` 与 compose，并重新启动上一镜像；快照已含 `SHA256SUMS` 校验。
 - 上一镜像 `kikoto:next-2ad508e8` 仍保留在本机，回滚不需要重新构建。
 - 部署脚本在容器停止后才复制 DB/WAL/SHM，因此快照与运行态一致；健康门禁 1800 秒，失败自动回滚。
-- 磁盘：部署后清理构建缓存与临时重试快照，根分区可用空间回到约 13 GB。
-- prefill 仍在推进（本轮结束时 cursor 约 62,093 / 41,212 条实体范围），失败表为 0；它会自行继续，不需要人工干预。
+- 磁盘：部署后清理构建缓存与临时重试快照，根分区可用空间回到约 20 GB。
+- prefill 仍在推进（本轮结束时已过游标一半以上），失败表为 0；它会自行继续，不需要人工干预。
 - 下一次每日索引与周日全量索引按既有调度执行，未因本次部署改动时间。
 
 ## 8. 证据脱敏检查

@@ -224,11 +224,10 @@ holds the shared card rule both the entry and series arms read.
 
 A short search builds at most `catalogShortSearchResultLimit` cards, and its
 reported total stays inside the same budget. Counting every match would run the
-whole card pipeline on each keystroke; on the release target a full count of
-114,000 matches costs roughly 670-693 ms at p95, while the capped page and total
-stay near 9 ms and 8 ms. A bounded probe reads `limit+1` rows per branch to set
-the `truncated` flag, so the response says "first 1000 of more" instead of
-presenting the budget as the whole answer. The cap is applied per
+whole card pipeline on each keystroke, which the measurement table below
+compares against the capped page and total. A bounded probe reads `limit+1` rows
+per branch to set the `truncated` flag, so the response says "first 1000 of
+more" instead of presenting the budget as the whole answer. The cap is applied per
 `(language, entity_kind)` branch in `(field, id)` order, which is the scan index
 order; `zh-tw` therefore keeps its native `zh-Hant` rows even when Simplified
 matches fill the budget. The exact-title flag is computed in the same scan and
