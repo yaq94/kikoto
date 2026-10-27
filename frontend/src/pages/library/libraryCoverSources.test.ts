@@ -13,11 +13,13 @@ const remoteVerdict: WorkCardBadge = {
   key: "source:remote:7:verdict",
   label: "Example Remote (unavailable)",
   variant: "outline",
+  readable: true,
 };
 const remoteUnavailable: WorkCardBadge = {
   key: "source:remote:7:unavailable",
   label: "Example Remote unavailable",
   variant: "warning",
+  readable: true,
 };
 
 const catalog: WorkCardBadge = { key: "source:2", label: "Example Remote", variant: "outline" };

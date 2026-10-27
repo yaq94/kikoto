@@ -57,6 +57,12 @@ export type WorkCardBadge = {
   label: string;
   variant?: "default" | "secondary" | "outline" | "warning";
   title?: string;
+  /**
+   * The label carries information a touch reader cannot get from a hover
+   * title, so the mark must be shown as text rather than as an icon. It also
+   * takes the first slot of its own class in a one-chip layout.
+   */
+  readable?: boolean;
   onClick?: () => void;
 };
 
@@ -510,11 +516,10 @@ export function coverSourceIcon(badge: WorkCardBadge) {
 }
 
 export function availabilityDotClassName(badge: WorkCardBadge) {
-  if (badge.variant === "warning") return "bg-warning";
-  // A verdict mark is an exception the reader has to notice, not a healthy
-  // source mark: the chip says "unavailable" while a green dot would contradict
-  // it.
-  if (badge.key?.endsWith(":verdict")) return "bg-warning";
+  // A readable mark is an exception the reader has to notice, not a healthy
+  // source mark: the chip may say "unavailable" while a green dot would
+  // contradict it. The badge states that itself; the key is only an identity.
+  if (badge.variant === "warning" || badge.readable) return "bg-warning";
   if (badge.key?.startsWith("source:")) return "bg-success";
   return "bg-muted-foreground";
 }

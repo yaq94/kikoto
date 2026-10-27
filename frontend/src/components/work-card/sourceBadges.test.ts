@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import { circleSourceBadges, sourcePresenceBadges } from "./sourceBadges";
+import { remoteSourceBadges, sourceBadgesNeedLabel } from "@/pages/library/remoteWorkBadges";
+
+import { circleSourceBadges, sortSourceBadges, sourcePresenceBadges } from "./sourceBadges";
 
 describe("source presence badges", () => {
   it("orders local, tracked, and remote presence and distinguishes unforked tracking", () => {
@@ -58,5 +60,37 @@ describe("circle source badges", () => {
         sourceTags: null,
       }),
     ).toEqual([]);
+  });
+});
+
+describe("source badge order", () => {
+  it("puts a readable mark before the healthy mark of its own class", () => {
+    // The state a Library card reaches in the "always" cover-source mode: the
+    // mark the scope implies plus the verdict that overrides it.
+    const healthy = remoteSourceBadges({ remotePlayable: true, availability: "available" }, 7, "Example Remote");
+    const verdict = remoteSourceBadges({ remotePlayable: true, availability: "unavailable" }, 7, "Example Remote");
+    const badges = [...healthy, ...verdict];
+
+    expect(sourceBadgesNeedLabel(badges)).toBe(true);
+    const sorted = sortSourceBadges(badges);
+    expect(sorted.map((badge) => badge.key)).toEqual(["source:remote:7:verdict", "source:remote:7"]);
+    // The compact card shows only the first mark; it has to be the readable one.
+    expect(sorted[0].readable).toBe(true);
+  });
+
+  it("keeps the class order and only moves readable marks inside their class", () => {
+    const sorted = sortSourceBadges([
+      { key: "source:remote:7", label: "Example Remote", variant: "outline" },
+      { key: "source:cache", label: "Cache", variant: "secondary" },
+      { key: "source:remote:7:verdict", label: "Example Remote (unavailable)", variant: "outline", readable: true },
+      { key: "source:local", label: "Local", variant: "secondary" },
+    ]);
+
+    expect(sorted.map((badge) => badge.key)).toEqual([
+      "source:local",
+      "source:remote:7:verdict",
+      "source:remote:7",
+      "source:cache",
+    ]);
   });
 });

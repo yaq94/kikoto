@@ -22,6 +22,7 @@ export function remoteSourceBadges(
         key: `${key}:unavailable`,
         label: i18n.t("workCard.namedSourceUnavailable", { name: sourceLabel }),
         variant: "warning",
+        readable: true,
       },
     ];
   }
@@ -29,18 +30,19 @@ export function remoteSourceBadges(
   if (verdict === "") return [{ key, label: sourceLabel, variant: "outline" }];
   const label = i18n.t("workCard.namedSourceVerdict", { name: sourceLabel, verdict });
   // A distinct key keeps this exception visible when the Library scope would
-  // otherwise hide the healthy mark for the same source, and lets a card choose
-  // a readable chip for it instead of the compact icon.
-  return [{ key: `${key}:verdict`, label, variant: "outline", title: label }];
+  // otherwise hide the healthy mark for the same source; `readable` is what
+  // makes a card choose a text chip instead of the compact icon.
+  return [{ key: `${key}:verdict`, label, variant: "outline", title: label, readable: true }];
 }
 
 /**
  * Whether these marks must be readable as text. A healthy mark may stay an
  * icon on a dense grid; a verdict or a warning is the reason to look at the
- * card, and a hover-only title is unreadable on touch.
+ * card, and a hover-only title is unreadable on touch. The badge says so
+ * itself, so a new mark cannot inherit the answer from its key spelling.
  */
-export function sourceBadgesNeedLabel(badges: Array<{ key?: string; variant?: string }>): boolean {
-  return badges.some((badge) => badge.variant === "warning" || badge.key?.endsWith(":verdict") === true);
+export function sourceBadgesNeedLabel(badges: WorkCardBadge[]): boolean {
+  return badges.some((badge) => badge.readable === true || badge.variant === "warning");
 }
 
 function verdictLabel(availability: string): string {

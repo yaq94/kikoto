@@ -25,11 +25,21 @@ describe("work card source dot", () => {
   it("does not paint a verdict mark green", () => {
     // The chip reads "unavailable"; a success dot next to it states the
     // opposite of the label.
-    expect(availabilityDotClassName({ key: "source:remote:7:verdict", label: "Example Remote (unavailable)" })).toBe(
-      "bg-warning",
-    );
+    expect(
+      availabilityDotClassName({
+        key: "source:remote:7:verdict",
+        label: "Example Remote (unavailable)",
+        readable: true,
+      }),
+    ).toBe("bg-warning");
     expect(
       availabilityDotClassName({ key: "source:remote:7:unavailable", label: "Example Remote", variant: "warning" }),
     ).toBe("bg-warning");
+  });
+
+  it("keeps a source mark green when only its key spells a verdict", () => {
+    // The key is an identity for the Library scope, not a statement about the
+    // mark; a card that forgets `readable` must not silently get the warning dot.
+    expect(availabilityDotClassName({ key: "source:remote:7:verdict", label: "Example Remote" })).toBe("bg-success");
   });
 });

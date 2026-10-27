@@ -13,6 +13,7 @@ describe("remote source badges", () => {
     expect(badges).toHaveLength(1);
     expect(badges[0].key).toBe("source:remote:7:verdict");
     expect(badges[0].variant).toBe("outline");
+    expect(badges[0].readable).toBe(true);
     expect(badges[0].label).toContain("Example Remote");
     expect(badges[0].label).toContain("unavailable");
   });
@@ -20,7 +21,12 @@ describe("remote source badges", () => {
   it("warns when the source can no longer open the card", () => {
     const badges = remoteSourceBadges({ remotePlayable: false, availability: "missing" }, 7, "Example Remote");
     expect(badges).toEqual([
-      { key: "source:remote:7:unavailable", label: "Example Remote unavailable", variant: "warning" },
+      {
+        key: "source:remote:7:unavailable",
+        label: "Example Remote unavailable",
+        variant: "warning",
+        readable: true,
+      },
     ]);
   });
 
@@ -35,5 +41,19 @@ describe("remote source badges", () => {
     expect(sourceBadgesNeedLabel(verdict)).toBe(true);
     const warning = remoteSourceBadges({ remotePlayable: false, availability: "missing" }, 7, "Example Remote");
     expect(sourceBadgesNeedLabel(warning)).toBe(true);
+  });
+
+  it("reads the badge field instead of the key spelling", () => {
+    // A mark whose key says nothing about a verdict still needs a label when it
+    // asks for one, and a key ending in `:verdict` alone is not a reason.
+    expect(sourceBadgesNeedLabel([{ key: "source:local", label: "Local", variant: "outline", readable: true }])).toBe(
+      true,
+    );
+    expect(
+      sourceBadgesNeedLabel([{ key: "source:remote:7:verdict", label: "Example Remote", variant: "outline" }]),
+    ).toBe(false);
+    expect(sourceBadgesNeedLabel([{ key: "source:remote:7", label: "Example Remote", variant: "outline" }])).toBe(
+      false,
+    );
   });
 });

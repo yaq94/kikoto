@@ -139,10 +139,24 @@ function dedupeBadges(badges: WorkCardBadge[]) {
   });
 }
 
-function sortSourceBadges(badges: WorkCardBadge[]) {
+/**
+ * Orders the cover marks of one card. Exported for its own test only; callers
+ * inside this module are `sourcePresenceBadges` and `circleSourceBadges`.
+ * A readable mark leads its own class, so a one-chip layout (the compact card)
+ * shows the mark that carries text the reader needs instead of folding it into
+ * a count.
+ */
+export function sortSourceBadges(badges: WorkCardBadge[]) {
   return [...badges].sort(
-    (left, right) => sourceBadgeRank(left) - sourceBadgeRank(right) || left.label.localeCompare(right.label),
+    (left, right) =>
+      sourceBadgeRank(left) - sourceBadgeRank(right) ||
+      readableRank(left) - readableRank(right) ||
+      left.label.localeCompare(right.label),
   );
+}
+
+function readableRank(badge: WorkCardBadge) {
+  return badge.readable === true ? 0 : 1;
 }
 
 function sourceBadgeRank(badge: WorkCardBadge) {
