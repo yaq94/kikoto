@@ -331,30 +331,29 @@ func TestCatalogEpisodeInterruptedStagingLeavesNoPublicSplitAndRecoversAfterRest
 }
 
 func TestCatalogEpisodePendingEntryIsHiddenFromReadSearchAndReview(t *testing.T) {
-	f := newLooseWorkFixture(t, looseEpisodeTree(101))
+	f := newLooseWorkFixture(t, looseEpisodeTree(1))
 	sourceID := f.sourceID(t)
-	metadataReviewExec(t, f.server.db, fmt.Sprintf(`
-		CREATE TRIGGER fail_pending_activation BEFORE UPDATE OF file_source_id ON source_catalog_entry
-		WHEN OLD.file_source_id IS NULL AND NEW.file_source_id IS NOT NULL
-			AND NEW.root_path=(
-				SELECT e.root_path FROM source_catalog_episode_pending p
-				JOIN source_catalog_entry e ON e.id=p.catalog_entry_id
-				WHERE p.source_id=%d AND p.parent_root='/Example'
-				ORDER BY e.root_path DESC LIMIT 1
-			)
-		BEGIN SELECT RAISE(ABORT,'synthetic late pending activation failure'); END;
-		CREATE TRIGGER hold_pending_cleanup BEFORE DELETE ON source_catalog_episode_pending
-		BEGIN SELECT RAISE(ABORT,'synthetic pending cleanup failure'); END;
-	`, sourceID))
-	f.request(t, http.MethodPost, "/catalog/scan", `{}`, http.StatusInternalServerError)
-
+	// Seed the state a failed activation leaves behind: the entry keeps its
+	// activated source identity while its pending mapping survives a blocked
+	// cleanup. The production path that reaches this state at a batch boundary
+	// is covered by TestCatalogEpisodeActivationFailureCompensatesWithoutPublicSplit
+	// and TestCatalogEpisodeInterruptedStagingLeavesNoPublicSplitAndRecoversAfterRestart.
+	// Driving it here needed 101 episodes — two write batches — and the pure-Go
+	// SQLite under -race spends minutes on that alone, because checkptr
+	// instrumentation dominates every statement. This case is about what a
+	// pending entry shows to a reader, so it starts from the state.
+	const pendingRoot = "/Example::episode:example|99"
 	var pendingID int64
-	if err := f.server.db.QueryRow(`SELECT p.catalog_entry_id FROM source_catalog_episode_pending p
-		JOIN source_catalog_entry e ON e.id=p.catalog_entry_id
-		WHERE p.source_id=? AND e.file_source_id=? ORDER BY p.catalog_entry_id LIMIT 1`,
-		sourceID, sourceID).Scan(&pendingID); err != nil {
-		t.Fatalf("load interrupted pending entry: %v", err)
+	if err := f.server.db.QueryRow(`INSERT INTO source_catalog_entry(
+			file_source_id,root_path,title,availability_status)
+			VALUES(?,'`+pendingRoot+`','Episode 99','available') RETURNING id`, sourceID).Scan(&pendingID); err != nil {
+		t.Fatalf("seed pending entry: %v", err)
 	}
+	metadataReviewExec(t, f.server.db, `INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes)
+			VALUES(?,'track.mp3','Episode 99','audio',100)`, pendingID)
+	metadataReviewExec(t, f.server.db, `INSERT INTO source_catalog_episode_pending(
+			source_id,parent_root,catalog_entry_root,catalog_entry_id) VALUES(?,'/Example',?,?)`,
+		sourceID, pendingRoot, pendingID)
 	reviewRequest(t, f.handler, f.cookie, http.MethodGet,
 		"/api/source-catalog/"+strconv.FormatInt(pendingID, 10), "", http.StatusNotFound)
 	reviewRequest(t, f.handler, f.cookie, http.MethodGet,

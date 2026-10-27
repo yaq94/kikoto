@@ -121,11 +121,6 @@ func newCatalogIndexFixtureWithDB(t *testing.T, upstream http.Handler, db *sql.D
 	t.Helper()
 	remote := httptest.NewServer(upstream)
 	t.Cleanup(remote.Close)
-	// These cases exercise catalog reconciliation, not upstream pacing. The
-	// production default waits 0.5–2 s per directory request, which turns a
-	// hundred-entry tree into a scan that outlives its five-minute budget on a
-	// race-enabled runner. Pacing itself is covered by source_gate_test.go.
-	metadataReviewExec(t, db, `INSERT OR REPLACE INTO app_setting (key, value_json) VALUES ('remote_request_delay_base_seconds', '0'), ('remote_request_delay_random_seconds', '0')`)
 	s := NewServer(db, config.Config{Mode: config.ModeProduction, RootUsername: "synthetic-user", DataRoot: t.TempDir(), CacheRoot: t.TempDir()})
 	t.Cleanup(func() { _ = s.Shutdown(context.Background()) })
 	createTestAdministrator(t, s, "synthetic-user", "synthetic-password")
