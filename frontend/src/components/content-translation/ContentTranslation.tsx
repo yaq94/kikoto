@@ -35,19 +35,20 @@ export type ContentTranslationDisplayState = ContentTranslationStatus | "pending
 
 export function contentTranslationDisplayState(input: {
   enabled: boolean;
-  /** False until the field has entered, or come close to, the viewport. */
-  visible?: boolean;
+  /** False until the field is near the viewport at the current request key. */
+  visible: boolean;
   status?: ContentTranslationStatus;
   timedOut: boolean;
 }): ContentTranslationDisplayState {
+  if (!input.enabled) return "original";
+  // A settled answer, including the batch route's `native`, outranks the
+  // bound: the note stops claiming progress as soon as text arrives.
+  if (input.status) return input.status;
   // A field outside the viewport has not asked for a translation yet. Calling
   // that `pending` claims work that was never started, so a list with one
   // visible row reads as a page of stalled translations while the network is
   // idle.
-  if (!input.enabled || input.visible === false) return "original";
-  // A settled answer, including the batch route's `native`, outranks the
-  // bound: the note stops claiming progress as soon as text arrives.
-  if (input.status) return input.status;
+  if (!input.visible) return "original";
   return input.timedOut ? "timeout" : "pending";
 }
 
@@ -230,7 +231,12 @@ export function TranslatedText({
   const scope = useContext(ScopeContext);
   const resource = explicit ?? scope.resource;
   const [element, setElement] = useState<HTMLSpanElement | null>(null);
-  const [visible, setVisible] = useState(false);
+  // The request key this field last came near the viewport for. Comparing it
+  // with the current key keeps a translated card from re-requesting when it
+  // scrolls out, while a language or resource change drops back to "not
+  // requested" so switching language translates what is on screen instead of
+  // the whole page the reader has ever visited.
+  const [visibleKey, setVisibleKey] = useState<string | null>(null);
   const key = JSON.stringify([
     session,
     revision,
@@ -266,23 +272,23 @@ export function TranslatedText({
     text.trim(),
   );
   const enabled = readable && language !== "origin";
+  const visible = visibleKey === key;
   useEffect(() => {
     if (!element) return;
-    // A field stays requested once it first comes near the viewport. The answer
-    // is cached, and un-requesting on scroll would restart every card the
-    // reader passes instead of reusing what was already translated. The margin
-    // starts the request just before the field is actually needed.
+    // Observing restarts per request key, and an observer reports the current
+    // intersection as soon as it starts. A field already on screen therefore
+    // asks for the new language at once, while one that is off screen waits
+    // until the reader reaches it instead of translating the whole page. The
+    // margin starts the request just before the field is actually needed.
     const observer = new IntersectionObserver(
       (entries) => {
-        if (!entries.some((entry) => entry.isIntersecting)) return;
-        setVisible(true);
-        observer.disconnect();
+        if (entries.some((entry) => entry.isIntersecting)) setVisibleKey(key);
       },
       { rootMargin: "400px 0px" },
     );
     observer.observe(element);
     return () => observer.disconnect();
-  }, [element]);
+  }, [element, key]);
   useEffect(() => {
     if (!enabled || !visible) return;
     const controller = new AbortController();

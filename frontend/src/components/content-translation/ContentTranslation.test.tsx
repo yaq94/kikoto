@@ -52,7 +52,8 @@ describe("createCacheVersionNotifier", () => {
 
 describe("contentTranslationDisplayState", () => {
   it("stays original when the field cannot be translated", () => {
-    expect(contentTranslationDisplayState({ enabled: false, timedOut: true })).toBe("original");
+    expect(contentTranslationDisplayState({ enabled: false, visible: true, timedOut: true })).toBe("original");
+    expect(contentTranslationDisplayState({ enabled: false, visible: false, timedOut: false })).toBe("original");
   });
 
   it("does not claim progress for a field that has not asked yet", () => {
@@ -61,19 +62,34 @@ describe("contentTranslationDisplayState", () => {
   });
 
   it("reports progress only until the bound passes", () => {
-    expect(contentTranslationDisplayState({ enabled: true, timedOut: false })).toBe("pending");
-    expect(contentTranslationDisplayState({ enabled: true, timedOut: true })).toBe("timeout");
+    expect(contentTranslationDisplayState({ enabled: true, visible: true, timedOut: false })).toBe("pending");
+    expect(contentTranslationDisplayState({ enabled: true, visible: true, timedOut: true })).toBe("timeout");
   });
 
   it("keeps a settled answer even after the bound passed", () => {
-    expect(contentTranslationDisplayState({ enabled: true, status: "translated", timedOut: true })).toBe("translated");
-    expect(contentTranslationDisplayState({ enabled: true, status: "failed", timedOut: true })).toBe("failed");
+    expect(contentTranslationDisplayState({ enabled: true, visible: true, status: "translated", timedOut: true })).toBe(
+      "translated",
+    );
+    expect(contentTranslationDisplayState({ enabled: true, visible: true, status: "failed", timedOut: true })).toBe(
+      "failed",
+    );
+  });
+
+  it("keeps a settled answer that outlived the field's current key", () => {
+    // A settled answer is the reader's answer even when the field is no longer
+    // near the viewport; it must not be mistaken for one that never asked.
+    expect(contentTranslationDisplayState({ enabled: true, visible: false, status: "existing", timedOut: false })).toBe(
+      "existing",
+    );
+    expect(contentTranslationDisplayState({ enabled: true, visible: false, status: "failed", timedOut: false })).toBe(
+      "failed",
+    );
   });
 
   it("passes every settled status through unchanged", () => {
     const settled: ContentTranslationStatus[] = ["original", "existing", "native", "translated", "failed"];
     for (const status of settled) {
-      expect(contentTranslationDisplayState({ enabled: true, status, timedOut: true })).toBe(status);
+      expect(contentTranslationDisplayState({ enabled: true, visible: true, status, timedOut: true })).toBe(status);
     }
   });
 });

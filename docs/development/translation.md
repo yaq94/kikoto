@@ -113,7 +113,13 @@ original/retry controls; `ContentResourceScope` changes the resource for a sourc
 directory. `TranslatedText` accepts a public field, display text, optional
 resource, media id and path. It renders plain text, translates visible dynamic
 content, retains original text while waiting or after failure, and cancels stale
-requests on language, resource, page or account changes. The content-language
+requests on language, resource, page or account changes. A field asks for a
+translation when it comes within 400 px of the viewport and keeps that request
+while it is scrolled away, so a translated card is not requested twice. The
+latch is per request key: changing the display language or the resource drops
+the field back to "not requested", so only what is on screen asks for the new
+language instead of the whole page the reader has visited. A field that has not
+asked shows its original text and no progress note. The content-language
 event refreshes text without remounting the detail or changing the selected
 directory, edition, media identity or player state.
 
@@ -245,8 +251,9 @@ written while the volume is below the floor. The response reports
 later pass retries it. Failed and empty generations are never stored. Stored
 rows report `hit`, freshly generated rows `stored`.
 
-A visible field that has no answer yet shows the original text with a progress
-note. The note is bounded: after `CONTENT_TRANSLATION_PENDING_TIMEOUT_MS` the
+A field that has asked for its translation and has no answer yet shows the
+original text with a progress note; a field outside the viewport shows only the
+original text, because no request exists to report. The note is bounded: after `CONTENT_TRANSLATION_PENDING_TIMEOUT_MS` the
 field reports that the translation has not finished and offers a retry, instead
 of presenting an unanswered request as ongoing work. The wording does not claim
 the request is queued: at that point it may still be generating. A settled
