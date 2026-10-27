@@ -53,8 +53,11 @@ type circleSourceStat struct {
 	Key         string `json:"key"`
 	SourceID    *int64 `json:"sourceId"`
 	DisplayName string `json:"displayName"`
-	Status      string `json:"status"`
-	Count       int    `json:"count"`
+	// Code is the work code this source actually holds. It can differ from the
+	// card's canonical code when editions share one work.
+	Code   string `json:"code,omitempty"`
+	Status string `json:"status"`
+	Count  int    `json:"count"`
 }
 
 type circleDetail struct {

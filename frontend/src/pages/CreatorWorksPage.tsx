@@ -111,6 +111,7 @@ import { openLibraryTagSearch } from "@/lib/libraryTagSearch";
 import {
   mergeVoiceWorks,
   voiceWorkHasRemoteAvailability,
+  voiceWorkAvailableRemoteTarget,
   voiceWorkHasRemoteReference,
   voiceWorkObservedSourceTags,
   voiceWorkRemoteTarget,
@@ -598,9 +599,9 @@ function VoiceDetailPage({ personId, active }: { personId: number; active: boole
   }, [filteredWorks]);
   const selectedWorks = mergedWorks.filter((work) => selectedWorkKeys.has(voiceWorkSelectionKey(work)));
   const selectablePageWorks = pageWorks.filter(isVoiceBulkSelectable);
-  const selectedSaveable = selectedWorks.filter(voiceWorkRemoteTarget);
+  const selectedFetchable = selectedWorks.filter(voiceWorkAvailableRemoteTarget);
   const selectedForkable = selectedWorks.filter(
-    (work) => voiceWorkRemoteTarget(work) && !voiceWorkHasImportedRemote(work),
+    (work) => voiceWorkAvailableRemoteTarget(work) && !voiceWorkHasImportedRemote(work),
   );
 
   const toggleFavorite = async () => {
@@ -738,7 +739,7 @@ function VoiceDetailPage({ personId, active }: { personId: number; active: boole
     try {
       await remoteWorkActions.recordBulkRuns(
         "track",
-        voiceRemoteTargets(selectedForkable),
+        voiceAvailableRemoteTargets(selectedForkable),
         creatorBulkCopy,
         refreshDetail,
       );
@@ -748,9 +749,9 @@ function VoiceDetailPage({ personId, active }: { personId: number; active: boole
   };
 
   const bulkSave = async () => {
-    if (selectedSaveable.length === 0) return;
+    if (selectedFetchable.length === 0) return;
     if (!requireBulkFetch()) return;
-    setSaveConfirm({ count: selectedSaveable.length, run: runBulkSave });
+    setSaveConfirm({ count: selectedFetchable.length, run: runBulkSave });
   };
 
   const runBulkSave = async () => {
@@ -760,7 +761,7 @@ function VoiceDetailPage({ personId, active }: { personId: number; active: boole
     try {
       await remoteWorkActions.recordBulkRuns(
         "fetch",
-        voiceRemoteTargets(selectedSaveable),
+        voiceAvailableRemoteTargets(selectedFetchable),
         creatorBulkCopy,
         refreshDetail,
       );
@@ -771,7 +772,7 @@ function VoiceDetailPage({ personId, active }: { personId: number; active: boole
   };
 
   const saveSingleWork = async (work: VoiceWorkView) => {
-    const target = voiceWorkRemoteTarget(work);
+    const target = voiceWorkAvailableRemoteTarget(work);
     if (!target) return;
     await fetchWorkspace.open({
       sourceId: target.sourceId,
@@ -782,7 +783,7 @@ function VoiceDetailPage({ personId, active }: { personId: number; active: boole
   };
 
   const forkSingleWork = async (work: VoiceWorkView) => {
-    const target = voiceWorkRemoteTarget(work);
+    const target = voiceWorkAvailableRemoteTarget(work);
     if (!target || !requireTrack()) return;
     setIsBulkBusy(true);
     try {
@@ -1055,7 +1056,7 @@ function VoiceDetailPage({ personId, active }: { personId: number; active: boole
             <WorkSelectionAction
               icon={<HardDriveDownload className="h-4 w-4" />}
               label={t("detailActions.fetch")}
-              count={selectedSaveable.length}
+              count={selectedFetchable.length}
               disabled={isBulkBusy}
               onClick={() => void bulkSave()}
             />
@@ -1200,7 +1201,7 @@ function VoiceWorkCard({
             <>
               <WorkCardActionButton
                 title={t("detailActions.fork")}
-                disabled={!voiceWorkRemoteTarget(work)}
+                disabled={!voiceWorkAvailableRemoteTarget(work)}
                 onClick={(event) => {
                   event.stopPropagation();
                   onFork();
@@ -1210,7 +1211,7 @@ function VoiceWorkCard({
               </WorkCardActionButton>
               <WorkCardActionButton
                 title={t("detailActions.fetch")}
-                disabled={!voiceWorkRemoteTarget(work)}
+                disabled={!voiceWorkAvailableRemoteTarget(work)}
                 onClick={(event) => {
                   event.stopPropagation();
                   onSave();
@@ -1336,8 +1337,8 @@ function VoiceDetailSkeleton() {
   );
 }
 
-function voiceRemoteTargets(works: readonly VoiceWorkView[]) {
-  return works.flatMap((work) => voiceWorkRemoteTarget(work) ?? []);
+function voiceAvailableRemoteTargets(works: readonly VoiceWorkView[]) {
+  return works.flatMap((work) => voiceWorkAvailableRemoteTarget(work) ?? []);
 }
 
 function voiceWorkSelectionKey(work: VoiceWorkView) {

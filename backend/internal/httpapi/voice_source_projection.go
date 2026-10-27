@@ -34,9 +34,11 @@ func (s *Server) workSourceStateByCode(ctx context.Context, code string) ([]circ
 
 func (s *Server) availableVoiceSourceTags(ctx context.Context, code string) ([]circleSourceStat, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT source.id, source.display_name, location.location_type, COUNT(*)
+		SELECT source.id, source.display_name, location.location_type, COUNT(*),
+			COALESCE(MIN(NULLIF(held_work.primary_code, '')), '')
 		FROM media_file_location AS location
 		INNER JOIN media_item AS item ON item.id = location.media_item_id
+		INNER JOIN work AS held_work ON held_work.id = item.work_id
 		INNER JOIN file_source AS source ON source.id = location.file_source_id
 		WHERE item.work_id IN (
 				SELECT work.id
@@ -61,18 +63,18 @@ func (s *Server) availableVoiceSourceTags(ctx context.Context, code string) ([]c
 	tagIndexes := map[string]int{}
 	for rows.Next() {
 		var sourceID int64
-		var name, locationType string
+		var name, locationType, code string
 		var count int
-		if err := rows.Scan(&sourceID, &name, &locationType, &count); err != nil {
+		if err := rows.Scan(&sourceID, &name, &locationType, &count, &code); err != nil {
 			return nil, err
 		}
 		switch locationType {
 		case "local":
 			mergeAvailableVoiceSourceTag(&tags, tagIndexes, circleSourceStat{Key: "local", DisplayName: "Local", Status: "available", Count: count})
 		case "cache":
-			mergeAvailableVoiceSourceTag(&tags, tagIndexes, circleSourceStat{Key: "cache", SourceID: &sourceID, DisplayName: "Cache", Status: "available", Count: count})
+			mergeAvailableVoiceSourceTag(&tags, tagIndexes, circleSourceStat{Key: "cache", SourceID: &sourceID, DisplayName: "Cache", Code: code, Status: "available", Count: count})
 		case "remote_stream", "remote_download":
-			mergeAvailableVoiceSourceTag(&tags, tagIndexes, circleSourceStat{Key: fmt.Sprintf("source:%d", sourceID), SourceID: &sourceID, DisplayName: name, Status: "available", Count: count})
+			mergeAvailableVoiceSourceTag(&tags, tagIndexes, circleSourceStat{Key: fmt.Sprintf("source:%d", sourceID), SourceID: &sourceID, DisplayName: name, Code: code, Status: "available", Count: count})
 		}
 	}
 	if err := rows.Err(); err != nil {
@@ -128,6 +130,7 @@ func (s *Server) observedVoiceSourceTags(ctx context.Context, code string) ([]ci
 			Key:         fmt.Sprintf("source:%d", sourceID),
 			SourceID:    &sourceID,
 			DisplayName: name,
+			Code:        strings.TrimSpace(remoteCode),
 			Status:      status,
 			Count:       count,
 		}

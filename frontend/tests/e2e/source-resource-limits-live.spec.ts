@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-import { playerQueueStorageBaseKey } from "./fixtures/player-library";
+import { playerQueueStorageBaseKey, readScopedPlayerState } from "./fixtures/player-library";
 
 test.use({ screenshot: "off", trace: "off", video: "off" });
 
@@ -30,23 +30,22 @@ test("playback and personal records survive a low-disk catalog pause @desktop", 
   await expect.poll(() => audio.evaluate((element: HTMLAudioElement) => element.currentTime)).toBeGreaterThan(0.5);
 
   // The player queue is part of the listener's live state, not the scan's.
-  const queueState = () =>
-    page.evaluate((baseKey) => {
-      const key = Object.keys(localStorage).find((name) => name.startsWith(baseKey));
-      const state = key ? JSON.parse(localStorage.getItem(key) ?? "null") : null;
-      return {
-        at: state?.currentIndex,
-        queue: (state?.queue ?? []).map((track: { mediaItemId: number; locationId: number; playbackKey: string }) => [
-          track.mediaItemId,
-          track.locationId,
-          track.playbackKey,
-        ]),
-      };
-    }, playerQueueStorageBaseKey);
+  const queueState = async () => {
+    const state = await readScopedPlayerState(page, playerQueueStorageBaseKey, 1);
+    return {
+      at: state?.currentIndex,
+      queue: (state?.queue ?? []).map((track: { mediaItemId: number; locationId: number; playbackKey: string }) => [
+        track.mediaItemId,
+        track.locationId,
+        track.playbackKey,
+      ]),
+    };
+  };
   // The first render persists the queue in more than one step. Wait for the
   // settled two-track baseline before comparing later states against it.
   await expect.poll(async () => (await queueState()).queue.length).toBe(2);
   await expect.poll(async () => (await queueState()).at).toBe(0);
+  await page.waitForTimeout(300);
   const queue = await queueState();
   const stream = await audio.evaluate((element: HTMLAudioElement) => element.currentSrc);
 
@@ -120,6 +119,12 @@ test("playback and personal records survive a low-disk catalog pause @desktop", 
   expect(await queueState()).toEqual(localQueue);
   expect(await audio.evaluate((element: HTMLAudioElement) => element.currentSrc)).toBe(localStream);
   expect(await audio.evaluate((element: HTMLAudioElement) => element.paused)).toBe(true);
+  // The persisted bytes are not the product: the restored queue panel must
+  // render both tracks and keep the current one selected.
+  await page.getByRole("button", { name: "Playback queue" }).click();
+  await expect(page.getByRole("button", { name: /^Options for local-a\.wav/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: /^Options for / })).toHaveCount(2);
+  await page.keyboard.press("Escape");
 
   // The personal record also survives the app restart, without the player or
   // the index recreating it.

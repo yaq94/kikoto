@@ -6,6 +6,8 @@ import type { SourceAvailabilitySource } from "@/lib/remoteSourceApi";
 export type CircleSourceStat = {
   key: string;
   sourceId?: number | null;
+  /** The code this source holds; may differ from the card's canonical code. */
+  code?: string | null;
   displayName: string;
   status: string;
   count: number;

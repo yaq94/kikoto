@@ -6,6 +6,7 @@ import { workDetailRoute } from "../app/workDetailNavigation";
 import {
   mergeVoiceWorks,
   sortVoiceWorks,
+  voiceWorkAvailableRemoteTarget,
   voiceWorkHasRemoteAvailability,
   voiceWorkHasRemoteReference,
   voiceWorkRemoteTarget,
@@ -156,6 +157,54 @@ describe("mergeVoiceWorks", () => {
     expect(voiceWorkRemoteTarget(unknown)).toEqual({ sourceId: 7, code: "RJ00000010" });
     expect(voiceWorkHasRemoteAvailability(unknown)).toBe(false);
     expect(voiceWorkHasRemoteReference(unknown)).toBe(true);
+  });
+
+  it("opens a known work's unknown source tag without claiming availability", () => {
+    const known: VoiceKnownWork = {
+      ...knownWork(),
+      sourceTags: [{ key: "source:7", sourceId: 7, displayName: "Sample Source", status: "unknown", count: 0 }],
+      remoteObservations: [],
+    };
+
+    expect(voiceWorkRemoteTarget(known)).toEqual({ sourceId: 7, code: "SAMPLE-ORIGIN" });
+    expect(voiceWorkAvailableRemoteTarget(known)).toBeNull();
+    expect(voiceWorkHasRemoteAvailability(known)).toBe(false);
+    expect(voiceWorkHasRemoteReference(known)).toBe(true);
+  });
+
+  it("uses the code a source tag actually holds", () => {
+    const known: VoiceKnownWork = {
+      ...knownWork(),
+      primaryCode: "SAMPLE-ORIGIN",
+      sourceTags: [
+        {
+          key: "source:7",
+          sourceId: 7,
+          code: "SAMPLE-EDITION",
+          displayName: "Sample Source",
+          status: "available",
+          count: 1,
+        },
+      ],
+      remoteObservations: [],
+    };
+
+    expect(voiceWorkRemoteTarget(known)).toEqual({ sourceId: 7, code: "SAMPLE-EDITION" });
+    expect(voiceWorkAvailableRemoteTarget(known)).toEqual({ sourceId: 7, code: "SAMPLE-EDITION" });
+  });
+
+  it("withholds fetch and fork targets until a source confirms availability", () => {
+    const unknown = {
+      ...remoteWork(),
+      primaryCode: "RJ00000010",
+      remoteCode: "RJ00000010",
+      remotePlayable: false,
+      hasRemote: true,
+      availability: "unknown",
+    };
+
+    expect(voiceWorkRemoteTarget(unknown)).toEqual({ sourceId: 7, code: "RJ00000010" });
+    expect(voiceWorkAvailableRemoteTarget(unknown)).toBeNull();
   });
 
   it("prefers an available source tag over an unknown observation", () => {

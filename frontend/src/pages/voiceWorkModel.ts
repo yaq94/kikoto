@@ -101,32 +101,52 @@ export function mergeVoiceWorks(knownWorks: VoiceKnownWork[], sourceSets: VoiceR
   );
 }
 
-export function voiceWorkRemoteTarget(work: VoiceWorkView): { sourceId: number; code: string } | null {
+export type VoiceRemoteTarget = { sourceId: number; code: string };
+
+/**
+ * A source this card can open and check. An unknown answer still qualifies:
+ * opening it runs the check that resolves it. Downloading and forking use
+ * voiceWorkAvailableRemoteTarget instead.
+ */
+export function voiceWorkRemoteTarget(work: VoiceWorkView): VoiceRemoteTarget | null {
+  return voiceWorkRemoteTargetFor(work, ["available", "unknown"]);
+}
+
+/** A source that confirmed availability; safe for fetch and fork actions. */
+export function voiceWorkAvailableRemoteTarget(work: VoiceWorkView): VoiceRemoteTarget | null {
+  return voiceWorkRemoteTargetFor(work, ["available"]);
+}
+
+function voiceWorkRemoteTargetFor(
+  work: VoiceWorkView,
+  statuses: readonly VoiceRemoteObservation["status"][],
+): VoiceRemoteTarget | null {
   // A confirmed answer wins. A known work can have several source tags, so an
-  // available tag is preferred over an unknown observation.
+  // available observation or tag is preferred over an unknown one.
   const observations = work.remoteObservations ?? [];
-  const availableObservation = observations.find((item) => item.status === "available");
-  if (availableObservation) {
-    return { sourceId: availableObservation.sourceId, code: availableObservation.remoteCode };
+  const fallbackCode = (work.remoteCode || work.primaryCode).trim();
+  for (const status of statuses) {
+    const observation = observations.find((item) => item.status === status);
+    if (observation) return { sourceId: observation.sourceId, code: observation.remoteCode };
+    if ("sourceTags" in work) {
+      const source = work.sourceTags.find(
+        (tag) => validSourceID(tag.sourceId) && tag.key !== "cache" && tag.status === status,
+      );
+      if (source?.sourceId) {
+        // A source tag carries the code it actually holds, which can differ
+        // from the card's canonical code when editions share one work.
+        const code = (source.code || fallbackCode).trim();
+        if (code) return { sourceId: source.sourceId, code };
+      }
+    }
   }
-  const code = (work.remoteCode || work.primaryCode).trim();
-  if ("sourceTags" in work) {
-    const source = work.sourceTags.find(
-      (tag) => validSourceID(tag.sourceId) && tag.key !== "cache" && tag.status === "available",
-    );
-    if (source?.sourceId && code) return { sourceId: source.sourceId, code };
-  }
-  // Unknown is a pending answer, not a refusal: opening the source runs the
-  // check that resolves it. A settled negative answer is withheld unless a
-  // stored presence row keeps the reference visible.
-  const unknownObservation = observations.find((item) => item.status === "unknown");
-  if (unknownObservation) {
-    return { sourceId: unknownObservation.sourceId, code: unknownObservation.remoteCode };
-  }
+  // A settled negative answer is withheld unless a stored presence row keeps
+  // the reference visible.
   if ("sourceId" in work && validSourceID(work.sourceId)) {
-    if (!work.remotePlayable && work.availability !== "available" && work.availability !== "unknown" && !work.hasRemote)
-      return null;
-    return code ? { sourceId: work.sourceId, code } : null;
+    const answered = work.remotePlayable || work.availability === "available";
+    const pending = statuses.includes("unknown") && (work.availability === "unknown" || work.hasRemote);
+    if (!answered && !pending) return null;
+    return fallbackCode ? { sourceId: work.sourceId, code: fallbackCode } : null;
   }
   return null;
 }
@@ -151,13 +171,7 @@ export function voiceWorkHasRemoteReference(work: VoiceWorkView) {
  * question; it still keeps the card visible through voiceWorkRemoteTarget.
  */
 export function voiceWorkHasRemoteAvailability(work: VoiceWorkView) {
-  if (work.remoteObservations?.some((observation) => observation.status === "available")) return true;
-  if ("sourceTags" in work) {
-    return work.sourceTags.some(
-      (tag) => tag.key !== "cache" && validSourceID(tag.sourceId) && tag.status === "available",
-    );
-  }
-  return "remotePlayable" in work && work.remotePlayable;
+  return voiceWorkAvailableRemoteTarget(work) !== null;
 }
 
 function groupRemoteWorks(remoteWorks: VoiceRemoteWork[]) {
@@ -252,6 +266,7 @@ function mergeObservedSourceTags(sourceTags: CircleSourceStat[], observations: V
     const tag: CircleSourceStat = {
       key: `source:${observation.sourceId}`,
       sourceId: observation.sourceId,
+      code: observation.remoteCode,
       displayName: observation.sourceName || observation.sourceCode || "Remote source",
       status,
       count: status === "available" ? 1 : 0,
