@@ -18,9 +18,9 @@
 | 18、19 | verified-local | 历史本地 H/R、F 证据保留；最终候选 Full CI 由 24 汇总。 |
 | 20 | verified-local | `531acdf4` 落地 098 状态机与系列准入；`9f3d82f0` 补资源重查。单卡评价／播放／媒体流／目录标签准入、零可见成员 404、零文件与旧 generation 集合统一、due 推进顺序、诊断过滤与真实 plan 断言已并入集成分支；42k 卡浏览与 5,001 文件卡拒绝路径的 p95 已在目标机达标。 |
 | 21 | verified-local | 099/102/105、严格语言搜索、共享短查询生成器与 `failed` 终态已合入；1–2 字查询的返回条数与 `total` 共用 1000 张预算并以 `truncated` 标记还有更多，目标机卡片页与同预算总数 p95 均 ≤13 ms；最终候选复验由 24 记录。 |
-| 22 | resolved（`f727feee`） | 迁移 100、`work.parent_work_id`、v2 + 可选 `parent`、`parent_alias_not_imported` 与多父级 `parent_conflict` 已落地；9 项验收勾选并有测试名，本候选重跑后端全量通过。 |
+| 22 | resolved（记录 SHA `f727feee`，历史） | 迁移 100、`work.parent_work_id`、v2 + 可选 `parent`、`parent_alias_not_imported` 与多父级 `parent_conflict` 已落地；9 项验收勾选并有测试名。 |
 | 23 | verified-local | 095–105 已合入，`compat/105_dev.sql` 已生成；文档与证据收口完成。 |
-| 24 | resolved | 候选 `f727feee` 已冻结并部署；Full CI run `40409566661` success（26/26）；迁移链四项、组合负载、LIVE 与部署后逐项验收完成。 |
+| 24 | resolved | 候选 `fd37dc4c` 已部署；Full CI run `40460123865` 记录状态为进行中（终态 TODO）；迁移链四项沿用上一候选证据，LIVE 与部署后逐项验收完成。 |
 
 11 的历史 `resolved` 只证明其记录 SHA；AC-14 的单集、格式副本、Bonus 和成员上限必须在 24 的当前候选上重新通过，不能由未提交系列修复替代。
 
@@ -407,7 +407,7 @@
 
 ## 发布状态
 
-24 张正式工单使用项目规定模板。每票链接到规格、总览和直接前置工单；当前 01–07、09–16 的历史本地证据为 resolved，但不自动作为当前候选证据；08、18、19、20、21、23 为 verified-local，22 与 24 在记录 SHA `f727feee` 上为 resolved，17 为 in-progress。分诊 `Status` 保持 `ready-for-agent`，上表只记录独立 `Implementation` 字段。验收清单仅随实际证据更新。候选 `f727feee` 已部署并取得 Full CI run `40409566661` success；真实全量覆盖仍为 run 53 partial，不以 partial 冒充完整覆盖。
+24 张正式工单使用项目规定模板。每票链接到规格、总览和直接前置工单；当前 01–07、09–16 的历史本地证据为 resolved，但不自动作为当前候选证据；08、18、19、20、21、23 为 verified-local，22 在记录 SHA `f727feee`（历史）上为 resolved，24 在 `fd37dc4c` 上为 resolved，17 为 in-progress。分诊 `Status` 保持 `ready-for-agent`，上表只记录独立 `Implementation` 字段。验收清单仅随实际证据更新。候选 `fd37dc4c` 已部署，Full CI run `40460123865` 记录状态为进行中、终态 TODO；真实全量覆盖仍为 partial，不以 partial 冒充完整覆盖。
 
 ## Comments
 

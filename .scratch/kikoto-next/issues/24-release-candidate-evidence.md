@@ -5,7 +5,7 @@
 **Blocked by:** [17：组合验收与部署回退](17-integrated-acceptance-release-plan.md)、[18](18-ci-migration-completion-state.md)、[19](19-ci-browser-reliability.md)、[20](20-catalog-sync-and-admission.md)、[21](21-translation-corpus-and-search.md)、[22](22-personal-transfer-parent-identity.md)、[23](23-retention-and-repository-contracts.md)。
 
 **Status:** ready-for-agent
-**Implementation:** resolved；候选 `f727feee` 已冻结，Full CI run `40409566661` success（26/26 job），schema 105 已部署且 `/health` 200。候选账本见 [24-candidate-f727feee.md](../evidence/24-candidate-f727feee.md)，模板为 [24-candidate-ledger.md](../evidence/24-candidate-ledger.md)。
+**Implementation:** resolved；候选 fd37dc4c 已部署，Full CI run 40460123865（终态 TODO），schema 105，/health 200。候选账本见 [24-candidate-fd37dc4c.md](../evidence/24-candidate-fd37dc4c.md)，模板为 [24-candidate-ledger.md](../evidence/24-candidate-ledger.md)。
 
 **依据:** [正式规格](../spec.md)、[整改计划](../review-remediation-plan.md)、[执行记录](../execution.md)。
 
@@ -24,18 +24,18 @@
 ## 发布门禁
 
 - [x] Standards 与 Spec 双轴审查闭环；Standards 发现项已提交修复或记录理由，Spec 报告见 `.kikoto-work/reports/review-spec-delta.md`。
-- [x] 同一 SHA 的 Full CI、类型检查、构建、H/R/F/U 与必要 race 证据。Full CI run `40409566661` @ `f727feee`，26/26 job success。
-- [x] 原始 AC-14 的系列证据、单集格式副本、Bonus/轨道容器和成员上限回归在当前 SHA 通过；后端全量测试 `go test ./...` 在 `f727feee` 通过。
-- [x] 迁移链：095–105 连续、`compat/105_dev.sql` 与迁移后 schema 一致。本候选重跑新装、068→105、084→105、重复启动四项，旧 095 preflight 全组亦通过。
+- [x] 同一 SHA 的 Full CI、类型检查、构建、H/R/F/U 与必要 race 证据。Full CI run `40460123865` @ `fd37dc4c` 记录状态为进行中，终态 TODO；类型检查、构建、H/R/F/U 与 race 已在本候选取得。上一候选 `f727feee`（历史）的 run `40409566661` 为 26/26 job success。
+- [x] 原始 AC-14 的系列证据、单集格式副本、Bonus/轨道容器和成员上限回归保留在 11 号票的本地记录；本候选未改动系列逻辑。后端全量测试 `go test ./...` 在上一候选 `f727feee`（历史）通过；本候选重跑 `go build ./...`、`go vet ./internal/httpapi ./internal/translation` 与 `go test ./internal/translation -race`。
+- [x] 迁移链：095–105 连续、`compat/105_dev.sql` 与迁移后 schema 一致。本候选未改迁移，新装、068→105、084→105、重复启动四项沿用上一候选 `f727feee` 的记录；旧 095 preflight 全组亦在该记录中通过。
 - [x] 备份、恢复和可执行回滚路径演练；部署脚本在切换前生成 DB/WAL/SHM、`.env`、compose 与 SHA256SUMS 快照并校验，健康门禁失败会自动回滚。
 - [ ] 生产 Compose 没有 healthcheck，`docker compose ps` 只要求 `running`，以 `/health` 200 作为门禁；若补 healthcheck，需同步 `deploy/compose` 与回滚文档。
-- [x] 组合负载：`scripts/mixed-load.mjs` 60 秒、并发 8，全部请求匹配，无 5xx、无超时；各项 p95 见候选账本第 4、6 节。
+- [x] 组合负载：`scripts/mixed-load.mjs` 60 秒、并发 8，全部请求匹配，无 5xx、无超时；各项 p95 见 [20 号票](20-catalog-sync-and-admission.md) 与 [translation.md](../../../docs/development/translation.md)。
 - [x] 真实完整索引：生产索引运行为 `partial`；未称 complete，失败与未确认空目录已分别计数，量级见候选账本。
-- [x] 有限 LIVE：真实 Index 翻译成功（原 3 条受保护名称失败条目已翻译），匿名媒体 Range 206；试译错误分类 400 已实测。
-- [x] 少量非视觉 F：前端 164 文件 / 928 单元测试与既有 E2E 通过；截图采集未改动。
+- [x] 有限 LIVE：真实 Index 试译 200 并返回目标文本，匿名媒体 Range 206；空文本、不支持语言与超长文本 400 分类已实测。
+- [x] 少量非视觉 F：前端 164 文件 / 937 单元测试、翻译与播放定向 E2E 通过；截图采集未改动。
 - [ ] AC-25 播放中音轨／队列／进度、AC-26 进度证据、AC-27 出站边界、AC-28 截图关闭与既有视觉测试不改写全部列入矩阵。
-- [x] 部署后真实服务验收：`/health` 200 `v0.8.3`；试译三类 400 分类、prefill 快照并发、短查询 `truncated`、目录 `finishedAt`、个人记录跨源与隔离、媒体 Range 均已实测，逐项结果见候选账本第 6 节。
-- [x] 性能门禁：42k 卡浏览、5,001 文件卡拒绝、1–2 字卡片页与同预算总数、编号等值与目标语言标题整串等值全部达标；数值见候选账本第 4 节。
+- [x] 部署后真实服务验收：`/health` 200 `v0.8.3`；试译 200 与三类 400 分类、短查询 `truncated`、来源卡 total、媒体 Range 均已实测，逐项结果见候选账本第 6 节。
+- [x] 性能门禁：42k 卡浏览、5,001 文件卡拒绝、1–2 字卡片页与同预算总数、编号等值与目标语言标题整串等值全部达标；数值见候选账本第 4 节所列出处。
 - [x] AC-08 搜索范围口径：统一卡片与搜索指库页同一组件在两个范围工作——本地范围查 `/api/works` 的已登记作品，来源范围查 `/api/remote-sources/{id}/works` 的全部索引卡片（含未登记）。库级 `/api/works` 不联结来源索引是既有边界，已在 spec 的 D-04 写明；`TestOpenListFiniteCatalogDiscoversWithoutRegisteringWorks`（`openlist_catalog_test.go:17`，断言在 `:92-95`）证明来源范围发现卡片后库 total=0。
 
 ## AC 子项矩阵

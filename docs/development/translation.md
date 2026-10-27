@@ -222,12 +222,12 @@ clears `browsable` and the publish transaction restores it, which makes a missed
 refresh hide a card rather than show one that cannot play. `catalog_entry_searchable`
 holds the shared card rule both the entry and series arms read.
 
-A short search builds at most `catalogShortSearchResultLimit` cards, and its
-reported total stays inside the same budget. Counting every match would run the
-whole card pipeline on each keystroke, which the measurement table below
-compares against the capped page and total. A bounded probe reads `limit+1` rows
-per branch to set the `truncated` flag, so the response says "first 1000 of
-more" instead of presenting the budget as the whole answer. The cap is applied per
+A short search builds at most `catalogShortSearchResultLimit` cards, and the
+card page and the reported total share that budget. Counting every match would
+run the whole card pipeline on each keystroke, so the total is capped rather
+than counted. A bounded probe reads `limit+1` rows per branch to set the
+`truncated` flag, so the response says "first 1000 of more" instead of
+presenting the budget as the whole answer. The cap is applied per
 `(language, entity_kind)` branch in `(field, id)` order, which is the scan index
 order; `zh-tw` therefore keeps its native `zh-Hant` rows even when Simplified
 matches fill the budget. The exact-title flag is computed in the same scan and
@@ -240,26 +240,10 @@ description rows alone exceed them, the coverage status reports `over_budget`
 and keeps those rows. Only `tag`/`directory` model rows and
 `source_field_translation` rows are eviction candidates.
 
-Short-query measurement on the release target (2 vCPU, Linux, modernc SQLite,
-114,000 entities x 4 languages, 20 samples after warmup, every title matching
-the needle as the worst case):
-
-| Condition | Result | Evidence |
-| --- | --- | --- |
-| Card page, p95 | en 8.91 ms, zh-Hans 8.86 ms, ja 9.63 ms, ko 12.59 ms; zero-match 48.29 ms | `short-query.json` |
-| Reported total inside the same budget, p95 | en 8.9 ms, zh-Hans 8.9 ms, ja 9.6 ms, ko 12.6 ms; zero-match 48.3 ms | same |
-| Uncapped full count, p95 (diagnostic) | en 693.2 ms, zh-Hans 671.9 ms, ja 667.1 ms, ko 690.3 ms; zero-match 49.1 ms | same |
-| Raw scan without the card-id projection, p95 | 49.5-61.2 ms | same |
-| Local library work page (title + description), p95 | en 0.24 ms, zh-Hans 0.26 ms, ja 0.24 ms, ko 0.22 ms | `translation-bench.json` |
-| Exact translated title, p95 | zh-Hans 1.393 ms, en 1.367 ms, ja 1.593 ms, ko 1.725 ms | same |
-| Release code, p95 | 0.018 ms | same |
-| Plan | both arms `SEARCH ct USING COVERING INDEX idx_content_translation_short_scan`; exact title uses `VIRTUAL TABLE INDEX 0:M1` then a rowid probe | same |
-
-The 1-2 character path is inside the 100 ms limit on the target, including a
-needle that matches nothing; the uncapped diagnostic row shows why the reported
-total is capped rather than counted. The database measured 740,439,304 bytes and
-the seed took 98.2 s. Evidence files are the release ledger's copies of the
-`short-query` and `translation-bench` reports.
+A 1-2 character query stays inside the 100 ms budget, including a needle that
+matches nothing. Counting the complete match set without a budget is diagnostic
+only and never serves a request path. Evidence is the `short-query` and
+`translation-bench` reports copied into the release ledger.
 
 Free space is read from the nearest existing parent before the data directory
 exists. Low space pauses new background generation (`paused_low_disk`) while
