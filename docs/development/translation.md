@@ -274,6 +274,13 @@ written while the volume is below the floor. The response reports
 `paused_low_disk`; the prefill pass records the item as a pending failure so a
 later pass retries it. Failed and empty generations are never stored. Stored
 rows report `hit`, freshly generated rows `stored`.
+
+A visible field that has no answer yet shows the original text with a progress
+note. The note is bounded: after `CONTENT_TRANSLATION_PENDING_TIMEOUT_MS` the
+field reports that the translation is still queued and offers a retry, instead
+of presenting an unanswered request as ongoing work. A settled answer — success
+or a classified failure — replaces the note even when the bound has passed.
+
 ## Model contract and limits
 
 The default model invocation name is `Index-Translate-35B-A3B`; a configured name

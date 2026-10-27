@@ -1,6 +1,7 @@
 export const translationAdmin = {
   content: {
     pending: "翻訳中…",
+    pendingTooLong: "翻訳はまだ待機中です。再試行できます。",
     failed: "翻訳できません。原文を表示しています。",
     retry: "翻訳を再試行",
     original: "原文を表示",

@@ -18,6 +18,30 @@ import { contentTranslationCache } from "@/lib/contentTranslationCache";
 import { USER_PREFERENCES_CHANGED } from "@/lib/recommendationSession";
 import { CONTENT_LANGUAGE_CHANGED } from "@/lib/contentLanguageEvents";
 
+/**
+ * How long a visible field may wait for a translation before it stops claiming
+ * to be translating. The original text is already on screen, so the bound only
+ * decides when the pending note becomes an explicit, retryable state.
+ */
+export const CONTENT_TRANSLATION_PENDING_TIMEOUT_MS = 20_000;
+
+/**
+ * The state a field shows. `pending` means a request is expected to answer;
+ * `timeout` means the bound passed without one, so the reader gets the original
+ * text plus a retry instead of an endless progress note.
+ */
+export function contentTranslationDisplayState(input: {
+  enabled: boolean;
+  status?: string;
+  timedOut: boolean;
+}): "original" | "pending" | "timeout" | "translated" | "existing" | "native" | "failed" {
+  if (!input.enabled) return "original";
+  if (input.status) {
+    return input.status as "translated" | "existing" | "native" | "failed";
+  }
+  return input.timedOut ? "timeout" : "pending";
+}
+
 const LanguageContext = createContext({
   language: "origin",
   accountScope: "",
@@ -223,6 +247,10 @@ export function TranslatedText({
     [workId, sourceId, code, catalogEntryId, seriesId, field, text, language, mediaId, path],
   );
   const [settled, setSettled] = useState<{ key: string; result: ContentTranslationResult } | null>(null);
+  // A translation that never settles must not read as progress forever. The
+  // wait is bounded so the original text and a retry action appear even when a
+  // queued request is never answered.
+  const [timedOut, setTimedOut] = useState(false);
   const readable = Boolean(
     canRead &&
     (resource?.workId || resource?.sourceId || resource?.code || resource?.catalogEntryId || resource?.seriesId) &&
@@ -240,10 +268,14 @@ export function TranslatedText({
     const controller = new AbortController();
     const translationInput: ContentTranslationInput = input;
     let cancelled = false;
+    setTimedOut(false);
     const fail = (code: string) => {
       if (cancelled || controller.signal.aborted) return;
       setSettled({ key, result: { text, original: text, language, status: "failed", code } });
     };
+    const timeout = window.setTimeout(() => {
+      if (!cancelled && !controller.signal.aborted) setTimedOut(true);
+    }, CONTENT_TRANSLATION_PENDING_TIMEOUT_MS);
     void (async () => {
       // A cached display language paints without touching the network.
       const cached = await contentTranslationCache.get(accountScope, translationInput, cacheVersion || undefined);
@@ -285,13 +317,15 @@ export function TranslatedText({
     })();
     return () => {
       cancelled = true;
+      window.clearTimeout(timeout);
       controller.abort();
     };
   }, [enabled, visible, key, input, text, language, accountScope, cacheVersion, noteVersion]);
   const result = settled?.key === key ? settled.result : null;
   const success =
     enabled && result && (result.status === "translated" || result.status === "existing" || result.status === "native");
-  const status = !enabled ? "original" : (result?.status ?? "pending");
+  const waiting = enabled && !result && !timedOut;
+  const status = contentTranslationDisplayState({ enabled, status: result?.status, timedOut });
   const shown = success && !scope.original ? result.text : (result?.original ?? text);
   const failure = result?.code
     ? t(`translationAdmin.errors.${result.code}`, { defaultValue: t("translationAdmin.content.failed") })
@@ -308,7 +342,15 @@ export function TranslatedText({
           className="ml-1 inline-flex flex-wrap items-center gap-1 text-xs font-normal text-muted-foreground"
           onClick={(event) => event.stopPropagation()}
         >
-          {status === "pending" && <span role="status">{t("translationAdmin.content.pending")}</span>}
+          {waiting && <span role="status">{t("translationAdmin.content.pending")}</span>}
+          {status === "timeout" && (
+            <>
+              <span role="status">{t("translationAdmin.content.pendingTooLong")}</span>
+              <button type="button" className="underline" onClick={scope.retry}>
+                {t("translationAdmin.content.retry")}
+              </button>
+            </>
+          )}
           {status === "failed" && (
             <>
               <span role="status">{failure}</span>
@@ -332,8 +374,8 @@ export function TranslatedText({
           )}
         </span>
       )}
-      {enabled && !controls && status === "failed" && (
-        <span role="img" aria-label={failure}>
+      {enabled && !controls && (status === "failed" || status === "timeout") && (
+        <span role="img" aria-label={status === "timeout" ? t("translationAdmin.content.pendingTooLong") : failure}>
           {" "}
           !
         </span>

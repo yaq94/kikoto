@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { createCacheVersionNotifier } from "./ContentTranslation";
+import { contentTranslationDisplayState, createCacheVersionNotifier } from "./ContentTranslation";
 
 /**
  * The provider used to pass an inline arrow as `noteVersion`, so every render
@@ -45,5 +45,21 @@ describe("createCacheVersionNotifier", () => {
     const reference = note;
     note("model-a|v1");
     expect(note).toBe(reference);
+  });
+});
+
+describe("contentTranslationDisplayState", () => {
+  it("stays original when the field cannot be translated", () => {
+    expect(contentTranslationDisplayState({ enabled: false, timedOut: true })).toBe("original");
+  });
+
+  it("reports progress only until the bound passes", () => {
+    expect(contentTranslationDisplayState({ enabled: true, timedOut: false })).toBe("pending");
+    expect(contentTranslationDisplayState({ enabled: true, timedOut: true })).toBe("timeout");
+  });
+
+  it("keeps a settled answer even after the bound passed", () => {
+    expect(contentTranslationDisplayState({ enabled: true, status: "translated", timedOut: true })).toBe("translated");
+    expect(contentTranslationDisplayState({ enabled: true, status: "failed", timedOut: true })).toBe("failed");
   });
 });

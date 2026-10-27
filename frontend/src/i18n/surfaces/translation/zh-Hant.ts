@@ -1,6 +1,7 @@
 export const translationAdmin = {
   content: {
     pending: "正在翻譯…",
+    pendingTooLong: "翻譯仍在排隊，可重試。",
     failed: "翻譯失敗，已保留原文。",
     retry: "重試翻譯",
     original: "查看原文",

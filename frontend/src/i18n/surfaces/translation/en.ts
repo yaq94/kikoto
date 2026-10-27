@@ -1,6 +1,7 @@
 export const translationAdmin = {
   content: {
     pending: "Translating…",
+    pendingTooLong: "Translation is still queued. You can retry.",
     failed: "Translation failed; original retained.",
     retry: "Retry translation",
     original: "Show original",
