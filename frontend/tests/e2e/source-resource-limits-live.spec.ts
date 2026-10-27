@@ -31,33 +31,38 @@ test("playback and personal records survive a low-disk catalog pause @desktop", 
   const queueState = () =>
     page.evaluate(() => {
       const key = Object.keys(localStorage).find((name) => name.startsWith("kikoto:player-queue:v2"));
-      const state = JSON.parse(key ? (localStorage.getItem(key) ?? "null") : "null");
+      const state = key ? JSON.parse(localStorage.getItem(key) ?? "null") : null;
       return {
-        index: state?.currentIndex,
-        queue: state?.queue.map((track: { mediaItemId: number; locationId: number; playbackKey: string }) => [
+        at: state?.currentIndex,
+        queue: (state?.queue ?? []).map((track: { mediaItemId: number; locationId: number; playbackKey: string }) => [
           track.mediaItemId,
           track.locationId,
           track.playbackKey,
         ]),
       };
     });
-  await expect.poll(async () => (await queueState()).queue?.length).toBe(2);
+  // The first render persists the queue in more than one step. Wait for the
+  // settled two-track baseline before comparing later states against it.
+  await expect.poll(async () => (await queueState()).queue.length).toBe(2);
+  await expect.poll(async () => (await queueState()).at).toBe(0);
   const queue = await queueState();
+  const stream = await audio.evaluate((element: HTMLAudioElement) => element.currentSrc);
 
-  const index = async (data: Record<string, unknown>) =>
+  const runIndex = async (data: Record<string, unknown>) =>
     (
       await page.request.post(`${backend}/api/remote-sources/5/catalog/index`, {
         data,
       })
     ).json();
   const progress = async () => (await page.request.get(`${backend}/api/remote-sources/5/catalog/index`)).json();
-  await index({ intervalMs: 100, minFreeBytes: 1_099_511_627_776 });
+  await runIndex({ intervalMs: 100, minFreeBytes: 1_099_511_627_776 });
   await expect.poll(async () => (await progress()).status).toBe("paused");
   const paused = await progress();
   expect(paused.pauseReason).toBe("low_disk_space");
   expect(paused.indexedEntries).toBe(0);
   const pausedAt = await audio.evaluate((element: HTMLAudioElement) => element.currentTime);
   expect(await queueState()).toEqual(queue);
+  expect(await audio.evaluate((element: HTMLAudioElement) => element.currentSrc)).toBe(stream);
 
   // Browsing and personal state keep working while the background pass is
   // parked, and the player keeps its identity instead of restarting.
@@ -72,6 +77,7 @@ test("playback and personal records survive a low-disk catalog pause @desktop", 
   expect(review.personalRating).toBe(4);
   expect(review.personalNote).toBe("Example low disk note");
   expect(await queueState()).toEqual(queue);
+  expect(await audio.evaluate((element: HTMLAudioElement) => element.currentSrc)).toBe(stream);
 
   await expect.poll(() => audio.evaluate((element: HTMLAudioElement) => element.paused)).toBe(false);
   await expect
@@ -80,7 +86,7 @@ test("playback and personal records survive a low-disk catalog pause @desktop", 
 
   // Free space returns: the scan finishes instead of reporting the pause as
   // coverage, and the rating and note are still the listener's own.
-  await index({ minFreeBytes: 0 });
+  await runIndex({ minFreeBytes: 0 });
   await expect.poll(async () => (await progress()).status).toBe("complete");
   const resumed = await progress();
   expect(resumed.pauseReason ?? "").toBe("");
@@ -92,4 +98,12 @@ test("playback and personal records survive a low-disk catalog pause @desktop", 
   await expect
     .poll(() => audio.evaluate((element: HTMLAudioElement) => element.currentTime))
     .toBeGreaterThan(pausedAt + 1);
+  expect(await audio.evaluate((element: HTMLAudioElement) => element.currentSrc)).toBe(stream);
+
+  // A full page load is the app restart the listener actually performs. The
+  // queue and its cursor come back; playback itself waits for the listener.
+  await page.reload();
+  await expect.poll(async () => (await queueState()).queue.length).toBe(2);
+  expect(await queueState()).toEqual(queue);
+  await expect(page.getByRole("button", { name: "Collapse player", exact: true })).toBeVisible();
 });
