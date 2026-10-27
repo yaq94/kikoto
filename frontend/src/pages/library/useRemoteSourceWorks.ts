@@ -11,6 +11,7 @@ import {
 } from "@/lib/api";
 
 import { defaultRemoteSourceViewState, remoteLibrarySort, type RemoteSourceViewState } from "./libraryBrowseModel";
+import { remoteWorkRowKey } from "./remoteSourceBrowseModel";
 import type { LibraryTab } from "./libraryRoutes";
 
 function unavailableRemoteWorks(
@@ -206,15 +207,12 @@ export function useRemoteSourceWorks({
       });
   };
 
-  const patchWork = (
-    primaryCode: string,
-    patch: Partial<Pick<RemoteWork, "workId" | "favorite" | "listeningStatus">>,
-  ) => {
+  const patchWork = (rowKey: string, patch: Partial<Pick<RemoteWork, "workId" | "favorite" | "listeningStatus">>) => {
     setResult((current) =>
       current
         ? {
             ...current,
-            works: current.works.map((item) => (item.primaryCode === primaryCode ? { ...item, ...patch } : item)),
+            works: current.works.map((item) => (remoteWorkRowKey(item) === rowKey ? { ...item, ...patch } : item)),
           }
         : current,
     );

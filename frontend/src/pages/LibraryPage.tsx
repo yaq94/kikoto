@@ -1330,6 +1330,7 @@ export function LibraryPage({ active = true }: { active?: boolean }) {
             localWorks.displayedRecommendationSort ||
             (recommendBadgesEnabled && localWorks.displayedRecommendationBadges)
           }
+          recommendationBaseline={localWorks.recommendationBaseline}
           mobileColumns={mobileColumns}
           desktopColumns={desktopColumns}
           cardLayout={cardLayout}

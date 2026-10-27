@@ -34,6 +34,7 @@ export const libraryHans = {
   showRecommendationBadges: "显示推荐标记",
   catalogQueue: "将全部音轨加入播放队列",
   catalogStreamOnly: "此来源按需播放，没有可下载或分叉的文件",
+  catalogEmpty: "此条目没有可播放的音轨",
   catalogQueued: "已加入 {{count}} 个音轨到队列",
   markFilter: "标记",
   clearMarkFilter: "清除标记筛选",

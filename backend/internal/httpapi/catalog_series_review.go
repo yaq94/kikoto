@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-
-	"github.com/yexca/kikoto/backend/internal/sqlutil"
 )
 
 // A series evaluation has its own work identity. Its members are neither
@@ -62,17 +60,8 @@ func (s *Server) updateCatalogSeriesReview(w http.ResponseWriter, r *http.Reques
 		if _, ok = s.requirePermission(w, r, "remote:track"); !ok {
 			return
 		}
-		workID.Int64, err = sqlutil.InsertID(r.Context(), tx, `INSERT INTO work(primary_code,title) VALUES('',?)`, title)
+		workID.Int64, err = insertWorkWithEdition(r.Context(), tx.Tx, "", title)
 		if err != nil {
-			writeError(w, err)
-			return
-		}
-		logicalID, err := sqlutil.InsertID(r.Context(), tx, `INSERT INTO logical_work(canonical_work_id,canonical_code) VALUES(?,'')`, workID.Int64)
-		if err != nil {
-			writeError(w, err)
-			return
-		}
-		if _, err = tx.ExecContext(r.Context(), `INSERT INTO work_edition(work_id,logical_work_id,primary_code,is_canonical) VALUES(?,?,'',1)`, workID.Int64, logicalID); err != nil {
 			writeError(w, err)
 			return
 		}

@@ -15,6 +15,35 @@ import (
 	"github.com/yexca/kikoto/backend/internal/testfixture"
 )
 
+// The page reports the affinity base its scores were computed with, so a card
+// can hide a badge that carries no personal evidence without guessing from the
+// account's current settings.
+func TestListPageReportsTheBaselineBehindItsScores(t *testing.T) {
+	store, userID := seedPaginationLibrary(t, 3, 1, 32)
+	page, err := store.ListPage(context.Background(), ListOptions{
+		UserID: userID, PageSize: 3, Sort: "recent", Direction: "desc",
+		IncludeRecommendation: true, RecommendationSessionID: "synthetic-session",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := store.snapshotForRecommendation(context.Background(), userID, "synthetic-session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if page.RecommendationBaseline != snapshot.Config.AffinityBase || page.RecommendationBaseline <= 0 {
+		t.Fatalf("baseline = %d, config base = %d", page.RecommendationBaseline, snapshot.Config.AffinityBase)
+	}
+	for _, work := range page.Works {
+		if work.RecommendScore != page.RecommendationBaseline {
+			// A work with a signal may score above it; none may score below.
+			if work.RecommendScore < page.RecommendationBaseline {
+				t.Fatalf("score %d below baseline %d", work.RecommendScore, page.RecommendationBaseline)
+			}
+		}
+	}
+}
+
 // Ordinary pagination retains its SQL projection and ordering. Optional badges
 // are read after paging from the frozen profile instead of a full score join.
 func TestListPagePreservesOrderedProjection(t *testing.T) {

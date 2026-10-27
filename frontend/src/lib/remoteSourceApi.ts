@@ -27,6 +27,12 @@ export type RemoteWorksResponse = {
   recommendationUnavailable?: boolean;
 };
 
+export type RemoteRecommendationResponse = {
+  scores: Array<{ primaryCode: string; score: number }>;
+  /** Affinity base the snapshot scored with; a card hides a badge at this value. */
+  baseline?: number;
+};
+
 export type RemoteWork = {
   seriesId?: number;
   catalogEntryId?: number;
@@ -353,12 +359,7 @@ export const remoteSourceApi = {
       works: Array<Pick<RemoteWork, "primaryCode" | "workId" | "tags" | "voiceActors" | "circle">>;
     },
     signal?: AbortSignal,
-  ) =>
-    postJSONBody<{ scores: Array<{ primaryCode: string; score: number }> }>(
-      `/api/remote-sources/${id}/recommendations`,
-      payload,
-      signal,
-    ),
+  ) => postJSONBody<RemoteRecommendationResponse>(`/api/remote-sources/${id}/recommendations`, payload, signal),
   getRemoteSourceWorkMetadata: (id: number, code: string, signal?: AbortSignal) =>
     getJSON<RemoteWorkMetadata>(`/api/remote-sources/${id}/works/${encodeURIComponent(code)}`, signal),
   getRemoteSourceWorkTracks: (id: number, code: string, signal?: AbortSignal) =>

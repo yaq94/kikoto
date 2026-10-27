@@ -34,6 +34,7 @@ const libraryKorean = {
   showRecommendationBadges: "추천 배지 표시",
   catalogQueue: "모든 트랙을 재생 대기열에 추가",
   catalogStreamOnly: "이 소스는 주문형 재생입니다. 다운로드하거나 포크할 파일이 없습니다",
+  catalogEmpty: "이 항목에는 재생할 수 있는 트랙이 없습니다",
   catalogQueued: "{{count}}개 트랙을 대기열에 추가했습니다",
   markFilter: "표시",
   clearMarkFilter: "표시 필터 지우기",

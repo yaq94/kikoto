@@ -111,7 +111,18 @@ func (s *Server) scoreRemoteRecommendations(w http.ResponseWriter, r *http.Reque
 	for index, candidate := range request.Works {
 		result[index] = remoteRecommendationScore{PrimaryCode: candidate.PrimaryCode, Score: breakdowns[index].Score}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"scores": result})
+	// The baseline belongs to the snapshot that produced these scores. A card
+	// hides its badge when the score is exactly this value.
+	baseline := 0
+	if len(breakdowns) > 0 {
+		for _, component := range breakdowns[0].Components {
+			if component.Key == "base" {
+				baseline = component.Contribution
+				break
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"scores": result, "baseline": baseline})
 }
 
 func (s *Server) scoreRemoteWorkSummaries(r *http.Request, userID int64, works []remoteWorkSummary) error {

@@ -1413,10 +1413,9 @@ function catalogWorkCardView(work: CircleCatalogWork, t: TFunction): WorkCardVie
       : []),
     ...sourceBadges,
   ];
+  const translationResource = catalogTranslationResource(work);
   return {
-    // A known work translates its stored title; a card without one keeps the
-    // bare code, which the server resolves only when that code is known.
-    translationResource: work.workId ? { workId: work.workId } : undefined,
+    translationResource,
     code: work.primaryCode,
     title: work.title,
     circle: work.circle || t("workCard.unknownCircle"),
@@ -1438,6 +1437,19 @@ function catalogWorkCardView(work: CircleCatalogWork, t: TFunction): WorkCardVie
     userTags: userTagBadges(work.userTags ?? [], (tag) => openLibraryTagSearch("user_tag", tag)),
     sourceBadges: statusBadges,
   };
+}
+
+/**
+ * The object whose text a circle card shows. A known work uses its id; a
+ * catalog-only card names the source and the exact edition it publishes, which
+ * is the only address the server can resolve without a work row.
+ */
+function catalogTranslationResource(work: CircleCatalogWork) {
+  if (work.workId) return { workId: work.workId };
+  const source = openableSourceTags(work.sourceTags).find((tag) => tag.sourceId);
+  if (!source?.sourceId) return undefined;
+  const code = (source.code || work.remoteCode || work.primaryCode).trim();
+  return code ? { sourceId: source.sourceId, code } : undefined;
 }
 
 function seriesCodeForWork(series: CircleSeries[], workCode: string) {

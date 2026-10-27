@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 	"unicode/utf8"
 
 	"github.com/yexca/kikoto/backend/internal/library"
@@ -330,44 +331,99 @@ func (s *Server) countContentTranslations(ctx context.Context, language string) 
 	return count, nil
 }
 
-// sharedTagTranslation reuses a translation of a tag name that another card
-// already obtained. A tag means the same thing on every work, so translating
-// it once per card multiplies the model calls behind a first page view without
-// changing any text. The memo keeps the second lookup from rescanning the
-// corpus for the same vocabulary on every request.
+// tagVocabulary is the tag translations of one display language and one model
+// configuration. A tag name means the same thing on every card, so translating
+// it once per card multiplies model calls without changing any text.
+//
+// The whole vocabulary is read with one grouped query the first time a page
+// needs it, and every later tag is a map read. Warming it once is cheaper than
+// asking the database per tag: the effective-row index serves the range, and a
+// catalogue has a few thousand distinct tags at most.
+type tagVocabulary struct {
+	mu     sync.Mutex
+	byLens map[string]map[string]string
+}
+
+func (v *tagVocabulary) lookup(scope, text string) (string, bool) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	values, ok := v.byLens[scope]
+	if !ok {
+		return "", false
+	}
+	value, ok := values[text]
+	return value, ok
+}
+
+func (v *tagVocabulary) remember(scope, text, value string) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if v.byLens == nil {
+		v.byLens = map[string]map[string]string{}
+	}
+	values := v.byLens[scope]
+	if values == nil {
+		values = map[string]string{}
+		v.byLens[scope] = values
+	}
+	values[text] = value
+}
+
+func (v *tagVocabulary) store(scope string, values map[string]string) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if v.byLens == nil {
+		v.byLens = map[string]map[string]string{}
+	}
+	v.byLens[scope] = values
+}
+
+// tagVocabularyScope names the answers a vocabulary covers: one model
+// configuration produces one set of tag texts for one language.
+func tagVocabularyScope(language, configKey string) string {
+	return language + "|" + configKey
+}
+
+// sharedTagTranslation answers a tag from the vocabulary already written for
+// this language and configuration, translating it once on a cold start.
 func (s *Server) sharedTagTranslation(ctx context.Context, field, language, sourceText, configKey string) (string, bool) {
 	if field != "tag" || sourceText == "" || configKey == "" {
 		return "", false
 	}
-	key := language + "\x00" + configKey + "\x00" + sourceText
-	s.tagTranslationMu.Lock()
-	value, ok := s.tagTranslations[key]
-	s.tagTranslationMu.Unlock()
-	if ok {
+	scope := tagVocabularyScope(language, configKey)
+	if value, ok := s.tagTranslations.lookup(scope, sourceText); ok {
 		return value, value != ""
 	}
-	var stored string
-	err := s.db.QueryRowContext(ctx, `
-		SELECT translated_text FROM content_translation
-		WHERE field = 'tag' AND language = ? AND source_text = ? AND config_key = ? AND origin = 'model'
-		LIMIT 1`, language, sourceText, configKey).Scan(&stored)
-	if err != nil || stored == "" {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT source_text, MIN(translated_text) FROM content_translation
+		WHERE language = ? AND entity_kind = 'work' AND field = 'tag'
+		  AND config_key = ? AND origin = 'model'
+		GROUP BY source_text`, language, configKey)
+	if err != nil {
 		return "", false
 	}
-	s.rememberTagTranslation(key, stored)
-	return stored, true
+	defer rows.Close()
+	values := map[string]string{}
+	for rows.Next() {
+		var source, translated string
+		if rows.Scan(&source, &translated) != nil {
+			return "", false
+		}
+		values[source] = translated
+	}
+	if rows.Err() != nil {
+		return "", false
+	}
+	s.tagTranslations.store(scope, values)
+	value, ok := values[sourceText]
+	return value, ok && value != ""
 }
 
-func (s *Server) rememberTagTranslation(key, value string) {
-	s.tagTranslationMu.Lock()
-	defer s.tagTranslationMu.Unlock()
-	if s.tagTranslations == nil {
-		s.tagTranslations = make(map[string]string)
-	}
-	// The vocabulary of a catalogue is small; the bound only stops a corpus
-	// with pathological tag names from growing the memo without limit.
-	if len(s.tagTranslations) >= 8192 {
+// rememberTagTranslation keeps a just-produced tag answer for the rest of the
+// process, so the next card showing the same badge does not ask the model.
+func (s *Server) rememberTagTranslation(field, language, sourceText, configKey, translated string) {
+	if field != "tag" || sourceText == "" || translated == "" || configKey == "" {
 		return
 	}
-	s.tagTranslations[key] = value
+	s.tagTranslations.remember(tagVocabularyScope(language, configKey), sourceText, translated)
 }

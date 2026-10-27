@@ -33,6 +33,7 @@ export const libraryEnglish = {
   showRecommendationBadges: "Show recommendation badges",
   catalogQueue: "Add every track to the playback queue",
   catalogStreamOnly: "This source streams on demand; there is nothing to download or fork",
+  catalogEmpty: "This entry has no playable track",
   catalogQueued: "Added {{count}} tracks to the queue",
   markFilter: "Mark",
   clearMarkFilter: "Clear mark filter",

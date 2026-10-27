@@ -160,6 +160,8 @@ export type WorksPage = {
   total: number;
   recommendationContext?: string;
   recommendationUnavailable?: boolean;
+  /** Affinity base the page's scores were computed with; badges start above it. */
+  recommendationBaseline?: number;
 };
 
 export type UnlinkedWorkMaintenanceSkip = {

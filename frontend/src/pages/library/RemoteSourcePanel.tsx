@@ -1,15 +1,14 @@
 import { OpenListScan } from "@/features/sources/OpenListScan";
 import type { TFunction } from "i18next";
 import { CloudOff, ExternalLink, GitFork, HardDriveDownload, RefreshCw } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { useTranslation } from "react-i18next";
 
 import { useAuth } from "@/auth/AuthProvider";
-import { usePlayer } from "@/player/PlayerProvider";
 import type { SourceVisibilityMode } from "@/components/source-visibility/sourceVisibility";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { toastFromError, useToast } from "@/components/ui/toast";
+import { useToast } from "@/components/ui/toast";
 import { CompactWorkCardSkeleton, type CompactWorkCardLayout } from "@/components/work-card/CompactWorkCard";
 import { FetchConfirmDialog } from "@/components/work-collection/FetchConfirmDialog";
 import { workCollectionClassName, workCollectionStyle } from "@/components/work-collection/WorkCollectionLayout";
@@ -17,16 +16,20 @@ import { WorkCollectionPagination } from "@/components/work-collection/WorkColle
 import { WorkSelectionAction, WorkSelectionBar } from "@/components/work-collection/WorkSelectionBar";
 import { safeExternalHTTPURL } from "@/features/work-detail/workDetailShared";
 import { LazyRemoteFetchWorkspaceDialog } from "@/features/work-detail/workflows/LazyRemoteFetchWorkspaceDialog";
-import { catalogCardQueue } from "@/features/work-detail/catalogCardQueue";
 import { useDeferredBusy } from "@/hooks/useDeferredBusy";
 import { useMobileNavigationLayout } from "@/hooks/useMobileNavigationLayout";
-import { api, type LibrarySource, type ListeningStatus, type RemoteWork, type RemoteWorksResponse } from "@/lib/api";
+import type { LibrarySource, RemoteWork, RemoteWorksResponse } from "@/lib/api";
 import type { LibraryColumnSetting } from "@/lib/libraryBrowseState";
-import { librarySourceSupportsRecommendations } from "@/lib/remoteSourceCapabilities";
+import { librarySourceProvidesMetadata } from "@/lib/remoteSourceCapabilities";
 import type { SearchClause } from "@/lib/librarySearchClauses";
 
 import type { RemoteSourceViewState } from "./libraryBrowseModel";
-import { remoteSourceBrowseModel, remoteSourcePanelModel, remoteWorkActionCode } from "./remoteSourceBrowseModel";
+import {
+  remoteSourceBrowseModel,
+  remoteSourcePanelModel,
+  remoteWorkActionCode,
+  remoteWorkRowKey,
+} from "./remoteSourceBrowseModel";
 import { RemoteWorkCard } from "./RemoteWorkCard";
 import { recommendationRevealDelay, useRemoteRecommendations } from "./useRemoteRecommendations";
 import { useRemoteSourceActions } from "./useRemoteSourceActions";
@@ -103,7 +106,7 @@ function RemoteSourceResults({
   coverSourceMode,
   selectionMode,
   bulkCodes,
-  isSyncingCode,
+  syncingWorkKey,
   actions,
   onToggleBulkCode,
   onClearSearch,
@@ -127,7 +130,7 @@ function RemoteSourceResults({
   coverSourceMode: SourceVisibilityMode;
   selectionMode: boolean;
   bulkCodes: Set<string>;
-  isSyncingCode: string | null;
+  syncingWorkKey: string | null;
   actions: ReturnType<typeof useRemoteSourceActions>;
   onToggleBulkCode: (code: string, checked: boolean) => void;
   onClearSearch: () => void;
@@ -141,51 +144,6 @@ function RemoteSourceResults({
   onRetry: () => void;
   t: TFunction;
 }) {
-  const player = usePlayer();
-  const toast = useToast();
-  const [queueingCatalogId, setQueueingCatalogId] = useState<number | null>(null);
-
-  // A catalog row has no work id until someone asks to keep a record of it.
-  // Registering it is the same step a rating or note takes, without writing
-  // either field, so listing and marking stay independent of review editing.
-  const ensureCatalogWork = async (work: RemoteWork): Promise<number | null> => {
-    if (!work.catalogEntryId) return null;
-    try {
-      const result = await api.registerCatalogWork(work.catalogEntryId);
-      onWorkStateChanged(work.primaryCode, { workId: result.workId });
-      return result.workId;
-    } catch (error) {
-      toast.notify(toastFromError(error, t("errors.unavailable")));
-      return null;
-    }
-  };
-
-  const markCatalogWork = async (work: RemoteWork, status: ListeningStatus) => {
-    const workId = work.workId ?? (await ensureCatalogWork(work));
-    if (!workId) return;
-    await actions.markRemoteWork({ ...work, workId }, status);
-  };
-
-  const queueCatalogWork = async (work: RemoteWork) => {
-    if (!work.catalogEntryId) return;
-    setQueueingCatalogId(work.catalogEntryId);
-    try {
-      const queue = await catalogCardQueue({
-        catalogEntryId: work.catalogEntryId,
-        workId: work.workId,
-        sourceId: source.id,
-        sourceName: source.displayName || source.code,
-        primaryCode: work.primaryCode,
-        title: work.title,
-      });
-      player.appendQueue(queue.tracks);
-      toast.success(t("library.catalogQueued", { count: queue.tracks.length }));
-    } catch (error) {
-      toast.notify(toastFromError(error, t("errors.unavailable")));
-    } finally {
-      setQueueingCatalogId(null);
-    }
-  };
   const showSkeleton = useDeferredBusy(isInitialLoading);
   if (isInitialLoading) {
     // A fast first page replaces the previous view directly; placeholders
@@ -226,23 +184,22 @@ function RemoteSourceResults({
             <RemoteWorkCard
               work={{ ...work, recommendScore: recommendations.scores.get(work.primaryCode) ?? 0 }}
               recommendationScored={recommendations.scores.has(work.primaryCode)}
+              recommendationBaseline={recommendations.baseline}
               revealDelay={recommendationRevealDelay(index)}
               source={source}
               coverSourceMode={coverSourceMode}
               layout={cardLayout}
-              selected={bulkCodes.has(work.primaryCode)}
+              selected={bulkCodes.has(remoteWorkRowKey(work))}
               // A catalog row has no upstream work to bulk fork or fetch, so
               // it stays out of the selection the toolbar acts on.
-              selectable={!work.catalogEntryId && Boolean(work.primaryCode)}
+              selectable={!work.catalogEntryId && Boolean(remoteWorkActionCode(work))}
               selectionActive={selectionMode}
-              isBusy={isSyncingCode === work.primaryCode || actions.fetchWorkspace.isBusy}
-              onSelectedChange={(checked) => onToggleBulkCode(work.primaryCode, checked)}
+              isBusy={syncingWorkKey === remoteWorkRowKey(work) || actions.fetchWorkspace.isBusy}
+              onSelectedChange={(checked) => onToggleBulkCode(remoteWorkRowKey(work), checked)}
               onOpen={() => onOpenPreview(work)}
               onFork={() => void actions.forkWork(work, "manual_fork")}
               onTagOpen={onTagOpen}
-              onMark={(status) =>
-                void (work.catalogEntryId ? markCatalogWork(work, status) : actions.markRemoteWork(work, status))
-              }
+              onMark={(status) => void actions.markRemoteWork(work, status)}
               canMark={() => Boolean(work.catalogEntryId) || actions.canStateRemoteWork(work)}
               onSave={() =>
                 void actions.fetchWorkspace.open({
@@ -252,13 +209,11 @@ function RemoteSourceResults({
                   sourceDisplayName: source.displayName,
                 })
               }
-              onEnsureWork={() =>
-                work.catalogEntryId ? ensureCatalogWork(work) : actions.ensureRemoteWorkForList(work)
-              }
-              onQueue={() => void queueCatalogWork(work)}
-              isQueueing={queueingCatalogId === work.catalogEntryId}
+              onEnsureWork={() => actions.ensureRemoteWorkForList(work)}
+              onQueue={() => void actions.queueCatalogWork(work)}
+              isQueueing={actions.queueingCatalogId === work.catalogEntryId}
               onListSaved={(workId, favorite) => {
-                onWorkStateChanged(work.primaryCode, { workId, favorite });
+                onWorkStateChanged(remoteWorkRowKey(work), { workId, favorite });
                 void onSynced(0);
               }}
             />
@@ -345,7 +300,10 @@ export function RemoteSourcePanel({
     sessionId: recommendationSessionId,
     enabled:
       recommendationsEnabled &&
-      librarySourceSupportsRecommendations(source) &&
+      // Scoring needs a work list with tags, cast and circle. A folder source
+      // publishes none, and asking would report a missing capability as an
+      // outage of a healthy source.
+      librarySourceProvidesMetadata(source) &&
       !loading &&
       Boolean(auth.user) &&
       !auth.demoMode &&
@@ -360,7 +318,7 @@ export function RemoteSourcePanel({
     onWorkStateChanged,
     onSynced,
   });
-  const { isSyncingCode, isBulkBusy, saveConfirm, clearSaveConfirm, bulkForkSelected, bulkSaveSelected } = actions;
+  const { syncingWorkKey, isBulkBusy, saveConfirm, clearSaveConfirm, bulkForkSelected, bulkSaveSelected } = actions;
   const remotePaginationProps = model.remotePaginationProps;
   // Phones show the page beside the result count in the toolbar instead.
   const mobileNavigationLayout = useMobileNavigationLayout();
@@ -390,7 +348,7 @@ export function RemoteSourcePanel({
           onFetch={() => void bulkSaveSelected()}
         />
       )}
-      {recommendations.failed && librarySourceSupportsRecommendations(source) && (
+      {recommendations.failed && librarySourceProvidesMetadata(source) && (
         <div role="status" className="flex items-center justify-between gap-3 text-sm text-muted-foreground">
           <span>{t("library.recommendationBadgesUnavailable")}</span>
           <Button variant="outline" size="sm" onClick={recommendations.retry}>
@@ -423,7 +381,7 @@ export function RemoteSourcePanel({
         coverSourceMode={coverSourceMode}
         selectionMode={selectionMode}
         bulkCodes={selection.bulkCodes}
-        isSyncingCode={isSyncingCode}
+        syncingWorkKey={syncingWorkKey}
         actions={actions}
         onToggleBulkCode={selection.toggleBulkCode}
         onClearSearch={onClearSearch}

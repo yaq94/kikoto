@@ -31,6 +31,7 @@ import { progressPercent, recentProgressLabel } from "./recentPlayback";
 export const LibraryWorkCard = memo(function LibraryWorkCard({
   work,
   showRecommendationScore,
+  recommendationBaseline = 0,
   onRecommendationOpen,
   onOpen,
   onStatusChange,
@@ -48,6 +49,8 @@ export const LibraryWorkCard = memo(function LibraryWorkCard({
 }: {
   work: Work;
   showRecommendationScore: boolean;
+  /** Affinity base reported with the page's scores; a score at it has no evidence. */
+  recommendationBaseline?: number;
   onRecommendationOpen: (work: Work) => void;
   onOpen: (work: Work) => void;
   onStatusChange: (workID: number, status: ListeningStatus) => Promise<void>;
@@ -66,7 +69,7 @@ export const LibraryWorkCard = memo(function LibraryWorkCard({
 }) {
   const { t } = useTranslation();
   const Shell = layout ? CompactWorkCardShell : WorkCardShell;
-  const { recommendationThreshold, recommendationBaseline } = useAuth();
+  const { recommendationThreshold } = useAuth();
   const baseView = libraryWorkCardView(
     work,
     onUserTagOpen,
@@ -187,7 +190,7 @@ function libraryWorkCardView(
   onUserTagOpen?: (tag: string) => void,
   showRecommendationScore = false,
   threshold = 50,
-  baseline = 35,
+  baseline = 0,
 ): WorkCardViewModel {
   return {
     translationResource: { workId: work.id },

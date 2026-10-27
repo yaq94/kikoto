@@ -163,6 +163,23 @@ func (s *Server) requirePermission(w http.ResponseWriter, r *http.Request, permi
 	return currentUser{}, false
 }
 
+// permissionHeld answers the same question as requirePermission without
+// writing a refusal. A handler that only sometimes needs a capability uses it
+// to decide, so a caller who cannot create an object still gets the object's
+// normal answer instead of an unrelated 403.
+func permissionHeld(r *http.Request, permission string) bool {
+	user, ok := userFromContext(r.Context())
+	if !ok {
+		return false
+	}
+	for _, item := range user.Permissions {
+		if item == permission || item == "system:admin" {
+			return true
+		}
+	}
+	return false
+}
+
 // requirePermissions checks every permission in order and writes the first
 // refusal, so an action that does several things needs each capability.
 func (s *Server) requirePermissions(w http.ResponseWriter, r *http.Request, permissions ...string) (currentUser, bool) {

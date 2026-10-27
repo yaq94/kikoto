@@ -30,6 +30,7 @@ export function LocalLibraryPanel({
   filtered,
   onClearFilters,
   showRecommendationScore,
+  recommendationBaseline,
   mobileColumns,
   desktopColumns,
   cardLayout,
@@ -64,6 +65,8 @@ export function LocalLibraryPanel({
   filtered: boolean;
   onClearFilters: () => void;
   showRecommendationScore: boolean;
+  /** Affinity base of the scored page; a badge needs a score above it. */
+  recommendationBaseline: number;
   mobileColumns: LibraryColumnSetting;
   desktopColumns: LibraryColumnSetting;
   cardLayout: CompactWorkCardLayout | null;
@@ -109,6 +112,7 @@ export function LocalLibraryPanel({
               key={work.id}
               work={work}
               showRecommendationScore={showRecommendationScore}
+              recommendationBaseline={recommendationBaseline}
               onRecommendationOpen={onRecommendationOpen}
               onOpen={onOpen}
               onStatusChange={onStatusChange}

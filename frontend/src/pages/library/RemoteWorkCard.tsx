@@ -1,6 +1,7 @@
-import { GitFork, HardDriveDownload, ListMusic } from "lucide-react";
+import { GitFork, HardDriveDownload, Info, ListMusic } from "lucide-react";
 
 import { useAuth } from "@/auth/AuthProvider";
+import { useToast } from "@/components/ui/toast";
 import type { SourceVisibilityMode } from "@/components/source-visibility/sourceVisibility";
 import { CompactWorkCardShell, type CompactWorkCardLayout } from "@/components/work-card/CompactWorkCard";
 import { showsRecommendationBadge } from "@/components/work-card/recommendationBadge";
@@ -25,6 +26,7 @@ import { remoteSourceBadges, sourceBadgesNeedLabel } from "./remoteWorkBadges";
 export function RemoteWorkCard({
   work,
   recommendationScored,
+  recommendationBaseline = 0,
   revealDelay,
   source,
   coverSourceMode,
@@ -47,6 +49,8 @@ export function RemoteWorkCard({
 }: {
   work: RemoteWork;
   recommendationScored: boolean;
+  /** Affinity base of the snapshot that produced this score. */
+  recommendationBaseline?: number;
   revealDelay: number;
   source: LibrarySource;
   coverSourceMode: SourceVisibilityMode;
@@ -70,12 +74,12 @@ export function RemoteWorkCard({
   layout: CompactWorkCardLayout | null;
 }) {
   const Shell = layout ? CompactWorkCardShell : WorkCardShell;
-  const { recommendationThreshold, recommendationBaseline } = useAuth();
+  const toast = useToast();
   const baseView = remoteWorkCardView(
     work,
     source,
     recommendationScored,
-    recommendationThreshold,
+    useAuth().recommendationThreshold,
     recommendationBaseline,
   );
   const sourceBadges = libraryCoverSourceBadges(
@@ -122,26 +126,44 @@ export function RemoteWorkCard({
                   <ListMusic className="h-4 w-4" />
                 </WorkCardActionButton>
               )}
-              <WorkCardActionButton
-                title={work.catalogEntryId ? i18n.t("library.catalogStreamOnly") : i18n.t("detailActions.fork")}
-                disabled={isBusy || !work.primaryCode || Boolean(work.catalogEntryId)}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onFork();
-                }}
-              >
-                <GitFork className="h-4 w-4" />
-              </WorkCardActionButton>
-              <WorkCardActionButton
-                title={work.catalogEntryId ? i18n.t("library.catalogStreamOnly") : i18n.t("detailActions.fetch")}
-                disabled={isBusy || !work.primaryCode || Boolean(work.catalogEntryId)}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onSave();
-                }}
-              >
-                <HardDriveDownload className="h-4 w-4" />
-              </WorkCardActionButton>
+              {work.catalogEntryId ? (
+                // A folder source has nothing to fork or download. One enabled
+                // control explains that, instead of two disabled buttons a
+                // keyboard reader cannot reach.
+                <WorkCardActionButton
+                  title={i18n.t("library.catalogStreamOnly")}
+                  disabled={isBusy}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    toast.info(i18n.t("library.catalogStreamOnly"));
+                  }}
+                >
+                  <Info className="h-4 w-4" />
+                </WorkCardActionButton>
+              ) : (
+                <>
+                  <WorkCardActionButton
+                    title={i18n.t("detailActions.fork")}
+                    disabled={isBusy || !work.primaryCode}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onFork();
+                    }}
+                  >
+                    <GitFork className="h-4 w-4" />
+                  </WorkCardActionButton>
+                  <WorkCardActionButton
+                    title={i18n.t("detailActions.fetch")}
+                    disabled={isBusy || !work.primaryCode}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onSave();
+                    }}
+                  >
+                    <HardDriveDownload className="h-4 w-4" />
+                  </WorkCardActionButton>
+                </>
+              )}
               <WorkCardListButton
                 workId={work.workId}
                 active={work.favorite}

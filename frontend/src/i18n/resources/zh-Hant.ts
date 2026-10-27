@@ -35,6 +35,7 @@ const libraryHant = {
   showRecommendationBadges: "顯示推薦標記",
   catalogQueue: "將全部音軌加入播放佇列",
   catalogStreamOnly: "此來源按需播放，沒有可下載或分叉的檔案",
+  catalogEmpty: "此條目沒有可播放的音軌",
   catalogQueued: "已加入 {{count}} 個音軌到佇列",
   markFilter: "標記",
   clearMarkFilter: "清除標記篩選",

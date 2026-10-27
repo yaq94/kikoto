@@ -28,7 +28,12 @@ export function useRemoteRecommendations({
       })),
   );
   const key = JSON.stringify([sourceId, sessionId, candidates, attempt]);
-  const [result, setResult] = useState<{ key: string; scores: Map<string, number>; failed: boolean } | null>(null);
+  const [result, setResult] = useState<{
+    key: string;
+    scores: Map<string, number>;
+    baseline: number;
+    failed: boolean;
+  } | null>(null);
 
   useEffect(() => {
     if (!enabled || candidates === "[]") return;
@@ -44,17 +49,18 @@ export function useRemoteRecommendations({
         },
         controller.signal,
       )
-      .then(({ scores }) => {
+      .then(({ scores, baseline }) => {
         if (!controller.signal.aborted) {
           setResult({
             key,
             scores: new Map(scores.map(({ primaryCode, score }) => [primaryCode, score])),
+            baseline: baseline ?? 0,
             failed: false,
           });
         }
       })
       .catch(() => {
-        if (!controller.signal.aborted) setResult({ key, scores: emptyScores, failed: true });
+        if (!controller.signal.aborted) setResult({ key, scores: emptyScores, baseline: 0, failed: true });
       });
     return () => controller.abort();
   }, [enabled, sourceId, sessionId, candidates, key]);
@@ -62,6 +68,7 @@ export function useRemoteRecommendations({
   const current = enabled && result?.key === key ? result : null;
   return {
     scores: current?.scores ?? emptyScores,
+    baseline: current?.baseline ?? 0,
     failed: current?.failed ?? false,
     retry: () => setAttempt((value) => value + 1),
   };

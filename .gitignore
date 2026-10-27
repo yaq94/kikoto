@@ -40,3 +40,6 @@ frontend/playwright-report/
 
 # Local implementation worktrees
 /.worktrees/
+
+# Local acceptance scripts, screenshots and captured JSON
+/.kikoto-work/

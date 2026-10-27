@@ -9,10 +9,12 @@ import {
 } from "@/auth/usePermissionGate";
 import { toastFromError, type useToast } from "@/components/ui/toast";
 import { useRemoteFetchWorkspace } from "@/features/work-detail/workflows/useRemoteFetchWorkspace";
+import { catalogCardQueue } from "@/features/work-detail/catalogCardQueue";
+import { usePlayer } from "@/player/PlayerProvider";
 import { api, type LibrarySource, type ListeningStatus, type RemoteWork } from "@/lib/api";
 import { libraryBulkCopy, useRemoteWorkActions } from "@/pages/useRemoteWorkActions";
 
-import { remoteWorkActionCode } from "./remoteSourceBrowseModel";
+import { remoteWorkActionCode, remoteWorkRowKey } from "./remoteSourceBrowseModel";
 
 export function useRemoteSourceActions({
   source,
@@ -28,8 +30,9 @@ export function useRemoteSourceActions({
   selectedSaveable: RemoteWork[];
   toast: ReturnType<typeof useToast>;
   t: TFunction;
+  /** Patches one card by its row key; a numberless card has no code to match on. */
   onWorkStateChanged: (
-    primaryCode: string,
+    rowKey: string,
     patch: Partial<Pick<RemoteWork, "workId" | "favorite" | "listeningStatus">>,
   ) => void;
   onSynced: (workID: number, options?: { openTracked?: boolean }) => Promise<void>;
@@ -37,7 +40,9 @@ export function useRemoteSourceActions({
   const requireBulkFetch = usePermissionGate(REMOTE_BULK_FETCH_PERMISSIONS);
   const requireBulkTrack = usePermissionGate(REMOTE_BULK_TRACK_PERMISSIONS, { deferDemo: true });
   const requireTrack = usePermissionGate(REMOTE_TRACK_PERMISSIONS, { deferDemo: true });
-  const [isSyncingCode, setIsSyncingCode] = useState<string | null>(null);
+  const [syncingWorkKey, setSyncingWorkKey] = useState<string | null>(null);
+  const [queueingCatalogId, setQueueingCatalogId] = useState<number | null>(null);
+  const player = usePlayer();
   const [isBulkBusy, setIsBulkBusy] = useState(false);
   const [saveConfirm, setSaveConfirm] = useState<{ codes: string[]; run: () => Promise<void> } | null>(null);
   const fetchWorkspace = useRemoteFetchWorkspace({ onWorksChanged: () => onSynced(0) });
@@ -51,11 +56,11 @@ export function useRemoteSourceActions({
       return;
     }
     if (!requireTrack()) return;
-    setIsSyncingCode(work.primaryCode);
+    setSyncingWorkKey(remoteWorkRowKey(work));
     try {
       await remoteWorkActions.queueFork({ sourceId: source.id, code: remoteWorkActionCode(work) }, reason);
     } finally {
-      setIsSyncingCode(null);
+      setSyncingWorkKey(null);
     }
   };
 
@@ -89,9 +94,52 @@ export function useRemoteSourceActions({
     setSaveConfirm({ codes: selectedSaveable.map((work) => work.primaryCode), run: runBulkSaveSelected });
   };
 
+  // A catalog row has no work until someone keeps a record of it. Registering
+  // it is the same step a rating takes, without writing either field.
+  const ensureCatalogWork = async (work: RemoteWork): Promise<number | null> => {
+    if (!work.catalogEntryId) return null;
+    setSyncingWorkKey(remoteWorkRowKey(work));
+    try {
+      const result = await api.registerCatalogWork(work.catalogEntryId);
+      onWorkStateChanged(remoteWorkRowKey(work), { workId: result.workId });
+      return result.workId;
+    } catch (error) {
+      toast.notify(toastFromError(error, t("errors.unavailable")));
+      return null;
+    } finally {
+      setSyncingWorkKey(null);
+    }
+  };
+
+  /** Queues every published track of a catalog entry, which has no work of its own. */
+  const queueCatalogWork = async (work: RemoteWork) => {
+    if (!work.catalogEntryId) return;
+    setQueueingCatalogId(work.catalogEntryId);
+    try {
+      const queue = await catalogCardQueue({
+        catalogEntryId: work.catalogEntryId,
+        workId: work.workId,
+        sourceId: source.id,
+        sourceName: source.displayName || source.code,
+        primaryCode: work.primaryCode,
+        title: work.title,
+      });
+      if (!queue) {
+        toast.info(t("library.catalogEmpty"));
+        return;
+      }
+      player.appendQueue(queue.tracks);
+      toast.success(t("library.catalogQueued", { count: queue.tracks.length }));
+    } catch (error) {
+      toast.notify(toastFromError(error, t("errors.unavailable")));
+    } finally {
+      setQueueingCatalogId(null);
+    }
+  };
+
   const ensureRemoteWorkForState = async (work: RemoteWork, reason: string) => {
     const result = await api.syncRemoteSourceWork(source.id, remoteWorkActionCode(work), reason);
-    onWorkStateChanged(work.primaryCode, { workId: result.workId });
+    onWorkStateChanged(remoteWorkRowKey(work), { workId: result.workId });
     await onSynced(result.workId);
     return result.workId;
   };
@@ -100,26 +148,32 @@ export function useRemoteSourceActions({
   const canStateRemoteWork = (work: RemoteWork) => Boolean(work.workId) || requireTrack();
 
   const markRemoteWork = async (work: RemoteWork, status: ListeningStatus) => {
-    if (!work.primaryCode || !canStateRemoteWork(work)) return;
-    setIsSyncingCode(work.primaryCode);
+    // A catalog card may have no printed code at all; it needs a work id, not a
+    // code, so the guard asks for identity rather than a label.
+    if (!work.workId && !work.primaryCode && !work.catalogEntryId) return;
+    if (!canStateRemoteWork(work)) return;
+    setSyncingWorkKey(remoteWorkRowKey(work));
     try {
-      const workId = work.workId ?? (await ensureRemoteWorkForState(work, "mark_interest"));
+      const workId =
+        work.workId ??
+        (work.catalogEntryId ? await ensureCatalogWork(work) : await ensureRemoteWorkForState(work, "mark_interest"));
       if (!workId) return;
       await api.updateWorkUserState(workId, { listeningStatus: status });
-      onWorkStateChanged(work.primaryCode, { workId, listeningStatus: status });
-      toast.success(t("library.savedAndMarked", { code: work.primaryCode }));
+      onWorkStateChanged(remoteWorkRowKey(work), { workId, listeningStatus: status });
+      toast.success(t("library.savedAndMarked", { code: work.primaryCode || work.title }));
       await onSynced(workId);
     } catch (error) {
       toast.notify(toastFromError(error, t("errors.unavailable")));
     } finally {
-      setIsSyncingCode(null);
+      setSyncingWorkKey(null);
     }
   };
 
   const ensureRemoteWorkForList = async (work: RemoteWork) => {
     if (work.workId) return work.workId;
+    if (work.catalogEntryId) return ensureCatalogWork(work);
     if (!work.primaryCode || !canStateRemoteWork(work)) return null;
-    setIsSyncingCode(work.primaryCode);
+    setSyncingWorkKey(remoteWorkRowKey(work));
     try {
       const result = await api.syncRemoteSourceWork(source.id, remoteWorkActionCode(work), "list_remote");
       toast.success(t("library.savedForList", { code: result.primaryCode }));
@@ -128,13 +182,13 @@ export function useRemoteSourceActions({
       toast.notify(toastFromError(error, t("errors.unavailable")));
       return null;
     } finally {
-      setIsSyncingCode(null);
+      setSyncingWorkKey(null);
     }
   };
 
   return {
     fetchWorkspace,
-    isSyncingCode,
+    syncingWorkKey,
     isBulkBusy,
     saveConfirm,
     clearSaveConfirm: () => setSaveConfirm(null),
@@ -145,5 +199,7 @@ export function useRemoteSourceActions({
     markRemoteWork,
     canStateRemoteWork,
     ensureRemoteWorkForList,
+    queueCatalogWork,
+    queueingCatalogId,
   };
 }

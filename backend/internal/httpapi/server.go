@@ -62,8 +62,7 @@ type Server struct {
 	cachePathLocks                 cachePathLocker
 	audioTranscodeLocks            cachePathLocker
 	metadataSyncMu                 sync.Mutex
-	tagTranslationMu               sync.Mutex
-	tagTranslations                map[string]string
+	tagTranslations                tagVocabulary
 	metadataPreviewMu              sync.Mutex
 	metadataPreviews               map[string]metadataPreviewRecord
 	metadataOnboardingMu           sync.Mutex

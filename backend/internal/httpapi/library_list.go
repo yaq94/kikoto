@@ -145,6 +145,7 @@ func (s *Server) listWorks(w http.ResponseWriter, r *http.Request) {
 		"total":                     page.Total,
 		"recommendationContext":     page.RecommendationContext,
 		"recommendationUnavailable": page.RecommendationUnavailable,
+		"recommendationBaseline":    page.RecommendationBaseline,
 	})
 }
 

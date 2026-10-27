@@ -23,6 +23,8 @@ export async function catalogCardQueue(identity: CatalogCardIdentity, signal?: A
   const files = flattenTreeFiles(buildCatalogTree(identity.catalogEntryId, page.tracks ?? [])).filter(
     (file) => (file.kind === "audio" || file.kind === "video") && Boolean(file.streamUrl || file.downloadUrl),
   );
-  if (files.length === 0) throw new Error("This catalog entry has no playable track.");
+  // An empty folder is a normal answer, not a source failure. The caller shows
+  // a message that says so instead of turning it into "service unavailable".
+  if (files.length === 0) return null;
   return catalogPlaybackQueue(identity, files, files[0].locationId, signal);
 }

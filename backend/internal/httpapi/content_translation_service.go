@@ -92,6 +92,7 @@ func (s *Server) translateStoredContent(ctx context.Context, in contentTranslati
 	if err != nil {
 		return translatedContent{}, "", err
 	}
+	s.rememberTagTranslation(in.Field, target.modelLanguage, text, configKey, translated)
 	display, err := displayText(translated, target.modelLanguage, target, field.Names)
 	if err != nil {
 		return translatedContent{}, "", err
@@ -207,6 +208,14 @@ func (s *Server) translateThroughModel(ctx context.Context, in contentTranslatio
 		}
 		return translatedContent{TranslatedText: display}, "native", nil
 	}
+	configKey := translation.ConfigKey(cfg)
+	if shared, ok := s.sharedTagTranslation(ctx, in.Field, target.modelLanguage, text, configKey); ok {
+		display, convertErr := displayText(shared, target.modelLanguage, target, field.Names)
+		if convertErr != nil {
+			return translatedContent{}, "", convertErr
+		}
+		return translatedContent{TranslatedText: display, CacheStatus: "hit"}, "translated", nil
+	}
 	key := sourceFieldTranslationCacheKey(in.SourceID, in.Code, in.Field, in.Path, target.modelLanguage, text, cfg.Model, cfg.BaseURL, translation.TemplateVersion, cfg.DisableThinking)
 	if rows, lookupErr := s.lookupSourceFieldTranslations(ctx, []string{key}); lookupErr == nil {
 		if row, ok := rows[key]; ok && row.Model == cfg.Model && row.TemplateVersion == translation.TemplateVersion {
@@ -236,6 +245,7 @@ func (s *Server) translateThroughModel(ctx context.Context, in contentTranslatio
 	if err != nil {
 		return translatedContent{}, "", err
 	}
+	s.rememberTagTranslation(in.Field, target.modelLanguage, text, configKey, translated)
 	display, err := displayText(translated, target.modelLanguage, target, field.Names)
 	if err != nil {
 		return translatedContent{}, "", err

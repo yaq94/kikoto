@@ -71,13 +71,25 @@ export function remoteSourcePanelModel({
   browse: RemoteSourceBrowseModel;
   bulkCodes: Set<string>;
 }): RemoteSourcePanelModel {
-  const selectedWorks = browse.selectableWorks.filter((work) => bulkCodes.has(work.primaryCode));
+  const selectedWorks = browse.selectableWorks.filter((work) => bulkCodes.has(remoteWorkRowKey(work)));
   return {
     ...browse,
     selectedWorks,
     selectedSyncable: selectedWorks.filter((work) => work.workId === null),
     selectedSaveable: selectedWorks,
   };
+}
+
+/**
+ * Identifies one card in the page. A numberless catalog entry has no printed
+ * code, so the code alone would make every such card the same row and let one
+ * card's work id overwrite another's.
+ */
+export function remoteWorkRowKey(work: RemoteWork) {
+  if (work.catalogEntryId) return `catalog:${work.catalogEntryId}`;
+  if (work.seriesId) return `series:${work.seriesId}`;
+  if (work.primaryCode) return `code:${work.primaryCode.toUpperCase()}`;
+  return `remote:${work.remoteId}`;
 }
 
 export function remoteWorkActionCode(work: RemoteWork) {

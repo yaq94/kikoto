@@ -34,6 +34,7 @@ const libraryJapanese = {
   showRecommendationBadges: "おすすめバッジを表示",
   catalogQueue: "すべてのトラックを再生キューに追加",
   catalogStreamOnly: "このソースはオンデマンド再生です。ダウンロードやフォークの対象ファイルはありません",
+  catalogEmpty: "この項目には再生できるトラックがありません",
   catalogQueued: "{{count}} 件のトラックをキューに追加しました",
   markFilter: "マーク",
   clearMarkFilter: "マークフィルターをクリア",

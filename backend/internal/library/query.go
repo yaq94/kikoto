@@ -72,6 +72,11 @@ type RawPage struct {
 	Total                     int
 	RecommendationContext     string
 	RecommendationUnavailable bool
+	// RecommendationBaseline is the affinity base the scores of this page were
+	// computed with. The client compares a score against this value, not
+	// against whatever the user's settings say now, so a session that began
+	// before a config change still hides only rows without personal evidence.
+	RecommendationBaseline int
 }
 
 type MatchingListOptions struct {
@@ -188,6 +193,7 @@ func (s *Store) ListPage(ctx context.Context, options ListOptions) (RawPage, err
 		for index := range page.Works {
 			page.Works[index].RecommendScore = scores[page.Works[index].ID].Score
 		}
+		page.RecommendationBaseline = snapshot.Config.AffinityBase
 	}
 	return page, nil
 }

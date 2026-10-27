@@ -264,7 +264,13 @@ async function flushCoalesced() {
     coalescedInflight.set(key, promise);
   }
 
+  // A key stays in `coalescedInflight` until it is settled. A reader that
+  // arrives after a page unmounted must never join a promise whose request was
+  // aborted, so the error path settles every unsettled key, not just the chunk
+  // that happened to be in flight.
+  const settled = new Set<string>();
   const settle = (key: string, entry: CoalescedEntry, result: ContentTranslationResult) => {
+    settled.add(key);
     coalescedInflight.delete(key);
     deferred.get(key)?.resolve(result);
     for (const waiter of entry.waiters) {
@@ -273,6 +279,7 @@ async function flushCoalesced() {
     }
   };
   const failEntry = (key: string, entry: CoalescedEntry, error: unknown) => {
+    settled.add(key);
     coalescedInflight.delete(key);
     deferred.get(key)?.reject(error);
     for (const waiter of entry.waiters) {
@@ -338,6 +345,15 @@ async function flushCoalesced() {
   };
   const workers = Math.min(CONTENT_TRANSLATION_CHUNK_CONCURRENCY, chunks.length);
   await Promise.all(Array.from({ length: workers }, runChunkWorker));
+  // Chunks behind an abort never run. Their readers still hold a request, so
+  // settle them with the same reason instead of leaving a promise that no
+  // later retry can replace.
+  const unsettled = controller.signal.aborted
+    ? abortError()
+    : new ContentTranslationBatchError("translation request did not run", "translation_batch_incomplete");
+  for (const [key, entry] of entries) {
+    if (!settled.has(key)) failEntry(key, entry, unsettled);
+  }
   if (coalesced.size > 0) scheduleCoalescedFlush();
 }
 

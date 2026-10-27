@@ -68,6 +68,9 @@ export function useLocalLibraryWorks({
   const [isLoading, setIsLoading] = useState(false);
   const [loadError, setLoadError] = useState("");
   const [recommendationUnavailable, setRecommendationUnavailable] = useState(false);
+  // The baseline belongs to the scored page, so a session created before a
+  // settings change still hides only rows without personal evidence.
+  const [recommendationBaseline, setRecommendationBaseline] = useState(0);
   // Clauses of an immediate search, matched against the loaded page until its
   // own results arrive.
   const [optimisticSearchClauses, setOptimisticSearchClauses] = useState<SearchClause[] | null>(null);
@@ -103,6 +106,7 @@ export function useLocalLibraryWorks({
       );
       setTotal(result.total);
       setRecommendationUnavailable(Boolean(result.recommendationUnavailable));
+      setRecommendationBaseline(result.recommendationBaseline ?? 0);
       setListContext(context);
       setLoadError("");
       return context;
@@ -285,6 +289,7 @@ export function useLocalLibraryWorks({
     isLoading,
     loadError,
     recommendationUnavailable,
+    recommendationBaseline,
     displayedRecommendationSort,
     displayedRecommendationBadges,
     optimisticSearchClauses,

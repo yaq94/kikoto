@@ -151,10 +151,6 @@ func (s *Server) getRuntimeSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	response["directoryRoutingRules"] = preferences.DirectoryRoutingRules
 	response["recommendationThreshold"] = preferences.RecommendationThreshold
-	// A work whose score is the affinity baseline carries no personal
-	// evidence. The client needs the baseline to tell such a row from a work
-	// that actually matches the viewer's tags, cast or circle.
-	response["recommendationBaseline"] = preferences.RecommendationConfig.AffinityBase
 	writeJSON(w, http.StatusOK, response)
 }
 

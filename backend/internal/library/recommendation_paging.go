@@ -81,7 +81,10 @@ func (s *Store) recommendationPage(ctx context.Context, options ListOptions) (Ra
 	if err != nil {
 		return RawPage{}, err
 	}
-	page := RawPage{Works: []RawWork{}, Page: options.Page, PageSize: options.PageSize, RecommendationContext: contextID}
+	page := RawPage{
+		Works: []RawWork{}, Page: options.Page, PageSize: options.PageSize, RecommendationContext: contextID,
+		RecommendationBaseline: snapshot.Config.AffinityBase,
+	}
 	exacts := make([]int, 0, len(counts))
 	for exact, lanes := range counts {
 		exacts = append(exacts, exact)
