@@ -215,6 +215,45 @@ func TestLoadVoiceKnownWorksPrefersConcreteAvailableLocationOverStaleNegativePre
 	}
 }
 
+// A source tag has to name the code that source actually holds. Editions of
+// one work can carry different codes, so the card's canonical code is not a
+// safe guess for a fetch or fork target.
+func TestLoadVoiceKnownWorksProjectsTheCodeEachSourceHolds(t *testing.T) {
+	db := openMigratedTestDB(t)
+	statements := []string{
+		"INSERT INTO work (id, primary_code, title) VALUES (1, 'SYNTH-VOICE-05', 'Source code voice work')",
+		"INSERT INTO person (id, display_name) VALUES (1, 'Example voice')",
+		"INSERT INTO work_credit (work_id, person_id, role, source) VALUES (1, 1, 'voice_actor', 'test')",
+		"INSERT INTO file_source (id, code, display_name, source_type, priority, enabled) VALUES (11, 'example_remote_a', 'Example Remote A', 'kikoeru_compatible', 10, 1)",
+		"INSERT INTO file_source (id, code, display_name, source_type, priority, enabled) VALUES (12, 'example_remote_b', 'Example Remote B', 'kikoeru_compatible', 20, 1)",
+		"INSERT INTO work_source_presence (work_id, file_source_id, presence_type, remote_code, availability) VALUES (1, 12, 'source', 'REMOTE-ALIAS', 'unknown')",
+		"INSERT INTO media_item (id, work_id, kind, title) VALUES (21, 1, 'audio', 'Track 1')",
+		"INSERT INTO media_file_location (id, media_item_id, file_source_id, location_type, stream_url, availability) VALUES (31, 21, 11, 'remote_stream', '/stream/31', 'available')",
+	}
+	for _, statement := range statements {
+		if _, err := db.Exec(statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	server := &Server{db: db}
+	works, err := server.loadVoiceKnownWorks(context.Background(), 0, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(works) != 1 {
+		t.Fatalf("works = %+v, want one known work", works)
+	}
+	concrete, ok := voiceSourceTagForID(works[0].SourceTags, 11)
+	if !ok || concrete.Code != "SYNTH-VOICE-05" {
+		t.Fatalf("concrete source tag = %+v (present %t), want the held work code", concrete, ok)
+	}
+	observed, ok := voiceSourceTagForID(works[0].SourceTags, 12)
+	if !ok || observed.Code != "REMOTE-ALIAS" {
+		t.Fatalf("observed source tag = %+v (present %t), want the stored remote code", observed, ok)
+	}
+}
+
 func voiceSourceTagForID(tags []circleSourceStat, sourceID int64) (circleSourceStat, bool) {
 	for _, tag := range tags {
 		if tag.SourceID != nil && *tag.SourceID == sourceID && tag.Key != "cache" {

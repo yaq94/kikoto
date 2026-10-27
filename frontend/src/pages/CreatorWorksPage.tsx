@@ -1244,14 +1244,11 @@ function voiceWorkCardView(work: VoiceWorkView, t: TFunction): WorkCardViewModel
   const isKnown = "local" in work;
   const sourceName = "sourceName" in work ? work.sourceName : "";
   const observedSourceTags = voiceWorkObservedSourceTags(work);
-  const availableBadges = isKnown
-    ? circleSourceBadges({ local: work.local, remote: work.remote, cache: work.cache, sourceTags: observedSourceTags })
-    : circleSourceBadges({
-        local: work.hasLocal,
-        remote: work.remotePlayable,
-        cache: work.hasCache,
-        sourceTags: observedSourceTags,
-      });
+  const availableBadges = circleSourceBadges({
+    local: isKnown ? work.local : work.hasLocal,
+    cache: isKnown ? work.cache : work.hasCache,
+    sourceTags: observedSourceTags,
+  });
   const observedStatusBadges = voiceObservedStatusBadges(observedSourceTags, t);
   const sourceBadges =
     availableBadges.length > 0 || observedStatusBadges.length > 0

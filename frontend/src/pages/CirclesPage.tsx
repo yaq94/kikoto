@@ -1403,7 +1403,7 @@ function CatalogDeleteConfirmModal({
 }
 
 function catalogWorkCardView(work: CircleCatalogWork, t: TFunction): WorkCardViewModel {
-  const sourceBadges = circleSourceBadges({ local: work.local, remote: work.remote, sourceTags: work.sourceTags });
+  const sourceBadges = circleSourceBadges({ local: work.local, sourceTags: work.sourceTags });
   const statusBadges = [
     ...(work.catalogStatus !== "imported"
       ? [{ key: `catalog:${work.catalogStatus}`, label: work.catalogStatus, variant: "outline" as const }]

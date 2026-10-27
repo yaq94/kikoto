@@ -66,14 +66,16 @@ function trackedPresenceBadge(item: SourcePresenceItem, availability: string, ha
   };
 }
 
+/**
+ * Source chips for a voice card. Availability comes from the source tags
+ * alone: an observation or a stored presence row cannot make a chip.
+ */
 export function circleSourceBadges({
   local,
-  remote,
   cache,
   sourceTags = [],
 }: {
   local?: boolean;
-  remote?: boolean;
   cache?: boolean;
   sourceTags?: CircleSourceStat[] | null;
 }): WorkCardBadge[] {
