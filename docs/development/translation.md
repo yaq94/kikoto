@@ -277,9 +277,11 @@ rows report `hit`, freshly generated rows `stored`.
 
 A visible field that has no answer yet shows the original text with a progress
 note. The note is bounded: after `CONTENT_TRANSLATION_PENDING_TIMEOUT_MS` the
-field reports that the translation is still queued and offers a retry, instead
-of presenting an unanswered request as ongoing work. A settled answer — success
-or a classified failure — replaces the note even when the bound has passed.
+field reports that the translation has not finished and offers a retry, instead
+of presenting an unanswered request as ongoing work. The wording does not claim
+the request is queued: at that point it may still be generating. A settled
+answer — success or a classified failure — replaces the note even when the
+bound has passed.
 
 ## Model contract and limits
 

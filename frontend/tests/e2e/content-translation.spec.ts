@@ -184,6 +184,35 @@ test("library search matches the displayed language and keeps untranslated text 
   await expect(page.getByTestId("work-card")).toHaveCount(0);
 });
 
+test("a field that never answers stops claiming progress after the bound @desktop", async ({ page }) => {
+  await page.request.post(`${backend}/api/auth/login`, {
+    data: { username: "synthetic-user", password: "synthetic-password" },
+  });
+  await page.request.patch(`${backend}/api/auth/me`, { data: { uiLocale: "en" } });
+  await page.request.patch(`${backend}/api/auth/me/preferences`, { data: { metadataLanguages: null } });
+  await page.request.post(`${backend}/api/library/onboarding/complete`, {
+    data: { startupScan: false, watchFolders: false },
+  });
+  const before = await (await page.request.get(`${backend}/__fixture/state`)).json();
+  // A new model name forces generation instead of a cached row.
+  await page.request.patch(`${backend}/api/settings/translation`, {
+    data: { model: `Example bounded model ${before.requests.length}` },
+  });
+  await page.request.post(`${backend}/__fixture/mode`, { data: { mode: "hold" } });
+  await page.clock.install();
+  await page.goto("/RJ00000000");
+  await chooseLanguage(page, "Japanese");
+  const hero = page.getByTestId("detail-hero");
+  await expect(hero).toContainText("Translating…");
+  await page.clock.runFor(21_000);
+  // The original stays readable and the note stops claiming ongoing work. It
+  // must not say the request is queued: it may still be generating.
+  await expect(hero).toContainText("Translation has not finished yet. You can retry.");
+  await expect(hero).toContainText("Example title by Example Voice");
+  await expect(hero).not.toContainText("Translating…");
+  await page.request.post(`${backend}/__fixture/mode`, { data: { mode: "ok" } });
+});
+
 test("traditional search reaches the simplified row and protects published names @desktop", async ({ page }) => {
   await page.request.post(`${backend}/api/auth/login`, {
     data: { username: "synthetic-user", password: "synthetic-password" },
