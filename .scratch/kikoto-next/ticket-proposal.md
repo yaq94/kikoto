@@ -2,7 +2,7 @@
 
 **Status:** ready-for-agent
 **发布状态:** 用户已批准本拆分，24 张正式工单已发布（01–19 原始、20–24 整改）。
-**Implementation:** in-progress；01–19 的历史实现与证据按原产物保留。20–24 为审查整改工作包，未获得同一最终候选的实际证据前不得关闭。完整发布依赖保留，逐票状态见执行记录。
+**Implementation:** resolved；01–19 的历史实现与证据按原产物保留。20–24 为审查整改工作包，已在候选 `15b84ed2` 上取得同一产物的门禁、部署与部署后证据，逐票状态见执行记录。
 **执行授权:** 用户已授权全部功能实现、必要依赖安装、测试、数据库迁移、部署与回滚；[执行记录](execution.md)维护当前状态与证据。
 **依据:** [正式规格](spec.md) · [领域词汇表](../../GLOSSARY.md) · [作品身份与个人记录 ADR](../../docs/decisions/ADR-0004-work-identity-and-personal-state.md)
 
@@ -20,7 +20,7 @@
 | 21 | verified-local | 099/102/105、严格语言搜索、共享短查询生成器与 `failed` 终态已合入；1–2 字查询的返回条数与 `total` 共用 1000 张预算并以 `truncated` 标记还有更多，目标机卡片页与同预算总数 p95 均 ≤13 ms；最终候选复验由 24 记录。 |
 | 22 | resolved（记录 SHA `f727feee`，历史） | 迁移 100、`work.parent_work_id`、v2 + 可选 `parent`、`parent_alias_not_imported` 与多父级 `parent_conflict` 已落地；9 项验收勾选并有测试名。 |
 | 23 | verified-local | 095–105 已合入，`compat/105_dev.sql` 已生成；文档与证据收口完成。 |
-| 24 | resolved | 候选 `0aaa83fd` 已部署；Full CI run `40496141828` 终态 success（27/27 job）；迁移链四项沿用上一候选证据，LIVE 与部署后逐项验收完成。 |
+| 24 | resolved | 候选 `15b84ed2` 已部署（schema 105）；上一候选 `907391f2` 的 run `40596212856` success（26 job）；`15b84ed2` 的 run `40602372253` 见 24 账本第 6 节；迁移链沿用上一候选证据，LIVE 与部署后逐项验收完成。 |
 
 11 的历史 `resolved` 只证明其记录 SHA；AC-14 的单集、格式副本、Bonus 和成员上限必须在 24 的当前候选上重新通过，不能由未提交系列修复替代。
 
@@ -407,7 +407,7 @@
 
 ## 发布状态
 
-24 张正式工单使用项目规定模板。每票链接到规格、总览和直接前置工单；当前 01–07、09–16 的历史本地证据为 resolved，但不自动作为当前候选证据；08、18、19、20、21、23 为 verified-local，22 在记录 SHA `f727feee`（历史）上为 resolved，24 在 `0aaa83fd` 上为 resolved，17 为 in-progress。分诊 `Status` 保持 `ready-for-agent`，上表只记录独立 `Implementation` 字段。验收清单仅随实际证据更新。候选 `0aaa83fd` 已部署，Full CI run `40496141828` 终态 success（27/27 job）；真实全量覆盖仍为 partial，不以 partial 冒充完整覆盖。
+24 张正式工单使用项目规定模板。每票链接到规格、总览和直接前置工单；当前 01–07、09–16 的历史本地证据为 resolved，但不自动作为当前候选证据；08、18、19、20、21、23 为 verified-local，22 在记录 SHA `f727feee`（历史）上为 resolved，24 在 `15b84ed2` 上为 resolved，17 为 in-progress。分诊 `Status` 保持 `ready-for-agent`，上表只记录独立 `Implementation` 字段。验收清单仅随实际证据更新。候选 `15b84ed2` 已部署；`c7d793e4` 的 run `40587302416` 曾因 race 用例超时失败，已在 `15b84ed2` 消除。真实全量覆盖仍为 partial，不以 partial 冒充完整覆盖。
 
 ## Comments
 

@@ -5,7 +5,7 @@
 **Blocked by:** [17：组合验收与部署回退](17-integrated-acceptance-release-plan.md)、[18](18-ci-migration-completion-state.md)、[19](19-ci-browser-reliability.md)、[20](20-catalog-sync-and-admission.md)、[21](21-translation-corpus-and-search.md)、[22](22-personal-transfer-parent-identity.md)、[23](23-retention-and-repository-contracts.md)。
 
 **Status:** ready-for-agent
-**Implementation:** resolved；候选 0aaa83fd 已部署，Full CI run 40496141828 终态 success（27/27 job），schema 105，/health 200。候选账本见 [24-candidate-0aaa83fd.md](../evidence/24-candidate-0aaa83fd.md)，生产浏览器证据见 [25-live-browser-ef812140.md](../evidence/25-live-browser-ef812140.md)，模板为 [24-candidate-ledger.md](../evidence/24-candidate-ledger.md)。
+**Implementation:** resolved；当前候选 `15b84ed2` 已部署，schema 105，/health 200，主包 `index-DNjiWLrG.js`。上一候选 `907391f2` 的 run `40596212856` success（26 job）；`c7d793e4` 的 run `40587302416` 曾因 race 用例超时失败，已在 `15b84ed2` 消除。候选账本见 [24-candidate-15b84ed2.md](../evidence/24-candidate-15b84ed2.md)，生产浏览器证据见 [25-live-browser.md](../evidence/25-live-browser.md)，模板为 [24-candidate-ledger.md](../evidence/24-candidate-ledger.md)。`0aaa83fd`、`cf4ada56`、`fe8d3d3d` 与 `8fa8465e` 的记录保留为历史候选。
 
 **依据:** [正式规格](../spec.md)、[整改计划](../review-remediation-plan.md)、[执行记录](../execution.md)。
 
@@ -23,18 +23,18 @@
 
 ## 发布门禁
 
-- [x] Standards 与 Spec 双轴审查闭环；两轴覆盖 `88498e94...ce0586cc` 与其后的审查修复，4 条硬违规与 5 条判断项、1 blocker 与 5 major 均已修复，逐项见候选账本第 3 节。
-- [x] 同一 SHA 的 Full CI、类型检查、构建、H/R/F/U 与必要 race 证据。Full CI run `40496141828` @ `0aaa83fd` 终态 success（27/27 job）；类型检查、构建、H/R/F/U 与 race 已在本候选取得。上一候选 `ef812140` 的 run `40484966430` 为 27/27 job success（历史）。
-- [x] 原始 AC-14 的系列证据、单集格式副本、Bonus/轨道容器和成员上限回归保留在 11 号票的本地记录；本候选未改动系列逻辑。后端全量测试 `go test ./...` 在上一候选 `f727feee`（历史）通过；本候选重跑 `go build ./...`、`go vet ./internal/httpapi ./internal/translation` 与 `go test ./internal/translation -race`。
+- [x] Standards 与 Spec 双轴审查覆盖 `cf4ada56...8fa8465e` 与发布账本；该轮发现并修复了可打开与可下载谓词混用、来源 chip 接收未使用参数、同源多 edition 猜测 code、E2E 固定等待掩盖过渡态、低空间暂停缺少跨重启 R 证据，以及证据文档仍把旧候选当当前候选。`8fa8465e...c7d793e4` 的两轴审查已发起，结论到达后补记。
+- [ ] 同一 SHA 的 Full CI、类型检查、构建、H/R/F/U 与必要 race 证据。`40596212856` @ `907391f2` success（26 job）；`40574379570` @ `8fa8465e` success（27/27 job）与 `40523343369` @ `fe8d3d3d` success（27/27 job）是历史基线。`15b84ed2` 的 run `40602372253` 见候选账本第 6 节。
+- [x] 原始 AC-14 的系列证据、单集格式副本、Bonus/轨道容器和成员上限回归保留在 11 号票的本地记录；本候选未改动系列逻辑。本候选的后端改动只涉及 voice source tag 的 code 投影，已重跑 `go build ./...`、`go vet ./...` 与整包 `go test ./internal/httpapi`；迁移未改。
 - [x] 迁移链：095–105 连续、`compat/105_dev.sql` 与迁移后 schema 一致。本候选未改迁移，新装、068→105、084→105、重复启动四项沿用上一候选 `f727feee` 的记录；旧 095 preflight 全组亦在该记录中通过。
-- [x] 备份、恢复和可执行回滚路径演练；部署脚本在切换前生成 DB/WAL/SHM、`.env`、compose 与 SHA256SUMS 快照并校验，健康门禁失败会自动回滚。
+- [x] 备份、恢复和可执行回滚路径演练；部署脚本在切换前生成 DB/WAL/SHM、`.env`、compose 与 SHA256SUMS 快照并校验，健康门禁失败会自动回滚。本候选快照 3/3 校验 OK，回滚目标 `kikoto:next-0aaa83fd`（schema 同为 105）。
 - [x] 生产 Compose 已有 healthcheck（`6927083a`），`docker compose ps` 报 `healthy`；部署脚本仍以 `/health` 200 作为门禁，回滚文档已同步。
 - [x] 组合负载：`scripts/mixed-load.mjs` 60 秒、并发 8，全部请求匹配，无 5xx、无超时；各项 p95 见 [20 号票](20-catalog-sync-and-admission.md) 与 [translation.md](../../../docs/development/translation.md)。
 - [x] 真实完整索引：生产索引运行为 `partial`；未称 complete，失败与未确认空目录已分别计数，量级见候选账本。
-- [x] 有限 LIVE：真实 Index 试译 200 并返回目标文本，匿名媒体 Range 206；空文本、不支持语言与超长文本 400 分类已实测。
-- [x] 少量非视觉 F：前端 164 文件 / 942 单元测试、翻译与播放定向 E2E 通过；截图采集未改动。
+- [x] 有限 LIVE：真实 Index 试译 200 并返回目标文本，匿名媒体 Range 206；空文本、不支持语言与超长文本 400 分类已实测。8192 字节输入被前端接受，8193 字节被拒绝；8192 字节有效日文请求返回已分类的 `translation_timeout`，不伪报成功。
+- [x] 少量非视觉 F：前端 164 文件 / 950 单元测试、翻译与播放定向 E2E 通过；截图采集未改动，E2E 不依赖固定等待。E2E 覆盖低空间暂停中的队列、流身份、暂停/浏览/恢复进度、整页重载后的队列/当前轨/流地址、队列面板渲染与个人评分/备注恢复。
 - [x] AC-25 播放中音轨／队列／进度、AC-26 进度证据、AC-27 出站边界、AC-28 截图关闭与既有视觉测试不改写全部列入矩阵；逐项证据与生产缺口见下表。
-- [x] 部署后真实服务验收：`/health` 200 `v0.8.3`；试译 200 与三类 400 分类、短查询 `truncated`、来源卡 total、媒体 Range 均已实测，逐项结果见候选账本第 6 节。
+- [x] 部署后真实服务验收：`/health` 200 `v0.8.3`；试译 200 与三类 400 分类、短查询 `truncated`、来源卡 total、媒体 Range 均已实测；新前端包已由部署脚本重新构建并在浏览器实际加载。逐项结果见候选账本第 6 节。
 - [x] 性能门禁：42k 卡浏览、5,001 文件卡拒绝、1–2 字卡片页与同预算总数、编号等值与目标语言标题整串等值全部达标；数值见候选账本第 4 节所列出处。
 - [x] AC-08 搜索范围口径：统一卡片与搜索指库页同一组件在两个范围工作——本地范围查 `/api/works` 的已登记作品，来源范围查 `/api/remote-sources/{id}/works` 的全部索引卡片（含未登记）。库级 `/api/works` 不联结来源索引是既有边界，已在 spec 的 D-04 写明；`TestOpenListFiniteCatalogDiscoversWithoutRegisteringWorks`（`openlist_catalog_test.go:17`，断言在 `:92-95`）证明来源范围发现卡片后库 total=0。
 
@@ -42,10 +42,10 @@
 
 | AC | 要求 | 当前证据 | 结论 |
 | --- | --- | --- | --- |
-| AC-25 | 播放、扫描、翻译并行时的资源上限与低空间暂停；播放器与个人记录保留 | 本地 H：`TestLowDiskPausesScanAndPrefillWithoutStoppingPlayback` 同时暂停扫描与 prefill，媒体 Range 仍 206，目录与备注仍可读；生产浏览器：SPA 导航与翻译设置加载期间播放进度从 15.3 s 推进到 99.9 s，`paused=false` | 本地组合通过；生产未制造磁盘压力，低空间部分不写生产 LIVE |
-| AC-26 | 产物版本与证据对应；模型生成、媒体 Range、进度各有证据 | Full CI `40496141828` @ `0aaa83fd`；生产试译 200；生产 Range 206；生产索引面板显示完成/待处理/失败/空目录计数；浏览器证据见 25 号文件 | 发布级证据已取得；正式进度测量仍是本地口径 |
+| AC-25 | 播放、扫描、翻译并行时的资源上限与低空间暂停；播放器与个人记录保留 | 本地 H：`TestLowDiskPausesScanAndPrefillWithoutStoppingPlayback` 同时暂停扫描与 prefill，媒体 Range 仍 206，目录与备注仍可读；R：`TestLowDiskPauseAndPersonalRecordSurviveApplicationRestart` 关闭数据库、重开同一文件后暂停与原因仍保留，个人记录与卡片可读；隔离 E2E：低空间暂停中队列、流身份、暂停/浏览/恢复进度保持，整页重载后本地双音轨队列、当前轨、流地址、队列面板与暂停状态恢复，个人评分/备注从个人记录恢复（1 passed，9.2 s）。生产浏览器：播放 0.61 s → 4.67 s，`paused=false`，队列 `1 / 21`；暂停于 4.12 s 后整页重载仍为 4.12 s、`1 / 21`、`paused=true` | 本地 H/R 与隔离 E2E 通过；生产未制造磁盘压力，低空间部分不写生产 LIVE |
+| AC-26 | 产物版本与证据对应；模型生成、媒体 Range、进度各有证据 | 当前候选 Full CI `40587302416` 撰写时 in_progress；生产单条翻译首次 2.08 s、随后命中 0.83–1.19 s，`/voices/4` 首个标题 427 ms；生产 Range 206（沿用同路径）；生产索引面板显示完成/待处理/失败/空目录计数；浏览器证据见 25 号文件第 12 节 | 证据已记录；CI 终态到达前不写发布级通过。进度面板的公共边缘延迟作为运维观察，不冒充性能门禁 |
 | AC-27 | 非法 URL、越界重定向、超大响应、取消、凭据剥离、私有来源例外 | 本地 H 覆盖出站边界、取消与凭据剥离；生产未构造恶意出站请求 | 本地通过；生产不构造破坏性边界 |
-| AC-28 | 只断言文本、操作、请求、持久状态与媒体功能；截图关闭；不改写既有视觉测试 | 本地 F 证据与既有 Playwright 配置；本次生产浏览器只读取文本、DOM 计算样式与网络结果，没有新增视觉门禁 | 通过（本地 F + 生产非视觉检查） |
+| AC-28 | 只断言文本、操作、请求、持久状态与媒体功能；截图关闭；不改写既有视觉测试 | 本地 F 证据与既有 Playwright 配置；本次生产浏览器只读取文本、可见控件状态与网络结果，没有新增截图、像素或布局门禁 | 通过（本地 F + 生产非视觉检查） |
 
 这些缺口已写入候选账本第 7 节，不用“矩阵已列出”替代“生产已通过”。
 
@@ -62,7 +62,7 @@
 ## 交付证据
 
 - 部署版本、Git 提交、镜像 digest、schema、迁移链、执行命令、退出状态、逐项结果和必要运维说明。
-- 证据脱敏：不含真实路径、数据库路径、作品编号、生产 entryId/sourceId 或原始日志。
+- 证据脱敏：不含真实路径、数据库路径、作品编号、生产 entryId/sourceId、真实来源名或原始日志。
 - 明确未覆盖项和资源校准；不以健康检查、模拟结果、代理报告或旧候选代替当前产物。
 
 ## 发布门禁的可执行性（裁决 2026-10-25）

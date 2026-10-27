@@ -1,16 +1,16 @@
 # Kikoto 下一阶段执行记录
 
 **Status:** ready-for-agent
-**Implementation:** resolved；01–19 的历史证据按对应产物保留；20–24 的整改已汇总到候选 `0aaa83fd`，门禁、部署与部署后验收已完成；双轴审查结论见 [24 候选账本](evidence/24-candidate-0aaa83fd.md) 第 3 节；Full CI run `40496141828` 终态 success（27/27 job）。
+**Implementation:** resolved；01–19 的历史证据按对应产物保留；20–24 的整改已汇总到当前候选 `15b84ed2`，部署与部署后验收已完成，见 [24 候选账本](evidence/24-candidate-15b84ed2.md)。上一候选 `907391f2` 的 Full CI run `40596212856` 为 success（26 job）；`15b84ed2` 的 run `40602372253` 见该账本第 6 节。
 
 ## 当前状态
 
-**当前部署：** 生产运行 `kikoto:next-0aaa83fd`（schema 105，`/health` 200 `v0.8.3`）；部署前为同 schema 的上一候选（已由 `0aaa83fd` 取代）。部署脚本在切换前完成一致性快照，`/health` 门禁通过，未触发回滚。部署版本、备份与回滚路径见 [24 候选账本](evidence/24-candidate-0aaa83fd.md)。
-**集成状态（2026-10-27 复核）：** 集成分支 `codex/kikoto-catalog-remediation` 已推进到本轮最终候选；提交清单与逐条归属见 [24 候选账本](evidence/24-candidate-0aaa83fd.md) 第 2 节，本文件不再复述一个会随每次提交变化的数字。迁移头 `105`：`101_work_parent_backfill_report.sql` 增加父级回填报告表并幂等重跑回填，`102_translation_prefill_status.sql` 为 prefill 增加 `failed` 状态并给失败表补 `(config_key, source_hash)` 索引，`103_translation_short_scan_index.sql` 用 `idx_content_translation_short_scan` 替换 099 的两个短查询索引，`104_source_catalog_entry_admission.sql` 为每卡准入计数建表并在文件写入事务内失效、发布事务内刷新，`105_translation_search_scope.sql` 把 `source_id`／`browsable` 物化到译文行并建立 scope 视图与触发器；`compat/105_dev.sql` 已生成。`migration_chain_105_test.go` 覆盖新装到 105、68→105、84→105、重复启动幂等与 `foreign_key_check` 0 行。20 的 098 状态机、系列准入、publication 事务内删 mapping、其余准入入口、零可见成员 404、零文件与旧 generation 集合统一、due 推进顺序、诊断过滤与 plan 断言全部并入并通过定向测试；目标机 42k 卡浏览与 5,001 文件卡拒绝路径的 p95 达标（数值见 20 号票）。21 的 099/102/105、严格语言搜索、共享短查询生成器与 `failed` 终态已合入；1–2 字查询的返回条数与 `total` 共用 1000 张预算并以 `truncated` 标记，目标机卡片页与同预算总数均在 100 ms 内（数值见 21 号票与 docs/development/translation.md）。22 的 100、`work.parent_work_id`、v2 + 可选 `parent`、`parent_alias_not_imported`、多父级导出改为可审阅 `parent_conflict` 均已合入并通过测试。23 的文档与保留回归已收口。候选 `0aaa83fd` 已部署：Full CI run `40496141828` 终态 success（27/27 job），生产运行 `kikoto:next-0aaa83fd` / schema 105，`/health` 200 `v0.8.3`。本候选在 `ef812140` 基础上补齐两处审查缺口：短查询分支被扫描上界截断时也标 `truncated`，以及“必须读文本”的标记判定收成一个谓词；`voice` 行按自身证据判断可播、Library 真实链路统一排序与无调用探测清理沿用上一候选。部署后实测：试译 200 返回目标文本（`elapsedMs=393`，model `Index-Translate-35B-A3B`），空文本、不支持语言与超长文本均 400 分类，媒体 Range 206，短查询 1000 命中返回 `total=1000`/`truncated=true`；浏览器层完成来源 chip、语言独立、多来源切换与播放连续性检查，见 [25 号证据](evidence/25-live-browser-ef812140.md)。本候选未改迁移，迁移链四项（新装、068→105、084→105、重复启动）沿用上一候选 `f727feee` 的证据。
+**当前部署：** 生产运行 `kikoto:next-15b84ed2`（schema 105，`/health` 200 `v0.8.3`，主包 `assets/index-DNjiWLrG.js`）；部署前为同 schema 的 `907391f2`，再前为 `c7d793e4`（均保留为回滚目标）。部署脚本在切换前完成一致性快照（`quick_check=ok`、`foreign_key_violations=0`），`/health` 门禁通过，未触发回滚。部署版本、备份与回滚路径见 [24 候选账本](evidence/24-candidate-15b84ed2.md)。
+**集成状态（2026-10-28 复核）：** 集成分支 `codex/kikoto-catalog-remediation` 已推进到当前候选 `15b84ed2`；提交清单见 [24 候选账本](evidence/24-candidate-15b84ed2.md) 第 2 节。迁移头仍为 `105`，本候选未改迁移。相对 `c7d793e4` 新增四个提交：`38965f64` 让未进入视口的字段不再声称“正在翻译”（/voices/4 首屏 113 个字段曾永不结算）；`c2057b7c` 把可见性闩锁按请求键作用域并让已定结果优先；`907391f2` 与 `15b84ed2` 修 CI race 用例（该用例在 race 下耗时 300.71 s 触发 503，现为 22.70 s）。部署后实测：`/voices/4` 首屏 60 existing / 7 translated / 113 original、0 pending、0 failed；滚动 8 屏后 159 / 20 / 1、仍 0 pending、0 failed；asmr.one 基线 35 的卡片无徽章，有真实收藏信号后分数升至 40–54；索引详情默认折叠；目录卡入队与两张无编号卡的独立标记均通过。详见 [25 号证据](evidence/25-live-browser.md) 第 14 节。
 
 **审查快照：** 审查时文档基线 `6122b7bf`；代码审查基线 `301e6c63`。`6b4a02ec`（096 与系列暂存）、`728651a6`（v2 可选 `parent`）、`47df9c11`（wall-clock/partial 调度）均已并入当前分支，但仍需在当前候选上重新验收；不要把它们当作已签收的外部交付。历史 run 53 为 partial，不能当作完整覆盖。2026-10-25 的逐项审查见 [audit-20261025-review.md](audit-20261025-review.md)。
 
-**当前候选：** 已部署 `0aaa83fd`（见 [24 候选账本](evidence/24-candidate-0aaa83fd.md)）。01–19 的 `resolved` 仅表示其记录 SHA 上的历史本地证据；本候选在门禁中重跑了后端定向、前端全量、浏览器用例与部署后真实服务验收，迁移链沿用上一候选证据，逐项结论见账本。
+**当前候选：** 已部署 `15b84ed2`（见 [24 候选账本](evidence/24-candidate-15b84ed2.md)）。01–19 的 `resolved` 仅表示其记录 SHA 上的历史本地证据；本候选重跑了后端构建与 `internal/httpapi` 整包测试、前端全量、构建与部署后真实服务验收，迁移链沿用上一候选证据，逐项结论见账本。`0aaa83fd`、`cf4ada56`、`fe8d3d3d`、`8fa8465e`、`c7d793e4`、`907391f2` 只作历史候选记录。
 
 `final-spec-review-20261024.md` 曾在 `a711bc39` 记录 AC-14 的系列发现失败（单集/格式副本/Bonus、成员上限）和 AC-26 的部署证据缺口；后续未提交工作区改动不能替代当前 SHA 的回归，24 必须把 AC-14 列入首要门禁。
 
@@ -22,7 +22,7 @@
 | [21 有效译文语料与严格语言搜索](issues/21-translation-corpus-and-search.md)                                                             | 有效语料、覆盖、严格搜索、短查询          | verified-local | 099/102/105、严格语言搜索、共享短查询生成器与 `failed` 终态已合入；1–2 字查询的返回条数与 `total` 共用 1000 张预算并以 `truncated` 标记，目标机卡片页与同预算总数达标（数值见 21 号票与 docs/development/translation.md）；最终候选复验由 24 记录 |
 | [22 个人备份父级归属](issues/22-personal-transfer-parent-identity.md)                                                                   | 空库单集与父系列恢复                      | resolved（记录 SHA `f727feee`，历史） | 100 与 `parent_work_id`、v2 + 可选 `parent`、`parent_alias_not_imported`、多父级导出改为可审阅 `parent_conflict`；9 项验收全部勾选并有测试名；权限 403 与往返身份均有 H/R 证据                                                     |
 | [23 保留与仓库规范](issues/23-retention-and-repository-contracts.md)                                                                    | 清理保护、迁移链、模型文档、证据脱敏      | verified-local | 6 项清理回归、合成 dry-run、095 历史与 096–105 连续链、旧 095 preflight 三路径、文档与 tracked-evidence 扫描全部通过                                                                                                                |
-| [24 同候选集成与发布证据](issues/24-release-candidate-evidence.md)                                                                      | 全部修复、双轴审查、部署验收              | resolved       | 候选 `0aaa83fd`：Full CI run `40496141828` 终态 success（27/27 job）；迁移链四项沿用上一候选 `f727feee` 的证据，后端定向与前端全量门禁、部署后 LIVE 翻译与媒体 Range 通过；证据见 [24 候选账本](evidence/24-candidate-0aaa83fd.md) |
+| [24 同候选集成与发布证据](issues/24-release-candidate-evidence.md)                                                                      | 全部修复、双轴审查、部署验收              | resolved       | 候选 `8fa8465e`：Full CI run `40574379570` 终态 success（27/27 job）；迁移链四项沿用 `f727feee` 的证据，后端整包、前端全量与部署后 LIVE 翻译、媒体 Range、多来源切换与播放重载通过；证据见 [24 候选账本](evidence/24-candidate-8fa8465e.md) |
 | 17 不依赖 20–24；24 依赖 17–23。以上新票不覆盖旧 evidence 文件，原 01–19 的需求与主责继续有效。任何 `resolved` 都必须满足当前产物定义。 |
 
 ## 历史执行记录
@@ -31,7 +31,7 @@
 
 - 01–07、09–16 的历史本地 H/F/R 证据保留在各自的 evidence 文件；其中 07 的真实媒体 Range 是旧独立实例证据，当前应用代理路径仍需 24 复验。
 - 08 的完整合成树、恢复与资源限制已通过；真实 run 53 仍为 partial（约 1.4 万目录中绝大多数完成、4 失败、27 未确认空），真实全量覆盖待 24。
-- 17 的旧部署 `7ed73fa0`（schema 68→76）与 `2bae5db9`（schema 83）只作历史；上一候选 `f727feee`（历史）曾部署，当前候选 `0aaa83fd` 已部署，见当前状态。
+- 17 的旧部署 `7ed73fa0`（schema 68→76）与 `2bae5db9`（schema 83）只作历史；`f727feee`、`0aaa83fd`、`cf4ada56`、`fe8d3d3d`、`8fa8465e`、`c7d793e4`、`907391f2` 均已部署过，当前候选 `15b84ed2` 已部署，见当前状态。
 - 18、19 的本地 H/R/F 证据保留；上一候选 `f727feee`（历史）的 Full CI 终态为 run `40409566661` success；当前候选的终态见当前状态。
 - 2026-10-24 前完成的目录身份、sidecar、翻译、关联与导入修复见 [20 证据](evidence/20-post-review-fixes.md)；旧 prune dry-run 只作历史，生产计数不再复述。
 
@@ -53,14 +53,14 @@
 | 文档 locale           | 通过         | `node scripts/check-doc-locales.mjs`：5 个 locale、11 个用户页                                                                          |
 | 空白检查              | 通过         | `git diff --check` 无输出                                                                                                               |
 | 敏感检查              | 变更范围通过 | `make sensitive-check` 覆盖变更行；已跟踪证据另由 `make tracked-evidence-check` 全文扫描                                                |
-| tracked-evidence 扫描 | 通过         | 53 个已跟踪证据文件；规则见 [23 证据策略](evidence/23-evidence-policy.md)                                                               |
+| tracked-evidence 扫描 | 通过         | 已跟踪证据文件全部符合规则；规则见 [23 证据策略](evidence/23-evidence-policy.md)                                                          |
 | 01–16 历史本地证据    | 保留         | 只证明各自旧 SHA；当前候选由 24 重跑                                                                                                    |
 | 08 真实覆盖           | partial      | run 53 未完成，失败/未确认空目录不计完整                                                                                                |
 | 17 旧部署             | 历史         | `2bae5db9`/schema 83，不是当前候选                                                                                                      |
-| Full CI               | 通过         | run `40496141828` @ `0aaa83fd` success（27/27 job）；上一候选 `c9449653` 的 run `40463449636` success（27/27 job，历史）                    |
+| Full CI               | 通过（上一候选） | `40596212856` @ `907391f2` success（26 job）；`40574379570` @ `8fa8465e` success（27/27 job，历史）。`15b84ed2` 的 run `40602372253` 见 [24 候选账本](evidence/24-candidate-15b84ed2.md) 第 6 节 |
 | 迁移演练              | 通过         | 上一候选 `f727feee`（历史）：84→105 共 21 个迁移、总耗时 20,840 ms、`quick_check` ok、FK 0；本候选未改迁移                              |
 | 回滚演练              | 通过         | 105 库 + 旧镜像启动失败（schema newer than binary）；`rollback.sh` 可执行，快照 `sha256sum -c` 全部 OK                                   |
-| 生产部署              | 通过         | `kikoto:next-0aaa83fd`，schema 105，`/health` 200 `v0.8.3`；`schema_before=105`、`schema_after=105`，健康门禁 1 秒，未回滚            |
+| 生产部署              | 通过         | `kikoto:next-15b84ed2`，schema 105，`/health` 200 `v0.8.3`，主包 `assets/index-DNjiWLrG.js`；`schema_before=105`、`schema_after=105`，快照 `quick_check=ok`，未回滚 |
 | 20–23 当前候选        | 通过         | 20/21/22/23 的本地、目标机与部署后真实服务证据均已复验；22 记录 SHA `f727feee`（历史）；未覆盖项见 24 账本                              |
 
 ## 17 的整体验收与部署门槛
@@ -91,4 +91,8 @@
 
 ## Comments
 
-2026-10-27：候选 `0aaa83fd` 已部署；Full CI run `40496141828` 终态 success（27/27 job），迁移链四项沿用上一候选 `f727feee` 的证据，LIVE 翻译、媒体 Range 与生产浏览器逐项复验完成。24 记为 `resolved`，证据见 [24 候选账本](evidence/24-candidate-0aaa83fd.md)。
+2026-10-27：候选 `0aaa83fd` 已部署；Full CI run `40496141828` 终态 success（27/27 job），迁移链四项沿用上一候选 `f727feee` 的证据，LIVE 翻译、媒体 Range 与生产浏览器逐项复验完成。24 记为 `resolved`，证据见 [24 候选账本](evidence/24-candidate-0aaa83fd.md)（历史）。
+
+2026-10-28：审查发现 `fe8d3d3d` 仍把“可打开”与“可下载”合成一个谓词、来源 chip 接收未使用参数、同源多 edition 会猜一个 code。新增 `72aefe65` 拆分谓词、`c4f43eb4` 统一 chip 口径、`c8542c13` 补低空间暂停跨重启的 R 测试、`8fa8465e` 在同源多 edition 时留空 code。候选 `8fa8465e` 已部署；Full CI run `40574379570` 终态 success（27/27 job）；生产浏览器复验见 [25 号证据](evidence/25-live-browser.md)。服务器旧镜像与构建目录已清理，根分区可用空间由 43G used / 15G avail 变为 32G used / 26G avail，`8fa8465e` 部署后为 38G used / 20G avail；服务健康检查保持 200。
+
+2026-10-28：用户报告五项真实使用问题（`/voices/4` 翻译全失败、推荐标记恒为 35、OpenList 索引进度不可折叠、OpenList 误报“服务暂时不可用”、目录卡无法入队）。新增 `5bf687f8` 与 `c7d793e4` 修复；候选 `c7d793e4` 已部署，生产浏览器复验见 [25 号证据](evidence/25-live-browser.md) 第 12 节。该轮修复由 `15b84ed2` 收口；`c7d793e4` 的 run `40587302416` 因 race 用例超时失败，已在 `15b84ed2` 消除。
