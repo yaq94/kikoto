@@ -14,29 +14,30 @@ import (
 // search omits both the FTS CTE and the per-file instr predicates, so browsing
 // without a query never touches file titles.
 func openListCatalogCardsQuery(sourceID int64, query string) (string, string, []any) {
-	return openListCatalogCardsQueryFiltered(sourceID, query, nil, nil, nil, "", 0)
+	return openListCatalogCardsQueryFiltered(sourceID, query, nil, nil, nil, "", 0, 0)
 }
 
 // openListCatalogCardsQueryLocalized restricts text search to the reader's
 // display-language corpus. It never falls back to the original title.
 //
-// limit is the card budget of a 1-2 character query. It bounds each branch's
-// scan and then trims the merged, deduplicated cards to that many rows in
-// display order, so entry and series cards and every corpus language the
-// display language reads share one number. Zero keeps every match, which the
-// trigram path and the diagnostic readers use.
-//
-// A caller that reports "more than the budget" builds the same statement twice:
-// once at the budget for the page, once one row past it for the count.
-func openListCatalogCardsQueryLocalized(sourceID int64, query string, targets []library.DisplaySearchTarget, configKey string, limit int) (string, string, []any) {
-	return openListCatalogCardsQueryFiltered(sourceID, query, nil, nil, targets, configKey, limit)
+// armScanLimit and cardLimit are two different bounds and both are needed.
+// armScanLimit bounds how many rows one (language, entity kind) branch reads:
+// that is a work limit, and it is what keeps a keystroke from scanning a whole
+// source. cardLimit bounds how many cards the merged, deduplicated set may
+// return: that is the response budget, and entry cards, series cards and every
+// corpus language the display language reads share it. A caller that must prove
+// overflow raises both by one, because a single arm has to be able to produce
+// the extra row. Zero in both keeps every match, which the trigram path and the
+// diagnostic readers use.
+func openListCatalogCardsQueryLocalized(sourceID int64, query string, targets []library.DisplaySearchTarget, configKey string, armScanLimit, cardLimit int) (string, string, []any) {
+	return openListCatalogCardsQueryFiltered(sourceID, query, nil, nil, targets, configKey, armScanLimit, cardLimit)
 }
 
 func openListCatalogCardsQueryForEntries(sourceID int64, entryIDs []int64) (string, string, []any) {
-	return openListCatalogCardsQueryFiltered(sourceID, "", entryIDs, nil, nil, "", 0)
+	return openListCatalogCardsQueryFiltered(sourceID, "", entryIDs, nil, nil, "", 0, 0)
 }
 
-func openListCatalogCardsQueryFiltered(sourceID int64, query string, entryIDs, seriesIDs []int64, localized []library.DisplaySearchTarget, configKey string, limit int) (string, string, []any) {
+func openListCatalogCardsQueryFiltered(sourceID int64, query string, entryIDs, seriesIDs []int64, localized []library.DisplaySearchTarget, configKey string, armScanLimit, cardLimit int) (string, string, []any) {
 	query = strings.TrimSpace(query)
 	prefix := ""
 	args := []any{}
@@ -91,7 +92,7 @@ func openListCatalogCardsQueryFiltered(sourceID int64, query string, entryIDs, s
 		if len(localized) > 0 {
 			// A display language searches only its own corpus. Original-title
 			// matches are not a fallback for a missing translation.
-			prefix, args = localizedCatalogSearchSQL(localized, sourceID, utf8.RuneCountInString(query) < 3, configKey, limit)
+			prefix, args = localizedCatalogSearchSQL(localized, sourceID, utf8.RuneCountInString(query) < 3, configKey, armScanLimit)
 			// The hit set already names the cards. Driving the pipeline from it
 			// keeps the work proportional to the matches instead of scanning
 			// every entry of the source and filtering afterwards. A 1-2
@@ -239,14 +240,12 @@ func openListCatalogCardsQueryFiltered(sourceID int64, query string, entryIDs, s
 	args = append(args, entryArgs...)
 	args = append(args, sourceID)
 	args = append(args, seriesArgs...)
-	if limit > 0 {
-		// One card budget covers the whole response: entries, series and every
-		// corpus language the display language reads. The trim sits outside the
-		// identity dedup so no identity group is cut in half. The order repeats
-		// the page order exactly; otherwise the trimmed prefix and the paged
-		// cards would be different sets.
-		from = `FROM (SELECT * ` + rankSuffix + ` ORDER BY exact DESC,updated_at DESC,series_id DESC,id DESC LIMIT ` +
-			strconv.Itoa(limit) + `) AS budgeted`
+	if cardLimit > 0 {
+		// The trim sits outside the identity dedup so no identity group is cut in
+		// half, and it repeats the page order through catalogCardOrder so "the
+		// first N cards" and the pages a reader pages through are one set.
+		from = `FROM (SELECT * ` + rankSuffix + ` ORDER BY ` + catalogCardOrder + ` LIMIT ` +
+			strconv.Itoa(cardLimit) + `) AS budgeted`
 	}
 	return prefix, from, args
 }
@@ -260,6 +259,11 @@ func ftsPhrase(query string) string {
 // reports 0.
 const catalogCardPageColumns = `id,series_id,primary_code,title,work_id,updated_at,availability_status,exact,has_audio`
 
+// catalogCardOrder is the display order of cards a reader can reach. The page
+// and the short-query trim both read it, so "the first N cards" and the pages a
+// reader pages through cannot drift into different sets.
+const catalogCardOrder = `exact DESC,updated_at DESC,series_id DESC,id DESC`
+
 // catalogCardPageSQL builds the page query for one candidate set. A capped
 // search omits the window total and reports its count separately; every other
 // shape carries the total on the page so a non-empty page needs one statement.
@@ -269,7 +273,7 @@ func catalogCardPageSQL(prefix, from string, capped bool) string {
 		total = ""
 	}
 	return catalogStatementPrefix(prefix) + `SELECT ` + catalogCardPageColumns + total + ` ` + from +
-		` ORDER BY exact DESC,updated_at DESC,series_id DESC,id DESC LIMIT ? OFFSET ?`
+		` ORDER BY ` + catalogCardOrder + ` LIMIT ? OFFSET ?`
 }
 
 // catalogStatementPrefix closes a CTE list that ends with a separator, so a

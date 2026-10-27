@@ -390,7 +390,7 @@ func TestOpenListCatalogShortTranslationSearchPlan(t *testing.T) {
 	if !ok {
 		t.Fatal("zh-cn is not a display language")
 	}
-	prefix, from, args := openListCatalogCardsQueryLocalized(7, "夜", targets, "config-key", 0)
+	prefix, from, args := openListCatalogCardsQueryLocalized(7, "夜", targets, "config-key", 0, 0)
 	plan := explainCatalogPlan(t, db, prefix+`SELECT count(*) `+from, args...)
 	t.Logf("short translated search plan:\n%s", plan)
 	if strings.Contains(plan, "SCAN content_translation\n") {

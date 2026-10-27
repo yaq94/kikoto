@@ -45,11 +45,11 @@ type ShortSearchArm struct {
 //
 // The scan walks the complete effective range in index order and stops after
 // the requested number of matches; it never starts from a fixed recent-rows
-// window. A caller that reports a total uses the same cap, so a keystroke never
-// runs the card pipeline over the whole source, and marks the response
-// truncated when the overflow probe below finds another match. Zero keeps the
-// complete effective set unordered, which is a diagnostic shape: a sort there
-// would read the whole range before returning anything.
+// window. The limit is a per-branch work bound, not the number of results a
+// caller may return: a caller that owns a response budget trims the merged rows
+// itself, and one that needs to prove overflow asks for one row past the bound.
+// Zero keeps the complete effective set unordered, which is a diagnostic shape:
+// a sort there would read the whole range before returning anything.
 //
 // The returned subquery exposes (entity_id, language, entity_kind, field, id,
 // exact), where `exact` says the stored text equals the needle. The comparison
@@ -96,46 +96,6 @@ func ShortTranslationSearchSQL(targets []DisplaySearchTarget, arms []ShortSearch
 		UNION ALL
 		`) + `
 	)`, args
-}
-
-// ShortTranslationSearchOverflowSQL reports, per (target language, entity
-// kind), whether more effective rows exist than the given budget. Each probe
-// walks at most limit+1 rows of the same index range, so it costs one page
-// rather than a full count. A caller uses it to mark a truncated result list
-// instead of presenting the budget as the whole answer.
-//
-// The statement returns (language, entity_kind, overflow) per branch.
-func ShortTranslationSearchOverflowSQL(targets []DisplaySearchTarget, arms []ShortSearchArm, limit int) (string, []any) {
-	if limit <= 0 || len(arms) == 0 || len(targets) == 0 {
-		return "", nil
-	}
-	probes := []string{}
-	args := []any{}
-	for _, arm := range arms {
-		if arm.EntityKind == "" || len(arm.Fields) == 0 || arm.After > 0 {
-			continue
-		}
-		for _, target := range targets {
-			if strings.TrimSpace(target.Query) == "" {
-				continue
-			}
-			branch, branchArgs := shortTranslationBranch(target, arm)
-			if branch == "" {
-				continue
-			}
-			probes = append(probes, `SELECT ? AS language,? AS entity_kind,
-				EXISTS(SELECT 1 FROM (`+branch+` LIMIT ? OFFSET ?)) AS overflow`)
-			probeArgs := append([]any{target.Language, arm.EntityKind}, branchArgs...)
-			probeArgs = append(probeArgs, 1, limit)
-			args = append(args, probeArgs...)
-		}
-	}
-	if len(probes) == 0 {
-		return "", nil
-	}
-	return strings.Join(probes, `
-		UNION ALL
-		`), args
 }
 
 // shortTranslationBranch builds one uncapped (target language, entity kind)

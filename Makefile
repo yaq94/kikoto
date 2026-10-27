@@ -6,6 +6,13 @@
 .PHONY: browse-performance browse-production-performance playback-performance recommendation-performance source-index-contract source-index-performance source-index-tail-performance
 
 GO ?= go
+# Go's per-package default test timeout is 600 s. internal/httpapi runs past
+# that on a two-core host once the catalog and translation suites are in the
+# same binary, and a package timeout aborts the run without naming a failing
+# assertion. These targets are the local equivalent of the CI jobs, whose job
+# timeouts are 25–45 minutes, so the package ceiling is set from the same
+# budget instead of the language default.
+GO_TEST_TIMEOUT ?= 30m
 DOCKER_BUILD ?= $(DOCKER) build
 DOCKER_BUILD_ARGS ?=
 E2E_ARGS ?=
@@ -91,7 +98,7 @@ backend-vuln:
 	cd backend && $(GO) run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./...
 
 backend-test:
-	cd backend && $(GO) test -timeout=30m ./...
+	cd backend && $(GO) test -timeout=$(GO_TEST_TIMEOUT) ./...
 
 # Opt-in synthetic experiments; run these sequentially on an otherwise idle host.
 browse-performance:
@@ -122,10 +129,10 @@ playback-performance: frontend-build
 	$(NODE) scripts/run-browse-performance.mjs playback
 
 backend-test-container:
-	$(DOCKER) run --rm -v "$(CURDIR)/backend:/src" -w /src $(GO_IMAGE) $(GO) test -timeout=30m ./...
+	$(DOCKER) run --rm -v "$(CURDIR)/backend:/src" -w /src $(GO_IMAGE) $(GO) test -timeout=$(GO_TEST_TIMEOUT) ./...
 
 backend-coverage:
-	cd backend && $(GO) test -count=1 -timeout=30m -covermode atomic -coverpkg ./... -coverprofile coverage.out ./...
+	cd backend && $(GO) test -count=1 -timeout=$(GO_TEST_TIMEOUT) -covermode atomic -coverpkg ./... -coverprofile coverage.out ./...
 	cd backend && $(GO) tool cover -func coverage.out
 
 backend-vet:

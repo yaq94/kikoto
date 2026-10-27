@@ -800,7 +800,7 @@ func (s *Server) listOpenListWorks(w http.ResponseWriter, r *http.Request, sourc
 		if short {
 			limit = catalogShortSearchResultLimit
 		}
-		prefix, from, args := openListCatalogCardsQueryLocalized(source.ID, q, targets, configKey, limit)
+		prefix, from, args := openListCatalogCardsQueryLocalized(source.ID, q, targets, configKey, limit, limit)
 		pageArgs = append([]any{}, args...)
 		pageSQL = catalogCardPageSQL(prefix, from, short)
 		pageArgs = append(pageArgs, pageSize, (page-1)*pageSize)
@@ -810,11 +810,12 @@ func (s *Server) listOpenListWorks(w http.ResponseWriter, r *http.Request, sourc
 		countPrefix, countFrom := prefix, from
 		countArgs = args
 		if short {
-			// The count reads one row past the budget, on the same statement
-			// shape. A row beyond the budget proves the set holds more, which is
-			// cheaper than a separate overflow probe per branch.
+			// Both bounds move together: a row past the card budget can only
+			// exist if some arm was allowed to read past its own bound, and a
+			// single arm has to be able to supply it. One extra row then proves
+			// more cards exist without a second query shape.
 			countPrefix, countFrom, countArgs = openListCatalogCardsQueryLocalized(
-				source.ID, q, targets, configKey, limit+1)
+				source.ID, q, targets, configKey, limit+1, limit+1)
 		}
 		countSQL = catalogStatementPrefix(countPrefix) + `SELECT COUNT(*) ` + countFrom
 		separateCount = short

@@ -335,12 +335,12 @@ func (s *Server) buildVoiceCatalogRemoteWork(ctx context.Context, row voiceCatal
 		Price: nullableInt64FromFloatNull(row.Price), Tags: tags, VoiceActors: voiceActors,
 		ImportStatus: remoteImportStatus(nullableWorkID(workID)), RemotePlayable: voiceCatalogPlayable(status),
 		WorkID: nullableWorkID(workID), HasLocal: flags.HasLocal, HasCache: flags.HasCache,
-		HasRemote: remotePresence(flags.HasRemote, status), Availability: status,
+		HasRemote: sourceHoldsWork(flags.HasRemote, status), Availability: status,
 	}, nil
 }
 
-// voiceCatalogPlayable answers whether the source observation says the work can
-// be opened there right now.
+// voiceCatalogPlayable answers whether a resolved voice status says the source
+// currently serves the work.
 //
 // A voice catalog row is a metadata observation, not a card with a published
 // file set: the audio only exists at the remote source. So the catalog rule —
@@ -348,6 +348,10 @@ func (s *Server) buildVoiceCatalogRemoteWork(ctx context.Context, row voiceCatal
 // files are still servable — does not carry over. Spelling out the one
 // playable verdict keeps an unavailable, errored or disabled row from offering
 // an action the source has no evidence for.
+//
+// The caller resolves the status before asking: an `unknown` row that carries a
+// last-seen timestamp is promoted to `available` above, so this function never
+// reads the raw column default.
 func voiceCatalogPlayable(status string) bool {
 	return status == "available"
 }

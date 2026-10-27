@@ -25,6 +25,11 @@ function hiddenAutomatically(badge: WorkCardBadge, scope: LibraryCoverSourceScop
  * only exceptions remain (a warning about the work's own files, or the other
  * Library scope also holding it); never shows none at all.
  * `sourceUnavailableFallback` is false when an empty result is intentional.
+ *
+ * The builders sort their own output, but this function merges marks that came
+ * from separate builders (a Library mark plus a remote verdict), and merging two
+ * sorted lists does not preserve order across classes. This is the one place
+ * that sees the merged list, so it is the one place that sorts it.
  */
 export function libraryCoverSourceBadges(
   badges: WorkCardBadge[],

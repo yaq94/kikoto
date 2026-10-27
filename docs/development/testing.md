@@ -91,10 +91,18 @@ even when names, credentials, or paths have been partially replaced.
 ```sh
 cd backend
 go run ../scripts/check-go-format.go . ../scripts
-go test ./...
+go test -timeout=30m ./...
 go vet ./...
-go test -race ./...
+go test -timeout=30m -race ./...
 ```
+
+The `Makefile` sets `GO_TEST_TIMEOUT` (30 minutes by default) for the same
+reason: `internal/httpapi` holds the catalog, translation and media suites in
+one package and passes Go's 600-second default on a two-core host. A package
+timeout ends the run without naming a failing assertion, so the ceiling comes
+from the CI job budget (25–45 minutes) rather than from the language default.
+Override it with `make GO_TEST_TIMEOUT=45m backend-test` when a slow host needs
+more room.
 
 The canonical Make targets also run the backend format and lint checks:
 

@@ -144,9 +144,9 @@ func shortQueryMeasure(t *testing.T, db *sql.DB, sourceID int64, target library.
 	// one row further, so a keystroke never walks the whole source. The uncapped
 	// shape stays as a diagnostic: it says how much a full count would cost
 	// without a budget.
-	prefix, from, args := openListCatalogCardsQueryLocalized(sourceID, target.Query, []library.DisplaySearchTarget{target}, configKey, catalogShortSearchResultLimit)
-	totalPrefix, totalFrom, totalArgs := openListCatalogCardsQueryLocalized(sourceID, target.Query, []library.DisplaySearchTarget{target}, configKey, catalogShortSearchResultLimit+1)
-	uncappedPrefix, uncappedFrom, uncappedArgs := openListCatalogCardsQueryLocalized(sourceID, target.Query, []library.DisplaySearchTarget{target}, configKey, 0)
+	prefix, from, args := openListCatalogCardsQueryLocalized(sourceID, target.Query, []library.DisplaySearchTarget{target}, configKey, catalogShortSearchResultLimit, catalogShortSearchResultLimit)
+	totalPrefix, totalFrom, totalArgs := openListCatalogCardsQueryLocalized(sourceID, target.Query, []library.DisplaySearchTarget{target}, configKey, catalogShortSearchResultLimit+1, catalogShortSearchResultLimit+1)
+	uncappedPrefix, uncappedFrom, uncappedArgs := openListCatalogCardsQueryLocalized(sourceID, target.Query, []library.DisplaySearchTarget{target}, configKey, 0, 0)
 	result := shortQueryCase{Language: target.Language, Needle: target.Query}
 
 	// The hit set is the short query itself: the complete effective range with
@@ -204,7 +204,7 @@ func shortQueryMeasure(t *testing.T, db *sql.DB, sourceID int64, target library.
 	})
 
 	pageSQL := catalogStatementPrefix(prefix) + `SELECT id ` + from +
-		` ORDER BY exact DESC,updated_at DESC,series_id DESC,id DESC LIMIT ? OFFSET ?`
+		` ORDER BY ` + catalogCardOrder + ` LIMIT ? OFFSET ?`
 	pageArgs := append(append([]any{}, args...), 200, 0)
 	pageRows := 0
 	result.Page = shortQuerySample(samples, func() error {
