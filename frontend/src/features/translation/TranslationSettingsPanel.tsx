@@ -25,6 +25,10 @@ export function TranslationSettingsPanel({ readOnly = false }: { readOnly?: bool
   const [text, setText] = useState("");
   const [target, setTarget] = useState<TranslationTarget>("zh-Hans");
   const [result, setResult] = useState<TranslationResult | null>(null);
+  // Set when a keystroke would push the field past the API's byte bound. The
+  // field keeps the last accepted value, and the note below it says so; a
+  // silently refused edit looks like the input was lost.
+  const [inputRejected, setInputRejected] = useState(false);
   const [busy, setBusy] = useState<"save" | "test" | null>(null);
   const [errorCode, setErrorCode] = useState<string | null>(null);
   const [savedMessage, setSavedMessage] = useState(false);
@@ -309,10 +313,14 @@ export function TranslationSettingsPanel({ readOnly = false }: { readOnly?: bool
               value={text}
               onChange={(event) => {
                 const next = event.target.value;
-                // Stop at the byte bound the API enforces. The counter below
-                // shows the measurement, so a refused keystroke is visible
-                // rather than silently dropped.
-                if (trialInputBytes(next) <= trialInputLimitBytes) setText(next);
+                // Stop at the byte bound the API enforces, and report the
+                // refusal inline instead of dropping the edit.
+                if (trialInputBytes(next) <= trialInputLimitBytes) {
+                  setText(next);
+                  setInputRejected(false);
+                } else {
+                  setInputRejected(true);
+                }
                 setResult(null);
               }}
               disabled={disabled}
@@ -323,6 +331,11 @@ export function TranslationSettingsPanel({ readOnly = false }: { readOnly?: bool
             <p id="translation-trial-bytes" className="text-xs text-muted-foreground">
               {t("translationAdmin.inputBytes", { used: trialBytes, limit: trialInputLimitBytes })}
             </p>
+            {inputRejected && (
+              <p role="status" className="text-xs text-error">
+                {t("translationAdmin.inputTooLong", { limit: trialInputLimitBytes })}
+              </p>
+            )}
           </SettingsRow>
           <SettingsRow title={t("translationAdmin.target")} htmlFor="translation-target">
             <NativeSelect

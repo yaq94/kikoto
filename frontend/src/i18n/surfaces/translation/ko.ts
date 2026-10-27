@@ -1,7 +1,7 @@
 export const translationAdmin = {
   content: {
     pending: "번역 중…",
-    pendingTooLong: "번역이 아직 대기 중입니다. 다시 시도할 수 있습니다.",
+    pendingTooLong: "번역이 아직 완료되지 않았습니다. 다시 시도할 수 있습니다.",
     failed: "번역하지 못했습니다. 원문을 표시합니다.",
     retry: "번역 다시 시도",
     original: "원문 보기",
@@ -34,6 +34,7 @@ export const translationAdmin = {
   trial: "번역 테스트",
   trialHint: "저장된 설정으로 민감한 정보가 없는 짧은 글을 번역합니다. 테스트마다 한 번만 요청합니다.",
   inputBytes: "{{used}} / {{limit}}바이트 입력됨",
+  inputTooLong: "입력 한도({{limit}}바이트)에 도달하여 추가 내용은 입력되지 않았습니다.",
   text: "테스트 글",
   target: "번역 대상 언어",
   test: "저장된 설정 테스트",

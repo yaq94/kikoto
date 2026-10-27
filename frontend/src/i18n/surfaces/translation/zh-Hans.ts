@@ -1,7 +1,7 @@
 export const translationAdmin = {
   content: {
     pending: "正在翻译…",
-    pendingTooLong: "翻译仍在排队，可重试。",
+    pendingTooLong: "翻译尚未完成，可重试。",
     failed: "翻译失败，已保留原文。",
     retry: "重试翻译",
     original: "查看原文",
@@ -34,6 +34,7 @@ export const translationAdmin = {
   trial: "试译",
   trialHint: "使用已保存的配置翻译一段不含敏感信息的短文本。每次试译只发送一次请求。",
   inputBytes: "已输入 {{used}} / {{limit}} 字节",
+  inputTooLong: "已到输入上限（{{limit}} 字节），多出的内容没有加入。",
   text: "试译文本",
   target: "翻译目标语言",
   test: "测试已保存的配置",

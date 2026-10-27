@@ -1,7 +1,7 @@
 export const translationAdmin = {
   content: {
     pending: "翻訳中…",
-    pendingTooLong: "翻訳はまだ待機中です。再試行できます。",
+    pendingTooLong: "翻訳はまだ完了していません。再試行できます。",
     failed: "翻訳できません。原文を表示しています。",
     retry: "翻訳を再試行",
     original: "原文を表示",
@@ -35,6 +35,7 @@ export const translationAdmin = {
   trial: "翻訳テスト",
   trialHint: "保存済みの設定で機密情報を含まない短い文章を翻訳します。テストごとにリクエストを 1 回送信します。",
   inputBytes: "{{used}} / {{limit}} バイト入力済み",
+  inputTooLong: "入力上限（{{limit}} バイト）に達したため、それ以上は追加されていません。",
   text: "テスト文章",
   target: "翻訳先言語",
   test: "保存済み設定をテスト",

@@ -193,3 +193,27 @@ test("translation cancellation releases the request and ordinary users cannot op
   await expect(page.getByRole("tab", { name: "Translation", exact: true })).toHaveCount(0);
   expect((await page.request.get(`${backendURL}/api/settings/translation`)).status()).toBe(403);
 });
+
+test("a trial keystroke past the input limit is refused with an inline note @desktop", async ({ page }) => {
+  expect(
+    (
+      await page.request.post(`${backendURL}/api/auth/login`, {
+        data: { username: "root", password: "synthetic-browser-password" },
+      })
+    ).ok(),
+  ).toBe(true);
+  await page.request.patch(`${backendURL}/api/auth/me`, { data: { uiLocale: "en" } });
+  await page.goto("/settings?tab=translation");
+  const field = page.getByLabel("Trial text", { exact: true });
+  await field.fill("Short text.");
+  await expect(page.locator("#translation-trial-bytes")).toHaveText("11 of 8192 bytes used");
+  // One keystroke past 8 KiB must leave the accepted text in place and say so;
+  // silently dropping the edit looks like the input was lost.
+  await field.fill("x".repeat(8193));
+  await expect(page.getByText("The input limit of 8192 bytes is reached; extra text was not added.")).toBeVisible();
+  await expect(field).toHaveValue("Short text.");
+  // The next accepted edit clears the note; the field is usable again.
+  await field.fill("Short.");
+  await expect(field).toHaveValue("Short.");
+  await expect(page.getByText("The input limit of 8192 bytes is reached; extra text was not added.")).toHaveCount(0);
+});

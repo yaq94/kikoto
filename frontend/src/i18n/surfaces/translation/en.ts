@@ -1,7 +1,7 @@
 export const translationAdmin = {
   content: {
     pending: "Translating…",
-    pendingTooLong: "Translation is still queued. You can retry.",
+    pendingTooLong: "Translation has not finished yet. You can retry.",
     failed: "Translation failed; original retained.",
     retry: "Retry translation",
     original: "Show original",
@@ -35,6 +35,7 @@ export const translationAdmin = {
   trial: "Translation trial",
   trialHint: "Send a short, non-sensitive text using the saved configuration. Each trial makes one request.",
   inputBytes: "{{used}} of {{limit}} bytes used",
+  inputTooLong: "The input limit of {{limit}} bytes is reached; extra text was not added.",
   text: "Trial text",
   target: "Translation target",
   test: "Test saved configuration",
