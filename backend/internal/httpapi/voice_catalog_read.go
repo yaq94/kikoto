@@ -333,10 +333,27 @@ func (s *Server) buildVoiceCatalogRemoteWork(ctx context.Context, row voiceCatal
 		Circle: row.Circle, AgeRating: row.AgeRating, Rating: nullableFloat64FromNull(row.Rating),
 		RatingCount: nullableInt64FromFloatNull(row.RatingCount), Sales: nullableInt64FromFloatNull(row.Sales),
 		Price: nullableInt64FromFloatNull(row.Price), Tags: tags, VoiceActors: voiceActors,
-		ImportStatus: remoteImportStatus(nullableWorkID(workID)), RemotePlayable: status == "available",
+		ImportStatus: remoteImportStatus(nullableWorkID(workID)), RemotePlayable: voiceCatalogPlayable(status),
 		WorkID: nullableWorkID(workID), HasLocal: flags.HasLocal, HasCache: flags.HasCache,
 		HasRemote: flags.HasRemote || status == "available", Availability: status,
 	}, nil
+}
+
+// voiceCatalogPlayable adapts the voice observation vocabulary to
+// catalogVerdictPlayable. Voice spells a confirmed absence "not_found" and keeps
+// a disabled source's rows visible instead of withholding them, so those two
+// verdicts are handed to the shared rule as "missing" and "excluded". Every
+// other voice verdict (available, unavailable, error, unknown) still has its
+// last published file set and stays playable, the same answer the catalog
+// detail and media endpoints give.
+func voiceCatalogPlayable(status string) bool {
+	switch status {
+	case "not_found":
+		status = "missing"
+	case "disabled":
+		status = "excluded"
+	}
+	return catalogVerdictPlayable(status)
 }
 
 func decodeVoiceCatalogStrings(raw string) []string {
