@@ -120,6 +120,9 @@ The Library is the main browsing surface for works.
   marks follow their own display option in every mode, and a card opens its
   work the same way in every mode. The choice applies to Local, Tracked, and
   remote sources in the Library, including the remote loading placeholders.
+  A remote card whose source's last check did not succeed shows that verdict
+  as a readable chip instead of an icon, because a touch reader cannot hover
+  and a screenshot of the grid would lose it.
 - Uses one shared query across Local, Tracked, and configured remote sources.
   Each source retains its own pagination, sort, and scroll state, while grid
   column settings remain shared. A source cannot restore stale query text after
