@@ -156,9 +156,9 @@ restore commands it is the directory under `rollbacks/`.
 `docker compose down` removes the container and keeps the bind mounts; do not
 add `-v`. The `mv` keeps the `079` database for inspection. Remove the WAL and
 SHM files before copying, because they belong to the database being replaced.
-The bundled `deploy/compose` files have a health check, so a deployment that
-uses one can wait with `up -d --wait`. The production stack in this repository
-does not define that check; poll `/health` as shown under
+The bundled compose files, including the root production example, define a
+health check, so a deployment that uses one can wait with `up -d --wait`. A
+host that kept an older compose file should still poll `/health` as shown under
 [Verify The Restored Instance](#verify-the-restored-instance).
 
 ## Restore A Schema 95 Through 105 Snapshot
@@ -208,7 +208,7 @@ last command reports `no such table` instead of a count. The health response is
 
 Then confirm:
 
-1. `docker compose ps` reports the expected image; a stack with a Compose healthcheck also reports `healthy`, while the production stack without one only needs `running`.
+1. `docker compose ps` reports the expected image and `healthy`; a stack that predates the bundled health check only needs `running`.
 2. `GET /health` returns HTTP 200 with the restored version.
 3. An authenticated `/api/works` read returns the works that existed before the
    upgrade, and a source and catalog entry remain readable.
