@@ -415,6 +415,7 @@ func (s *Server) Routes() http.Handler {
 	handleSlowFirstResponse("POST /api/source-catalog/{id}/refresh", s.refreshCatalogDirectory)
 	handleSlowFirstResponse("GET /api/source-catalog/{id}/media", s.streamSourceCatalogMedia)
 	mux.HandleFunc("PATCH /api/source-catalog/{id}/user-state", s.updateSourceCatalogUserState)
+	mux.HandleFunc("POST /api/source-catalog/{id}/work", s.registerSourceCatalogWork)
 	mux.HandleFunc("PATCH /api/file-sources/{id}", s.updateFileSource)
 	mux.HandleFunc("DELETE /api/file-sources/{id}", s.deleteFileSource)
 	mux.HandleFunc("POST /api/file-sources/{id}/health-check", s.checkFileSourceHealth)

@@ -187,6 +187,7 @@ export const surfaceKorean = {
     error: "색인 요청에 실패했습니다. 진행 상황을 새로고침하거나 다시 시도하세요.",
     limits: "색인 제한",
     limitsHint: "제한은 하나의 스캔 작업 안에 적용됩니다. 실행 중인 설정을 바꾸려면 취소 후 재개하세요.",
+    summary: "완료 {{completed}} · 대기 {{pending}} · 실패 {{failed}} · 미확인 빈 폴더 {{empty}}",
     counts: "완료 폴더 {{completed}} · 대기 {{pending}} · 관찰 항목 {{entries}} · 재생 가능 카드 {{indexed}}",
     issues: "실패 {{failed}} · 접근 제한 {{restricted}} · 미확인 빈 폴더 {{empty}}",
     times: "시작 {{started}} · 갱신 {{updated}} · 페이지 요청 {{requests}}회",

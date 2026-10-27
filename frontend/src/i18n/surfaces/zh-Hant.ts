@@ -183,6 +183,7 @@ export const surfaceHant = {
     error: "索引請求失敗，請重新整理進度或重試。",
     limits: "索引限制",
     limitsHint: "這些限制作用於一個掃描作業內。執行中的設定保持不變；取消後繼續可套用新設定。",
+    summary: "已完成 {{completed}} · 待處理 {{pending}} · 失敗 {{failed}} · 待確認空目錄 {{empty}}",
     counts: "目錄：已完成 {{completed}}，待處理 {{pending}} · 已觀察項目 {{entries}} · 可播放卡片 {{indexed}}",
     issues: "失敗 {{failed}} · 存取受限 {{restricted}} · 待確認空目錄 {{empty}}",
     times: "開始 {{started}} · 更新 {{updated}} · 目錄頁請求 {{requests}} 次",

@@ -45,6 +45,11 @@ test("administrator configures, cancels and resumes the full source index throug
     failedDirectories: 0,
     restrictedDirectories: 0,
   });
+  // The diagnostic detail starts folded; its summary alone carries the counts.
+  const progressDetails = region.locator("details").filter({ hasText: "Partitions" });
+  await expect(progressDetails).toHaveJSProperty("open", false);
+  await progressDetails.locator("summary").click();
+  await expect(progressDetails).toHaveJSProperty("open", true);
   await expect(region).toContainText("/Example Work");
   await expect(page.getByRole("heading", { name: "Example Work", exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Translation Example", exact: true })).toBeVisible();

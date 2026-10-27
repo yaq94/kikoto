@@ -145,3 +145,24 @@ func TestRemoteBrowseOptionalRecommendationFailurePreservesCardsAndHealth(t *tes
 		}
 	}
 }
+
+// A catalog source has no work list to score. Reporting that as an outage of
+// the source made the Library show "service unavailable" for a healthy source.
+func TestRemoteRecommendationsReportMissingCapabilityForCatalogSources(t *testing.T) {
+	s := newRemoteTextPreviewServer(t, "https://upstream.example.invalid", "https://upstream.example.invalid/media/track.wav")
+	metadataReviewExec(t, s.db, "UPDATE file_source SET source_type = 'openlist' WHERE id = 7")
+	userID := metadataReviewExec(t, s.db, "INSERT INTO user_account (username, display_name, role) VALUES ('synthetic-user', 'Example User', 'user')")
+	user := currentUser{ID: userID, Role: "user", Permissions: []string{"library:read"}}
+	payload := `{"recommendationSession":"synthetic-session","works":[{"primaryCode":"RJ00000001"}]}`
+	r := httptest.NewRequest(http.MethodPost, "/api/remote-sources/7/recommendations", strings.NewReader(payload))
+	r.SetPathValue("id", "7")
+	r = r.WithContext(context.WithValue(r.Context(), currentUserKey, user))
+	response := httptest.NewRecorder()
+	s.scoreRemoteRecommendations(response, r)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+	if !strings.Contains(response.Body.String(), "recommendations_not_supported") {
+		t.Fatalf("body=%s", response.Body.String())
+	}
+}

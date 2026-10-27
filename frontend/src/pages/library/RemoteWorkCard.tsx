@@ -1,8 +1,9 @@
-import { GitFork, HardDriveDownload } from "lucide-react";
+import { GitFork, HardDriveDownload, ListMusic } from "lucide-react";
 
 import { useAuth } from "@/auth/AuthProvider";
 import type { SourceVisibilityMode } from "@/components/source-visibility/sourceVisibility";
 import { CompactWorkCardShell, type CompactWorkCardLayout } from "@/components/work-card/CompactWorkCard";
+import { showsRecommendationBadge } from "@/components/work-card/recommendationBadge";
 import {
   dlsiteTagBadges,
   WorkCardActionButton,
@@ -40,6 +41,8 @@ export function RemoteWorkCard({
   onSave,
   onEnsureWork,
   onListSaved,
+  onQueue,
+  isQueueing,
   layout,
 }: {
   work: RemoteWork;
@@ -61,10 +64,20 @@ export function RemoteWorkCard({
   onSave: () => void;
   onEnsureWork: () => Promise<number | null>;
   onListSaved: (workId: number, favorite: boolean) => void;
+  /** Catalog rows have no files to download, but they can still be queued. */
+  onQueue: () => void;
+  isQueueing: boolean;
   layout: CompactWorkCardLayout | null;
 }) {
   const Shell = layout ? CompactWorkCardShell : WorkCardShell;
-  const baseView = remoteWorkCardView(work, source, recommendationScored, useAuth().recommendationThreshold);
+  const { recommendationThreshold, recommendationBaseline } = useAuth();
+  const baseView = remoteWorkCardView(
+    work,
+    source,
+    recommendationScored,
+    recommendationThreshold,
+    recommendationBaseline,
+  );
   const sourceBadges = libraryCoverSourceBadges(
     baseView.sourceBadges,
     { kind: "remote", sourceId: source.id },
@@ -97,8 +110,20 @@ export function RemoteWorkCard({
           left={work.primaryCode ? <WorkCardDLsiteAction href={dlsiteWorkURL(work.primaryCode)} /> : null}
           right={
             <>
+              {work.catalogEntryId && (
+                <WorkCardActionButton
+                  title={i18n.t("library.catalogQueue")}
+                  disabled={isBusy || isQueueing}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onQueue();
+                  }}
+                >
+                  <ListMusic className="h-4 w-4" />
+                </WorkCardActionButton>
+              )}
               <WorkCardActionButton
-                title={i18n.t("detailActions.fork")}
+                title={work.catalogEntryId ? i18n.t("library.catalogStreamOnly") : i18n.t("detailActions.fork")}
                 disabled={isBusy || !work.primaryCode || Boolean(work.catalogEntryId)}
                 onClick={(event) => {
                   event.stopPropagation();
@@ -108,7 +133,7 @@ export function RemoteWorkCard({
                 <GitFork className="h-4 w-4" />
               </WorkCardActionButton>
               <WorkCardActionButton
-                title={i18n.t("detailActions.fetch")}
+                title={work.catalogEntryId ? i18n.t("library.catalogStreamOnly") : i18n.t("detailActions.fetch")}
                 disabled={isBusy || !work.primaryCode || Boolean(work.catalogEntryId)}
                 onClick={(event) => {
                   event.stopPropagation();
@@ -120,13 +145,13 @@ export function RemoteWorkCard({
               <WorkCardListButton
                 workId={work.workId}
                 active={work.favorite}
-                disabled={isBusy || !work.primaryCode || Boolean(work.catalogEntryId)}
+                disabled={isBusy || (!work.primaryCode && !work.catalogEntryId)}
                 ensureWorkId={onEnsureWork}
                 onSaved={(favorite, workId) => onListSaved(workId, favorite)}
               />
               <WorkCardQuickMarkButton
                 value={work.listeningStatus}
-                disabled={isBusy || !work.primaryCode || Boolean(work.catalogEntryId)}
+                disabled={isBusy || (!work.primaryCode && !work.catalogEntryId)}
                 canOpen={canMark}
                 onChange={onMark}
               />
@@ -143,6 +168,7 @@ function remoteWorkCardView(
   source: LibrarySource,
   scored: boolean,
   threshold: number,
+  baseline: number,
 ): WorkCardViewModel {
   const sourceLabel = source.displayName || source.code || i18n.t("workCard.remoteSource");
   return {
@@ -168,7 +194,7 @@ function remoteWorkCardView(
     hasLyrics: work.hasLyrics,
     dlsiteTags: dlsiteTagBadges(work.tags),
     userTags: [],
-    recommended: scored && Number.isFinite(work.recommendScore),
+    recommended: showsRecommendationBadge(scored, work.recommendScore, baseline),
     recommendationHighlighted: work.recommendScore >= threshold,
     recommendationScore: work.recommendScore,
     sourceBadges: remoteSourceBadges(work, source.id, sourceLabel),

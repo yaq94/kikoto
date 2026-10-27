@@ -190,6 +190,7 @@ export const surfaceEnglish = {
     error: "Index request failed. Refresh progress or retry.",
     limits: "Index limits",
     limitsHint: "Limits apply within one scan job. Active runs keep their settings; cancel and resume to change them.",
+    summary: "{{completed}} complete · {{pending}} pending · {{failed}} failed · {{empty}} unconfirmed empty",
     counts:
       "Directories: {{completed}} complete, {{pending}} pending · {{entries}} observed entries · {{indexed}} playable cards",
     issues: "{{failed}} failed · {{restricted}} restricted · {{empty}} unconfirmed empty",

@@ -55,91 +55,13 @@ func (s *Server) updateSourceCatalogUserState(w http.ResponseWriter, r *http.Req
 		return
 	}
 	defer func() { _ = tx.Rollback() }()
-	// Take the writer lock before reading identity. Every field used below is
-	// then the row a concurrent rename or source move committed before the lock,
-	// never a pre-transaction snapshot.
-	if _, err = tx.ExecContext(r.Context(), "UPDATE source_catalog_entry SET id=id WHERE id=?", retained.ID); err != nil {
-		writeError(w, err)
+	entry, ok := s.lockCatalogEntry(r.Context(), w, r, tx, retained.ID)
+	if !ok {
 		return
 	}
-	entry, err := resolveCatalogEntry(r.Context(), tx, retained.ID)
-	if err != nil {
-		writeError(w, err)
+	workID, ok := s.ensureCatalogEntryWork(r.Context(), w, r, tx, entry)
+	if !ok {
 		return
-	}
-	id = entry.ID
-	if entry.SourceID != 0 {
-		admission, admissionErr := catalogPublishedEntryAdmission(r.Context(), tx, entry.ID)
-		if admissionErr != nil {
-			writeError(w, admissionErr)
-			return
-		}
-		// A retained missing record has no current published file set to judge;
-		// every other source-backed card must pass the same admission rule as
-		// the detail, tracks and browse routes.
-		if catalogEntryAdmissionRequired(entry) && !admission.Admitted() {
-			writeCatalogEntryNotAvailable(w, admission)
-			return
-		}
-	}
-	var resolvedID int64
-	if entry.PrimaryCode != "" {
-		resolvedID, err = resolveCatalogReviewWorkID(r.Context(), tx, entry.PrimaryCode)
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			writeError(w, err)
-			return
-		}
-		if errors.Is(err, sql.ErrNoRows) {
-			resolvedID = 0
-		}
-	}
-	var workID sql.NullInt64
-	if err = tx.QueryRowContext(r.Context(), "SELECT work_id FROM source_catalog_entry WHERE id=?", id).Scan(&workID); err != nil {
-		writeError(w, err)
-		return
-	}
-	if !workID.Valid && resolvedID > 0 {
-		workID = sql.NullInt64{Int64: resolvedID, Valid: true}
-	}
-	if !workID.Valid {
-		if _, ok = s.requirePermission(w, r, "remote:track"); !ok {
-			return
-		}
-		if entry.PrimaryCode != "" {
-			_, err = tx.ExecContext(r.Context(), `INSERT INTO work(primary_code,title) VALUES(?,?) ON CONFLICT(primary_code) WHERE primary_code<>'' DO NOTHING`, entry.PrimaryCode, entry.Title)
-			if err == nil {
-				err = tx.QueryRowContext(r.Context(), "SELECT id FROM work WHERE primary_code=?", entry.PrimaryCode).Scan(&workID.Int64)
-			}
-		} else {
-			workID.Int64, err = sqlutil.InsertID(r.Context(), tx, "INSERT INTO work(primary_code,title) VALUES('',?)", entry.Title)
-		}
-		if err != nil {
-			writeError(w, err)
-			return
-		}
-		workID.Valid = true
-		var logicalID int64
-		err = tx.QueryRowContext(r.Context(), "SELECT logical_work_id FROM work_edition WHERE work_id=?", workID.Int64).Scan(&logicalID)
-		if errors.Is(err, sql.ErrNoRows) {
-			logicalID, err = sqlutil.InsertID(r.Context(), tx, "INSERT INTO logical_work(canonical_work_id,canonical_code) VALUES(?,?)", workID.Int64, entry.PrimaryCode)
-			if err == nil {
-				_, err = tx.ExecContext(r.Context(), "INSERT INTO work_edition(work_id,logical_work_id,primary_code,is_canonical) VALUES(?,?,?,1)", workID.Int64, logicalID, entry.PrimaryCode)
-			}
-		}
-		if err != nil {
-			writeError(w, err)
-			return
-		}
-	}
-	if _, err = tx.ExecContext(r.Context(), "UPDATE source_catalog_entry SET work_id=? WHERE id=?", workID.Int64, id); err != nil {
-		writeError(w, err)
-		return
-	}
-	if entry.SourceID != 0 {
-		if err = upsertWorkSourcePresence(r.Context(), tx, workSourcePresence{WorkID: workID.Int64, FileSourceID: entry.SourceID, PresenceType: sourcePresenceTypeRemoteSource, RemoteID: strconv.FormatInt(id, 10), RemoteCode: entry.PrimaryCode, Availability: entry.Status, RawJSON: mustJSON(map[string]any{"catalogEntryId": id})}); err != nil {
-			writeError(w, err)
-			return
-		}
 	}
 	state, err := patchWorkUserState(r.Context(), tx, user.ID, workID.Int64, patch)
 	if err != nil {
@@ -151,6 +73,143 @@ func (s *Server) updateSourceCatalogUserState(w http.ResponseWriter, r *http.Req
 		return
 	}
 	writeJSON(w, http.StatusOK, state)
+}
+
+// lockCatalogEntry takes the writer lock before reading entry identity. Every
+// field used afterwards is then the row a concurrent rename or source move
+// committed before the lock, never a pre-transaction snapshot. The retained
+// id is followed through a relocation before it is returned.
+func (s *Server) lockCatalogEntry(ctx context.Context, w http.ResponseWriter, r *http.Request, tx *sql.Tx, retainedID int64) (catalogEntry, bool) {
+	if _, err := tx.ExecContext(ctx, "UPDATE source_catalog_entry SET id=id WHERE id=?", retainedID); err != nil {
+		writeError(w, err)
+		return catalogEntry{}, false
+	}
+	entry, err := resolveCatalogEntry(ctx, tx, retainedID)
+	if err != nil {
+		writeError(w, err)
+		return catalogEntry{}, false
+	}
+	if entry.SourceID != 0 {
+		admission, admissionErr := catalogPublishedEntryAdmission(ctx, tx, entry.ID)
+		if admissionErr != nil {
+			writeError(w, admissionErr)
+			return catalogEntry{}, false
+		}
+		// A retained missing record has no current published file set to judge;
+		// every other source-backed card must pass the same admission rule as
+		// the detail, tracks and browse routes.
+		if catalogEntryAdmissionRequired(entry) && !admission.Admitted() {
+			writeCatalogEntryNotAvailable(w, admission)
+			return catalogEntry{}, false
+		}
+	}
+	return entry, true
+}
+
+// ensureCatalogEntryWork registers the work a catalog entry stands for,
+// reusing a work that already carries the same code and creating one when this
+// entry is its first publication. The caller already holds the writer lock and
+// has checked that the entry may be used.
+func (s *Server) ensureCatalogEntryWork(ctx context.Context, w http.ResponseWriter, r *http.Request, tx *sql.Tx, entry catalogEntry) (sql.NullInt64, bool) {
+	var resolvedID int64
+	var err error
+	if entry.PrimaryCode != "" {
+		resolvedID, err = resolveCatalogReviewWorkID(ctx, tx, entry.PrimaryCode)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			writeError(w, err)
+			return sql.NullInt64{}, false
+		}
+		if errors.Is(err, sql.ErrNoRows) {
+			resolvedID = 0
+		}
+	}
+	var workID sql.NullInt64
+	if err = tx.QueryRowContext(ctx, "SELECT work_id FROM source_catalog_entry WHERE id=?", entry.ID).Scan(&workID); err != nil {
+		writeError(w, err)
+		return sql.NullInt64{}, false
+	}
+	if !workID.Valid && resolvedID > 0 {
+		workID = sql.NullInt64{Int64: resolvedID, Valid: true}
+	}
+	if !workID.Valid {
+		if _, ok := s.requirePermission(w, r, "remote:track"); !ok {
+			return sql.NullInt64{}, false
+		}
+		if entry.PrimaryCode != "" {
+			_, err = tx.ExecContext(ctx, `INSERT INTO work(primary_code,title) VALUES(?,?) ON CONFLICT(primary_code) WHERE primary_code<>'' DO NOTHING`, entry.PrimaryCode, entry.Title)
+			if err == nil {
+				err = tx.QueryRowContext(ctx, "SELECT id FROM work WHERE primary_code=?", entry.PrimaryCode).Scan(&workID.Int64)
+			}
+		} else {
+			workID.Int64, err = sqlutil.InsertID(ctx, tx, "INSERT INTO work(primary_code,title) VALUES('',?)", entry.Title)
+		}
+		if err != nil {
+			writeError(w, err)
+			return sql.NullInt64{}, false
+		}
+		workID.Valid = true
+		var logicalID int64
+		err = tx.QueryRowContext(ctx, "SELECT logical_work_id FROM work_edition WHERE work_id=?", workID.Int64).Scan(&logicalID)
+		if errors.Is(err, sql.ErrNoRows) {
+			logicalID, err = sqlutil.InsertID(ctx, tx, "INSERT INTO logical_work(canonical_work_id,canonical_code) VALUES(?,?)", workID.Int64, entry.PrimaryCode)
+			if err == nil {
+				_, err = tx.ExecContext(ctx, "INSERT INTO work_edition(work_id,logical_work_id,primary_code,is_canonical) VALUES(?,?,?,1)", workID.Int64, logicalID, entry.PrimaryCode)
+			}
+		}
+		if err != nil {
+			writeError(w, err)
+			return sql.NullInt64{}, false
+		}
+	}
+	if _, err = tx.ExecContext(ctx, "UPDATE source_catalog_entry SET work_id=? WHERE id=?", workID.Int64, entry.ID); err != nil {
+		writeError(w, err)
+		return sql.NullInt64{}, false
+	}
+	if entry.SourceID != 0 {
+		if err = upsertWorkSourcePresence(ctx, tx, workSourcePresence{WorkID: workID.Int64, FileSourceID: entry.SourceID, PresenceType: sourcePresenceTypeRemoteSource, RemoteID: strconv.FormatInt(entry.ID, 10), RemoteCode: entry.PrimaryCode, Availability: entry.Status, RawJSON: mustJSON(map[string]any{"catalogEntryId": entry.ID})}); err != nil {
+			writeError(w, err)
+			return sql.NullInt64{}, false
+		}
+	}
+	return workID, true
+}
+
+// registerSourceCatalogWork lets a card obtain the work id it needs for list
+// and listening actions without writing a rating or note. Rating and note stay
+// the only fields that create a personal review.
+func (s *Server) registerSourceCatalogWork(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requirePermission(w, r, "favorites:write"); !ok {
+		return
+	}
+	id, err := parseInt64PathValue(r, "id")
+	if err != nil {
+		writeAPIError(w, 400, "invalid_request", "invalid catalog id", false)
+		return
+	}
+	retained, _, err := s.loadRetainedSourceCatalogEntry(r.Context(), id)
+	if err != nil {
+		writeUpstreamError(w, err)
+		return
+	}
+	tx, err := s.db.BeginTx(r.Context(), nil)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	defer func() { _ = tx.Rollback() }()
+	entry, ok := s.lockCatalogEntry(r.Context(), w, r, tx, retained.ID)
+	if !ok {
+		return
+	}
+	workID, ok := s.ensureCatalogEntryWork(r.Context(), w, r, tx, entry)
+	if !ok {
+		return
+	}
+	if err = tx.Commit(); err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]int64{"workId": workID.Int64})
 }
 
 // resolveCatalogReviewWorkID applies the same canonical-code precedence as

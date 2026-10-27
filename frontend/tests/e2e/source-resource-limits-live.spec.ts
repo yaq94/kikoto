@@ -41,12 +41,26 @@ test("playback and personal records survive a low-disk catalog pause @desktop", 
       ]),
     };
   };
-  // The first render persists the queue in more than one step. Wait for the
-  // settled two-track baseline before comparing later states against it.
-  await expect.poll(async () => (await queueState()).queue.length).toBe(2);
-  await expect.poll(async () => (await queueState()).at).toBe(0);
-  await page.waitForTimeout(300);
-  const queue = await queueState();
+  // The first render persists the queue in more than one step. Take a baseline
+  // only once two consecutive reads agree, so a later comparison cannot catch a
+  // write that is still settling.
+  const stableQueue = async () => {
+    let previous = await queueState();
+    await expect
+      .poll(
+        async () => {
+          const current = await queueState();
+          const settled =
+            current.queue.length === 2 && current.at === 0 && JSON.stringify(current) === JSON.stringify(previous);
+          previous = current;
+          return settled;
+        },
+        { timeout: 5_000 },
+      )
+      .toBe(true);
+    return previous;
+  };
+  const queue = await stableQueue();
   const stream = await audio.evaluate((element: HTMLAudioElement) => element.currentSrc);
 
   const runIndex = async (data: Record<string, unknown>) =>

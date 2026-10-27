@@ -6,6 +6,7 @@ import { useStableCallback } from "@/hooks/useStableCallback";
 import { useAuth } from "@/auth/AuthProvider";
 import { api, type CatalogIndexOptions, type CatalogIndexProgress } from "@/lib/api";
 import { sidecarFailureSummary } from "./sourceIndexSidecars";
+import { SourceIndexProgressPanel } from "./SourceIndexProgressPanel";
 
 const fields: Array<{ key: keyof CatalogIndexOptions; min: number; max: number }> = [
   { key: "concurrency", min: 1, max: 4 },
@@ -157,79 +158,7 @@ export function FullSourceIndex({ sourceId, onDone }: { sourceId: number; onDone
         )}
       </details>
       {progress && progress.status !== "idle" && (
-        <>
-          <p className="text-sm">
-            {t("sourceIndex.counts", {
-              completed: progress.completedDirectories,
-              pending: progress.pendingDirectories,
-              entries: progress.observedEntries,
-              indexed: progress.indexedEntries,
-            })}
-          </p>
-          <p className="text-sm text-muted-foreground">
-            {t("sourceIndex.issues", {
-              failed: progress.failedDirectories,
-              restricted: progress.restrictedDirectories,
-              empty: progress.unconfirmedEmptyDirectories,
-            })}
-          </p>
-          <p className="text-xs text-muted-foreground">
-            {t(progress.finishedAt ? "sourceIndex.timesFinished" : "sourceIndex.times", {
-              started: progress.startedAt,
-              ...(progress.finishedAt ? { finished: progress.finishedAt } : {}),
-              updated: progress.updatedAt,
-              requests: progress.requests,
-            })}
-          </p>
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm">
-              <caption className="text-left">{t("sourceIndex.partitions")}</caption>
-              <thead>
-                <tr>
-                  <th>{t("sourceIndex.path")}</th>
-                  <th>{t("sourceIndex.completed")}</th>
-                  <th>{t("sourceIndex.failed")}</th>
-                  <th>{t("sourceIndex.restricted")}</th>
-                  <th>{t("sourceIndex.empty")}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {progress.partitions.map((part) => (
-                  <tr key={part.path}>
-                    <td>{part.path}</td>
-                    <td>
-                      {part.completed} / {part.directories}
-                    </td>
-                    <td>{part.failed}</td>
-                    <td>{part.restricted}</td>
-                    <td>{part.unconfirmedEmpty}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <ul className="space-y-1 text-sm">
-            {progress.details.map((dir) => (
-              <li key={dir.path}>
-                {dir.path} — {t(`sourceIndex.state.${dir.status}`)}
-                {dir.errorCode && <> · {t(`sourceIndex.reason.${dir.errorCode}`)}</>}
-              </li>
-            ))}
-          </ul>
-          {pages > 1 && (
-            <div className="flex gap-2">
-              <Button variant="ghost" disabled={page <= 1} onClick={() => setPage(page - 1)}>
-                {t("sourceIndex.previous")}
-              </Button>
-              <span>
-                {page} / {pages}
-              </span>
-              <Button variant="ghost" disabled={page >= pages} onClick={() => setPage(page + 1)}>
-                {t("sourceIndex.next")}
-              </Button>
-            </div>
-          )}
-        </>
+        <SourceIndexProgressPanel progress={progress} page={page} pages={pages} onPageChange={setPage} />
       )}
     </section>
   );

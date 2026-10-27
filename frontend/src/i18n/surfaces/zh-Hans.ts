@@ -183,6 +183,7 @@ export const surfaceHans = {
     error: "索引请求失败，请刷新进度或重试。",
     limits: "索引限制",
     limitsHint: "这些限制作用于一个扫描作业内。运行中的设置保持不变；取消后继续可应用新设置。",
+    summary: "已完成 {{completed}} · 待处理 {{pending}} · 失败 {{failed}} · 待确认空目录 {{empty}}",
     counts: "目录：已完成 {{completed}}，待处理 {{pending}} · 已观察条目 {{entries}} · 可播放卡片 {{indexed}}",
     issues: "失败 {{failed}} · 访问受限 {{restricted}} · 待确认空目录 {{empty}}",
     times: "开始 {{started}} · 更新 {{updated}} · 目录页请求 {{requests}} 次",

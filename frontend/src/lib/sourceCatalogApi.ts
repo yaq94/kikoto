@@ -223,6 +223,8 @@ export const sourceCatalogApi = {
   },
   updateCatalogReview: (id: number, patch: PersonalReviewPatch) =>
     patchJSONBody<PersonalReview & { workId: number }>(`/api/source-catalog/${id}/user-state`, patch),
+  /** Registers the work behind an entry so list and listening actions have an id. */
+  registerCatalogWork: (id: number) => postJSONBody<{ workId: number }>(`/api/source-catalog/${id}/work`, {}),
   scanSourceCatalog: (id: number, signal?: AbortSignal) =>
     postJSONBody<CatalogScanResult>(`/api/remote-sources/${id}/catalog/scan`, {}, signal),
 };

@@ -11,6 +11,16 @@ export function librarySourceProvidesMetadata(source: LibrarySource): boolean {
 }
 
 /**
+ * Recommendation scores need a Kikoeru-style work list with tags, cast and
+ * circle. A catalog source such as OpenList has no such list, and its score
+ * endpoint answers "source unavailable"; asking anyway turns a missing
+ * capability into a fake outage of the source itself.
+ */
+export function librarySourceSupportsRecommendations(source: LibrarySource): boolean {
+  return librarySourceProvidesMetadata(source);
+}
+
+/**
  * Whether a source declares the metadata capability. A remote source without
  * a declared list keeps its type's default; an explicit list is authoritative.
  */

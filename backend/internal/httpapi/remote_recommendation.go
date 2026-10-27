@@ -36,8 +36,15 @@ func (s *Server) scoreRemoteRecommendations(w http.ResponseWriter, r *http.Reque
 		writeAPIError(w, http.StatusNotFound, "source_not_found", "source not found", false)
 		return
 	}
-	if !source.Enabled || !isKikoeruSourceType(source.SourceType) {
+	if !source.Enabled {
 		writeAPIError(w, http.StatusBadRequest, "source_unavailable", "source is unavailable", false)
+		return
+	}
+	// A catalog source such as OpenList publishes files, not a work list with
+	// tags, cast and circle. It has no recommendation inputs, which is a
+	// missing capability rather than an outage of the source.
+	if !isKikoeruSourceType(source.SourceType) {
+		writeAPIError(w, http.StatusBadRequest, "recommendations_not_supported", "this source does not provide recommendation data", false)
 		return
 	}
 	var request remoteRecommendationRequest

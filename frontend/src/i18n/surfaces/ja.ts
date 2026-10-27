@@ -186,6 +186,7 @@ export const surfaceJapanese = {
     error: "索引の操作に失敗しました。進捗を更新するか再試行してください。",
     limits: "索引の制限",
     limitsHint: "制限は1つのスキャンジョブ内に適用されます。実行中の設定変更はキャンセルして再開すると適用されます。",
+    summary: "完了 {{completed}}・待機 {{pending}}・失敗 {{failed}}・未確認の空 {{empty}}",
     counts: "完了フォルダー {{completed}}・待機 {{pending}}・確認項目 {{entries}}・再生可能カード {{indexed}}",
     issues: "失敗 {{failed}}・アクセス制限 {{restricted}}・未確認の空フォルダー {{empty}}",
     times: "開始 {{started}}・更新 {{updated}}・ページ要求 {{requests}} 回",
