@@ -255,8 +255,8 @@ func (q *Queue) launchLocked(call *queuedCall) {
 		q.active--
 		if background {
 			q.backgroundActive--
-			} else {
-				q.interactiveActive--
+		} else {
+			q.interactiveActive--
 		}
 		if q.jobs[call.key] == call {
 			delete(q.jobs, call.key)
