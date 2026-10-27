@@ -283,11 +283,6 @@ func catalogCardScan(rows *sql.Rows, item *remoteWorkSummary, availability *stri
 		&item.UpdatedAt, availability, exact, hasAudio, total)
 }
 
-// localizedCatalogSearchSQL builds the translated hit set for a display
-// language. Entry and series titles are searchable; source_catalog_entry has
-// no description column. Three or more characters use the trigram index;
-// one- and two-character needles use the shared keyset generator so the
-// remote, local and benchmark paths cannot diverge again.
 // catalogShortSearchResultLimit is how many cards a 1-2 character search may
 // return. The scan still covers the complete effective set in index order, but
 // both the page and the reported total stop at this budget, and the response
@@ -296,6 +291,11 @@ func catalogCardScan(rows *sql.Rows, item *remoteWorkSummary, availability *stri
 // the whole source.
 const catalogShortSearchResultLimit = 1000
 
+// localizedCatalogSearchSQL builds the translated hit set for a display
+// language. Entry and series titles are searchable; source_catalog_entry has
+// no description column. Three or more characters use the trigram index;
+// one- and two-character needles use the shared keyset generator so the
+// remote, local and benchmark paths cannot diverge again.
 func localizedCatalogSearchSQL(targets []library.DisplaySearchTarget, sourceID int64, short bool, configKey string, shortLimit int) (string, []any) {
 	if !short {
 		prefix := `WITH search_hits AS MATERIALIZED (`

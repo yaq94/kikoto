@@ -47,9 +47,9 @@ type shortQueryCase struct {
 	Matches  int             `json:"matches"`
 	HitScan  shortQueryStats `json:"hitScan"`
 	HitSet   shortQueryStats `json:"hitSet"`
-	// Total is the bounded count the API reports. Complete is kept as the JSON
-	// key older reports used for that shape; Uncapped is the diagnostic that
-	// walks every match without the result budget.
+	// Total is the bounded count the API reports. The JSON key stays `complete`
+	// so older reports remain comparable; Uncapped is the diagnostic that walks
+	// every match without the result budget.
 	Complete shortQueryStats `json:"complete"`
 	Uncapped shortQueryStats `json:"uncapped"`
 	Page     shortQueryStats `json:"page"`
@@ -143,8 +143,9 @@ func shortQueryMeasure(t *testing.T, db *sql.DB, sourceID int64, target library.
 	// The page and the reported total both build at most one budget of cards, so
 	// a keystroke never walks the whole source. The uncapped shape stays as a
 	// diagnostic: it says how much a full count would cost without a budget.
+	// The page and the reported total read the same bounded statement, so one
+	// build measures both shapes.
 	prefix, from, args := openListCatalogCardsQueryLocalized(sourceID, target.Query, []library.DisplaySearchTarget{target}, configKey, catalogShortSearchResultLimit)
-	completePrefix, completeFrom, completeArgs := openListCatalogCardsQueryLocalized(sourceID, target.Query, []library.DisplaySearchTarget{target}, configKey, catalogShortSearchResultLimit)
 	uncappedPrefix, uncappedFrom, uncappedArgs := openListCatalogCardsQueryLocalized(sourceID, target.Query, []library.DisplaySearchTarget{target}, configKey, 0)
 	result := shortQueryCase{Language: target.Language, Needle: target.Query}
 
@@ -184,15 +185,15 @@ func shortQueryMeasure(t *testing.T, db *sql.DB, sourceID int64, target library.
 	result.HitSet.Rows = result.Matches
 	result.HitPlan = shortQueryPlan(t, db, hitSQL, hitArgs)
 
-	completeSQL := catalogStatementPrefix(completePrefix) + `SELECT count(*) ` + completeFrom
+	completeSQL := catalogStatementPrefix(prefix) + `SELECT count(*) ` + from
 	for range warmup {
-		if err := db.QueryRowContext(context.Background(), completeSQL, completeArgs...).Scan(&result.Matches); err != nil {
+		if err := db.QueryRowContext(context.Background(), completeSQL, args...).Scan(&result.Matches); err != nil {
 			t.Fatalf("%s warm complete: %v", target.Language, err)
 		}
 	}
 	result.Complete = shortQuerySample(samples, func() error {
 		var total int
-		return db.QueryRowContext(context.Background(), completeSQL, completeArgs...).Scan(&total)
+		return db.QueryRowContext(context.Background(), completeSQL, args...).Scan(&total)
 	})
 	result.Complete.Rows = result.Matches
 
@@ -223,7 +224,7 @@ func shortQueryMeasure(t *testing.T, db *sql.DB, sourceID int64, target library.
 		return nil
 	})
 	result.Page.Rows = pageRows
-	result.Plan = shortQueryPlan(t, db, completeSQL, completeArgs)
+	result.Plan = shortQueryPlan(t, db, completeSQL, args)
 	return result
 }
 

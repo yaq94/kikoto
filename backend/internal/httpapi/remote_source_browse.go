@@ -636,8 +636,9 @@ func (s *Server) buildRemoteWorkSummary(ctx context.Context, userID, sourceID in
 
 func mergeRemoteWorkSummary(existing *remoteWorkSummary, item remoteWorkSummary) {
 	existing.RemotePlayable = existing.RemotePlayable || item.RemotePlayable
-	// A merged card keeps the most severe verdict it saw: one unavailable
-	// source row must not be hidden by another row that is available.
+	// A merged card keeps the first verdict it saw when that one is not a plain
+	// "available": the merge folds rows of one work, and an earlier failed or
+	// missing range must not be replaced by a later healthy row.
 	if existing.Availability == "" || existing.Availability == "available" {
 		existing.Availability = item.Availability
 	}
