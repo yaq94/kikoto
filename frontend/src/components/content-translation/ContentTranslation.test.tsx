@@ -62,4 +62,10 @@ describe("contentTranslationDisplayState", () => {
     expect(contentTranslationDisplayState({ enabled: true, status: "translated", timedOut: true })).toBe("translated");
     expect(contentTranslationDisplayState({ enabled: true, status: "failed", timedOut: true })).toBe("failed");
   });
+
+  it("passes every settled status through unchanged", () => {
+    for (const status of ["original", "existing", "native"] as const) {
+      expect(contentTranslationDisplayState({ enabled: true, status, timedOut: true })).toBe(status);
+    }
+  });
 });

@@ -13,6 +13,7 @@ import {
   type ContentTranslationRequest,
   type ContentTranslationResource,
   type ContentTranslationResult,
+  type ContentTranslationStatus,
 } from "@/lib/contentTranslationApi";
 import { contentTranslationCache } from "@/lib/contentTranslationCache";
 import { USER_PREFERENCES_CHANGED } from "@/lib/recommendationSession";
@@ -32,13 +33,13 @@ export const CONTENT_TRANSLATION_PENDING_TIMEOUT_MS = 20_000;
  */
 export function contentTranslationDisplayState(input: {
   enabled: boolean;
-  status?: string;
+  status?: ContentTranslationStatus;
   timedOut: boolean;
-}): "original" | "pending" | "timeout" | "translated" | "existing" | "native" | "failed" {
+}): "original" | "pending" | "timeout" | ContentTranslationStatus {
   if (!input.enabled) return "original";
-  if (input.status) {
-    return input.status as "translated" | "existing" | "native" | "failed";
-  }
+  // A settled answer, including the batch route's `native`, outranks the
+  // bound: the note stops claiming progress as soon as text arrives.
+  if (input.status) return input.status;
   return input.timedOut ? "timeout" : "pending";
 }
 
