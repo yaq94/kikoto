@@ -55,6 +55,11 @@ describe("contentTranslationDisplayState", () => {
     expect(contentTranslationDisplayState({ enabled: false, timedOut: true })).toBe("original");
   });
 
+  it("does not claim progress for a field that has not asked yet", () => {
+    expect(contentTranslationDisplayState({ enabled: true, visible: false, timedOut: false })).toBe("original");
+    expect(contentTranslationDisplayState({ enabled: true, visible: false, timedOut: true })).toBe("original");
+  });
+
   it("reports progress only until the bound passes", () => {
     expect(contentTranslationDisplayState({ enabled: true, timedOut: false })).toBe("pending");
     expect(contentTranslationDisplayState({ enabled: true, timedOut: true })).toBe("timeout");

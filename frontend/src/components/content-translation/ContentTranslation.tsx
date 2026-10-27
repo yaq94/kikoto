@@ -35,10 +35,16 @@ export type ContentTranslationDisplayState = ContentTranslationStatus | "pending
 
 export function contentTranslationDisplayState(input: {
   enabled: boolean;
+  /** False until the field has entered, or come close to, the viewport. */
+  visible?: boolean;
   status?: ContentTranslationStatus;
   timedOut: boolean;
 }): ContentTranslationDisplayState {
-  if (!input.enabled) return "original";
+  // A field outside the viewport has not asked for a translation yet. Calling
+  // that `pending` claims work that was never started, so a list with one
+  // visible row reads as a page of stalled translations while the network is
+  // idle.
+  if (!input.enabled || input.visible === false) return "original";
   // A settled answer, including the batch route's `native`, outranks the
   // bound: the note stops claiming progress as soon as text arrives.
   if (input.status) return input.status;
@@ -262,7 +268,18 @@ export function TranslatedText({
   const enabled = readable && language !== "origin";
   useEffect(() => {
     if (!element) return;
-    const observer = new IntersectionObserver((entries) => setVisible(entries.some((entry) => entry.isIntersecting)));
+    // A field stays requested once it first comes near the viewport. The answer
+    // is cached, and un-requesting on scroll would restart every card the
+    // reader passes instead of reusing what was already translated. The margin
+    // starts the request just before the field is actually needed.
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (!entries.some((entry) => entry.isIntersecting)) return;
+        setVisible(true);
+        observer.disconnect();
+      },
+      { rootMargin: "400px 0px" },
+    );
     observer.observe(element);
     return () => observer.disconnect();
   }, [element]);
@@ -331,7 +348,7 @@ export function TranslatedText({
   const result = settled?.key === key ? settled.result : null;
   const success =
     enabled && result && (result.status === "translated" || result.status === "existing" || result.status === "native");
-  const status = contentTranslationDisplayState({ enabled, status: result?.status, timedOut });
+  const status = contentTranslationDisplayState({ enabled, visible, status: result?.status, timedOut });
   const shown = success && !scope.original ? result.text : (result?.original ?? text);
   const failure = result?.code
     ? t(`translationAdmin.errors.${result.code}`, { defaultValue: t("translationAdmin.content.failed") })
