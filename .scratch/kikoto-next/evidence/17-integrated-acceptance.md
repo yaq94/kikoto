@@ -69,7 +69,7 @@ Full CI 的 E2E 组（personal / openlist / series / content-translation / sourc
 
 - OpenList run 53 起始于 2026-10-20 20:08，早于编码损坏登记模块（2026-10-21 19:41）。4 个目录在 run 中记录为 `upstream_unavailable`，其路径含 U+FFFD，原始字节已丢失，无法由客户端推测修复。
   - `/asmr/橙澄子汉化组/[橙澄子汉化组][RJ313527]…` 与 `[…][RJ324820]…` 的音轨已由同名的正确路径索引（9 / 4 条音轨）。
-  - `RJ305379` 与 `RJ308692` 的工作目录列表为空，唯一子目录名已损坏：这两部作品的音轨在当前来源中不可索引。需要在来源侧重命名该目录后重新扫描；Kikoto 不会猜测替换字符对应的字节。
+  - `RJ305379` 与 `RJ308692`：直接请求来源 API 证实，父目录列出的损坏子目录本身返回 `code 500 / object not found`；同一父目录只剩 `MP3+lrc.zip` / `MP4.7z` 归档。也就是说，这两部作品的**可播放副本在来源侧已不可读**，只剩规格明确排除的整包归档，任何客户端都无法按该路径播放。Kikoto 因此没有漏掉可播放音轨；若来源侧修复目录名，重新扫描即可收录。Kikoto 不会猜测替换字符对应的字节。
   - 当前代码对这类名字的行为由 `TestCatalogEncodingDamagedDirectoryIsRecordedNotEnqueued` 与 `TestCatalogEncodingUnresolvedDoesNotMakeRunPartial` 固定：登记待修复项、不发起请求、不因此把运行标为 partial。
 - 27 个 `empty` 目录的上游响应为空但未给出 404/410，按规格不能视为已删除，因此运行保持 `partial`。这是正确状态，不是停滞。
 - 8192 字节边界的模型调用在历史候选 `cf4ada56` 上超时；本候选未重测该长度。
