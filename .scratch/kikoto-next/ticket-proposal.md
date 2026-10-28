@@ -14,7 +14,7 @@
 | --- | --- | --- |
 | 01–07、09–16 | resolved | 代码与各票要求的本地 H/F（06、09 为 H/R）已验收；生产部署验收见 17。 |
 | 08 | verified-local | 完整合成树、恢复与资源限制已验收；run 53 仍为 partial，真实全量覆盖与 095–105 迁移链待 24。 |
-| 17 | in-progress | 历史组合证据保留；当前候选验收未完成，20–24 不阻塞本票。 |
+| 17 | resolved | 当前候选 `15b84ed2` 的组合验收完成：H/R 四条低空间用例、F 低空间播放组合、真实 Index 生成、媒体 Range、播放进度、迁移与快照恢复演练均通过；证据见 [17 组合验收](evidence/17-integrated-acceptance.md)。 |
 | 18、19 | verified-local | 历史本地 H/R、F 证据保留；最终候选 Full CI 由 24 汇总。 |
 | 20 | verified-local | `531acdf4` 落地 098 状态机与系列准入；`9f3d82f0` 补资源重查。单卡评价／播放／媒体流／目录标签准入、零可见成员 404、零文件与旧 generation 集合统一、due 推进顺序、诊断过滤与真实 plan 断言已并入集成分支；42k 卡浏览与 5,001 文件卡拒绝路径的 p95 已在目标机达标。 |
 | 21 | verified-local | 099/102/105、严格语言搜索、共享短查询生成器与 `failed` 终态已合入；1–2 字查询的返回条数与 `total` 共用 1000 张预算并以 `truncated` 标记还有更多，目标机卡片页与同预算总数 p95 均 ≤13 ms；最终候选复验由 24 记录。 |
@@ -407,7 +407,7 @@
 
 ## 发布状态
 
-24 张正式工单使用项目规定模板。每票链接到规格、总览和直接前置工单；当前 01–07、09–16 的历史本地证据为 resolved，但不自动作为当前候选证据；08、18、19、20、21、23 为 verified-local，22 在记录 SHA `f727feee`（历史）上为 resolved，24 在 `15b84ed2` 上为 resolved，17 为 in-progress。分诊 `Status` 保持 `ready-for-agent`，上表只记录独立 `Implementation` 字段。验收清单仅随实际证据更新。候选 `15b84ed2` 已部署；`c7d793e4` 的 run `40587302416` 曾因 race 用例超时失败，已在 `15b84ed2` 消除。真实全量覆盖仍为 partial，不以 partial 冒充完整覆盖。
+24 张正式工单使用项目规定模板。每票链接到规格、总览和直接前置工单；当前 01–07、09–16 的历史本地证据为 resolved，但不自动作为当前候选证据；08、18、19、20、21、23 为 verified-local，22 在记录 SHA `f727feee`（历史）上为 resolved，24 在 `15b84ed2` 上为 resolved，17 在 `15b84ed2` 上为 resolved。分诊 `Status` 保持 `ready-for-agent`，上表只记录独立 `Implementation` 字段。验收清单仅随实际证据更新。候选 `15b84ed2` 已部署；`c7d793e4` 的 run `40587302416` 曾因 race 用例超时失败，已在 `15b84ed2` 消除。真实全量覆盖仍为 partial，不以 partial 冒充完整覆盖。
 
 ## Comments
 
