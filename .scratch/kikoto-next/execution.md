@@ -57,7 +57,7 @@
 | 01–16 历史本地证据    | 保留         | 只证明各自旧 SHA；当前候选由 24 重跑                                                                                                    |
 | 08 真实覆盖           | partial      | run 53 未完成，失败/未确认空目录不计完整                                                                                                |
 | 17 旧部署             | 历史         | `2bae5db9`/schema 83，不是当前候选                                                                                                      |
-| Full CI               | 通过（上一候选） | `40596212856` @ `907391f2` success（26 job）；`40574379570` @ `8fa8465e` success（27/27 job，历史）。`15b84ed2` 的 run `40602372253` 见 [24 候选账本](evidence/24-candidate-15b84ed2.md) 第 6 节 |
+| Full CI               | 通过         | `40602372253` @ `15b84ed2` success（27/27 job，含此前失败的 `Backend (race 2/4)` 分片）；`40596212856` @ `907391f2` success（26 job，历史） |
 | 迁移演练              | 通过         | 上一候选 `f727feee`（历史）：84→105 共 21 个迁移、总耗时 20,840 ms、`quick_check` ok、FK 0；本候选未改迁移                              |
 | 回滚演练              | 通过         | 105 库 + 旧镜像启动失败（schema newer than binary）；`rollback.sh` 可执行，快照 `sha256sum -c` 全部 OK                                   |
 | 生产部署              | 通过         | `kikoto:next-15b84ed2`，schema 105，`/health` 200 `v0.8.3`，主包 `assets/index-DNjiWLrG.js`；`schema_before=105`、`schema_after=105`，快照 `quick_check=ok`，未回滚 |

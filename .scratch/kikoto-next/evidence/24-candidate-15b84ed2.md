@@ -61,7 +61,7 @@
 
 ## 6. Full CI 终态
 
-run `40602372253`（`15b84ed2`）：见本节更新与 [25-live-browser.md](25-live-browser.md) 第 13 节。
+run `40602372253`（`15b84ed2`）：**success，27/27 job**，无 skipped。其中 `Full / Backend (race 2/4)` 就是 `c7d793e4` 上失败的同一分片，本次通过；`Full / E2E (content-translation)`、`Full / E2E (openlist)`、`Full / Backend (coverage)`、`Full / Backend (static)` 与其余 E2E 均为 success。
 
 ## 7. 双轴审查（基线 `3336e5c0`）
 
