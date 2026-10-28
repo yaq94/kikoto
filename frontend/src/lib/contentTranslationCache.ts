@@ -79,18 +79,36 @@ export function contentTranslationEntity(input: ContentTranslationInput): {
 }
 
 /**
- * `<accountScope>|<entityKind>:<entityId>|<field>|<language>|<contentHash>`
- * Returns null for source-level resources, which the server translates without
- * persisting a searchable row.
+ * Identity component of the browser cache key.
+ *
+ * A durable object — series, catalogue entry or work — speaks for itself. A
+ * remote card has no such object until someone registers it, but the source
+ * page addresses it by source and code, and that pair is stable across visits.
+ * Left out of the cache, every revisit re-requested every remote title; the
+ * content hash inside the key still invalidates when the text changes, and the
+ * stored version when the model or template does. A directory path is part of
+ * the identity because two folders may hold files with the same name.
+ */
+export function contentTranslationCacheIdentity(input: ContentTranslationInput): string | null {
+  const entity = contentTranslationEntity(input);
+  if (entity) return entity.kind + ":" + entity.id;
+  if (input.sourceId === undefined || !input.code) return null;
+  const path = input.path ? "|" + encodeURIComponent(input.path) : "";
+  return "source:" + input.sourceId + ":" + encodeURIComponent(input.code) + path;
+}
+
+/**
+ * `<accountScope>|<identity>|<field>|<language>|<contentHash>`, where identity
+ * is the durable entity or, for a remote card, its source, code and path.
  */
 export function buildContentTranslationCacheKey(
   accountScope: string,
   input: ContentTranslationInput,
   contentHash: string,
 ): string | null {
-  const entity = contentTranslationEntity(input);
-  if (!entity) return null;
-  return `${accountScope}|${entity.kind}:${entity.id}|${input.field}|${input.language}|${contentHash}`;
+  const identity = contentTranslationCacheIdentity(input);
+  if (!identity) return null;
+  return accountScope + "|" + identity + "|" + input.field + "|" + input.language + "|" + contentHash;
 }
 
 function toHex(buffer: ArrayBuffer) {
@@ -186,7 +204,7 @@ export function createContentTranslationCache(options: ContentTranslationCacheOp
   }
 
   async function keyFor(scope: string, input: ContentTranslationInput): Promise<string | null> {
-    if (!contentTranslationEntity(input)) return null;
+    if (!contentTranslationCacheIdentity(input)) return null;
     return buildContentTranslationCacheKey(scope, input, await contentHash(input.text));
   }
 

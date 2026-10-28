@@ -127,13 +127,40 @@ describe("content translation cache key", () => {
     ).toBe("srv:user-7|series:9|title|ja|abc");
   });
 
-  it("has no key for source-level content", () => {
+  it("keys a remote card by its source and code", () => {
+    // A remote card has no durable work id until someone registers it, but the
+    // source page always addresses it by the same pair. Without this identity
+    // every revisit re-requested every remote title.
     expect(
       buildContentTranslationCacheKey(
         "srv:user-7",
         { sourceId: 2, code: "RJ1", field: "title", text: "x", language: "ko" },
         "abc",
       ),
+    ).toBe("srv:user-7|source:2:RJ1|title|ko|abc");
+  });
+
+  it("keeps distinct remote identities apart", () => {
+    const scope = "srv:user-7";
+    const base: ContentTranslationInput = { sourceId: 2, code: "RJ1", field: "title", text: "x", language: "ko" };
+    const key = (overrides: Partial<ContentTranslationInput>) =>
+      buildContentTranslationCacheKey(scope, { ...base, ...overrides }, "abc");
+    expect(key({ code: "RJ2" })).not.toBe(key({}));
+    expect(key({ sourceId: 3 })).not.toBe(key({}));
+    expect(key({ language: "zh-cn" })).not.toBe(key({}));
+    expect(key({ field: "tag" })).not.toBe(key({}));
+    // Two folders may publish a file with the same name, so the path is part
+    // of a directory translation's identity.
+    expect(key({ field: "directory", path: "/Example/A" })).not.toBe(key({ field: "directory", path: "/Example/B" }));
+  });
+
+  it("has no key for content that names no object at all", () => {
+    expect(
+      buildContentTranslationCacheKey("srv:user-7", { field: "title", text: "x", language: "ko" }, "abc"),
+    ).toBeNull();
+    // A source without a code cannot be matched to a card on a later visit.
+    expect(
+      buildContentTranslationCacheKey("srv:user-7", { sourceId: 2, field: "title", text: "x", language: "ko" }, "abc"),
     ).toBeNull();
   });
 
