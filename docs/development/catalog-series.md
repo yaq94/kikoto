@@ -56,8 +56,10 @@ availability, and is identified by a `source_catalog_episode_pending` row. Its
 files and series membership can be refreshed in bounded transactions without
 appearing in public cards or source scans. Stage transactions write at most
 100 entry/file rows in total, counting an entry upsert and every file upsert;
-the bound is not a count of episode roots. Existing active episodes keep their
-catalog ids and can be refreshed in place.
+the bound is not a count of episode roots. A committed batch consumes its whole
+planned range once. For 101 one-file episodes, staging writes 101 entry rows and
+101 file rows in three transactions. Existing active episodes keep their catalog
+ids and can be refreshed in place.
 
 After staging completes, activation gives public source identity to at most 100
 stored entries per transaction. Every batch rechecks the parent's work, series

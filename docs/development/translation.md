@@ -346,6 +346,13 @@ committed. Regenerate a development compat baseline with
 `cd backend && go run ./cmd/schema-baseline -migrations . -version-file ../../VERSION`;
 do not hand-write a `compat/NNN_dev.sql` while the chain has a gap.
 
+`cmd/translation-bench` uses the bounded high-cardinality synthetic work-code
+constructor and refuses more than 400,000 entities. A query failure has an
+explicit `error` in the JSON result, preserves its successful sample count and
+plan, and omits latency percentiles. Other query results remain in the report;
+the command writes that report and exits nonzero if any query failed. A failed
+query is never printed as a successful zero-latency summary.
+
 ```sh
 cd backend
 go test ./internal/httpapi -run '^Test(ContentTranslation|SourceFieldTranslation|Translation(AdminConfiguration|Configuration|Trial|Retention))' -count=1 -v

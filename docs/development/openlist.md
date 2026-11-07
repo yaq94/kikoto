@@ -129,6 +129,18 @@ the existing generation: complete directories are probed for changes, while
 failed, restricted, pending and unconfirmed-empty ranges are retried. A full
 generation is only requested when no reusable generation exists.
 
+Incremental probes traverse paths with a keyset boundary in batches of 32.
+The workflow job checkpoint stores `probeGeneration` and `probeAfter` in the
+same transaction as each directory's `last_verified_run`. A failed transaction
+or cancelled batch cannot advance the checkpoint. An invocation continuing the
+same sync run can read that position after reopening the database; a new
+scheduled run starts a new verification pass. Startup's interrupted-run cleanup
+and daily scheduling keep their existing lifecycle.
+Before settling, the worker checks for unverified paths below the cursor and
+wraps when needed, so newly eligible earlier paths are not omitted. An upstream
+probe failure is recorded as attempted for that run, reports partial coverage,
+and remains eligible for the next run.
+
 A low disk, disk-state failure or deployment hold writes only
 `deferred_until=now+1h` and `deferred_reason` (`low_disk`, `disk_unknown` or
 `maintenance_hold`). The due boundaries, pending bits, `pending_full_run_id` and
