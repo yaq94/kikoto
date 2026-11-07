@@ -462,6 +462,9 @@ func TestCatalogPublicationKeepsPlaybackAndLibraryPresenceUntilCommit(t *testing
 		if err != nil || !found {
 			t.Errorf("source tags=%+v err=%v, available=%v", tags, err, available)
 		}
+		if got := f.server.workHasSourcePresence(context.Background(), 900, sourceID, "source", "available"); got != available {
+			t.Errorf("source availability flag=%v, want %v", got, available)
+		}
 		editions, err := f.server.loadMaterializedWorkTranslationsByCodes(context.Background(), []string{"RJ00000000"})
 		if err != nil || len(editions) != 1 || editions[0].HasMedia != available {
 			t.Errorf("edition availability=%+v err=%v, available=%v", editions, err, available)

@@ -235,7 +235,7 @@ func (s *Server) commitCatalogPublicationTranslations(ctx context.Context, id in
 			// Source writes can arrive while translation batches are preparing.
 			// Retry admission/media preparation before publishing those keys.
 			var pending bool
-			err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM source_catalog_publication_entity WHERE operation_id=? AND entity_kind='retired_files')
+			err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM source_catalog_publication_entity WHERE operation_id=? AND entity_kind IN ('retired_aliases','retired_files'))
 				OR EXISTS(SELECT 1 FROM source_catalog_publication_entity WHERE operation_id=? AND entity_kind='entry' AND media_prepared=0)`, id, id).Scan(&pending)
 			if err == nil && !pending {
 				_, err = tx.ExecContext(ctx, `UPDATE source_catalog_publication SET state='committed' WHERE id=? AND state='preparing'`, id)

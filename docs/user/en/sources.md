@@ -99,6 +99,10 @@ submission instead of immediately requesting the same tree again. After Local
 registration succeeds, cache objects promoted by that Fetch are removed;
 unselected cache objects remain available.
 
+## OpenList catalog exclusions
+
+Whole-directory rules exclude a path and its descendants; whitelist rules keep a subtree within an excluded path. Saving or removing a rule starts a recoverable task. The form distinguishes a saved rule from a completed catalog update and refreshes the content only after the task succeeds. Large updates continue in the background; reopening the form restores the task status. Low space or source maintenance can defer processing while the published catalog remains readable. Authorized users can retry a failed or cancelled task from its saved progress. Exclusion preserves work identities and personal records; removing a rule lets a later scan confirm the files again.
+
 ## Related Docs
 
 - [Work detail](work-detail.md)

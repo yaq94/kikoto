@@ -82,7 +82,9 @@ func (s *Server) prepareCatalogPublicationRetirements(ctx context.Context, opera
 			return err
 		}
 		var entry int64
-		err = tx.QueryRowContext(ctx, `SELECT entity_id FROM source_catalog_publication_entity WHERE operation_id=? AND entity_kind='retired_files' ORDER BY entity_id LIMIT 1`, operation).Scan(&entry)
+		var kind string
+		err = tx.QueryRowContext(ctx, `SELECT entity_id,entity_kind FROM source_catalog_publication_entity
+			WHERE operation_id=? AND entity_kind IN ('retired_aliases','retired_files') ORDER BY entity_kind,entity_id LIMIT 1`, operation).Scan(&entry, &kind)
 		if errors.Is(err, sql.ErrNoRows) {
 			release()
 			return nil
@@ -91,13 +93,24 @@ func (s *Server) prepareCatalogPublicationRetirements(ctx context.Context, opera
 			release()
 			return err
 		}
-		result, err := tx.ExecContext(ctx, `DELETE FROM source_catalog_file WHERE rowid IN(SELECT rowid FROM source_catalog_file WHERE catalog_entry_id=? ORDER BY relative_path LIMIT 64)`, entry)
+		var result sql.Result
+		if kind == "retired_aliases" {
+			// The retired row holds the stable successor. Updating a batch removes
+			// it from this indexed pending set, so retries never scan a consumed
+			// prefix or advance a cursor without its corresponding writes.
+			result, err = tx.ExecContext(ctx, `UPDATE source_catalog_entry
+				SET relocated_to_id=(SELECT relocated_to_id FROM source_catalog_entry WHERE id=?)
+				WHERE id IN (SELECT id FROM source_catalog_entry WHERE relocated_to_id=?
+				AND id<>(SELECT relocated_to_id FROM source_catalog_entry WHERE id=?) ORDER BY id LIMIT 64)`, entry, entry, entry)
+		} else {
+			result, err = tx.ExecContext(ctx, `DELETE FROM source_catalog_file WHERE rowid IN(SELECT rowid FROM source_catalog_file WHERE catalog_entry_id=? ORDER BY relative_path LIMIT 64)`, entry)
+		}
 		var count int64
 		if err == nil {
 			count, err = result.RowsAffected()
 		}
 		if err == nil && count < 64 {
-			_, err = tx.ExecContext(ctx, `DELETE FROM source_catalog_publication_entity WHERE operation_id=? AND entity_kind='retired_files' AND entity_id=?`, operation, entry)
+			_, err = tx.ExecContext(ctx, `DELETE FROM source_catalog_publication_entity WHERE operation_id=? AND entity_kind=? AND entity_id=?`, operation, kind, entry)
 		}
 		if err == nil {
 			err = tx.Commit()

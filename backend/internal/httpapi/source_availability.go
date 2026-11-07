@@ -486,7 +486,7 @@ func (s *Server) workHasLocationType(ctx context.Context, workID int64, sourceID
 	}
 	query += " LIMIT 1"
 	var found int
-	return s.db.QueryRowContext(ctx, query, args...).Scan(&found) == nil
+	return s.catalogRead(ctx).QueryRowContext(ctx, query, args...).Scan(&found) == nil
 }
 
 func (s *Server) workHasSourcePresence(ctx context.Context, workID int64, sourceID int64, presenceType string, availability string) bool {
@@ -504,7 +504,7 @@ func (s *Server) workHasSourcePresence(ctx context.Context, workID int64, source
 	}
 	query += " LIMIT 1"
 	var found int
-	return s.db.QueryRowContext(ctx, query, args...).Scan(&found) == nil
+	return s.catalogRead(ctx).QueryRowContext(ctx, query, args...).Scan(&found) == nil
 }
 
 func (s *Server) recordAvailabilityPresence(ctx context.Context, tx *sql.Tx, code string, results []sourceAvailabilitySummary) error {

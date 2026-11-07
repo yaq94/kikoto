@@ -1009,7 +1009,13 @@ func retireCatalogCardTx(ctx context.Context, tx *sql.Tx, id, targetID int64) (r
 			}
 			return false, err
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE source_catalog_entry SET relocated_to_id=? WHERE relocated_to_id=? AND id<>?`, targetID, id, targetID); err != nil {
+		if operation, _ := ctx.Value(catalogPublicationKey{}).(int64); operation > 0 {
+			_, err = tx.ExecContext(ctx, `INSERT INTO source_catalog_publication_entity(operation_id,entity_kind,entity_id)
+				VALUES(?,'retired_aliases',?) ON CONFLICT DO NOTHING`, operation, id)
+		} else {
+			_, err = tx.ExecContext(ctx, `UPDATE source_catalog_entry SET relocated_to_id=? WHERE relocated_to_id=? AND id<>?`, targetID, id, targetID)
+		}
+		if err != nil {
 			return false, err
 		}
 	}
