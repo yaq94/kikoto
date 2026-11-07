@@ -106,7 +106,7 @@ func TestCatalogSyncProbeFailureDoesNotAdvanceOrExhaust(t *testing.T) {
 	handler := tree.handler(t)
 	f := newCatalogIndexFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if fail.Load() && r.URL.Path == "/api/fs/dirs" {
-			fmt.Fprint(w, `{"code":500,"message":"synthetic unavailable probe"}`)
+			_, _ = fmt.Fprint(w, `{"code":500,"message":"synthetic unavailable probe"}`)
 			return
 		}
 		handler.ServeHTTP(w, r)

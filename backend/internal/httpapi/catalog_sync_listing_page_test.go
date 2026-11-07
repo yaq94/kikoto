@@ -80,21 +80,21 @@ func TestCatalogSyncListingRejectsAmbiguousPagesAndKeepsPublishedFiles(t *testin
 				_ = json.Unmarshal(body, &input)
 				if armed.Load() && r.URL.Path == "/api/fs/list" && input.Path == "/Example Work" {
 					if failure == "empty" {
-						fmt.Fprint(w, `{"code":200,"data":{"content":[],"total":0}}`)
+						_, _ = fmt.Fprint(w, `{"code":200,"data":{"content":[],"total":0}}`)
 						return
 					}
 					if failure == "unknown_total" {
-						fmt.Fprint(w, `{"code":200,"data":{"content":[]}}`)
+						_, _ = fmt.Fprint(w, `{"code":200,"data":{"content":[]}}`)
 						return
 					}
 					if input.Page == 2 {
 						switch failure {
 						case "duplicate":
-							fmt.Fprint(w, `{"code":200,"data":{"content":[{"name":"01.mp3","size":1}],"total":3}}`)
+							_, _ = fmt.Fprint(w, `{"code":200,"data":{"content":[{"name":"01.mp3","size":1}],"total":3}}`)
 						case "total_changed":
-							fmt.Fprint(w, `{"code":200,"data":{"content":[{"name":"03.mp3","size":1}],"total":4}}`)
+							_, _ = fmt.Fprint(w, `{"code":200,"data":{"content":[{"name":"03.mp3","size":1}],"total":4}}`)
 						case "early_empty":
-							fmt.Fprint(w, `{"code":200,"data":{"content":[],"total":3}}`)
+							_, _ = fmt.Fprint(w, `{"code":200,"data":{"content":[],"total":3}}`)
 						case "partial":
 							http.Error(w, "synthetic failure", 500)
 						}

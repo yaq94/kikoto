@@ -59,7 +59,7 @@ func TestContentTranslationVersionFollowsInFlightConfiguration(t *testing.T) {
 					done <- response{err: err}
 					return
 				}
-				defer res.Body.Close()
+				defer func() { _ = res.Body.Close() }()
 				data, err := io.ReadAll(res.Body)
 				done <- response{res.StatusCode, data, err}
 			}()

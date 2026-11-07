@@ -423,7 +423,7 @@ func (s *Server) translationCorpusCoverageFor(ctx context.Context, cfg translati
 	if err != nil {
 		return coverage, fmt.Errorf("read effective translation coverage: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var item translationCorpusLanguageCoverage
 		if err := rows.Scan(&item.Language, &coverage.Revision, &coverage.Total, &item.Rows, &item.Native, &item.Model,
@@ -561,7 +561,7 @@ func (s *Server) dueTranslationPrefillFailures(ctx context.Context, cfg translat
 	if err != nil {
 		return nil, fmt.Errorf("read due prefill failures: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	type failure struct {
 		item       translationCorpusItem
 		sourceHash string

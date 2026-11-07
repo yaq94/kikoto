@@ -48,7 +48,7 @@ func (s *Server) prepareCatalogPublicationMedia(ctx context.Context, operation i
 		if err == nil {
 			err = rows.Err()
 		}
-		rows.Close()
+		_ = rows.Close()
 		for _, c := range batch {
 			if err != nil {
 				break

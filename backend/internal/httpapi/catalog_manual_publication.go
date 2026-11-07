@@ -20,7 +20,7 @@ func (s *Server) persistOpenListSnapshot(ctx context.Context, sourceID int64, ro
 	}
 	digest := sha256.New()
 	for _, f := range files {
-		fmt.Fprintf(digest, "%s\x00%s\x00%s\x00%d\x00", f.Path, f.Title, f.Kind, f.Size)
+		_, _ = fmt.Fprintf(digest, "%s\x00%s\x00%s\x00%d\x00", f.Path, f.Title, f.Kind, f.Size)
 	}
 	version := hex.EncodeToString(digest.Sum(nil))
 	options := mustJSON(map[string]string{"sourceRoot": sourceRoot, "title": title, "kind": "manual"})
@@ -128,7 +128,7 @@ func (s *Server) persistOpenListSnapshot(ctx context.Context, sourceID int64, ro
 			if err == nil {
 				err = rows.Err()
 			}
-			rows.Close()
+			_ = rows.Close()
 		}
 		for _, f := range batch {
 			if err != nil {
@@ -205,7 +205,7 @@ func (s *Server) markStaleSnapshotCards(ctx context.Context, sourceID int64, roo
 		if err == nil {
 			err = rows.Err()
 		}
-		rows.Close()
+		_ = rows.Close()
 		if err == nil {
 			err = setCatalogEntryStatusesTx(ctx, tx.Tx, updates)
 		}

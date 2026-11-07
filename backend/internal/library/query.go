@@ -148,7 +148,7 @@ func (s *Store) ListPage(ctx context.Context, options ListOptions) (RawPage, err
 	if err != nil {
 		return RawPage{}, err
 	}
-	defer readTx.Rollback()
+	defer func() { _ = readTx.Rollback() }()
 	var total int
 	if err := readTx.QueryRowContext(ctx, "SELECT COUNT(*) FROM work LEFT JOIN user_work_state ON user_work_state.work_id = work.id AND user_work_state.user_id = ? WHERE "+where, countArgs...).Scan(&total); err != nil {
 		return RawPage{}, err

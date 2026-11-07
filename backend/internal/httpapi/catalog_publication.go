@@ -179,7 +179,7 @@ func (s *Server) commitCatalogPublication(ctx context.Context, id int64) error {
 		if err == nil {
 			err = rows.Err()
 		}
-		rows.Close()
+		_ = rows.Close()
 		if err != nil {
 			release()
 			return err
@@ -233,7 +233,7 @@ func (s *Server) commitCatalogPublication(ctx context.Context, id int64) error {
 		if err == nil {
 			err = rows.Err()
 		}
-		rows.Close()
+		_ = rows.Close()
 		if err != nil {
 			release()
 			return err
@@ -366,7 +366,7 @@ func (s *Server) beginCatalogRead(ctx context.Context) (context.Context, func(),
 	// Establish the SQLite read snapshot before any source-owned projection.
 	var id int
 	if err = tx.QueryRowContext(ctx, `SELECT id FROM source_catalog_publication_writer WHERE id=1`).Scan(&id); err != nil {
-		tx.Rollback()
+		_ = tx.Rollback()
 		return ctx, nil, err
 	}
 	return context.WithValue(ctx, catalogReadTxKey{}, tx), func() { _ = tx.Rollback() }, nil

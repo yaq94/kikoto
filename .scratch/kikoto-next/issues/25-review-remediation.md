@@ -6,13 +6,13 @@
 
 **Status:** ready-for-agent
 
-**Implementation:** in-progress；按主代理指定分批交付。第一批只包含清理误删与恢复单集跨层关联，其余审查整改仍待实施，不能据此关闭完整规格。
+**Implementation:** in-progress；功能、浏览器生命周期与翻译资源整改已分批集成，107 目录发布已合入可审阅阶段实现。分组算法、手动扫描、排除与退役的资源边界及最终同候选验收仍未完成。
 
 **依据:** [正式规格](../spec.md)、[20 准入合同](20-catalog-sync-and-admission.md)、[22 父级恢复](22-personal-transfer-parent-identity.md)、[23 清理保留](23-retention-and-repository-contracts.md)、[13 共享关联](13-shared-link-conflict-review.md)、[14 自动匹配](14-high-confidence-work-matching.md)、[ADR-0004](../../../docs/decisions/ADR-0004-work-identity-and-personal-state.md)、[ADR-0006](../../../docs/decisions/ADR-0006-catalog-remediation-and-translation-consistency.md)。
 
 ## 验收范围
 
-当前审查基点是 `53d905e1d212e85d78cb95687044b96b4fc3ebae`。旧 `resolved` 和旧绿色日志仅证明对应历史产物，当前验收以本票证据中的提交及命令为准。迁移头为 105，本批不改迁移。
+当前审查基点是 `53d905e1d212e85d78cb95687044b96b4fc3ebae`。旧 `resolved` 和旧绿色日志仅证明对应历史产物，当前验收以本票证据中的提交及命令为准。生产迁移头仍为 105；集成分支新增 106 译文 revision 与 107 目录 publication，已发布迁移保持不变。107 的范围与未完成项见[阶段证据](../evidence/25-sync107-publication.md)。
 
 ## 验收清单
 
@@ -22,7 +22,7 @@
 - [x] 系列评价及翻译统一检查合格成员，并保留个人恢复的无媒体父系列及既有 missing 边界。
 - [x] 同一 SPA 缓存页进入设置改模型后返回，复现并处理版本刷新；他人配置变化和迟到响应不能回写旧版本。
 - [x] 单集 staging 每批消费后正确推进；101 集总 staging 量及事务数有回归，不只检查单事务上限。
-- [ ] 增量同步按页及有界批次持久化检查点，取消、低空间与恢复有效，完整集合与最终可见性保持；确需迁移时采用主代理已保留的 107（106 归译文资源整改），实施前先协调迁移链。设计交接见[107 方案，未实现](../evidence/25-sync107-design.md)。
+- [ ] 增量同步按页及有界批次持久化检查点，取消、低空间与恢复有效，完整集合与最终可见性保持；107 的逐页与 publication 纵向实现已合入，分组、finite scan、exclusion、retire 与派生读路径仍需完成。设计依据与阶段结果分别见[107 设计](../evidence/25-sync107-design.md)、[107 实施证据](../evidence/25-sync107-publication.md)。
 - [x] 前端翻译跨 flush 保持共享并发上限，取消和失败后资源释放可验证。
 - [x] 翻译基准查询失败明确失败并非零退出，不以 0 ms 成功输出；保留每项错误；相关夹具使用保留编号构造器。
 - [x] 增量 probe 不重复扫描已完成前缀，持久游标与失败恢复仍覆盖完整集合；按资源基线复测规模曲线。
@@ -30,6 +30,9 @@
 - [ ] 写后保留维护不在交互返回路径同步扫描全表；预算与历史淘汰有界、可恢复，当前搜索语料与个人记录保持。
 - [x] 浏览器缓存清理有界且不重叠，避免每次写入后重新复制、编码全部缓存；上限、LRU 和账号／内容／配置隔离保持正确。
 - [x] 后续独立复审：flush 后加入的重复读者计入取消所有权，已完成读者不阻止剩余请求取消；IDB 失败不留下未处理 transaction rejection，禁用或 blocked 后迟到成功关闭连接。39 个公共边界 U 与 5 个原生 IDB F 通过，含多 tab 精确预算账本，见[浏览器生命周期证据](../evidence/25-browser-lifecycle.md)。
+- [x] 独立复审 F2：排队分块失去全部读者后不再发送；取得共享槽后重新检查，保留仍有效或重新加入的读者。见[取消分块证据](../evidence/25-cancelled-chunks.md)，主集成工作区 30 项 U 复跑通过。
+- [x] 独立复审 TR2：维护等待配置锁不阻止生命周期取消，跳过的维护下个 tick 可继续；见[配置锁取消证据](../evidence/25-translation-maintenance-cancel.md)。
+- [ ] 最终集成重新复验 106/107 的语料、目录改名、发布指针与 maintenance 失效依赖，完成最终 race、规模资源、完整 CI、恢复演练及部署验收。
 
 ## 测试与交付边界
 
@@ -38,6 +41,8 @@
 第一批证据见 [25 审查整改证据](../evidence/25-review-remediation.md)。第二批服务端版本绑定、系列及单卡翻译准入见 [第二批交接证据](../evidence/25-translation-backend.md)；前端实现已保留在同分支，尚不据此关闭本票前端清单。原始日志保留在仓库外的工作区 reports/20261107-remediation 目录。发布账本、完整候选 CI、生产验收由主代理另行记录，本票不替代它们。
 
 ## Comments
+
+2026-11-08：集成 `30cd671d` 包含第三批算法、取消/IDB 修复、106 翻译资源、维护取消、前端空分块取消及 107 阶段实现。两项个人导出失败已在原基点证实为无来源/音频夹具违背准入合同；仅补有效导出端夹具，全部原断言与空库恢复保留，见[个人系列回归](../evidence/25-personal-series-regression.md)。根代理当前验收与剩余范围见[集成记录](../evidence/25-integration-20261108.md)；本票不据阶段绿灯关闭。
 
 第三批算法证据见 [25 算法整改](../evidence/25-algorithms.md)。本批完成 staging、probe 路径遍历和基准错误传播；整目录分页事务、覆盖统计与写后保留仍待实施，后续前端复审问题另行修复。上述前端已勾选项记录此前批次的验证，不代表后续新发现已关闭。
 

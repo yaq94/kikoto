@@ -117,9 +117,9 @@ func TestTranslationCompleteRevisionSurvivesRestartAndFindsNewEntity(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	s = NewServer(db, config.Config{})
-	defer s.Shutdown(context.Background())
+	defer func() { _ = s.Shutdown(context.Background()) }()
 	if _, err := s.runTranslationPrefillBatch(context.Background()); err != nil {
 		t.Fatal(err)
 	}

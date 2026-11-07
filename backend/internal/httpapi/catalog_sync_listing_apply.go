@@ -45,7 +45,7 @@ func (s *Server) applyCatalogSyncListingPages(ctx context.Context, sourceID, gen
 		if err == nil {
 			err = rows.Err()
 		}
-		rows.Close()
+		_ = rows.Close()
 		if err != nil {
 			return 0, changed, err
 		}
@@ -87,7 +87,7 @@ func (s *Server) applyCatalogSyncListingBatch(ctx context.Context, sourceID, gen
 	if err == nil {
 		err = rows.Err()
 	}
-	rows.Close()
+	_ = rows.Close()
 	if err != nil {
 		return 0, err
 	}
@@ -184,7 +184,7 @@ func (s *Server) removeCatalogSyncObservation(ctx context.Context, sourceID, gen
 		if err == nil {
 			err = rows.Err()
 		}
-		rows.Close()
+		_ = rows.Close()
 		if err != nil {
 			release()
 			return err
@@ -277,12 +277,12 @@ func (s *Server) finishCatalogSyncListing(ctx context.Context, sourceID, generat
 		if err = rows.Scan(&item.Name, &item.Kind, &item.Size, &item.Hash, &item.Modified); err != nil {
 			break
 		}
-		fmt.Fprintf(digest, "%s%c%s%c%d%c%s%c%s%c", item.Name, 0, item.Kind, 0, item.Size, 0, item.Hash, 0, item.Modified, 0)
+		_, _ = fmt.Fprintf(digest, "%s%c%s%c%d%c%s%c%s%c", item.Name, 0, item.Kind, 0, item.Size, 0, item.Hash, 0, item.Modified, 0)
 	}
 	if err == nil {
 		err = rows.Err()
 	}
-	rows.Close()
+	_ = rows.Close()
 	if err != nil {
 		return err
 	}

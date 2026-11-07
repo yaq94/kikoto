@@ -948,12 +948,12 @@ func (s *Server) publishCatalogBatch(ctx context.Context, job workflowJobRecord,
 	if err != nil {
 		return 0, err
 	}
-	defer entryStatement.Close()
+	defer func() { _ = entryStatement.Close() }()
 	fileStatement, err := tx.PrepareContext(ctx, `INSERT INTO source_catalog_file(catalog_entry_id,relative_path,source_root,title,kind,size_bytes,content_hash,modified_at,observed_generation) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(catalog_entry_id,relative_path) DO UPDATE SET source_root=excluded.source_root,title=excluded.title,kind=excluded.kind,size_bytes=excluded.size_bytes,content_hash=excluded.content_hash,modified_at=excluded.modified_at,observed_generation=excluded.observed_generation`)
 	if err != nil {
 		return 0, err
 	}
-	defer fileStatement.Close()
+	defer func() { _ = fileStatement.Close() }()
 	splitPlans := map[string]catalogSplitPlan{}
 	parentNeeded := map[string]bool{}
 	splitRoots := map[string]bool{}

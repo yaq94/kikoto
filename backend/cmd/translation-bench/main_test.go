@@ -12,7 +12,7 @@ func TestBenchmarkQueryFailureIsNotAZeroLatencySuccess(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	for _, name := range []string{"warmup", "measurement"} {
 		t.Run(name, func(t *testing.T) {
 			calls := 0
