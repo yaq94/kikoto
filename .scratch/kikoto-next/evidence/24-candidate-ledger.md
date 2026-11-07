@@ -13,8 +13,8 @@
 | 集成负责人 | TODO |
 | 镜像 tag | `kikoto:next-<shortsha>` |
 | 镜像 digest（受限记录，不写仓库） | TODO |
-| schema 版本 | TODO（当前预期 109） |
-| 迁移链 | TODO（既有库继续编号链至 109；生产升级 105 → 106 → 107 → 108 → 109） |
+| schema 版本 | TODO（当前预期 110） |
+| 迁移链 | TODO（既有库继续编号链至 110；生产升级 105 → 106 → 107 → 108 → 109 → 110） |
 | 配置指纹（model / base URL / template / reasoning） | TODO |
 | 工作区状态 | `git status --porcelain` 为空；否则阻塞 |
 

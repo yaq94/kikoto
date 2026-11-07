@@ -10,6 +10,8 @@
 
 ## 当前状态
 
+当前新增 110 旧拆分卡退役游标已在 `5f78ae45` 集成，详见[资源证据](evidence/25-split-retirement-bounds.md)。`e9b1cd38` 的 Full CI 仍失败；已通过的真实试译及 105→109→105 恢复仅记录对应候选，当前门禁与待修项见[续验记录](evidence/25-ci-publication-and-split.md)。
+
 2026-11-08：[25：现行实现审查整改](issues/25-review-remediation.md) 保持 `in-progress`。功能、浏览器生命周期、106 翻译资源、107 发布、108 分组与有限扫描、109 查询亲和性、排除任务、退役和派生读取整改已集成。定向回归及前端完整门禁已有证据；2747e05e 的隔离 105→109→105 恢复演练通过。同候选双轴审查、完整 CI、目标机组合性能、恢复复核与部署验收待完成。见[复审修复](evidence/25-final-review-fixes.md)、[翻译浏览器回归](evidence/25-browser-final-regressions.md)及[完整门禁修复](evidence/25-full-ci-corrections.md)。以下表格是旧候选状态，不代表本次审查通过。
 
 | 范围 | 状态 | 说明 |

@@ -32,7 +32,7 @@
 - [x] 后续独立复审：flush 后加入的重复读者计入取消所有权，已完成读者不阻止剩余请求取消；IDB 失败不留下未处理 transaction rejection，禁用或 blocked 后迟到成功关闭连接。39 个公共边界 U 与 5 个原生 IDB F 通过，含多 tab 精确预算账本，见[浏览器生命周期证据](../evidence/25-browser-lifecycle.md)。
 - [x] 独立复审 F2：排队分块失去全部读者后不再发送；取得共享槽后重新检查，保留仍有效或重新加入的读者。见[取消分块证据](../evidence/25-cancelled-chunks.md)，主集成工作区 30 项 U 复跑通过。
 - [x] 独立复审 TR2：维护等待配置锁不阻止生命周期取消，跳过的维护下个 tick 可继续；见[配置锁取消证据](../evidence/25-translation-maintenance-cancel.md)。
-- [ ] 最终集成重新复验 106–109 的语料、目录改名、发布指针与 maintenance 失效依赖，完成最终 race、规模资源、完整 CI、恢复演练及部署验收。
+- [ ] 最终集成重新复验 106–110 的语料、目录改名、发布指针与 maintenance 失效依赖，完成最终 race、规模资源、完整 CI、恢复演练及部署验收。
 
 ## 测试与交付边界
 
@@ -41,6 +41,8 @@
 第一批证据见 [25 审查整改证据](../evidence/25-review-remediation.md)。第二批服务端版本绑定、系列及单卡翻译准入见 [第二批交接证据](../evidence/25-translation-backend.md)；前端实现已保留在同分支，尚不据此关闭本票前端清单。原始日志保留在仓库外的工作区 reports/20261107-remediation 目录。发布账本、完整候选 CI、生产验收由主代理另行记录，本票不替代它们。
 
 ## Comments
+
+2026-11-08：`5f78ae45` 修复完整索引及增量恢复中的整根旧拆分卡退役，新增 110 持久游标；1,103 张旧卡的单事务 entry 写入由 1,104 降至 64，故障、低空间和取消后实际重启恢复保留个人评分，见[退役资源证据](../evidence/25-split-retirement-bounds.md)。完整 CI 的工作表观察和拆分保存屏障修正及未解决 race 问题见[完整门禁续验](../evidence/25-ci-publication-and-split.md)。本票继续 in-progress。
 
 2026-11-08：109 将已发布投影的 work_id 固定为整数亲和性，使译文插入使用索引查询；50,001 条原回归由超时恢复为 8.31 秒通过。排除恢复拥有者、series-only 清理与尺寸查询修复见[复审修复](../evidence/25-final-review-fixes.md)。后续完整门禁暴露的同来源刷新兼容性和共享关联保存竞态、2747e05e 的真实隔离恢复演练见[完整门禁修复](../evidence/25-full-ci-corrections.md)。这些定向证据不关闭最终同候选门禁。
 

@@ -88,16 +88,24 @@ func TestCatalogDirectoryListingChecksUnknownAndStaleTabs(t *testing.T) {
 	var path string
 	for {
 		var first, second, checked string
-		if err := f.server.db.QueryRow(`SELECT
-			(SELECT availability_status FROM source_catalog_entry WHERE id=1),
-			(SELECT availability_status FROM source_catalog_entry WHERE id=2),
-				(SELECT status_checked_at FROM source_catalog_entry WHERE id=2),
-				(SELECT relative_path FROM source_catalog_file WHERE catalog_entry_id=2)`).Scan(&first, &second, &checked, &path); err != nil {
-			t.Fatal(err)
+		directories = reviewRequest(t, f.handler, f.cookies["user"], http.MethodGet, "/api/works/1/catalog-directories", "", http.StatusOK)["directories"].([]any)
+		for _, raw := range directories {
+			item := raw.(map[string]any)
+			switch item["catalogEntryId"] {
+			case float64(1):
+				first = item["status"].(string)
+			case float64(2):
+				second, checked = item["status"].(string), item["checkedAt"].(string)
+			}
 		}
+		tracks := reviewRequest(t, f.handler, f.cookies["user"], http.MethodGet, "/api/source-catalog/2/tracks", "", http.StatusOK)["tracks"].([]any)
+		if len(tracks) != 1 {
+			t.Fatalf("background refresh exposed an incomplete directory: %#v", tracks)
+		}
+		path = tracks[0].(map[string]any)["path"].(string)
 		// The seeded card already has an old check timestamp. Wait for the
-		// published file, not the row status, otherwise the read below races
-		// the commit that replaces the snapshot.
+		// public track response: working file rows can be empty while the old
+		// published directory must remain readable until the marker commits.
 		if first == "available" && second == "available" && checked != "" && path == "checked.wav" {
 			break
 		}

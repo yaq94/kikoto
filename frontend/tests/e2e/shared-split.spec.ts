@@ -103,8 +103,15 @@ test("owners allocate changed reviews and reopen a pending split through the rea
   await expect(split.getByRole("status")).toHaveText("Waiting for record allocations");
   await expect(split.getByRole("button", { name: "Confirm my allocation", exact: true })).toBeDisabled();
   await split.getByLabel("Keep my changed review in", { exact: true }).selectOption("left");
+  const decision = page.waitForResponse(
+    (response) => /\/api\/shared-splits\/\d+\/decision$/.test(response.url()) && response.request().method() === "POST",
+  );
   await split.getByRole("button", { name: "Confirm my allocation", exact: true }).click();
+  const saved = await decision;
+  expect(saved.ok()).toBe(true);
+  expect((await saved.json()).myAllocation).toBe("left");
   await expect(split.getByRole("status")).toHaveText("Waiting for record allocations");
+  await expect(split).toContainText("Your allocation is saved. Other owners still need to confirm.");
   await page.reload();
   await association
     .getByRole("button", { name: /Open association/ })
