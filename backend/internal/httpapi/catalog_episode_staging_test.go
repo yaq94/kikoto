@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/yexca/kikoto/backend/internal/config"
 	"github.com/yexca/kikoto/backend/internal/openlist"
@@ -34,6 +35,13 @@ type catalogWriteAudit struct {
 	totalFiles       int
 	fileTransactions int
 	history          []string
+	allRows          int
+	allTransactions  int
+	totalAllRows     int
+	maxAllRows       int
+	tableRows        map[string]int
+	maxTables        map[string]int
+	maxDuration      time.Duration
 }
 
 func (a *catalogWriteAudit) start() {
@@ -50,6 +58,10 @@ func (a *catalogWriteAudit) start() {
 	a.totalFiles = 0
 	a.fileTransactions = 0
 	a.history = nil
+	a.allRows, a.allTransactions, a.totalAllRows, a.maxAllRows = 0, 0, 0, 0
+	a.tableRows = map[string]int{}
+	a.maxTables = nil
+	a.maxDuration = 0
 }
 
 func (a *catalogWriteAudit) stop() {
@@ -82,6 +94,8 @@ func (a *catalogWriteAudit) rowChanged(data sqlite.SQLitePreUpdateData) {
 	if !a.active {
 		return
 	}
+	a.allRows++
+	a.tableRows[data.TableName]++
 	switch data.TableName {
 	case "source_catalog_entry":
 		a.entries++
@@ -95,6 +109,15 @@ func (a *catalogWriteAudit) rowChanged(data sqlite.SQLitePreUpdateData) {
 func (a *catalogWriteAudit) committed() int32 {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	if a.active && a.allRows > 0 {
+		a.allTransactions++
+		a.totalAllRows += a.allRows
+		if a.allRows > a.maxAllRows {
+			a.maxAllRows, a.maxTables = a.allRows, a.tableRows
+		}
+	}
+	a.allRows = 0
+	a.tableRows = map[string]int{}
 	if a.active && a.rows > 0 {
 		a.transactions++
 		if a.files > 0 {
@@ -122,6 +145,28 @@ func (a *catalogWriteAudit) rolledBack() {
 	a.rows = 0
 	a.entries = 0
 	a.files = 0
+	a.allRows = 0
+	a.tableRows = map[string]int{}
+}
+
+func (a *catalogWriteAudit) allDetails() (int, int, int, map[string]int) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.totalAllRows, a.allTransactions, a.maxAllRows, a.maxTables
+}
+
+func (a *catalogWriteAudit) recordTiming(elapsed time.Duration) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.active && elapsed > a.maxDuration {
+		a.maxDuration = elapsed
+	}
+}
+
+func (a *catalogWriteAudit) duration() time.Duration {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.maxDuration
 }
 
 func openCatalogWriteAuditedDB(t *testing.T, audit *catalogWriteAudit) *sql.DB {
@@ -287,6 +332,34 @@ func TestCatalogEpisodeLargeSnapshotStagesAtMost100RowsPerBatch(t *testing.T) {
 	}
 	if got := episodePendingCount(t, f); got != 0 {
 		t.Fatalf("pending mappings=%d after activation, want zero", got)
+	}
+}
+
+func TestCatalogManualSingleSnapshotUsesBoundedFileTransactions(t *testing.T) {
+	audit := &catalogWriteAudit{}
+	tree := map[string][]map[string]any{"/": {looseDir("RJ00000000")}, "/RJ00000000": {}}
+	for i := 0; i < 205; i++ {
+		tree["/RJ00000000"] = append(tree["/RJ00000000"], looseAudio(fmt.Sprintf("track-%03d.mp3", i)))
+	}
+	f := newLooseWorkFixtureWithDB(t, tree, openCatalogWriteAuditedDB(t, audit))
+	files := mustOpenListFiles(t, f, "/RJ00000000")
+	source, err := f.server.loadRemoteSourceForUse(context.Background(), f.sourceID(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	audit.start()
+	id, err := f.server.persistOpenListRoot(context.Background(), source, "/RJ00000000", files)
+	audit.stop()
+	if err != nil {
+		t.Fatal(err)
+	}
+	maxRows, entries, fileRows, _ := audit.details()
+	if maxRows > 100 {
+		t.Fatalf("single snapshot transaction=%d entry+%d file rows", entries, fileRows)
+	}
+	stored, err := f.server.loadSourceCatalogFiles(context.Background(), id)
+	if err != nil || len(stored) != 205 {
+		t.Fatalf("complete manual set=%d %v", len(stored), err)
 	}
 }
 

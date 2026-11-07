@@ -92,7 +92,7 @@ func linkCatalogEntryWork(ctx context.Context, tx *sql.Tx, entry catalogEntry, w
 	if entry.SourceID == 0 {
 		return nil
 	}
-	return upsertWorkSourcePresence(ctx, tx, workSourcePresence{
+	return upsertCatalogReviewPresence(ctx, tx, entry, workSourcePresence{
 		WorkID: workID, FileSourceID: entry.SourceID, PresenceType: sourcePresenceTypeRemoteSource,
 		RemoteID: fmt.Sprint(entry.ID), RemoteCode: entry.PrimaryCode, Availability: availability,
 		RawJSON: mustJSON(map[string]any{"catalogEntryId": entry.ID}),

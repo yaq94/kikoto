@@ -81,7 +81,7 @@ type Progress struct {
 const mediaEditionOrderSQL = `EXISTS (
 				SELECT 1
 				FROM media_item AS local_item
-				INNER JOIN media_file_location AS local_location ON local_location.media_item_id = local_item.id
+				INNER JOIN published_media_file_location AS local_location ON local_location.media_item_id = local_item.id
 				WHERE local_item.work_id = edition.work_id
 					AND local_location.location_type = 'local'
 					AND local_location.availability = 'available'
@@ -104,7 +104,7 @@ const selectedMediaWorkSQL = `COALESCE((
 func selectedMediaLocationExists(locationTypes string) string {
 	return `EXISTS (
 		SELECT 1
-		FROM media_file_location AS badge_location
+		FROM published_media_file_location AS badge_location
 		INNER JOIN media_item AS badge_item ON badge_item.id = badge_location.media_item_id
 		WHERE badge_item.work_id = ` + selectedMediaWorkSQL + `
 			AND badge_location.availability = 'available'
@@ -200,8 +200,8 @@ func (s *Store) LoadAvailability(ctx context.Context, workIDs []int64) (map[int6
 	query, args := int64InQuery(`
 		SELECT work.id,
 			(SELECT COUNT(*) FROM media_item WHERE media_item.work_id = work.id AND (media_item.kind = 'audio' OR (media_item.kind = 'video' AND COALESCE(media_item.has_audio, 1) = 1))),
-			(SELECT COUNT(*) FROM media_file_location INNER JOIN media_item ON media_item.id = media_file_location.media_item_id WHERE media_item.work_id = work.id AND (media_item.kind = 'audio' OR (media_item.kind = 'video' AND COALESCE(media_item.has_audio, 1) = 1)) AND media_file_location.availability = 'available'),
-			COALESCE((SELECT GROUP_CONCAT(DISTINCT media_file_location.location_type) FROM media_file_location INNER JOIN media_item ON media_item.id = media_file_location.media_item_id WHERE media_item.work_id = work.id AND media_file_location.availability = 'available'), '')
+			(SELECT COUNT(*) FROM published_media_file_location INNER JOIN media_item ON media_item.id = published_media_file_location.media_item_id WHERE media_item.work_id = work.id AND (media_item.kind = 'audio' OR (media_item.kind = 'video' AND COALESCE(media_item.has_audio, 1) = 1)) AND published_media_file_location.availability = 'available'),
+			COALESCE((SELECT GROUP_CONCAT(DISTINCT published_media_file_location.location_type) FROM published_media_file_location INNER JOIN media_item ON media_item.id = published_media_file_location.media_item_id WHERE media_item.work_id = work.id AND published_media_file_location.availability = 'available'), '')
 		FROM work WHERE work.id IN (%s)
 	`, uniqueInt64s(workIDs))
 	rows, err := s.db.QueryContext(ctx, query, args...)

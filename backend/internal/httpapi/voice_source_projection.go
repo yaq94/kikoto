@@ -11,6 +11,11 @@ import (
 )
 
 func (s *Server) workSourceStateByCode(ctx context.Context, code string) ([]circleSourceStat, []voiceRemoteObservation, error) {
+	ctx, done, err := s.beginCatalogRead(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer done()
 	tags, err := s.availableVoiceSourceTags(ctx, code)
 	if err != nil {
 		return nil, nil, err
@@ -37,7 +42,7 @@ func (s *Server) workSourceStateByCode(ctx context.Context, code string) ([]circ
 // of one work live in the same source, one tag cannot name a single code, so
 // the projection stays empty and the caller keeps the card's code.
 func (s *Server) availableVoiceSourceTags(ctx context.Context, code string) ([]circleSourceStat, error) {
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.catalogRead(ctx).QueryContext(ctx, `
 		SELECT source.id, source.display_name, location.location_type, COUNT(*),
 			CASE WHEN MIN(COALESCE(held_work.primary_code, '')) = MAX(COALESCE(held_work.primary_code, ''))
 				THEN COALESCE(MIN(held_work.primary_code), '') ELSE '' END
@@ -94,7 +99,7 @@ func (s *Server) availableVoiceSourceTags(ctx context.Context, code string) ([]c
 // Source presence is a work-level availability observation. It can make the
 // remote source available without implying that concrete media rows exist.
 func (s *Server) observedVoiceSourceTags(ctx context.Context, code string) ([]circleSourceStat, []voiceRemoteObservation, error) {
-	presenceRows, err := s.db.QueryContext(ctx, `
+	presenceRows, err := s.catalogRead(ctx).QueryContext(ctx, `
 		SELECT source.id, source.code, source.display_name, presence.remote_code, presence.availability, COUNT(*)
 		FROM work_source_presence AS presence
 		INNER JOIN file_source AS source ON source.id = presence.file_source_id

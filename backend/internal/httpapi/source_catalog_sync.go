@@ -2,14 +2,11 @@ package httpapi
 
 import (
 	"context"
-	"crypto/sha256"
 	"database/sql"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"path"
-	"sort"
 	"strings"
 	"time"
 
@@ -24,8 +21,6 @@ import (
 const (
 	sourceCatalogSyncWorkerType = "source_catalog_sync"
 	catalogSyncBatch            = 32
-	catalogSyncMaxListBatches   = 512
-	catalogSyncMaxLifecycle     = 4096
 	catalogSyncMaxNote          = 600
 )
 
@@ -139,11 +134,37 @@ func enqueueCatalogSyncTx(ctx context.Context, tx *sql.Tx, sourceID int64, force
 	if fullRunning {
 		return 0, errCatalogIndexRunning
 	}
+	// An unpublished operation owns its durable pages and probe checkpoint. The
+	// scheduler resumes that run after interruption instead of allocating a new
+	// verification pass that would discard already committed progress.
+	var resumable int64
+	resumable, err = resumableCatalogSyncRunTx(ctx, tx, sourceID)
+	if err == nil {
+		_, err = tx.ExecContext(ctx, `UPDATE source_catalog_sync_run SET status='running',finished_at=NULL,force=max(force,?) WHERE id=?`, catalogSyncBoolInt(force), resumable)
+		return resumable, err
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return 0, err
+	}
 	result, err := tx.ExecContext(ctx, `INSERT INTO source_catalog_sync_run(file_source_id,status,force) VALUES(?, 'running', ?)`, sourceID, catalogSyncBoolInt(force))
 	if err != nil {
 		return 0, err
 	}
 	return result.LastInsertId()
+}
+
+func resumableCatalogSyncRunTx(ctx context.Context, tx *sql.Tx, sourceID int64) (int64, error) {
+	var resumable int64
+	err := tx.QueryRowContext(ctx, `SELECT run.id FROM source_catalog_sync_run run
+		JOIN source_catalog_scan scan ON scan.file_source_id=run.file_source_id
+		JOIN source_catalog_publication op ON op.file_source_id=run.file_source_id
+			AND op.state='preparing' AND op.owner='generation:' || scan.workflow_run_id
+		WHERE run.file_source_id=? AND run.status IN ('failed','cancelled','partial')
+		AND EXISTS(SELECT 1 FROM workflow_job job WHERE job.worker_type=?
+			AND json_extract(job.payload_json,'$.syncRunId')=run.id
+			AND json_extract(job.checkpoint_json,'$.probeGeneration')=scan.workflow_run_id)
+		ORDER BY run.id DESC LIMIT 1`, sourceID, sourceCatalogSyncWorkerType).Scan(&resumable)
+	return resumable, err
 }
 
 func (s *Server) startCatalogIncrementalSync(ctx context.Context, sourceID int64, force bool) (int64, error) {
@@ -216,6 +237,14 @@ func (s *Server) executeCatalogIncrementalSync(ctx context.Context, runID, sourc
 		if status == "" || status == "running" {
 			status = "succeeded"
 		}
+		var paused catalogSyncPaused
+		if errors.As(runErr, &paused) {
+			status = "partial"
+			state.Note = appendCatalogSyncNote(state.Note, paused.reason)
+			state.DeferralReason = catalogDeferralReason(paused.reason)
+			deferredUntil = catalogDeferralDeadline(s.catalogTime())
+			runErr = nil
+		}
 		if runErr != nil {
 			status = "failed"
 			state.Note = appendCatalogSyncNote(state.Note, runErr.Error())
@@ -225,6 +254,16 @@ func (s *Server) executeCatalogIncrementalSync(ctx context.Context, runID, sourc
 		}
 		settle := context.WithoutCancel(ctx)
 		_ = s.finishCatalogSyncRun(settle, runID, status, state)
+		// A pending publication is recoverable work even when dispatch already
+		// advanced today's boundary. Reuse the existing schedule and its hold
+		// deadline so a restart or low-space pause does not wait another day.
+		var unpublished bool
+		if err := s.db.QueryRowContext(settle, `SELECT EXISTS(SELECT 1 FROM source_catalog_publication WHERE file_source_id=? AND state='preparing')`, sourceID).Scan(&unpublished); err == nil && unpublished {
+			_, _ = s.db.ExecContext(settle, `UPDATE source_catalog_schedule SET manual_pending=1 WHERE file_source_id=?`, sourceID)
+			if deferredUntil.IsZero() {
+				deferredUntil = catalogDeferralDeadline(s.catalogTime())
+			}
+		}
 		if !deferredUntil.IsZero() {
 			_ = setCatalogScheduleDeferredTx(settle, s.db, sourceID, deferredUntil, state.DeferralReason)
 		}
@@ -268,10 +307,15 @@ func (s *Server) executeCatalogIncrementalSync(ctx context.Context, runID, sourc
 	}
 	state.Force = force != 0
 
-	if err = s.seedCatalogSyncDirectories(ctx, sourceID, generation, state.Force); err != nil {
+	ctx = s.catalogPublicationContext(ctx, options)
+	if err = s.seedCatalogSyncDirectories(ctx, sourceID, generation, runID, state.Force); err != nil {
 		return err
 	}
 	probeAfter, err := s.loadCatalogSyncProbeAfter(ctx, runID, generation)
+	if err != nil {
+		return err
+	}
+	probeExhausted, err := s.loadCatalogSyncProbeExhausted(ctx, runID, generation)
 	if err != nil {
 		return err
 	}
@@ -283,6 +327,10 @@ func (s *Server) executeCatalogIncrementalSync(ctx context.Context, runID, sourc
 		status := state.Status
 		if runErr != nil {
 			status = "failed"
+			var paused catalogSyncPaused
+			if errors.As(runErr, &paused) {
+				status = "partial"
+			}
 		} else if status == "" || status == "running" {
 			status = "succeeded"
 		}
@@ -290,6 +338,10 @@ func (s *Server) executeCatalogIncrementalSync(ctx context.Context, runID, sourc
 	}()
 
 	failed := false
+	ctx, publicationID, err := s.beginCatalogPublication(ctx, sourceID, catalogPublicationOwner("sync", generation))
+	if err != nil {
+		return err
+	}
 	// listingCursor advances over changed directories in path order. It is not
 	// durable: a restart re-lists from the beginning, and the listing digest
 	// makes an unchanged directory cheap.
@@ -311,9 +363,23 @@ func (s *Server) executeCatalogIncrementalSync(ctx context.Context, runID, sourc
 			deferredUntil = catalogDeferralDeadline(s.catalogTime())
 			return nil
 		}
-		probes, queryErr := s.pendingCatalogSyncProbes(ctx, sourceID, generation, runID, probeAfter, catalogSyncBatch)
-		if queryErr != nil {
-			return queryErr
+		var probes []catalogSyncDirectoryState
+		if !probeExhausted {
+			probes, err = s.pendingCatalogSyncProbes(ctx, sourceID, generation, runID, probeAfter, catalogSyncBatch)
+			if err != nil {
+				return err
+			}
+			if len(probes) == 0 {
+				if !failed {
+					if err = s.setCatalogSyncProbeExhausted(ctx, lease.Job.ID, generation, probeAfter); err != nil {
+						return err
+					}
+				}
+				if err != nil {
+					return err
+				}
+				probeExhausted = true
+			}
 		}
 		if len(probes) > 0 {
 			results := make([]catalogSyncProbeResult, 0, len(probes))
@@ -325,6 +391,9 @@ func (s *Server) executeCatalogIncrementalSync(ctx context.Context, runID, sourc
 				state.Requests++
 				state.DirsProbed++
 				if requestErr != nil {
+					if ctx.Err() != nil {
+						return ctx.Err()
+					}
 					failed = true
 					state.Note = appendCatalogSyncNote(state.Note, fmt.Sprintf("dirs %s: %v", dir.Path, requestErr))
 				}
@@ -359,6 +428,7 @@ func (s *Server) executeCatalogIncrementalSync(ctx context.Context, runID, sourc
 			}
 			if len(remainingProbes) > 0 {
 				probeAfter = ""
+				probeExhausted = false
 				continue
 			}
 			// A listing can insert a child directory that sorts before the last
@@ -384,9 +454,20 @@ func (s *Server) executeCatalogIncrementalSync(ctx context.Context, runID, sourc
 		}
 		listingCursor = changedDirs[len(changedDirs)-1].Path
 		for _, dir := range changedDirs {
-			entries, pages, requestErr := s.fetchCatalogSyncListing(ctx, client, dir, options)
+			listing, pages, requestErr := s.fetchCatalogSyncListingPages(ctx, client, sourceID, generation, lease.Job.ID, dir, options)
 			state.Requests += pages
 			if requestErr != nil {
+				var paused catalogSyncPaused
+				if errors.As(requestErr, &paused) {
+					state.Status = "partial"
+					state.Note = appendCatalogSyncNote(state.Note, paused.reason)
+					state.DeferralReason = catalogDeferralReason(paused.reason)
+					deferredUntil = catalogDeferralDeadline(s.catalogTime())
+					return nil
+				}
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
 				failed = true
 				state.Note = appendCatalogSyncNote(state.Note, fmt.Sprintf("list %s: %v", dir.Path, requestErr))
 				if markErr := s.markCatalogSyncListFailure(ctx, sourceID, generation, runID, dir, requestErr); markErr != nil {
@@ -394,8 +475,16 @@ func (s *Server) executeCatalogIncrementalSync(ctx context.Context, runID, sourc
 				}
 				continue
 			}
-			published, changed, applyErr := s.applyCatalogSyncListing(ctx, sourceID, generation, runID, dir, entries, options)
+			published, changed, applyErr := s.applyCatalogSyncListingPages(ctx, sourceID, generation, runID, dir, listing, options)
 			if applyErr != nil {
+				var paused catalogSyncPaused
+				if errors.As(applyErr, &paused) {
+					state.Status = "partial"
+					state.Note = appendCatalogSyncNote(state.Note, paused.reason)
+					state.DeferralReason = catalogDeferralReason(paused.reason)
+					deferredUntil = catalogDeferralDeadline(s.catalogTime())
+					return nil
+				}
 				return applyErr
 			}
 			state.DirsListed++
@@ -426,6 +515,9 @@ func (s *Server) executeCatalogIncrementalSync(ctx context.Context, runID, sourc
 		if lifecycleErr = s.reconcileCatalogSyncEmptyEntries(ctx, sourceID, generation); lifecycleErr != nil {
 			return lifecycleErr
 		}
+	}
+	if err = s.commitCatalogPublication(ctx, publicationID); err != nil {
+		return err
 	}
 	if failed {
 		state.Status = "partial"
@@ -536,6 +628,9 @@ func (s *Server) settleInterruptedCatalogSyncTiming(ctx context.Context) error {
 		if err = s.finishCatalogSyncRun(ctx, id, "failed", catalogSyncRunState{ID: id, Note: "startup interrupted before completion"}); err != nil {
 			return err
 		}
+		if _, err = s.db.ExecContext(ctx, `UPDATE source_catalog_schedule SET manual_pending=1 WHERE file_source_id=(SELECT file_source_id FROM source_catalog_sync_run WHERE id=?) AND EXISTS(SELECT 1 FROM source_catalog_publication op WHERE op.file_source_id=source_catalog_schedule.file_source_id AND op.state='preparing')`, id); err != nil {
+			return err
+		}
 	}
 	_, err = s.db.ExecContext(ctx, `UPDATE workflow_job SET status='failed',error_message=CASE WHEN error_message='' THEN 'startup interrupted before completion' ELSE error_message END,locked_by='',locked_at=NULL,heartbeat_at=NULL,updated_at=CURRENT_TIMESTAMP
 		WHERE worker_type=? AND status IN ('running','queued')`, sourceCatalogSyncWorkerType)
@@ -547,34 +642,48 @@ func (s *Server) settleInterruptedCatalogSyncTiming(ctx context.Context) error {
 	return err
 }
 
-func (s *Server) seedCatalogSyncDirectories(ctx context.Context, sourceID, generation int64, force bool) error {
-	tx, release, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
-	if err != nil {
-		return err
+func (s *Server) seedCatalogSyncDirectories(ctx context.Context, sourceID, generation, runID int64, force bool) error {
+	for {
+		tx, release, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
+		if err != nil {
+			return err
+		}
+		reset, err := tx.ExecContext(ctx, `UPDATE source_catalog_directory SET last_probe_failed_run=0 WHERE rowid IN (SELECT rowid FROM source_catalog_directory WHERE file_source_id=? AND generation=? AND last_probe_failed_run=? ORDER BY path LIMIT 64)`, sourceID, generation, runID)
+		var resetRows, changedRows int64
+		if err == nil {
+			resetRows, err = reset.RowsAffected()
+		}
+		if err == nil {
+			var changed sql.Result
+			changed, err = tx.ExecContext(ctx, `UPDATE source_catalog_directory SET sync_state='changed' WHERE rowid IN (SELECT rowid FROM source_catalog_directory WHERE file_source_id=? AND generation=? AND sync_state NOT IN ('excluded','changed') AND last_verified_run<>? AND (? OR path='/' OR status IN ('pending','listing_complete','failed','restricted') OR (status='empty' AND error_code<>'not_found')) ORDER BY path LIMIT 64)`, sourceID, generation, runID, force)
+			if err == nil {
+				changedRows, err = changed.RowsAffected()
+			}
+		}
+		if err == nil {
+			err = tx.Commit()
+		}
+		release()
+		if err != nil {
+			return err
+		}
+		if resetRows < 64 && changedRows < 64 {
+			return nil
+		}
+		if err = pauseCatalogWriter(ctx); err != nil {
+			return err
+		}
 	}
-	defer release()
-	if force {
-		_, err = tx.ExecContext(ctx, `UPDATE source_catalog_directory SET sync_state='changed' WHERE file_source_id=? AND generation=? AND sync_state<>'excluded'`, sourceID, generation)
-	} else {
-		_, err = tx.ExecContext(ctx, `UPDATE source_catalog_directory SET sync_state='changed'
-			WHERE file_source_id=? AND generation=? AND sync_state<>'excluded'
-			AND (path='/' OR status IN ('pending','listing_complete','failed','restricted')
-				OR (status='empty' AND error_code<>'not_found'))`, sourceID, generation)
-	}
-	if err != nil {
-		return err
-	}
-	return tx.Commit()
 }
 
 func (s *Server) pendingCatalogSyncProbes(ctx context.Context, sourceID, generation, runID int64, after string, limit int) ([]catalogSyncDirectoryState, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT d.path,d.partition_path,d.catalog_root,d.revision,d.status,d.sync_state,d.observed_version,d.listing_digest
 		FROM source_catalog_directory d
-		WHERE d.file_source_id=? AND d.generation=? AND d.sync_state<>'excluded' AND d.last_verified_run<>?
+		WHERE d.file_source_id=? AND d.generation=? AND d.sync_state<>'excluded' AND d.last_verified_run<>? AND d.last_probe_failed_run<>?
 			AND (d.path='/' OR EXISTS(
 				SELECT 1 FROM source_catalog_observation o
 				WHERE o.file_source_id=d.file_source_id AND o.directory_path=d.path AND o.revision=d.revision AND o.kind='folder'))
-			AND d.path>? ORDER BY d.path LIMIT ?`, sourceID, generation, runID, after, limit)
+			AND d.path>? ORDER BY d.path LIMIT ?`, sourceID, generation, runID, runID, after, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -620,12 +729,21 @@ func (s *Server) applyCatalogSyncProbes(ctx context.Context, sourceID, generatio
 	}
 	defer release()
 	changed := 0
+	var blocked bool
+	if err = tx.QueryRowContext(ctx, `SELECT COALESCE(json_extract(checkpoint_json,'$.probeBlocked'),0) FROM workflow_job WHERE id=?`, jobID).Scan(&blocked); err != nil {
+		return 0, err
+	}
+	after := ""
 	for _, result := range results {
 		if result.Err != nil {
-			if _, updateErr := tx.ExecContext(ctx, `UPDATE source_catalog_directory SET last_verified_run=?,last_verified_at=CURRENT_TIMESTAMP WHERE file_source_id=? AND generation=? AND path=?`, runID, sourceID, generation, result.Dir.Path); updateErr != nil {
-				return 0, updateErr
+			blocked = true
+			if _, err = tx.ExecContext(ctx, `UPDATE source_catalog_directory SET last_probe_failed_run=? WHERE file_source_id=? AND generation=? AND path=?`, runID, sourceID, generation, result.Dir.Path); err != nil {
+				return 0, err
 			}
 			continue
+		}
+		if !blocked {
+			after = result.Dir.Path
 		}
 		count, applyErr := s.applyCatalogSyncProbeTx(ctx, tx.Tx, sourceID, generation, runID, result)
 		if applyErr != nil {
@@ -634,7 +752,7 @@ func (s *Server) applyCatalogSyncProbes(ctx context.Context, sourceID, generatio
 		changed += count
 	}
 	if len(results) > 0 {
-		if _, err = tx.ExecContext(ctx, `UPDATE workflow_job SET checkpoint_json=json_set(checkpoint_json,'$.probeGeneration',?,'$.probeAfter',?) WHERE id=?`, generation, results[len(results)-1].Dir.Path, jobID); err != nil {
+		if _, err = tx.ExecContext(ctx, `UPDATE workflow_job SET checkpoint_json=json_set(checkpoint_json,'$.probeGeneration',?,'$.probeAfter',CASE WHEN ?='' THEN COALESCE(json_extract(checkpoint_json,'$.probeAfter'),'') ELSE ? END,'$.probeExhausted',0,'$.probeBlocked',?) WHERE id=?`, generation, after, after, catalogSyncBoolInt(blocked), jobID); err != nil {
 			return 0, err
 		}
 	}
@@ -654,6 +772,27 @@ func (s *Server) loadCatalogSyncProbeAfter(ctx context.Context, runID, generatio
 		return "", nil
 	}
 	return after, err
+}
+
+func (s *Server) loadCatalogSyncProbeExhausted(ctx context.Context, runID, generation int64) (bool, error) {
+	var exhausted bool
+	err := s.db.QueryRowContext(ctx, `SELECT COALESCE(json_extract(checkpoint_json,'$.probeExhausted'),0) FROM workflow_job
+		WHERE worker_type=? AND json_extract(payload_json,'$.syncRunId')=?
+		AND json_extract(checkpoint_json,'$.probeGeneration')=?
+		ORDER BY id DESC LIMIT 1`, sourceCatalogSyncWorkerType, runID, generation).Scan(&exhausted)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return exhausted, err
+}
+
+// An empty keyset query has consumed the tail, including leaves that are not
+// probe candidates. Keep that phase durable while listing batches run. The
+// final wrap still finds new folder observations on either side of the cursor.
+func (s *Server) setCatalogSyncProbeExhausted(ctx context.Context, jobID, generation int64, after string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE workflow_job SET checkpoint_json=json_set(checkpoint_json,
+		'$.probeGeneration',?,'$.probeAfter',?,'$.probeExhausted',1) WHERE id=?`, generation, after, jobID)
+	return err
 }
 
 func (s *Server) applyCatalogSyncProbeTx(ctx context.Context, tx *sql.Tx, sourceID, generation, runID int64, result catalogSyncProbeResult) (int, error) {
@@ -793,35 +932,6 @@ func (s *Server) applyCatalogSyncProbeTx(ctx context.Context, tx *sql.Tx, source
 	return changedCount, nil
 }
 
-func (s *Server) fetchCatalogSyncListing(ctx context.Context, client *openlist.Client, dir catalogSyncDirectoryState, options catalogIndexOptions) ([]openlist.Object, int, error) {
-	entries := []openlist.Object{}
-	pages := 0
-	expected := -1
-	for page := 1; ; page++ {
-		if page > options.MaxPagesPerDirectory {
-			return nil, pages, openlist.ErrLimit
-		}
-		data, err := client.ListPage(ctx, dir.Path, page, options.PageSize)
-		pages++
-		if err != nil {
-			return nil, pages, err
-		}
-		if expected < 0 {
-			expected = data.Total
-		} else if expected != data.Total {
-			return nil, pages, openlist.ErrInvalid
-		}
-		entries = append(entries, data.Content...)
-		if len(entries) >= expected {
-			break
-		}
-		if len(data.Content) == 0 {
-			return nil, pages, openlist.ErrInvalid
-		}
-	}
-	return entries, pages, nil
-}
-
 func (s *Server) markCatalogSyncListFailure(ctx context.Context, sourceID, generation, runID int64, dir catalogSyncDirectoryState, requestErr error) error {
 	status, code := "failed", "upstream_unavailable"
 	if errors.Is(requestErr, openlist.ErrNotFound) {
@@ -848,256 +958,11 @@ func (s *Server) markCatalogSyncListFailure(ctx context.Context, sourceID, gener
 	return tx.Commit()
 }
 
-func (s *Server) applyCatalogSyncListing(ctx context.Context, sourceID, generation, runID int64, dir catalogSyncDirectoryState, entries []openlist.Object, options catalogIndexOptions) (published, changed int, err error) {
-	digest := catalogSyncDigest(entries)
-	tx, release, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
-	if err != nil {
-		return 0, 0, err
-	}
-	defer release()
-	var revision int
-	var status, state, root, oldDigest string
-	if err = tx.QueryRowContext(ctx, `SELECT revision,status,sync_state,catalog_root,listing_digest FROM source_catalog_directory WHERE file_source_id=? AND generation=? AND path=?`, sourceID, generation, dir.Path).Scan(&revision, &status, &state, &root, &oldDigest); err != nil {
-		return 0, 0, err
-	}
-	if state != "changed" {
-		return 0, 0, tx.Commit()
-	}
-	if oldDigest == digest && digest != "" {
-		newStatus := "complete"
-		if len(entries) == 0 {
-			newStatus = "empty"
-		}
-		_, err = tx.ExecContext(ctx, `UPDATE source_catalog_directory SET status=?,error_code='',sync_state='listed',last_verified_run=?,last_verified_at=CURRENT_TIMESTAMP,completed_at=CURRENT_TIMESTAMP WHERE file_source_id=? AND path=?`, newStatus, runID, sourceID, dir.Path)
-		if err != nil {
-			return 0, 0, err
-		}
-		return 0, 0, tx.Commit()
-	}
-
-	// A cancelled generation can leave the directory revision ahead of its
-	// observations: adopting a child in applyCatalogSyncProbes bumps the
-	// revision, but the listing that would rewrite those rows never ran. Read
-	// every row for the path, not only the current revision, or the insert below
-	// collides with the primary key and the stale revision survives.
-	oldRows := map[string]catalogSyncObservation{}
-	rows, err := tx.QueryContext(ctx, `SELECT name,kind,size_bytes,content_hash,modified_at,revision,publish_pending FROM source_catalog_observation WHERE file_source_id=? AND directory_path=?`, sourceID, dir.Path)
-	if err != nil {
-		return 0, 0, err
-	}
-	for rows.Next() {
-		var row catalogSyncObservation
-		if err = rows.Scan(&row.Name, &row.Kind, &row.Size, &row.Hash, &row.Modified, &row.Revision, &row.Pending); err != nil {
-			break
-		}
-		oldRows[row.Name] = row
-	}
-	if err == nil {
-		err = rows.Err()
-	}
-	_ = rows.Close()
-	if err != nil {
-		return 0, 0, err
-	}
-
-	newRevision := revision + 1
-	if _, err = tx.ExecContext(ctx, `UPDATE source_catalog_observation SET revision=?,publish_pending=0 WHERE file_source_id=? AND directory_path=?`, newRevision, sourceID, dir.Path); err != nil {
-		return 0, 0, err
-	}
-	// An exclusion or a damaged name removes the child from this generation.
-	// Filtering here keeps observations, directory rows and the publish queue
-	// consistent; the probe path applies the same rule.
-	visible := make([]openlist.Object, 0, len(entries))
-	for _, obj := range entries {
-		childPath := path.Join(dir.Path, obj.Name)
-		traversable, excludeErr := catalogPathTraversableTx(ctx, tx.Tx, sourceID, childPath)
-		if excludeErr != nil {
-			return 0, 0, excludeErr
-		}
-		if !traversable {
-			continue
-		}
-		if catalogNameEncodingDamaged(obj.Name) {
-			if _, err = recordCatalogEncodingIssueTx(ctx, tx.Tx, sourceID, dir.Path, obj.Name); err != nil {
-				return 0, 0, err
-			}
-			continue
-		}
-		visible = append(visible, obj)
-	}
-	entries = visible
-	seen := map[string]bool{}
-	for _, obj := range entries {
-		name := obj.Name
-		if seen[name] {
-			return 0, 0, openlist.ErrInvalid
-		}
-		seen[name] = true
-		kind := openlist.Kind(name, obj.IsDir)
-		hash := obj.ContentHash()
-		old, exists := oldRows[name]
-		rowChanged := !exists || old.Revision != revision || old.Kind != kind || old.Size != obj.Size || old.Hash != hash || old.Modified != obj.Modified
-		if rowChanged {
-			changed++
-		}
-		if exists {
-			_, err = tx.ExecContext(ctx, `UPDATE source_catalog_observation SET revision=?,kind=?,size_bytes=?,content_hash=?,modified_at=?,publish_pending=? WHERE file_source_id=? AND directory_path=? AND name=?`, newRevision, kind, obj.Size, hash, obj.Modified, catalogSyncBoolInt(rowChanged), sourceID, dir.Path, name)
-		} else {
-			_, err = tx.ExecContext(ctx, `INSERT INTO source_catalog_observation(file_source_id,directory_path,name,revision,kind,size_bytes,content_hash,modified_at,publish_pending,published_generation) VALUES(?,?,?,?,?,?,?,?,?,0)`, sourceID, dir.Path, name, newRevision, kind, obj.Size, hash, obj.Modified, catalogSyncBoolInt(rowChanged))
-		}
-		if err != nil {
-			return 0, 0, err
-		}
-	}
-	removed := []catalogSyncObservation{}
-	for name, row := range oldRows {
-		if !seen[name] {
-			removed = append(removed, row)
-			if _, err = tx.ExecContext(ctx, `DELETE FROM source_catalog_observation WHERE file_source_id=? AND directory_path=? AND name=?`, sourceID, dir.Path, name); err != nil {
-				return 0, 0, err
-			}
-		}
-	}
-	for _, row := range removed {
-		childPath := path.Join(dir.Path, row.Name)
-		if row.Kind == "folder" {
-			if _, err = tx.ExecContext(ctx, `UPDATE source_catalog_directory SET sync_state='excluded',status='empty',error_code='not_found',completed_at=CURRENT_TIMESTAMP
-				WHERE file_source_id=? AND generation=? AND (path=? OR (path>=? AND path<?))`, sourceID, generation, childPath, childPath+"/", childPath+"0"); err != nil {
-				return 0, 0, err
-			}
-			// A complete parent listing confirmed that the child folder is
-			// gone. Remove the files and internals of that subtree now; the
-			// lifecycle pass then marks a card with no remaining audio missing.
-			// Removing a confirmed-gone subtree clears the stored search scope
-			// of the cards that owned those files. A card that still has audio
-			// in another directory must stay searchable, so recompute the
-			// affected cards in this transaction instead of leaving them
-			// hidden until the next publish.
-			affected, selectErr := catalogExclusionEntries(ctx, tx.Tx, sourceID, childPath)
-			if selectErr != nil {
-				return 0, 0, selectErr
-			}
-			if _, err = tx.ExecContext(ctx, `DELETE FROM source_catalog_file WHERE catalog_entry_id IN (
-					SELECT id FROM source_catalog_entry WHERE file_source_id=? AND (`+catalogExclusionBaseRootSQL+`=? OR substr(`+catalogExclusionBaseRootSQL+`,1,length(?)+1)=? || '/'))`,
-				sourceID, childPath, childPath, childPath); err != nil {
-				return 0, 0, err
-			}
-			if err = refreshContentTranslationBrowsableTx(ctx, tx.Tx, affected); err != nil {
-				return 0, 0, err
-			}
-			if _, err = tx.ExecContext(ctx, `DELETE FROM source_catalog_observation
-					WHERE file_source_id=? AND (directory_path=? OR (directory_path>=? AND directory_path<?))`,
-				sourceID, childPath, childPath+"/", childPath+"0"); err != nil {
-				return 0, 0, err
-			}
-		} else if root != "" {
-			// A split card keeps the directory in source_root and a group
-			// suffix in root_path, so matching root_path alone would leave the
-			// deleted audio playable through the split card. A file published
-			// from a folded format copy also carries its own directory, so the
-			// comparison uses the resolved path instead of one card-wide base.
-			affected, selectErr := catalogExclusionEntries(ctx, tx.Tx, sourceID, childPath)
-			if selectErr != nil {
-				return 0, 0, selectErr
-			}
-			if _, err = tx.ExecContext(ctx, `DELETE FROM source_catalog_file WHERE catalog_entry_id IN (
-					SELECT id FROM source_catalog_entry WHERE file_source_id=? AND `+catalogExclusionBaseRootSQL+`=?)
-				AND (CASE WHEN source_root='' THEN
-					(CASE WHEN ?='/' THEN '/' || relative_path ELSE ? || '/' || relative_path END)
-					ELSE (CASE WHEN source_root='/' THEN '/' || relative_path ELSE source_root || '/' || relative_path END) END)=?`,
-				sourceID, root, root, root, childPath); err != nil {
-				return 0, 0, err
-			}
-			if err = refreshContentTranslationBrowsableTx(ctx, tx.Tx, affected); err != nil {
-				return 0, 0, err
-			}
-		}
-	}
-	for _, obj := range entries {
-		if !obj.IsDir {
-			continue
-		}
-		childPath := path.Join(dir.Path, obj.Name)
-		partition := dir.Partition
-		if dir.Path == "/" {
-			partition = childPath
-		}
-		_, err = tx.ExecContext(ctx, `INSERT INTO source_catalog_directory(file_source_id,path,generation,partition_path,catalog_root,status,sync_state,observed_version,last_verified_run,last_verified_at)
-			VALUES(?,?,?,?,?,'pending','changed',?,0,CURRENT_TIMESTAMP)
-			ON CONFLICT(file_source_id,path) DO NOTHING`, sourceID, childPath, generation, partition, root, obj.Modified)
-		if err != nil {
-			return 0, 0, err
-		}
-	}
-	newStatus := "complete"
-	if len(entries) == 0 {
-		newStatus = "empty"
-	}
-	if _, err = tx.ExecContext(ctx, `UPDATE source_catalog_directory SET revision=?,status=?,error_code=?,catalog_root=?,listing_digest=?,sync_state='listed',last_verified_run=?,last_verified_at=CURRENT_TIMESTAMP,completed_at=CURRENT_TIMESTAMP WHERE file_source_id=? AND path=?`, newRevision, newStatus, catalogSyncEmptyCode(newStatus), root, digest, runID, sourceID, dir.Path); err != nil {
-		return 0, 0, err
-	}
-	if status != "complete" || root == "" {
-		d := catalogScanDirectory{Path: dir.Path, Partition: dir.Partition, Root: root, Revision: newRevision, Page: 1, Expected: -1}
-		if err = completeCatalogDirectoryTx(ctx, tx.Tx, sourceID, generation, &d); err != nil {
-			return 0, 0, err
-		}
-		root = d.Root
-		if _, err = tx.ExecContext(ctx, `UPDATE source_catalog_directory SET catalog_root=? WHERE file_source_id=? AND path=?`, root, sourceID, dir.Path); err != nil {
-			return 0, 0, err
-		}
-	}
-	if newStatus == "empty" {
-		// A successful but empty listing remains unconfirmed. The card keeps
-		// its identity and personal records, but it must stop advertising the
-		// old files as playable while the range is unresolved.
-		target := root
-		if target == "" {
-			target = dir.Path
-		}
-		if err = markCatalogRangeStatusTx(ctx, tx.Tx, sourceID, target, "unconfirmed_empty"); err != nil {
-			return 0, 0, err
-		}
-	}
-	change, err := refreshCatalogAudioRootStateTx(ctx, tx.Tx, sourceID, generation, dir.Path)
-	if err != nil {
-		return 0, 0, err
-	}
-	if newStatus == "complete" {
-		if err = addCompletedDirectoryPublishPendingTx(ctx, tx.Tx, sourceID, generation, dir.Path, change); err != nil {
-			return 0, 0, err
-		}
-	} else if change.Deleted {
-		if err = addCatalogPublishPendingTx(ctx, tx.Tx, sourceID, -change.Pending); err != nil {
-			return 0, 0, err
-		}
-	}
-	if err = resetCatalogPublishCursorTx(ctx, tx.Tx, sourceID, dir.Path, true); err != nil {
-		return 0, 0, err
-	}
-	return 0, changed, tx.Commit()
-}
-
 func catalogSyncEmptyCode(status string) string {
 	if status == "empty" {
 		return "unconfirmed_empty"
 	}
 	return ""
-}
-
-func catalogSyncDigest(entries []openlist.Object) string {
-	names := make([]string, 0, len(entries))
-	byName := make(map[string]openlist.Object, len(entries))
-	for _, entry := range entries {
-		names = append(names, entry.Name)
-		byName[entry.Name] = entry
-	}
-	sort.Strings(names)
-	digest := sha256.New()
-	for _, name := range names {
-		entry := byName[name]
-		_, _ = fmt.Fprintf(digest, "%s%c%s%c%d%c%s%c%s%c", name, 0, openlist.Kind(name, entry.IsDir), 0, entry.Size, 0, entry.ContentHash(), 0, entry.Modified, 0)
-	}
-	return hex.EncodeToString(digest.Sum(nil))
 }
 
 func (s *Server) refreshCatalogSyncCounters(ctx context.Context, sourceID int64) error {
@@ -1130,7 +995,7 @@ func (s *Server) publishCatalogSyncChanges(ctx context.Context, job workflowJobR
 	}
 	release()
 	published := 0
-	for pass := 0; pass < catalogSyncMaxListBatches; pass++ {
+	for {
 		n, err := s.publishCatalogBatch(ctx, job, sourceID)
 		if err != nil {
 			return published, err
@@ -1152,7 +1017,7 @@ func (s *Server) settleCatalogSyncLifecycle(ctx context.Context, job workflowJob
 	}
 	lifecycleJob := job
 	lifecycleJob.RunID = generation
-	for pass := 0; pass < catalogSyncMaxLifecycle; pass++ {
+	for {
 		pending, err := s.settleCatalogLifecycleBatch(ctx, lifecycleJob, sourceID)
 		if err != nil {
 			return err
@@ -1161,7 +1026,6 @@ func (s *Server) settleCatalogSyncLifecycle(ctx context.Context, job workflowJob
 			return nil
 		}
 	}
-	return nil
 }
 
 // reconcileCatalogSyncEmptyEntries applies the deletion rule after lifecycle.
@@ -1197,9 +1061,11 @@ func (s *Server) reconcileCatalogSyncEmptyEntriesBatch(ctx context.Context, sour
 	defer release()
 	rows, err := tx.QueryContext(ctx, `SELECT e.id,`+catalogEffectiveRootSQL("e")+` FROM source_catalog_entry e
 		WHERE e.file_source_id=? AND e.relocated_to_id IS NULL AND e.availability_status='available'
-			AND NOT EXISTS(SELECT 1 FROM source_catalog_file f WHERE f.catalog_entry_id=e.id AND f.kind='audio')
+			AND (NOT EXISTS(SELECT 1 FROM source_catalog_file f WHERE f.catalog_entry_id=e.id AND f.kind='audio')
+				OR EXISTS(SELECT 1 FROM source_catalog_directory d WHERE d.file_source_id=e.file_source_id
+					AND d.generation=? AND d.path=`+catalogEffectiveRootSQL("e")+` AND d.status='empty' AND d.error_code<>'not_found'))
 		ORDER BY e.id LIMIT ?`,
-		sourceID, catalogReconcileEntriesPerBatch)
+		sourceID, generation, catalogReconcileEntriesPerBatch)
 	if err != nil {
 		return false, err
 	}
@@ -1278,13 +1144,26 @@ func (s *Server) beginCatalogSyncLease(ctx context.Context, syncRunID, generatio
 		cancel()
 		return nil, err
 	}
-	jobID, err := workflow.InsertJob(ctx, tx.Tx, runID, workflow.JobSpec{NodeRunID: nodeID, WorkerType: sourceCatalogSyncWorkerType, Status: "running", Priority: workflow.JobPriorityBackground, ResourceKey: "remote:catalog", Payload: map[string]any{"syncRunId": syncRunID}, Checkpoint: map[string]any{"phase": "sync"}, Recoverable: false, MaxRetries: 1})
+	checkpoint := mustJSON(map[string]any{"phase": "sync", "probeGeneration": generation, "probeAfter": "", "probeExhausted": 0})
+	var savedCheckpoint string
+	err = tx.QueryRowContext(ctx, `SELECT checkpoint_json FROM workflow_job
+		WHERE worker_type=? AND json_extract(payload_json,'$.syncRunId')=?
+		AND json_extract(checkpoint_json,'$.probeGeneration')=?
+		ORDER BY id DESC LIMIT 1`, sourceCatalogSyncWorkerType, syncRunID, generation).Scan(&savedCheckpoint)
+	if err == nil {
+		checkpoint = savedCheckpoint
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		s.workflowLeases.release(token)
+		cancel()
+		return nil, err
+	}
+	jobID, err := workflow.InsertJob(ctx, tx.Tx, runID, workflow.JobSpec{NodeRunID: nodeID, WorkerType: sourceCatalogSyncWorkerType, Status: "running", Priority: workflow.JobPriorityBackground, ResourceKey: "remote:catalog", Payload: map[string]any{"syncRunId": syncRunID}, Checkpoint: json.RawMessage(checkpoint), Recoverable: false, MaxRetries: 1})
 	if err != nil {
 		s.workflowLeases.release(token)
 		cancel()
 		return nil, err
 	}
-	if _, err = tx.ExecContext(ctx, `UPDATE workflow_job SET locked_by=?,locked_at=CURRENT_TIMESTAMP,heartbeat_at=CURRENT_TIMESTAMP WHERE id=?`, token, jobID); err != nil {
+	if _, err = tx.ExecContext(ctx, `UPDATE workflow_job SET locked_by=?,locked_at=CURRENT_TIMESTAMP,heartbeat_at=CURRENT_TIMESTAMP,checkpoint_json=json_set(checkpoint_json,'$.probeBlocked',0) WHERE id=?`, token, jobID); err != nil {
 		s.workflowLeases.release(token)
 		cancel()
 		return nil, err

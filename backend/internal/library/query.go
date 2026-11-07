@@ -144,8 +144,13 @@ func (s *Store) ListPage(ctx context.Context, options ListOptions) (RawPage, err
 	}
 	where, args := listOptionsWhere(options)
 	countArgs := append([]any{options.UserID}, args...)
+	readTx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return RawPage{}, err
+	}
+	defer readTx.Rollback()
 	var total int
-	if err := s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM work LEFT JOIN user_work_state ON user_work_state.work_id = work.id AND user_work_state.user_id = ? WHERE "+where, countArgs...).Scan(&total); err != nil {
+	if err := readTx.QueryRowContext(ctx, "SELECT COUNT(*) FROM work LEFT JOIN user_work_state ON user_work_state.work_id = work.id AND user_work_state.user_id = ? WHERE "+where, countArgs...).Scan(&total); err != nil {
 		return RawPage{}, err
 	}
 	config := DefaultRecommendationConfig()
@@ -164,7 +169,7 @@ func (s *Store) ListPage(ctx context.Context, options ListOptions) (RawPage, err
 	queryArgs = append(queryArgs, options.UserID)
 	queryArgs = append(queryArgs, args...)
 	queryArgs = append(queryArgs, options.PageSize, (options.Page-1)*options.PageSize)
-	rows, err := s.db.QueryContext(ctx, listPageSelectSQLWithSearchRank(
+	rows, err := readTx.QueryContext(ctx, listPageSelectSQLWithSearchRank(
 		where, options.Sort, options.Direction, options.RandomSeed, config, false, 0, searchRank, titleSort,
 	), queryArgs...)
 	if err != nil {
@@ -172,6 +177,9 @@ func (s *Store) ListPage(ctx context.Context, options ListOptions) (RawPage, err
 	}
 	works, err := ScanRows(rows)
 	if err != nil {
+		return RawPage{}, err
+	}
+	if err = readTx.Rollback(); err != nil {
 		return RawPage{}, err
 	}
 	page := RawPage{Works: works, Page: options.Page, PageSize: options.PageSize, Total: total}
@@ -491,13 +499,13 @@ func listWhereInLanguage(scope string, status string, queryText string, userID i
 	case "local":
 		clauses = append(clauses, localPresenceWhereClause())
 	case "tracked":
-		clauses = append(clauses, `EXISTS (SELECT 1 FROM work_source_presence AS scope_presence WHERE scope_presence.work_id = work.id AND scope_presence.presence_type = 'tracked' AND scope_presence.availability = 'available')`)
+		clauses = append(clauses, `EXISTS (SELECT 1 FROM published_work_source_presence AS scope_presence WHERE scope_presence.work_id = work.id AND scope_presence.presence_type = 'tracked' AND scope_presence.availability = 'available')`)
 	case "remote":
 		clauses = append(clauses,
-			`EXISTS (SELECT 1 FROM work_source_presence AS scope_presence WHERE scope_presence.work_id = work.id AND scope_presence.presence_type = 'source' AND scope_presence.availability = 'available')`,
-			`NOT EXISTS (SELECT 1 FROM work_source_presence AS scope_presence WHERE scope_presence.work_id = work.id AND scope_presence.presence_type = 'tracked' AND scope_presence.availability = 'available')`,
+			`EXISTS (SELECT 1 FROM published_work_source_presence AS scope_presence WHERE scope_presence.work_id = work.id AND scope_presence.presence_type = 'source' AND scope_presence.availability = 'available')`,
+			`NOT EXISTS (SELECT 1 FROM published_work_source_presence AS scope_presence WHERE scope_presence.work_id = work.id AND scope_presence.presence_type = 'tracked' AND scope_presence.availability = 'available')`,
 			`NOT EXISTS (
-				SELECT 1 FROM work_source_presence AS scope_presence
+				SELECT 1 FROM published_work_source_presence AS scope_presence
 				WHERE (scope_presence.work_id = work.id OR scope_presence.work_id IN (
 					SELECT sibling.work_id FROM work_edition AS current_edition
 					INNER JOIN work_edition AS sibling ON sibling.logical_work_id = current_edition.logical_work_id
@@ -545,13 +553,13 @@ func listWhereInLanguage(scope string, status string, queryText string, userID i
 // every work; it also built an automatic index that did not include work_id.
 func localPresenceWhereClause() string {
 	return `(EXISTS (
-		SELECT 1 FROM work_source_presence AS scope_presence
+		SELECT 1 FROM published_work_source_presence AS scope_presence
 		WHERE scope_presence.work_id = work.id
 			AND scope_presence.presence_type = 'local' AND scope_presence.availability = 'available'
 	) OR EXISTS (
 		SELECT 1 FROM work_edition AS current_edition
 		INNER JOIN work_edition AS sibling ON sibling.logical_work_id = current_edition.logical_work_id
-		INNER JOIN work_source_presence AS scope_presence ON scope_presence.work_id = sibling.work_id
+		INNER JOIN published_work_source_presence AS scope_presence ON scope_presence.work_id = sibling.work_id
 		WHERE current_edition.work_id = work.id
 			AND scope_presence.presence_type = 'local' AND scope_presence.availability = 'available'
 	))`
@@ -571,7 +579,7 @@ func canonicalVisibleWhereClause() string {
 
 func noSourceWhereClause() string {
 	return `NOT EXISTS (
-		SELECT 1 FROM work_source_presence AS scope_presence
+		SELECT 1 FROM published_work_source_presence AS scope_presence
 		WHERE (scope_presence.work_id = work.id OR scope_presence.work_id IN (
 			SELECT sibling.work_id FROM work_edition AS current_edition
 			INNER JOIN work_edition AS sibling ON sibling.logical_work_id = current_edition.logical_work_id
@@ -579,7 +587,7 @@ func noSourceWhereClause() string {
 		))
 		AND scope_presence.availability = 'available'
 	) AND NOT EXISTS (
-		SELECT 1 FROM media_file_location AS scope_location
+		SELECT 1 FROM published_media_file_location AS scope_location
 		INNER JOIN media_item AS scope_item ON scope_item.id = scope_location.media_item_id
 		WHERE (scope_item.work_id = work.id OR scope_item.work_id IN (
 			SELECT sibling.work_id FROM work_edition AS current_edition
@@ -1130,9 +1138,9 @@ const listWorkColumnsSQL = `work.id, work.primary_code, work.title, work.age_rat
 
 var listSummaryColumnsSQL = listWorkColumnsSQL + `,
 		(SELECT COUNT(*) FROM media_item WHERE media_item.work_id = work.id AND (media_item.kind = 'audio' OR (media_item.kind = 'video' AND COALESCE(media_item.has_audio, 1) = 1))) AS track_count,
-		(SELECT COUNT(*) FROM media_file_location INNER JOIN media_item ON media_item.id = media_file_location.media_item_id WHERE media_item.work_id = work.id AND (media_item.kind = 'audio' OR (media_item.kind = 'video' AND COALESCE(media_item.has_audio, 1) = 1)) AND media_file_location.availability = 'available') AS available_locations,
-		(SELECT GROUP_CONCAT(DISTINCT media_file_location.location_type) FROM media_file_location INNER JOIN media_item ON media_item.id = media_file_location.media_item_id WHERE media_item.work_id = work.id AND media_file_location.availability = 'available') AS available_location_types,
-		(SELECT GROUP_CONCAT(DISTINCT presence.presence_type || '|' || presence.availability || '|' || presence.file_source_id || '|' || COALESCE(source.code, '') || '|' || COALESCE(source.display_name, '') || '|' || COALESCE(presence.remote_id, '') || '|' || COALESCE(presence.source_url, '') || '|' || COALESCE(presence.remote_code, '') || '|' || COALESCE(presence.work_id, 0) || '|' || COALESCE(source.source_type, '')) FROM work_source_presence AS presence LEFT JOIN file_source AS source ON source.id = presence.file_source_id WHERE presence.work_id = work.id OR presence.work_id IN (SELECT sibling.work_id FROM work_edition AS current_edition INNER JOIN work_edition AS sibling ON sibling.logical_work_id = current_edition.logical_work_id WHERE current_edition.work_id = work.id)) AS source_presence,
+		(SELECT COUNT(*) FROM published_media_file_location INNER JOIN media_item ON media_item.id = published_media_file_location.media_item_id WHERE media_item.work_id = work.id AND (media_item.kind = 'audio' OR (media_item.kind = 'video' AND COALESCE(media_item.has_audio, 1) = 1)) AND published_media_file_location.availability = 'available') AS available_locations,
+		(SELECT GROUP_CONCAT(DISTINCT published_media_file_location.location_type) FROM published_media_file_location INNER JOIN media_item ON media_item.id = published_media_file_location.media_item_id WHERE media_item.work_id = work.id AND published_media_file_location.availability = 'available') AS available_location_types,
+		(SELECT GROUP_CONCAT(DISTINCT presence.presence_type || '|' || presence.availability || '|' || presence.file_source_id || '|' || COALESCE(source.code, '') || '|' || COALESCE(source.display_name, '') || '|' || COALESCE(presence.remote_id, '') || '|' || COALESCE(presence.source_url, '') || '|' || COALESCE(presence.remote_code, '') || '|' || COALESCE(presence.work_id, 0) || '|' || COALESCE(source.source_type, '')) FROM published_work_source_presence AS presence LEFT JOIN file_source AS source ON source.id = presence.file_source_id WHERE presence.work_id = work.id OR presence.work_id IN (SELECT sibling.work_id FROM work_edition AS current_edition INNER JOIN work_edition AS sibling ON sibling.logical_work_id = current_edition.logical_work_id WHERE current_edition.work_id = work.id)) AS source_presence,
 		` + LatestSnapshotCardColumnsSQL("work.id", true) + `,
 		(SELECT display_name || '|' || external_id FROM work_primary_circle WHERE work_id = work.id) AS party_link`
 

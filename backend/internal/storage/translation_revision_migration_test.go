@@ -37,7 +37,7 @@ func TestTranslationRevisionMigration105UpgradeRestartAndBackupRestore(t *testin
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := Migrate(db, completeMigrationDir(t)); err != nil {
+		if err := Migrate(db, copyNumberedMigrationsThrough(t, filepath.Join("..", "..", "migrations"), 106)); err != nil {
 			t.Fatal(err)
 		}
 		assertSchemaVersion(t, db, 106)
@@ -69,7 +69,7 @@ func TestTranslationRevisionMigration105UpgradeRestartAndBackupRestore(t *testin
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := Migrate(db, completeMigrationDir(t)); err != nil {
+		if err := Migrate(db, copyNumberedMigrationsThrough(t, filepath.Join("..", "..", "migrations"), 106)); err != nil {
 			t.Fatal(err)
 		}
 		if err := db.QueryRow(`SELECT revision FROM translation_corpus_revision WHERE id=1`).Scan(&after); err != nil {

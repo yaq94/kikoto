@@ -29,6 +29,7 @@ func catalogEntryPendingSQL(alias string) string {
 }
 
 func resolveCatalogEntry(ctx context.Context, q catalogEntryQueryer, id int64) (catalogEntry, error) {
+	q = publishedCatalogRows{q}
 	for range 8 {
 		var e catalogEntry
 		var target sql.NullInt64
@@ -52,7 +53,7 @@ func (s *Server) loadRetainedSourceCatalogEntry(ctx context.Context, id int64) (
 	if s.cfg.IsDemo() {
 		return catalogEntry{}, remoteSourceForUse{}, errRemoteWorkNotFound
 	}
-	entry, err := resolveCatalogEntry(ctx, s.db, id)
+	entry, err := resolveCatalogEntry(ctx, s.catalogRead(ctx), id)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return entry, remoteSourceForUse{}, errRemoteWorkNotFound
@@ -89,7 +90,7 @@ type catalogRelocationView struct {
 }
 
 func (s *Server) catalogRelocationCandidates(ctx context.Context, id int64) ([]catalogRelocationView, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT e.id,e.title,c.reason FROM source_catalog_relocation_candidate c JOIN source_catalog_entry e ON e.id=c.candidate_entry_id WHERE c.catalog_entry_id=? AND e.relocated_to_id IS NULL ORDER BY e.id LIMIT 8`, id)
+	rows, err := s.catalogRead(ctx).QueryContext(ctx, `SELECT e.id,e.title,c.reason FROM source_catalog_relocation_candidate c JOIN source_catalog_entry e ON e.id=c.candidate_entry_id WHERE c.catalog_entry_id=? AND e.relocated_to_id IS NULL ORDER BY e.id LIMIT 8`, id)
 	if err != nil {
 		return nil, err
 	}

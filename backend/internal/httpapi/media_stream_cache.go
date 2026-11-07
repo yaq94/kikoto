@@ -24,7 +24,7 @@ type mediaStreamTarget struct {
 func (s *Server) loadMediaStreamTarget(ctx context.Context, locationID int64) (mediaStreamTarget, bool, error) {
 	if cached, ok := s.mediaStreamCache.Load(locationID); ok {
 		target := cached.(mediaStreamTarget)
-		if time.Now().Before(target.ExpiresAt) {
+		if target.LocationType != "catalog_stream" && time.Now().Before(target.ExpiresAt) {
 			return target, true, nil
 		}
 		s.mediaStreamCache.Delete(locationID)
@@ -49,7 +49,7 @@ func (s *Server) loadMediaStreamTarget(ctx context.Context, locationID int64) (m
 			item.kind,
 			item.has_audio,
 			COALESCE(location.duration_seconds, item.duration_seconds)
-		FROM media_file_location AS location
+		FROM published_media_file_location AS location
 		INNER JOIN media_item AS item ON item.id = location.media_item_id
 		WHERE location.id = ?
 	`, locationID).Scan(
@@ -66,6 +66,8 @@ func (s *Server) loadMediaStreamTarget(ctx context.Context, locationID int64) (m
 		return mediaStreamTarget{}, false, err
 	}
 	target.ExpiresAt = time.Now().Add(mediaStreamTargetTTL)
-	s.mediaStreamCache.Store(locationID, target)
+	if target.LocationType != "catalog_stream" {
+		s.mediaStreamCache.Store(locationID, target)
+	}
 	return target, false, nil
 }

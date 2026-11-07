@@ -186,7 +186,7 @@ func (s *Server) loadMediaLocationRows(ctx context.Context, mediaWorkID int64, m
 			location.duration_seconds,
 			location.availability,
 			location.last_checked_at
-		FROM media_file_location AS location
+		FROM published_media_file_location AS location
 		INNER JOIN file_source AS source ON source.id = location.file_source_id
 		INNER JOIN media_item AS item ON item.id = location.media_item_id
 		WHERE item.work_id = ?
@@ -271,7 +271,7 @@ func (s *Server) workHasAvailableLocalMedia(ctx context.Context, workID int64) (
 		SELECT EXISTS (
 			SELECT 1
 			FROM media_item AS item
-			INNER JOIN media_file_location AS location ON location.media_item_id = item.id
+			INNER JOIN published_media_file_location AS location ON location.media_item_id = item.id
 			WHERE item.work_id = ?
 				AND location.location_type = 'local'
 				AND location.availability = 'available'
@@ -288,7 +288,7 @@ func (s *Server) workHasMedia(ctx context.Context, workID int64) (bool, error) {
 		SELECT EXISTS (
 			SELECT 1
 			FROM media_item AS item
-			INNER JOIN media_file_location AS location ON location.media_item_id = item.id
+			INNER JOIN published_media_file_location AS location ON location.media_item_id = item.id
 			WHERE item.work_id = ?
 				AND location.availability = 'available'
 		)

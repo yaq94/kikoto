@@ -942,6 +942,18 @@ func (s *Server) publishCatalogBatch(ctx context.Context, job workflowJobRecord,
 	if err != nil {
 		return 0, err
 	}
+	// Each statement compiles its trigger programs once for this bounded batch.
+	// Files and entries retain their normal table constraints and UPSERT rules.
+	entryStatement, err := tx.PrepareContext(ctx, `INSERT INTO source_catalog_entry(file_source_id,root_path,source_root,primary_code,title,last_seen_generation,discovered_generation) VALUES(?,?,?,?,?,?,?) ON CONFLICT(file_source_id,root_path) DO UPDATE SET source_root=excluded.source_root,primary_code=excluded.primary_code,title=excluded.title,last_seen_generation=excluded.last_seen_generation,availability_status='available',status_checked_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP RETURNING id`)
+	if err != nil {
+		return 0, err
+	}
+	defer entryStatement.Close()
+	fileStatement, err := tx.PrepareContext(ctx, `INSERT INTO source_catalog_file(catalog_entry_id,relative_path,source_root,title,kind,size_bytes,content_hash,modified_at,observed_generation) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(catalog_entry_id,relative_path) DO UPDATE SET source_root=excluded.source_root,title=excluded.title,kind=excluded.kind,size_bytes=excluded.size_bytes,content_hash=excluded.content_hash,modified_at=excluded.modified_at,observed_generation=excluded.observed_generation`)
+	if err != nil {
+		return 0, err
+	}
+	defer fileStatement.Close()
 	splitPlans := map[string]catalogSplitPlan{}
 	parentNeeded := map[string]bool{}
 	splitRoots := map[string]bool{}
@@ -1073,7 +1085,7 @@ func (s *Server) publishCatalogBatch(ctx context.Context, job workflowJobRecord,
 		// entry published before code parsing understood a prefix keeps its
 		// empty code unless the rescan rewrites it, and then search never
 		// finds the work by its published number.
-		err = tx.QueryRowContext(ctx, `INSERT INTO source_catalog_entry(file_source_id,root_path,source_root,primary_code,title,last_seen_generation,discovered_generation) VALUES(?,?,?,?,?,?,?) ON CONFLICT(file_source_id,root_path) DO UPDATE SET source_root=excluded.source_root,primary_code=excluded.primary_code,title=excluded.title,last_seen_generation=excluded.last_seen_generation,availability_status='available',status_checked_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP RETURNING id`, sourceID, root, sourceRoot, catalogEntryCode(root), title, job.RunID, job.RunID).Scan(&id)
+		err = entryStatement.QueryRowContext(ctx, sourceID, root, sourceRoot, catalogEntryCode(root), title, job.RunID, job.RunID).Scan(&id)
 		if err != nil {
 			return 0, err
 		}
@@ -1117,7 +1129,7 @@ func (s *Server) publishCatalogBatch(ctx context.Context, job workflowJobRecord,
 				fileRoot, rel = p.dir, p.name
 			}
 		}
-		_, err = tx.ExecContext(ctx, `INSERT INTO source_catalog_file(catalog_entry_id,relative_path,source_root,title,kind,size_bytes,content_hash,modified_at,observed_generation) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(catalog_entry_id,relative_path) DO UPDATE SET source_root=excluded.source_root,title=excluded.title,kind=excluded.kind,size_bytes=excluded.size_bytes,content_hash=excluded.content_hash,modified_at=excluded.modified_at,observed_generation=excluded.observed_generation`, id, rel, fileRoot, p.name, p.kind, p.size, p.hash, p.modified, job.RunID)
+		_, err = fileStatement.ExecContext(ctx, id, rel, fileRoot, p.name, p.kind, p.size, p.hash, p.modified, job.RunID)
 		if err != nil {
 			return 0, err
 		}

@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"path/filepath"
 	"time"
@@ -50,7 +51,7 @@ func observeCatalogWrite(ctx context.Context, kind string, started time.Time, ro
 	}
 }
 
-func (s *Server) executeSourceCatalogIndexJob(ctx context.Context, job workflowJobRecord) error {
+func (s *Server) executeSourceCatalogIndexJob(ctx context.Context, job workflowJobRecord) (resultErr error) {
 	var input catalogIndexInput
 	if err := json.Unmarshal([]byte(job.PayloadJSON), &input); err != nil {
 		return err
@@ -87,6 +88,27 @@ func (s *Server) executeSourceCatalogIndexJob(ctx context.Context, job workflowJ
 	// before any write, not only after the queue has been drained once.
 	if reason := s.catalogIndexDiskPause(options); reason != "" {
 		return s.settleCatalogBatch(ctx, job, input.SourceID, "partial", reason)
+	}
+	ctx = s.catalogPublicationContext(ctx, options)
+	defer func() {
+		var paused catalogSyncPaused
+		if errors.As(resultErr, &paused) {
+			settle := context.WithValue(context.WithoutCancel(ctx), catalogPublicationResourceGuardKey{}, (func() error)(nil))
+			if paused.reason == "maintenance" {
+				_, until, holdErr := s.catalogMaintenanceActive(settle)
+				if holdErr != nil {
+					resultErr = holdErr
+					return
+				}
+				resultErr = s.settleCatalogBatchAt(settle, job, input.SourceID, "queued", paused.reason, until)
+				return
+			}
+			resultErr = s.settleCatalogBatch(settle, job, input.SourceID, "partial", paused.reason)
+		}
+	}()
+	ctx, publicationID, err := s.beginCatalogPublication(ctx, input.SourceID, catalogPublicationOwner("full", job.RunID))
+	if err != nil {
+		return err
 	}
 	// The publish queue is drained before the next page batch, not on every
 	// step. A working tree always has another directory to expand or page, so a
@@ -270,6 +292,9 @@ func (s *Server) executeSourceCatalogIndexJob(ctx context.Context, job workflowJ
 					count++
 					continue
 				}
+			}
+			if err = s.commitCatalogPublication(ctx, publicationID); err != nil {
+				return err
 			}
 			return s.settleCatalogBatch(ctx, job, input.SourceID, status, "")
 		}

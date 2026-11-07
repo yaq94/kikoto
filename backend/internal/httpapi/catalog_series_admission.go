@@ -45,6 +45,7 @@ func catalogSeriesMembersSQL() string {
 // visible membership as the detail route. Personal imports restore episodes
 // through their parent work without creating source membership or media.
 func requireCatalogSeriesReadable(ctx context.Context, q catalogEntryQueryer, id int64) error {
+	q = publishedCatalogRows{q}
 	var readable bool
 	err := q.QueryRowContext(ctx, `SELECT EXISTS(`+catalogSeriesMembersSQL()+`) OR EXISTS(
   SELECT 1 FROM catalog_series s JOIN work child ON child.parent_work_id=s.work_id WHERE s.id=?)`, id, id).Scan(&readable)

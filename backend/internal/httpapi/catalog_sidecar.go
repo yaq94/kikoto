@@ -587,7 +587,7 @@ func decodeUTF16(raw []byte, bigEndian bool) string {
 // the bounded worker; the actual fetch budget is applied by the caller.
 func (s *Server) loadCatalogSidecars(ctx context.Context, entry catalogEntry) (catalogSidecarCache, error) {
 	var raw string
-	err := s.db.QueryRowContext(ctx, `SELECT sidecar_json FROM source_catalog_entry WHERE id=?`, entry.ID).Scan(&raw)
+	err := s.catalogRead(ctx).QueryRowContext(ctx, `SELECT sidecar_json FROM source_catalog_entry WHERE id=?`, entry.ID).Scan(&raw)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return catalogSidecarCache{}, err
 	}
@@ -900,6 +900,12 @@ func publishedCatalogSidecarRevision(ctx context.Context, tx *sql.Tx, id, genera
 // queued for an immediate continuation; a source that answered nothing is not
 // continued at once, because that would spin on a failed origin.
 func (s *Server) refreshCatalogSidecars(ctx context.Context, sourceID int64) (more bool) {
+	if _, working := ctx.Value(catalogPublicationKey{}).(int64); !working {
+		var preparing bool
+		if err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM source_catalog_publication WHERE file_source_id=? AND state='preparing')`, sourceID).Scan(&preparing); err != nil || preparing {
+			return false
+		}
+	}
 	unlock := lockCatalogSidecarSource(sourceID)
 	defer unlock()
 	source, err := s.catalogIndexSource(ctx, sourceID)
@@ -1100,7 +1106,7 @@ func (s *Server) finishCatalogSidecar(ctx context.Context, item catalogSidecarCa
 			// Record the revision even when no file could be read. A failed
 			// first read otherwise leaves an empty revision that the next
 			// rescan mistakes for a change, restarting the budget.
-			if _, err := s.db.ExecContext(ctx, `UPDATE source_catalog_entry SET sidecar_revision=? WHERE id=?`, result.Revision, item.ID); err != nil {
+			if _, err := s.execCatalogWrite(ctx, `UPDATE source_catalog_entry SET sidecar_revision=? WHERE id=?`, result.Revision, item.ID); err != nil {
 				slog.Warn("record catalog sidecar revision", "catalog_entry_id", item.ID, "error", err)
 				return false
 			}
@@ -1129,7 +1135,7 @@ func (s *Server) finishCatalogSidecar(ctx context.Context, item catalogSidecarCa
 				// the operator can reopen it without editing the file.
 				pending = 0
 			}
-			if _, err := s.db.ExecContext(ctx, `UPDATE source_catalog_entry
+			if _, err := s.execCatalogWrite(ctx, `UPDATE source_catalog_entry
 					SET sidecar_transient_attempts=?,sidecar_retry_at=datetime('now',?),sidecar_failure=?,sidecar_pending=?
 					WHERE id=?`, transient, catalogSidecarRetryOffset(catalogSidecarTransientDelay(transient)),
 				catalogSidecarFailureReason(result), pending, item.ID); err != nil {
@@ -1138,7 +1144,7 @@ func (s *Server) finishCatalogSidecar(ctx context.Context, item catalogSidecarCa
 			}
 			return true
 		}
-		if _, err := s.db.ExecContext(ctx, `UPDATE source_catalog_entry
+		if _, err := s.execCatalogWrite(ctx, `UPDATE source_catalog_entry
 				SET sidecar_attempts=sidecar_attempts+1,sidecar_failure=?,
 					sidecar_transient_attempts=0,sidecar_retry_at='',
 					sidecar_pending=CASE WHEN sidecar_attempts+1>=? THEN 0 ELSE 1 END
@@ -1157,7 +1163,7 @@ func (s *Server) finishCatalogSidecar(ctx context.Context, item catalogSidecarCa
 		slog.Warn("clear catalog sidecar evidence", "catalog_entry_id", item.ID, "error", err)
 		return false
 	}
-	if _, err := s.db.ExecContext(ctx, `UPDATE source_catalog_entry
+	if _, err := s.execCatalogWrite(ctx, `UPDATE source_catalog_entry
 			SET sidecar_pending=0,sidecar_transient_attempts=0,sidecar_retry_at='',sidecar_failure=''
 			WHERE id=?`, item.ID); err != nil {
 		slog.Warn("clear catalog sidecar queue", "catalog_entry_id", item.ID, "error", err)

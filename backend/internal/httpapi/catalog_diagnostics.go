@@ -29,7 +29,14 @@ func (s *Server) catalogDiagnostics(w http.ResponseWriter, r *http.Request) {
 		unresolvedEncoding int64
 	}
 	var t totals
-	if err = s.db.QueryRowContext(r.Context(), `SELECT
+	readCtx, done, err := s.beginCatalogRead(r.Context())
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	defer done()
+	r = r.WithContext(readCtx)
+	if err = s.catalogRead(r.Context()).QueryRowContext(r.Context(), `SELECT
 		count(*),
 		coalesce(sum(work_id IS NOT NULL),0),
 		coalesce(sum(availability_status='excluded'),0),
@@ -45,7 +52,7 @@ func (s *Server) catalogDiagnostics(w http.ResponseWriter, r *http.Request) {
 	// half of all file rows. The threshold and the file set are the same ones
 	// the publisher applies: the requested source, the entry's current
 	// generation, folder rows excluded.
-	if err = s.db.QueryRowContext(r.Context(), `SELECT count(*) FROM (
+	if err = s.catalogRead(r.Context()).QueryRowContext(r.Context(), `SELECT count(*) FROM (
 		SELECT f.catalog_entry_id FROM source_catalog_file f
 		JOIN source_catalog_entry e ON e.id=f.catalog_entry_id
 		WHERE e.file_source_id=? AND f.kind<>'folder'
@@ -56,7 +63,7 @@ func (s *Server) catalogDiagnostics(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var unresolved int
-	_ = s.db.QueryRowContext(r.Context(), `SELECT count(*) FROM source_catalog_encoding_issue
+	_ = s.catalogRead(r.Context()).QueryRowContext(r.Context(), `SELECT count(*) FROM source_catalog_encoding_issue
 		WHERE file_source_id=? AND status='unresolved'`, sourceID).Scan(&unresolved)
 	if unresolved != 0 {
 		t.unresolvedEncoding = int64(unresolved)

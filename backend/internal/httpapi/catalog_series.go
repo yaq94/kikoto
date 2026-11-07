@@ -71,7 +71,14 @@ func (s *Server) getCatalogSeries(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	view := catalogSeriesView{ID: id, Episodes: []catalogSeriesEpisode{}}
-	if err = s.db.QueryRowContext(r.Context(), `SELECT s.title,s.work_id,u.rating,COALESCE(u.note,'') FROM catalog_series s
+	readCtx, done, err := s.beginCatalogRead(r.Context())
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	defer done()
+	r = r.WithContext(readCtx)
+	if err = s.catalogRead(r.Context()).QueryRowContext(r.Context(), `SELECT s.title,s.work_id,u.rating,COALESCE(u.note,'') FROM catalog_series s
 	LEFT JOIN user_work_state u ON u.work_id=s.work_id AND u.user_id=? WHERE s.id=?`, optionalUserID(r.Context()), id).Scan(&view.Title, &view.WorkID, &view.PersonalRating, &view.PersonalNote); err != nil {
 		writeCatalogGroupingError(w, err)
 		return
@@ -84,7 +91,7 @@ func (s *Server) getCatalogSeries(w http.ResponseWriter, r *http.Request) {
 	// because it carries personal state rather than a currently published file
 	// set. A source-backed zero-file member has no exception: the detail, list
 	// and tracks routes all judge the same published file set.
-	rows, err := s.db.QueryContext(r.Context(), catalogSeriesMembersSQL(), id)
+	rows, err := s.catalogRead(r.Context()).QueryContext(r.Context(), catalogSeriesMembersSQL(), id)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -121,7 +128,7 @@ func (s *Server) getCatalogSeries(w http.ResponseWriter, r *http.Request) {
 				position = episode.Position
 			}
 		}
-		personalRows, err := s.db.QueryContext(r.Context(), `SELECT id,title,primary_code FROM work
+		personalRows, err := s.catalogRead(r.Context()).QueryContext(r.Context(), `SELECT id,title,primary_code FROM work
 			WHERE parent_work_id=? ORDER BY id`, *view.WorkID)
 		if err != nil {
 			writeError(w, err)

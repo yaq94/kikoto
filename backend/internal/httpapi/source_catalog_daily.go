@@ -6,8 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"time"
-
-	"github.com/yexca/kikoto/backend/internal/sqlutil"
 )
 
 // catalogMaintenanceActiveTx reads the deployment hold through the dispatch
@@ -206,6 +204,16 @@ func (s *Server) dispatchCatalogUpdate(ctx context.Context, sourceID int64, now 
 		return tx.Commit()
 	}
 
+	// Finish an unpublished incremental operation before a newly due weekly
+	// generation. Otherwise the weekly enqueue replaces its durable page cursor.
+	if _, resumeErr := resumableCatalogSyncRunTx(ctx, tx.Tx, sourceID); resumeErr == nil {
+		if err = clearCatalogManualPendingTx(ctx, tx.Tx, sourceID); err != nil {
+			return err
+		}
+		return s.dispatchCatalogSync(ctx, tx, sourceID)
+	} else if !errors.Is(resumeErr, sql.ErrNoRows) {
+		return resumeErr
+	}
 	// A resume full is complete only when the run it created succeeds. A
 	// queued or running run keeps the marker; a failed one is forgotten so the
 	// next tick creates a replacement; success advances the weekly boundary.
@@ -334,7 +342,7 @@ func (s *Server) dispatchCatalogUpdate(ctx context.Context, sourceID int64, now 
 // dispatchCatalogSyncWithSchedule creates the sync row first and advances the
 // schedule only after the row exists. A lost race to another full generation
 // commits nothing, so the daily boundary stays due for the next tick.
-func (s *Server) dispatchCatalogSyncWithSchedule(ctx context.Context, tx *sqlutil.BoundedTx, sourceID int64, now time.Time, weeklyDue, manualPending bool) error {
+func (s *Server) dispatchCatalogSyncWithSchedule(ctx context.Context, tx *catalogWriteTx, sourceID int64, now time.Time, weeklyDue, manualPending bool) error {
 	syncID, err := enqueueCatalogSyncTx(ctx, tx.Tx, sourceID, false)
 	if err != nil {
 		if errors.Is(err, errCatalogIndexRunning) {
@@ -364,7 +372,7 @@ func (s *Server) dispatchCatalogSyncWithSchedule(ctx context.Context, tx *sqluti
 
 // dispatchCatalogSync creates the directory-first writer for an existing
 // generation. A lost race to another sync leaves the due boundary untouched.
-func (s *Server) dispatchCatalogSync(ctx context.Context, tx *sqlutil.BoundedTx, sourceID int64) error {
+func (s *Server) dispatchCatalogSync(ctx context.Context, tx *catalogWriteTx, sourceID int64) error {
 	syncID, err := enqueueCatalogSyncTx(ctx, tx.Tx, sourceID, false)
 	if err != nil {
 		if errors.Is(err, errCatalogIndexRunning) {
@@ -380,7 +388,7 @@ func (s *Server) dispatchCatalogSync(ctx context.Context, tx *sqlutil.BoundedTx,
 
 // dispatchCatalogManual consumes one manual request without moving the daily or
 // weekly boundary. A source with no reusable generation needs a full crawl.
-func (s *Server) dispatchCatalogManual(ctx context.Context, tx *sqlutil.BoundedTx, sourceID int64, directories int, options catalogIndexOptions) error {
+func (s *Server) dispatchCatalogManual(ctx context.Context, tx *catalogWriteTx, sourceID int64, directories int, options catalogIndexOptions) error {
 	if directories == 0 {
 		queued, err := s.enqueueSourceCatalogIndexTx(ctx, tx.Tx, sourceID, options, "manual", true)
 		if err != nil {

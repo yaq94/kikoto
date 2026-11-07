@@ -175,11 +175,11 @@ func BuildReport(ctx context.Context, db *sql.DB, options Options) (Report, erro
 	report := Report{GeneratedAt: time.Now().UTC().Format(time.RFC3339), Whitelist: whitelist, Entries: []Entry{}, Skipped: []Skipped{}}
 
 	rows, err := db.QueryContext(ctx, `SELECT e.id, COALESCE(e.file_source_id,0), e.root_path, e.source_root, e.title,
-		(SELECT count(*) FROM source_catalog_file f WHERE f.catalog_entry_id=e.id AND f.observed_generation=e.last_seen_generation AND f.kind<>'folder'),
-		(SELECT count(*) FROM source_catalog_file f WHERE f.catalog_entry_id=e.id AND f.observed_generation=e.last_seen_generation AND f.kind='audio'),
-			(SELECT count(*) FROM source_catalog_file f WHERE f.catalog_entry_id=e.id AND f.observed_generation=e.last_seen_generation AND f.kind NOT IN ('audio','folder')),
+		(SELECT count(*) FROM published_source_catalog_file f WHERE f.catalog_entry_id=e.id AND f.observed_generation=e.last_seen_generation AND f.kind<>'folder'),
+		(SELECT count(*) FROM published_source_catalog_file f WHERE f.catalog_entry_id=e.id AND f.observed_generation=e.last_seen_generation AND f.kind='audio'),
+			(SELECT count(*) FROM published_source_catalog_file f WHERE f.catalog_entry_id=e.id AND f.observed_generation=e.last_seen_generation AND f.kind NOT IN ('audio','folder')),
 			e.work_id
-		FROM source_catalog_entry e
+		FROM published_source_catalog_entry e
 		WHERE e.relocated_to_id IS NULL AND e.file_source_id IS NOT NULL
 		ORDER BY e.id`)
 	if err != nil {
@@ -341,13 +341,13 @@ func BuildReport(ctx context.Context, db *sql.DB, options Options) (Report, erro
 
 func zeroFileAudioObservations(ctx context.Context, db *sql.DB) (map[int64]bool, error) {
 	rows, err := db.QueryContext(ctx, `SELECT DISTINCT e.id
-		FROM source_catalog_entry e
+		FROM published_source_catalog_entry e
 		JOIN source_catalog_directory d ON d.file_source_id=e.file_source_id
 			AND d.path=CASE WHEN e.source_root<>'' THEN e.source_root ELSE e.root_path END
 		JOIN source_catalog_observation o ON o.file_source_id=e.file_source_id
 			AND o.directory_path=d.path AND o.revision=d.revision
 		WHERE d.status='complete' AND o.kind='audio' AND o.publish_pending=0
-			AND NOT EXISTS(SELECT 1 FROM source_catalog_file f WHERE f.catalog_entry_id=e.id)`)
+			AND NOT EXISTS(SELECT 1 FROM published_source_catalog_file f WHERE f.catalog_entry_id=e.id)`)
 	if err != nil {
 		return nil, err
 	}
@@ -703,7 +703,7 @@ func reconcileScanCounters(ctx context.Context, db *sql.DB, sources map[int64]bo
 			observed=(SELECT count(*) FROM source_catalog_directory d
 				JOIN source_catalog_observation o ON o.file_source_id=d.file_source_id AND o.directory_path=d.path AND o.revision=d.revision
 				WHERE d.file_source_id=source_catalog_scan.file_source_id AND d.generation=source_catalog_scan.workflow_run_id),
-			indexed=(SELECT count(*) FROM source_catalog_entry e
+			indexed=(SELECT count(*) FROM published_source_catalog_entry e
 				WHERE e.file_source_id=source_catalog_scan.file_source_id AND e.last_seen_generation=source_catalog_scan.workflow_run_id),
 			publish_pending_remaining=(SELECT count(*) FROM source_catalog_directory d
 				JOIN source_catalog_observation o ON o.file_source_id=d.file_source_id AND o.directory_path=d.path AND o.revision=d.revision
@@ -768,7 +768,7 @@ func applyBatch(ctx context.Context, db *sql.DB, batch []Entry, paths map[int64]
 		// prior batch or another writer may have changed admission since planning.
 		if err = tx.QueryRowContext(ctx, `SELECT count(*),
 			COALESCE(sum(f.kind='audio'),0),COALESCE(sum(f.kind<>'audio'),0)
-			FROM source_catalog_file f JOIN source_catalog_entry e ON e.id=f.catalog_entry_id
+			FROM published_source_catalog_file f JOIN published_source_catalog_entry e ON e.id=f.catalog_entry_id
 			WHERE e.id=? AND f.observed_generation=e.last_seen_generation AND f.kind<>'folder'`, entry.EntryID).Scan(&files, &audio, &nonAudio); err != nil {
 			return BatchResult{}, err
 		}
@@ -841,12 +841,12 @@ func applyBatch(ctx context.Context, db *sql.DB, batch []Entry, paths map[int64]
 	// surviving object for the reference, so apply refuses it above and never
 	// reaches this transfer.
 	if _, err = tx.ExecContext(ctx, `UPDATE personal_transfer_ref
-		SET work_id=(SELECT e.work_id FROM source_catalog_entry e WHERE e.id=personal_transfer_ref.catalog_entry_id),
+		SET work_id=(SELECT e.work_id FROM published_source_catalog_entry e WHERE e.id=personal_transfer_ref.catalog_entry_id),
 			catalog_entry_id=NULL,
 			object_kind='work',
 			is_primary=0
 		WHERE catalog_entry_id IN (`+in+`)
-			AND (SELECT e.work_id FROM source_catalog_entry e WHERE e.id=personal_transfer_ref.catalog_entry_id) IS NOT NULL`, args...); err != nil {
+			AND (SELECT e.work_id FROM published_source_catalog_entry e WHERE e.id=personal_transfer_ref.catalog_entry_id) IS NOT NULL`, args...); err != nil {
 		return BatchResult{}, err
 	}
 	var unresolvedRefs int
@@ -900,14 +900,14 @@ func whitelistCounts(ctx context.Context, tx *sql.Tx, whitelist []string) (white
 	for _, root := range whitelist {
 		var entries, files, observations int
 		if err := tx.QueryRowContext(ctx, `SELECT
-			(SELECT count(*) FROM source_catalog_entry e WHERE e.root_path=? OR substr(e.root_path,1,length(?)+1)=? || '/')
-			 + (SELECT count(*) FROM source_catalog_entry e WHERE e.source_root=? OR substr(e.source_root,1,length(?)+1)=? || '/')`,
+			(SELECT count(*) FROM published_source_catalog_entry e WHERE e.root_path=? OR substr(e.root_path,1,length(?)+1)=? || '/')
+			 + (SELECT count(*) FROM published_source_catalog_entry e WHERE e.source_root=? OR substr(e.source_root,1,length(?)+1)=? || '/')`,
 			root, root, root, root, root, root).Scan(&entries); err != nil {
 			return snapshot, err
 		}
-		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM source_catalog_file f
+		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM published_source_catalog_file f
 			WHERE f.catalog_entry_id IN (
-				SELECT id FROM source_catalog_entry e WHERE e.root_path=? OR substr(e.root_path,1,length(?)+1)=? || '/'
+				SELECT id FROM published_source_catalog_entry e WHERE e.root_path=? OR substr(e.root_path,1,length(?)+1)=? || '/'
 					OR e.source_root=? OR substr(e.source_root,1,length(?)+1)=? || '/')`,
 			root, root, root, root, root, root).Scan(&files); err != nil {
 			return snapshot, err
