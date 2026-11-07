@@ -279,7 +279,7 @@ func (s *Server) readWorkSourceAvailability(ctx context.Context, code string) (s
 
 func (s *Server) latestSourceAvailabilityCheckedAt(ctx context.Context, code string) (string, error) {
 	var checkedAt sql.NullString
-	err := s.db.QueryRowContext(ctx, `
+	err := s.catalogRead(ctx).QueryRowContext(ctx, `
 		SELECT MAX(presence.last_checked_at)
 		FROM work_source_presence AS presence
 		INNER JOIN work ON work.id = presence.work_id
@@ -297,7 +297,7 @@ func (s *Server) latestSourceAvailabilityCheckedAt(ctx context.Context, code str
 
 func (s *Server) attachCachedSourcePresence(ctx context.Context, result *sourceAvailabilitySummary, sourceID int64, workCode string) error {
 	var availability, remoteID, rawJSON, checkedAt sql.NullString
-	err := s.db.QueryRowContext(ctx, `
+	err := s.catalogRead(ctx).QueryRowContext(ctx, `
 		SELECT presence.availability, presence.remote_id, presence.raw_json, presence.last_checked_at
 		FROM work_source_presence AS presence
 		INNER JOIN work ON work.id = presence.work_id
@@ -461,6 +461,13 @@ func (s *Server) sourceAvailabilityFlags(ctx context.Context, sourceID int64, wo
 	if err != nil {
 		return flags, err
 	}
+	// Resolve live identity before pinning the source projection; those helpers
+	// use the database pool and must not run under a single-connection read tx.
+	ctx, done, err := s.beginCatalogRead(ctx)
+	if err != nil {
+		return flags, err
+	}
+	defer done()
 	for _, workID := range ids {
 		flags.HasRemote = flags.HasRemote || s.workHasLocationType(ctx, workID, sourceID, "remote_stream") || s.workHasSourcePresence(ctx, workID, sourceID, sourcePresenceTypeRemoteSource, "available")
 		flags.HasTracked = flags.HasTracked || s.workHasSourcePresence(ctx, workID, sourceID, "tracked", "available")

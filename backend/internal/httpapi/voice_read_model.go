@@ -15,7 +15,7 @@ import (
 )
 
 func (s *Server) loadVoiceSummaries(ctx context.Context, userID int64) ([]voiceSummary, error) {
-	rows, err := s.db.QueryContext(ctx, voiceSummaryQuery("", s.cfg.IsDemo())+" ORDER BY known_works DESC, person.display_name ASC", userID)
+	rows, err := s.catalogRead(ctx).QueryContext(ctx, voiceSummaryQuery("", s.cfg.IsDemo())+" ORDER BY known_works DESC, person.display_name ASC", userID)
 	if err != nil {
 		return nil, err
 	}
@@ -64,7 +64,7 @@ func (s *Server) loadVoiceSummaries(ctx context.Context, userID int64) ([]voiceS
 }
 
 func (s *Server) loadVoiceSummary(ctx context.Context, userID int64, personID int64) (voiceSummary, error) {
-	row := s.db.QueryRowContext(ctx, voiceSummaryQuery("WHERE person.id = ?", s.cfg.IsDemo()), userID, personID)
+	row := s.catalogRead(ctx).QueryRowContext(ctx, voiceSummaryQuery("WHERE person.id = ?", s.cfg.IsDemo()), userID, personID)
 	item, err := s.scanVoiceSummary(ctx, row, userID)
 	if err != nil {
 		return voiceSummary{}, err
