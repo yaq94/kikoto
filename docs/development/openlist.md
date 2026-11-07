@@ -91,6 +91,27 @@ every work, review, series and relocation reference are retained. Only catalog
 files, observations, directory rows and audio roots that remain excluded are
 removed, including files of a parent card that fall inside the excluded path.
 
+Each rule mutation saves a recoverable workflow run and a source publication
+owner together. The response includes `runId`; the run's state distinguishes a
+saved rule from completed reconciliation. Entries, files, observations,
+directories and audio roots advance with durable keyset cursors, at most 64
+rows per batch. The complete previous catalog remains readable until the
+publication marker and successful workflow result commit together. Failures,
+cancellation and low disk space retain that readable set and the same operation.
+Retry the failed or cancelled run through the workflow retry action; low-space
+and disabled-source jobs stay queued with a delayed retry. Other catalog
+operations cannot replace its source checkpoints while it owns publication.
+Source permissions and enabled configuration remain current. Committed
+before-image cleanup is retryable maintenance and cannot revoke publication.
+One preparation invocation performs at most 16 batches before yielding the
+same job back to the queue. Large rules return their saved `runId` while the
+worker continues; `GET /api/workflow-runs/{runId}` reports the actual terminal
+state. The HTTP first-response budget stays unchanged.
+Scan progress counters use separate 64-row directory, observation and entry
+passes against the operation's saved generation. Their accumulators and cursors
+commit together, and one final update replaces the complete counter projection.
+A changed generation rejects the stale operation before publication.
+
 The Library source panel shows index status, counts, timestamps, partition
 coverage and unresolved directories. **Index limits** configures the next start
 or resume; active settings are read-only. **Cancel**, **Resume index** and

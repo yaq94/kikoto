@@ -113,6 +113,9 @@ func catalogFullIndexRunningTx(ctx context.Context, tx *sql.Tx, sourceID int64) 
 }
 
 func enqueueCatalogSyncTx(ctx context.Context, tx *sql.Tx, sourceID int64, force bool) (int64, error) {
+	if err := rejectPendingCatalogExclusionTx(ctx, tx, sourceID); err != nil {
+		return 0, err
+	}
 	// A process that stopped during a long probe leaves one running row. Six
 	// hours is well above a full 3k-directory pass at the observed latency and
 	// keeps the partial unique index from blocking every later day.

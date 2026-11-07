@@ -240,6 +240,11 @@ func (s *Server) commitCatalogPublicationTranslations(ctx context.Context, id in
 			if err == nil && !pending {
 				_, err = tx.ExecContext(ctx, `UPDATE source_catalog_publication SET state='committed' WHERE id=? AND state='preparing'`, id)
 				if err == nil {
+					if committed, ok := ctx.Value(catalogPublicationCommitKey{}).(func(*sql.Tx) error); ok && committed != nil {
+						err = committed(tx.Tx)
+					}
+				}
+				if err == nil {
 					err = tx.Commit()
 				}
 			}

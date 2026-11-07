@@ -25,7 +25,7 @@ func (s *Server) prepareCatalogPublicationMedia(ctx context.Context, operation i
 			release()
 			return err
 		}
-		rows, err := tx.QueryContext(ctx, `SELECT l.id,CASE WHEN e.id IS NULL OR e.file_source_id IS NULL OR e.availability_status='missing' THEN 'unavailable'
+		rows, err := tx.QueryContext(ctx, `SELECT l.id,CASE WHEN e.id IS NULL OR e.file_source_id IS NULL OR e.availability_status IN ('missing','excluded') THEN 'unavailable'
 		 WHEN e.availability_status='available' THEN CASE WHEN EXISTS(SELECT 1 FROM source_catalog_file f WHERE f.catalog_entry_id=e.id AND f.kind='audio' AND m.fingerprint='catalog:'||e.id||':'||f.relative_path) THEN 'available' ELSE 'unavailable' END ELSE l.availability END
 		 FROM media_item m JOIN media_file_location l ON l.media_item_id=m.id LEFT JOIN source_catalog_entry e ON e.id=?
 		 WHERE m.fingerprint>=('catalog:'||?||':') AND m.fingerprint<('catalog:'||?||';') AND l.location_type='catalog_stream'
