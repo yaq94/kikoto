@@ -76,6 +76,24 @@ series readers require a published entry. See
 [Catalog series](../development/catalog-series.md) for the transaction and
 recovery boundary.
 
+## Catalog Publication
+
+Catalog publication uses `source_catalog_publication` and sparse
+`*_publication_before` rows on the stable catalog tables. Snapshot-zero rows
+remain in place. A pending operation preserves the old values and absence of
+each affected key; the `published_*` projections expose those values until the
+operation's committed marker selects the working rows. Entry/work references
+and personal records remain live. The publication writer marker is scoped to
+each SQLite write transaction and cleared before commit.
+
+`source_catalog_listing` and `source_catalog_listing_item` persist incremental
+directory pages with generation, observed revision, expected total, next page
+and bounded-apply cursors. A page and its workflow checkpoint share a commit.
+`source_catalog_publication_entity` identifies affected admission and translation
+scope keys for bounded preparation. See
+[Catalog publication snapshots](../decisions/ADR-0008-catalog-publication-snapshots.md)
+for ownership, conflicting writes and read transaction boundaries.
+
 ## Work Metadata
 
 Important tables:

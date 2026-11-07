@@ -42,7 +42,7 @@ type remoteSourceForUse struct {
 func (s *Server) loadRemoteSourceForUse(ctx context.Context, id int64) (remoteSourceForUse, error) {
 	var source remoteSourceForUse
 	var configJSON, allowedHostPatternsJSON string
-	if err := s.db.QueryRowContext(ctx, `
+	if err := s.catalogRead(ctx).QueryRowContext(ctx, `
 		SELECT source.id, source.code, source.display_name, source.source_type, source.enabled, source.config_json,
 			COALESCE(endpoint.api_url, ''), COALESCE(endpoint.base_url, ''), COALESCE(endpoint.fallback_url, ''),
 			COALESCE(endpoint.work_url_template, ''), COALESCE(endpoint.restrict_outbound_hosts, 0),

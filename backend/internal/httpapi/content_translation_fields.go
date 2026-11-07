@@ -39,7 +39,7 @@ func (s *Server) loadTranslationField(ctx context.Context, in contentTranslation
 			return readableTranslationField{}, err
 		}
 		var title string
-		err := s.db.QueryRowContext(ctx, `SELECT title FROM catalog_series WHERE id=?`, in.SeriesID).Scan(&title)
+		err := s.catalogRead(ctx).QueryRowContext(ctx, `SELECT title FROM catalog_series WHERE id=?`, in.SeriesID).Scan(&title)
 		field := readableTranslationField{Text: title, Original: title}
 		if err == nil {
 			field.Names, err = s.catalogSeriesProtectedNames(ctx, in.SeriesID)
@@ -296,7 +296,7 @@ func (s *Server) catalogEntryProtectedNames(ctx context.Context, entry catalogEn
 // A series title belongs to the same work as its episodes, so every member's
 // circle and cast are protected names for that title.
 func (s *Server) catalogSeriesProtectedNames(ctx context.Context, seriesID int64) ([]string, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT m.catalog_entry_id,COALESCE(e.work_id,0) FROM catalog_series_member m
+	rows, err := s.catalogRead(ctx).QueryContext(ctx, `SELECT m.catalog_entry_id,COALESCE(e.work_id,0) FROM catalog_series_member m
 		JOIN source_catalog_entry e ON e.id=m.catalog_entry_id
 		WHERE m.series_id=?`, seriesID)
 	if err != nil {

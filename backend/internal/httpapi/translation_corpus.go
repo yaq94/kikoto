@@ -106,18 +106,18 @@ type translationPrefillCursor struct {
 // the same predicate used by the publisher and browse API, so a hidden card
 // never enters coverage or prefill.
 func translationCorpusEntrySQL() string {
-	return `SELECT 'entry' AS entity_kind, e.id AS entity_id, 'title' AS field,
+	return publishedCatalogSQL(`SELECT 'entry' AS entity_kind, e.id AS entity_id, 'title' AS field,
 			e.title AS source_text
 		FROM source_catalog_entry e
 		JOIN file_source src ON src.id=e.file_source_id
 		WHERE e.relocated_to_id IS NULL
 		  AND src.enabled=1 AND src.source_type='openlist'
 		  AND trim(e.title)<>''
-		  AND ` + catalogEntryAdmittedSQL("e")
+		  AND ` + catalogEntryAdmittedSQL("e"))
 }
 
 func translationCorpusSeriesSQL() string {
-	return `SELECT 'series' AS entity_kind, s.id AS entity_id, 'title' AS field, s.title AS source_text
+	return publishedCatalogSQL(`SELECT 'series' AS entity_kind, s.id AS entity_id, 'title' AS field, s.title AS source_text
 		FROM catalog_series s
 		WHERE trim(s.title)<>''
 		  AND (SELECT COUNT(*) FROM catalog_series_member m WHERE m.series_id=s.id)>=2
@@ -127,7 +127,7 @@ func translationCorpusSeriesSQL() string {
 			JOIN file_source src ON src.id=e.file_source_id
 			WHERE m.series_id=s.id AND e.relocated_to_id IS NULL
 			  AND src.enabled=1 AND src.source_type='openlist'
-			  AND ` + catalogEntryAdmittedSQL("e") + `)`
+			  AND ` + catalogEntryAdmittedSQL("e") + `)`)
 }
 
 func translationCorpusWorkSQL(field string) string {
@@ -492,7 +492,7 @@ func (s *Server) translationCorpusItemText(ctx context.Context, kind string, id 
 // definition used by retention and the budget report. A stale config key or
 // changed source text is not protected.
 func translationPersistentCorpusSQL(alias string) string {
-	return `(
+	return publishedCatalogSQL(`(
 		(` + alias + `.entity_kind='entry' AND ` + alias + `.field='title' AND EXISTS(
 			SELECT 1 FROM source_catalog_entry e JOIN file_source src ON src.id=e.file_source_id
 			WHERE e.id=` + alias + `.entity_id AND e.relocated_to_id IS NULL
@@ -517,7 +517,7 @@ func translationPersistentCorpusSQL(alias string) string {
 			  AND ((` + alias + `.field='title' AND ` + alias + `.source_text=w.title)
 			    OR (` + alias + `.field='description' AND ` + alias + `.source_text=w.description))
 			  AND (` + alias + `.origin='native' OR (` + alias + `.origin='model' AND ` + alias + `.config_key=?))))
-	)`
+		)`)
 }
 
 func (s *Server) clearTranslationPrefillFailures(ctx context.Context, item translationCorpusItem, configKey string) error {

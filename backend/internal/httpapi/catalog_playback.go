@@ -38,13 +38,19 @@ func (s *Server) prepareCatalogPlayback(w http.ResponseWriter, r *http.Request) 
 		writeAPIError(w, 400, "invalid_request", "playback queue must contain 1 to 256 paths", false)
 		return
 	}
-	entry, _, err := s.loadSourceCatalogEntry(r.Context(), id)
+	readCtx, entry, source, done, err := s.beginCatalogEntryRead(r.Context(), id)
 	if err != nil {
 		writeUpstreamError(w, err)
 		return
 	}
+	defer done()
+	if !source.Enabled || source.SourceType != sourceTypeOpenList {
+		writeUpstreamError(w, errRemoteSourceNotUsable)
+		return
+	}
+	r = r.WithContext(readCtx)
 	if catalogEntryAdmissionRequired(entry) {
-		admission, admissionErr := catalogPublishedEntryAdmission(r.Context(), s.db, entry.ID)
+		admission, admissionErr := catalogPublishedEntryAdmission(r.Context(), s.catalogRead(r.Context()), entry.ID)
 		if admissionErr != nil {
 			writeError(w, admissionErr)
 			return
@@ -87,9 +93,13 @@ type catalogPlaybackFile struct {
 // transaction only opens when a media item or location row is actually
 // missing, and then every missing row is written in one statement.
 func (s *Server) prepareCatalogPlaybackTargets(ctx context.Context, entry catalogEntry, paths []string) ([]map[string]any, error) {
-	files, err := s.loadCatalogPlaybackFiles(ctx, s.db, entry.ID, paths)
+	files, err := s.loadCatalogPlaybackFiles(ctx, s.catalogRead(ctx), entry.ID, paths)
 	if err != nil {
 		return nil, err
+	}
+	if tx, ok := ctx.Value(catalogReadTxKey{}).(*sql.Tx); ok {
+		_ = tx.Rollback()
+		ctx = context.WithValue(ctx, catalogReadTxKey{}, (*sql.Tx)(nil))
 	}
 	unique := make([]catalogPlaybackFile, 0, len(files))
 	seen := map[string]bool{}
@@ -331,10 +341,15 @@ func insertCatalogPlaybackMedia(ctx context.Context, tx *sql.Tx, workID, entryID
 	return err
 }
 
-func insertCatalogPlaybackLocations(ctx context.Context, tx *sql.Tx, sourceID, entryID int64, files []catalogPlaybackFile, mediaIDs map[string]int64) error {
+func insertCatalogPlaybackLocations(ctx context.Context, tx *sql.Tx, sourceID, entryID int64, files []catalogPlaybackFile, mediaIDs map[string]int64) (err error) {
 	if len(files) == 0 {
 		return nil
 	}
+	operation, restore, err := catalogProjectionWriterTx(ctx, tx, sourceID)
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, restore()) }()
 	var statement strings.Builder
 	args := make([]any, 0, len(files)*4+2)
 	statement.WriteString(`INSERT INTO media_file_location(media_item_id,file_source_id,location_type,path,stream_url,size_bytes,availability)
@@ -351,8 +366,26 @@ func insertCatalogPlaybackLocations(ctx context.Context, tx *sql.Tx, sourceID, e
 		SELECT 1 FROM media_file_location l WHERE l.media_item_id=v.media_item_id
 		AND l.file_source_id=? AND l.location_type='catalog_stream' AND l.path=v.path)`)
 	args = append(args, sourceID)
-	_, err := tx.ExecContext(ctx, statement.String(), args...)
-	return err
+	_, err = tx.ExecContext(ctx, statement.String(), args...)
+	if err != nil || operation == 0 {
+		return err
+	}
+	// The user prepared a published file while its replacement was staging.
+	// Keep that first playback visible; the working projection follows the new
+	// file set when the publication marker commits.
+	for _, file := range files {
+		var locationID int64
+		if err = tx.QueryRowContext(ctx, `SELECT id FROM media_file_location WHERE media_item_id=? AND file_source_id=? AND location_type='catalog_stream' AND path=?`, mediaIDs[file.relative], sourceID, file.relative).Scan(&locationID); err != nil {
+			return err
+		}
+		if _, err = tx.ExecContext(ctx, `UPDATE media_file_location_publication_before SET existed=1 WHERE operation_id=? AND id=? AND existed=0`, operation, locationID); err != nil {
+			return err
+		}
+		if _, err = tx.ExecContext(ctx, `UPDATE media_file_location SET availability=CASE WHEN EXISTS(SELECT 1 FROM source_catalog_entry e JOIN source_catalog_file f ON f.catalog_entry_id=e.id WHERE e.id=? AND e.availability_status<>'missing' AND f.relative_path=? AND f.kind='audio') THEN 'available' ELSE 'unavailable' END WHERE id=?`, entryID, file.relative, locationID); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *Server) streamCatalogLocation(w http.ResponseWriter, r *http.Request, target mediaStreamTarget) {

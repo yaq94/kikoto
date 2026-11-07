@@ -120,8 +120,15 @@ func openListCatalogCardsQueryFiltered(sourceID int64, query string, entryIDs, s
 	SELECT d.catalog_entry_id, d.series_id
 	FROM source_catalog_search s JOIN source_catalog_search_doc d ON d.id=s.rowid
 	WHERE source_catalog_search MATCH ? AND (d.entity_kind='series' OR d.file_source_id=?)
+	 AND NOT EXISTS(SELECT 1 FROM source_catalog_search_doc_publication_before b JOIN source_catalog_publication op ON op.id=b.operation_id WHERE b.id=d.id AND op.state='preparing')
+	UNION
+	SELECT b.catalog_entry_id,b.series_id FROM source_catalog_publication_search s
+	 JOIN source_catalog_search_doc_publication_before b ON b.id=s.rowid
+	 JOIN source_catalog_publication op ON op.id=b.operation_id
+	WHERE source_catalog_publication_search MATCH ? AND (b.entity_kind='series' OR b.file_source_id=?)
+	 AND b.existed=1 AND op.state='preparing'
 	`
-			args = append(args, ftsPhrase(query), sourceID)
+			args = append(args, ftsPhrase(query), sourceID, ftsPhrase(query), sourceID)
 			// The trigram path has no exact flag; its ordering stays by
 			// recency, and 0 keeps the shared page projection valid.
 			prefix += `), requested_entry(id,exact) AS (SELECT catalog_entry_id,0 FROM search_hits WHERE catalog_entry_id<>0), ` +

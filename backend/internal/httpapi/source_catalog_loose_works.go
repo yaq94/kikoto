@@ -1006,7 +1006,12 @@ func retireCatalogCardTx(ctx context.Context, tx *sql.Tx, id, targetID int64) (r
 	if _, err := tx.ExecContext(ctx, `UPDATE source_catalog_entry SET file_source_id=NULL,relocated_to_id=?,updated_at=CURRENT_TIMESTAMP WHERE id=?`, nullIfZero(targetID), id); err != nil {
 		return false, err
 	}
-	if _, err = tx.ExecContext(ctx, `DELETE FROM source_catalog_file WHERE catalog_entry_id=?`, id); err != nil {
+	if operation, _ := ctx.Value(catalogPublicationKey{}).(int64); operation > 0 {
+		_, err = tx.ExecContext(ctx, `INSERT INTO source_catalog_publication_entity(operation_id,entity_kind,entity_id) VALUES(?,'retired_files',?) ON CONFLICT DO NOTHING`, operation, id)
+	} else {
+		_, err = tx.ExecContext(ctx, `DELETE FROM source_catalog_file WHERE catalog_entry_id=?`, id)
+	}
+	if err != nil {
 		return false, err
 	}
 	if _, err = tx.ExecContext(ctx, "RELEASE SAVEPOINT "+savepoint); err != nil {
@@ -1442,44 +1447,6 @@ func (s *Server) retireOrphanSplitRootsBatch(ctx context.Context, job workflowJo
 // lists. The card itself, its work link and its personal records are kept; a
 // later scan that lists the path again restores it. This never runs for a
 // failed scan: the caller returns before publishing in that case.
-func markStaleSnapshotCardsTx(ctx context.Context, tx *sql.Tx, sourceID int64, root string, keep map[int64]bool) error {
-	rows, err := tx.QueryContext(ctx, `SELECT id,root_path FROM source_catalog_entry
-		WHERE file_source_id=? AND relocated_to_id IS NULL
-			AND (source_root=? OR root_path=? OR substr(root_path,1,length(?)+1)=? || '/')
-		ORDER BY id`, sourceID, root, root, root, root)
-	if err != nil {
-		return err
-	}
-	type staleCard struct {
-		id   int64
-		root string
-	}
-	stale := []staleCard{}
-	for rows.Next() {
-		var card staleCard
-		if err = rows.Scan(&card.id, &card.root); err != nil {
-			break
-		}
-		if keep[card.id] || card.root == root {
-			continue
-		}
-		stale = append(stale, card)
-	}
-	readErr := rows.Err()
-	_ = rows.Close()
-	if err != nil {
-		return err
-	}
-	if readErr != nil {
-		return readErr
-	}
-	for _, card := range stale {
-		if err = setCatalogEntryStatusTx(ctx, tx, card.id, "missing"); err != nil {
-			return err
-		}
-	}
-	return nil
-}
 
 // retireStaleSplitCardsTx hides split cards for this root that the current
 // generation did not publish. A directory that used to hold separate works can

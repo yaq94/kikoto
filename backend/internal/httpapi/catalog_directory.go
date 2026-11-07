@@ -84,16 +84,14 @@ func (s *Server) refreshCatalogEntry(ctx context.Context, id int64) (string, err
 	if entry.SourceRoot != "" {
 		// A split card refreshes only its own files; the directory scan above
 		// read the real creator folder to resolve them.
-		tx, release, txErr := beginTxWithDatabaseBusyRetry(ctx, s.db)
+		writeCtx, publicationID, txErr := s.beginCatalogPublication(ctx, source.ID, "manual:"+entry.RootPath)
 		if txErr != nil {
 			return "", txErr
 		}
-		defer release()
-		defer func() { _ = tx.Rollback() }()
-		if _, txErr = persistOpenListSnapshotTx(ctx, tx.Tx, source.ID, entry.RootPath, entry.SourceRoot, entry.Title, cardFiles); txErr != nil {
+		if _, txErr = s.persistOpenListSnapshot(writeCtx, source.ID, entry.RootPath, entry.SourceRoot, entry.Title, cardFiles); txErr != nil {
 			return "", txErr
 		}
-		if txErr = tx.Commit(); txErr != nil {
+		if txErr = s.commitCatalogPublication(writeCtx, publicationID); txErr != nil {
 			return "", txErr
 		}
 	} else if _, err = s.persistOpenListRoot(ctx, source, entry.RootPath, files); err != nil {
@@ -116,8 +114,15 @@ func (s *Server) getWorkCatalogDirectories(w http.ResponseWriter, r *http.Reques
 	if !s.requireDemoWork(w, r, id) {
 		return
 	}
+	readCtx, done, err := s.beginCatalogRead(r.Context())
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	defer done()
+	r = r.WithContext(readCtx)
 	var code string
-	if err = s.db.QueryRowContext(r.Context(), "SELECT primary_code FROM work WHERE id=?", id).Scan(&code); err != nil {
+	if err = s.catalogRead(r.Context()).QueryRowContext(r.Context(), "SELECT primary_code FROM work WHERE id=?", id).Scan(&code); err != nil {
 		writeWorkReadError(w, err)
 		return
 	}
@@ -127,7 +132,7 @@ func (s *Server) getWorkCatalogDirectories(w http.ResponseWriter, r *http.Reques
 	// arm below has no catalog file rows and is not part of this gate.
 	pendingDirectory := catalogEntryPendingSQL("entry")
 	admittedDirectory := catalogEntryAdmittedSQL("entry")
-	rows, err := s.db.QueryContext(r.Context(), `WITH family AS (
+	rows, err := s.catalogRead(r.Context()).QueryContext(r.Context(), `WITH family AS (
 		SELECT peer.work_id FROM shared_work_identity AS own
 		JOIN shared_work_identity AS peer ON peer.identity_work_id=own.identity_work_id
 		WHERE own.work_id=?

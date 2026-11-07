@@ -228,6 +228,7 @@ func (a catalogEntryAdmission) Admitted() bool { return a.Reason == "" }
 func catalogPublishedEntryAdmission(ctx context.Context, q interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
 }, id int64) (catalogEntryAdmission, error) {
+	q = publishedCatalogRows{q}
 	var adm catalogEntryAdmission
 	// Read the stored counts when they describe the entry's current generation.
 	// A file write marks the row with an impossible generation, so a miss means

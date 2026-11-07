@@ -331,7 +331,7 @@ func (s *Server) translationCacheDiskBytesFor(ctx context.Context, cfg translati
 // the same real path and title. Title/description rows are protected by the
 // corpus predicate instead.
 func translationDisplayCacheCurrentSQL(alias string) string {
-	return `(
+	return publishedCatalogSQL(`(
 		(` + alias + `.field='tag' AND (
 			(` + alias + `.entity_kind='entry' AND EXISTS(
 				SELECT 1 FROM source_catalog_entry e WHERE e.id=` + alias + `.entity_id AND e.relocated_to_id IS NULL))
@@ -344,7 +344,7 @@ func translationDisplayCacheCurrentSQL(alias string) string {
 			JOIN source_catalog_file f ON f.catalog_entry_id=e.id
 			WHERE e.id=` + alias + `.entity_id AND e.relocated_to_id IS NULL
 			  AND f.relative_path=` + alias + `.entity_key AND f.title=` + alias + `.source_text))
-	)`
+		)`)
 }
 
 // deleteHistoricalContentTranslations removes superseded and retired model

@@ -183,7 +183,18 @@ func (s *Server) scanOpenListCatalog(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"status": status, "roots": results})
 }
 
-func (s *Server) persistOpenListRoot(ctx context.Context, source remoteSourceForUse, root string, files []openlist.File) (int64, error) {
+func (s *Server) persistOpenListRoot(ctx context.Context, source remoteSourceForUse, root string, files []openlist.File) (result int64, resultErr error) {
+	var publicationID int64
+	var err error
+	ctx, publicationID, err = s.beginCatalogPublication(ctx, source.ID, "manual:"+root)
+	if err != nil {
+		return 0, err
+	}
+	defer func() {
+		if resultErr == nil {
+			resultErr = s.commitCatalogPublication(ctx, publicationID)
+		}
+	}()
 	if id, split, err := s.persistCatalogEpisodeRoots(ctx, source, root, files); split || err != nil {
 		return id, err
 	}
@@ -195,33 +206,20 @@ func (s *Server) persistOpenListRoot(ctx context.Context, source remoteSourceFor
 	if len(groups) > 0 {
 		return s.persistCatalogLooseWorkRoots(ctx, source, root, mode, groups, parent)
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	id, err := s.persistOpenListSnapshot(ctx, source.ID, root, "", path.Base(root), files)
 	if err != nil {
 		return 0, err
 	}
-	defer func() { _ = tx.Rollback() }()
-	id, err := persistOpenListSnapshotTx(ctx, tx, source.ID, root, "", path.Base(root), files)
-	if err != nil {
+	if err = s.markStaleSnapshotCards(ctx, source.ID, root, map[int64]bool{id: true}); err != nil {
 		return 0, err
 	}
-	// A directory that used to be split can become one work (or lose an
-	// episode). The current listing is a complete snapshot, so cards of this
-	// root that it no longer publishes are stale.
-	if err = markStaleSnapshotCardsTx(ctx, tx, source.ID, root, map[int64]bool{id: true}); err != nil {
-		return 0, err
-	}
-	return id, tx.Commit()
+	return id, nil
 }
 
 // persistCatalogLooseWorkRoots writes one card per prefix group or per file.
 // The real directory stays in source_root so playback and refresh keep reading
 // the source tree, while root_path becomes the card identity.
 func (s *Server) persistCatalogLooseWorkRoots(ctx context.Context, source remoteSourceForUse, root, mode string, groups map[string][]openlist.File, parent []openlist.File) (int64, error) {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return 0, err
-	}
-	defer func() { _ = tx.Rollback() }()
 	roots := make([]string, 0, len(groups))
 	for groupRoot := range groups {
 		roots = append(roots, groupRoot)
@@ -240,7 +238,7 @@ func (s *Server) persistCatalogLooseWorkRoots(ctx context.Context, source remote
 		} else if len(files) > 0 {
 			title = catalogFileStem(files[0].Path)
 		}
-		id, err := persistOpenListSnapshotTx(ctx, tx, source.ID, groupRoot, root, title, files)
+		id, err := s.persistOpenListSnapshot(ctx, source.ID, groupRoot, root, title, files)
 		if err != nil {
 			return 0, err
 		}
@@ -251,7 +249,8 @@ func (s *Server) persistCatalogLooseWorkRoots(ctx context.Context, source remote
 	}
 	if len(parent) > 0 {
 		var id int64
-		if id, err = persistOpenListSnapshotTx(ctx, tx, source.ID, root, "", path.Base(root), parent); err != nil {
+		var err error
+		if id, err = s.persistOpenListSnapshot(ctx, source.ID, root, "", path.Base(root), parent); err != nil {
 			return 0, err
 		}
 		keep[id] = true
@@ -260,14 +259,16 @@ func (s *Server) persistCatalogLooseWorkRoots(ctx context.Context, source remote
 		}
 		parentKept = true
 	}
-	// This scan published a complete snapshot of the root. Split cards from an
-	// earlier snapshot that were not republished no longer describe a playable
-	// group; leaving them visible would show works the source no longer has.
-	if err = markStaleSnapshotCardsTx(ctx, tx, source.ID, root, keep); err != nil {
+	if err := s.markStaleSnapshotCards(ctx, source.ID, root, keep); err != nil {
 		return 0, err
 	}
+	tx, release, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
+	if err != nil {
+		return 0, err
+	}
+	defer release()
 	if firstSplit != 0 && !parentKept {
-		if err = retireCatalogSplitParentTx(ctx, tx, source.ID, root, firstSplit); err != nil {
+		if err = retireCatalogSplitParentTx(ctx, tx.Tx, source.ID, root, firstSplit); err != nil {
 			return 0, err
 		}
 	}
@@ -285,43 +286,6 @@ func catalogDirectAudioNames(files []openlist.File) []string {
 		}
 	}
 	return names
-}
-
-func persistOpenListSnapshotTx(ctx context.Context, tx *sql.Tx, sourceID int64, root, sourceRoot, title string, files []openlist.File) (int64, error) {
-	id, err := persistOpenListEntryTx(ctx, tx, sourceID, root, sourceRoot, title)
-	if err != nil {
-		return 0, err
-	}
-	// Files for a split card are replaced wholesale. The caller passes only the
-	// rows that belong to this card, never the whole creator directory.
-	if _, err = tx.ExecContext(ctx, "DELETE FROM source_catalog_file WHERE catalog_entry_id=?", id); err != nil {
-		return 0, err
-	}
-	for _, file := range files {
-		if err = persistOpenListFileTx(ctx, tx, id, file); err != nil {
-			return 0, err
-		}
-	}
-	if sourceRoot == "" {
-		// A split card is already one work; do not let a file title become
-		// episode evidence for a new series.
-		if err = attachCatalogSeriesForRootTx(ctx, tx, id, sourceID, root); err != nil {
-			return 0, err
-		}
-	}
-	if err = setCatalogEntryStatusTx(ctx, tx, id, "available"); err != nil {
-		return 0, err
-	}
-	if _, err = tx.ExecContext(ctx, `DELETE FROM source_catalog_relocation_candidate WHERE catalog_entry_id=?`, id); err != nil {
-		return 0, err
-	}
-	if err = refreshCatalogEntryAdmissionTx(ctx, tx, id); err != nil {
-		return 0, err
-	}
-	if err = refreshContentTranslationBrowsableTx(ctx, tx, []int64{id}); err != nil {
-		return 0, err
-	}
-	return id, nil
 }
 
 func persistOpenListEntryTx(ctx context.Context, tx *sql.Tx, sourceID any, root, sourceRoot, title string) (int64, error) {
@@ -363,7 +327,7 @@ func (s *Server) loadSourceCatalogEntry(ctx context.Context, id int64) (catalogE
 }
 
 func (s *Server) loadSourceCatalogFiles(ctx context.Context, id int64) ([]SourceCatalogFile, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT relative_path,title,kind,size_bytes,modified_at,observed_generation FROM source_catalog_file WHERE catalog_entry_id=? ORDER BY relative_path`, id)
+	rows, err := s.catalogRead(ctx).QueryContext(ctx, `SELECT relative_path,title,kind,size_bytes,modified_at,observed_generation FROM source_catalog_file WHERE catalog_entry_id=? ORDER BY relative_path`, id)
 	if err != nil {
 		return nil, err
 	}
@@ -395,17 +359,19 @@ func (s *Server) getSourceCatalogEntry(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, 400, "invalid_request", "invalid catalog id", false)
 		return
 	}
-	entry, source, err := s.loadRetainedSourceCatalogEntry(r.Context(), id)
+	readCtx, entry, source, done, err := s.beginCatalogEntryRead(r.Context(), id)
 	if err != nil {
 		writeUpstreamError(w, err)
 		return
 	}
+	defer done()
+	r = r.WithContext(readCtx)
 	// A retained missing record is provenance with personal state: its source
 	// confirmed the absence, so it has no current published file set to judge.
 	// Every other source-backed card, including a metadata-only parent, must
 	// pass the same admission rule as browse and tracks.
 	if catalogEntryAdmissionRequired(entry) {
-		admission, err := catalogPublishedEntryAdmission(r.Context(), s.db, entry.ID)
+		admission, err := catalogPublishedEntryAdmission(r.Context(), s.catalogRead(r.Context()), entry.ID)
 		if err != nil {
 			writeError(w, err)
 			return
@@ -418,7 +384,7 @@ func (s *Server) getSourceCatalogEntry(w http.ResponseWriter, r *http.Request) {
 	var rating sql.NullInt64
 	note := ""
 	if entry.WorkID != nil && optionalUserID(r.Context()) > 0 {
-		err = s.db.QueryRowContext(r.Context(), `SELECT rating,note FROM user_work_state WHERE work_id=? AND user_id=?`, *entry.WorkID, optionalUserID(r.Context())).Scan(&rating, &note)
+		err = s.catalogRead(r.Context()).QueryRowContext(r.Context(), `SELECT rating,note FROM user_work_state WHERE work_id=? AND user_id=?`, *entry.WorkID, optionalUserID(r.Context())).Scan(&rating, &note)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			writeError(w, err)
 			return
@@ -432,7 +398,7 @@ func (s *Server) getSourceCatalogEntry(w http.ResponseWriter, r *http.Request) {
 	// Membership normally lives on the surviving card. Historical aliases may
 	// still own it after a rename, so follow every alias of this successor
 	// instead of losing the "open series" path from an old link.
-	if err = s.db.QueryRowContext(r.Context(), `WITH RECURSIVE aliases(id) AS (
+	if err = s.catalogRead(r.Context()).QueryRowContext(r.Context(), `WITH RECURSIVE aliases(id) AS (
 		SELECT ?
 		UNION ALL
 		SELECT e.id FROM source_catalog_entry e JOIN aliases a ON e.relocated_to_id=a.id
@@ -455,12 +421,14 @@ func (s *Server) getSourceCatalogTracks(w http.ResponseWriter, r *http.Request) 
 		writeAPIError(w, 400, "invalid_request", "invalid catalog id", false)
 		return
 	}
-	entry, _, err := s.loadRetainedSourceCatalogEntry(r.Context(), id)
+	readCtx, entry, _, done, err := s.beginCatalogEntryRead(r.Context(), id)
 	if err != nil {
 		writeUpstreamError(w, err)
 		return
 	}
-	admission, err := catalogPublishedEntryAdmission(r.Context(), s.db, entry.ID)
+	defer done()
+	r = r.WithContext(readCtx)
+	admission, err := catalogPublishedEntryAdmission(r.Context(), s.catalogRead(r.Context()), entry.ID)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -561,7 +529,7 @@ const (
 )
 
 func (s *Server) loadSourceCatalogFileBatch(ctx context.Context, id int64, after string, limit int) ([]SourceCatalogFile, bool, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT relative_path,title,kind,size_bytes,modified_at,observed_generation
+	rows, err := s.catalogRead(ctx).QueryContext(ctx, `SELECT relative_path,title,kind,size_bytes,modified_at,observed_generation
 		FROM source_catalog_file WHERE catalog_entry_id=? AND relative_path>? ORDER BY relative_path LIMIT ?`, id, after, limit+1)
 	if err != nil {
 		return nil, false, err
@@ -588,7 +556,7 @@ func (s *Server) loadSourceCatalogFileBatch(ctx context.Context, id int64, after
 func (s *Server) countSourceCatalogFiles(ctx context.Context, id int64, root string) (int, error) {
 	where, args := catalogTrackPathFilter(root)
 	var total int
-	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM source_catalog_file INDEXED BY source_catalog_file_parent WHERE catalog_entry_id=? AND kind<>'folder'`+where,
+	err := s.catalogRead(ctx).QueryRowContext(ctx, `SELECT COUNT(*) FROM source_catalog_file INDEXED BY source_catalog_file_parent WHERE catalog_entry_id=? AND kind<>'folder'`+where,
 		append([]any{id}, args...)...).Scan(&total)
 	return total, err
 }
@@ -610,7 +578,7 @@ func (s *Server) loadSourceCatalogTrackPage(ctx context.Context, id int64, root 
 	}
 	queryArgs := append([]any{id}, args...)
 	queryArgs = append(queryArgs, limit+1)
-	rows, err := s.db.QueryContext(ctx, `SELECT relative_path,title,kind,size_bytes,modified_at,observed_generation
+	rows, err := s.catalogRead(ctx).QueryContext(ctx, `SELECT relative_path,title,kind,size_bytes,modified_at,observed_generation
 		FROM source_catalog_file INDEXED BY source_catalog_file_parent WHERE catalog_entry_id=?`+where+` ORDER BY relative_path LIMIT ?`, queryArgs...)
 	if err != nil {
 		return nil, false, err
@@ -835,7 +803,14 @@ func (s *Server) listOpenListWorks(w http.ResponseWriter, r *http.Request, sourc
 		countSQL = catalogStatementPrefix(prefix) + "SELECT COUNT(*) " + from
 		countArgs = args
 	}
-	rows, err := s.db.QueryContext(r.Context(), pageSQL, pageArgs...)
+	readCtx, done, err := s.beginCatalogRead(r.Context())
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	defer done()
+	r = r.WithContext(readCtx)
+	rows, err := s.catalogRead(r.Context()).QueryContext(r.Context(), pageSQL, pageArgs...)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -882,7 +857,7 @@ func (s *Server) listOpenListWorks(w http.ResponseWriter, r *http.Request, sourc
 	}
 	saturated := false
 	if separateCount {
-		if err = s.db.QueryRowContext(r.Context(), countSQL, countArgs...).Scan(&total, &saturated); err != nil {
+		if err = s.catalogRead(r.Context()).QueryRowContext(r.Context(), countSQL, countArgs...).Scan(&total, &saturated); err != nil {
 			writeError(w, err)
 			return
 		}
@@ -890,7 +865,7 @@ func (s *Server) listOpenListWorks(w http.ResponseWriter, r *http.Request, sourc
 	if len(works) == 0 && page > 1 && !separateCount {
 		// The total rides on the page. An out-of-range page has no row to carry
 		// it, so only that page pays for a separate count.
-		if err = s.db.QueryRowContext(r.Context(), countSQL, countArgs...).Scan(&total); err != nil {
+		if err = s.catalogRead(r.Context()).QueryRowContext(r.Context(), countSQL, countArgs...).Scan(&total); err != nil {
 			writeError(w, err)
 			return
 		}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 )
 
 // contentTranslationScopeSQL copies the stored scope of one translation row
@@ -36,6 +37,9 @@ func refreshContentTranslationScopeTx(ctx context.Context, tx *sql.Tx, keys []st
 // change what a short search may return; the two statements keep every answer
 // in the same transaction.
 func refreshContentTranslationBrowsableTx(ctx context.Context, tx *sql.Tx, entryIDs []int64) error {
+	if operation, _ := ctx.Value(catalogPublicationKey{}).(int64); operation > 0 {
+		return nil
+	}
 	if len(entryIDs) == 0 {
 		return nil
 	}
@@ -44,7 +48,7 @@ func refreshContentTranslationBrowsableTx(ctx context.Context, tx *sql.Tx, entry
 	// keeps a publish batch's statement count flat.
 	placeholders := sqlPlaceholders(len(entryIDs))
 	args := append(int64Args(entryIDs), int64Args(entryIDs)...)
-	if _, err := tx.ExecContext(ctx, `UPDATE content_translation SET `+contentTranslationScopeSQL+`
+	if _, err := tx.ExecContext(ctx, `UPDATE content_translation SET `+strings.ReplaceAll(contentTranslationScopeSQL, "content_translation_scope scope", "content_translation_scope_live scope")+`
 		WHERE (entity_kind='entry' AND entity_id IN (`+placeholders+`))
 		   OR (entity_kind='series' AND entity_id IN (
 				SELECT series_id FROM catalog_series_member WHERE catalog_entry_id IN (`+placeholders+`)))`,

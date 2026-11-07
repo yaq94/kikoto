@@ -425,7 +425,8 @@ func setCatalogEntryStatusesTx(ctx context.Context, tx *sql.Tx, updates []catalo
 		WHERE id IN (SELECT id FROM updates)`, args...); err != nil {
 		return err
 	}
-	if len(missing) > 0 {
+	_, staged := ctx.Value(catalogPublicationKey{}).(int64)
+	if len(missing) > 0 && !staged {
 		if _, err := tx.ExecContext(ctx, `UPDATE media_file_location SET availability='unavailable'
 			WHERE location_type='catalog_stream' AND media_item_id IN (
 				SELECT m.id FROM source_catalog_entry e CROSS JOIN media_item m
@@ -435,7 +436,7 @@ func setCatalogEntryStatusesTx(ctx context.Context, tx *sql.Tx, updates []catalo
 			return err
 		}
 	}
-	if len(available) > 0 {
+	if len(available) > 0 && !staged {
 		if _, err := tx.ExecContext(ctx, `UPDATE media_file_location SET availability='available'
 			WHERE location_type='catalog_stream' AND media_item_id IN (
 				SELECT m.id FROM source_catalog_entry e
@@ -610,6 +611,8 @@ func (s *Server) settleCatalogLifecycleBatch(ctx context.Context, job workflowJo
 		return false, readErr
 	}
 	updates := make([]catalogEntryStatusUpdate, 0, len(entries))
+	fileBudget := int64(64)
+	retryEntry := false
 	for _, e := range entries {
 		if stage == "reconcile" {
 			if e.generation != job.RunID {
@@ -681,8 +684,18 @@ func (s *Server) settleCatalogLifecycleBatch(ctx context.Context, job workflowJo
 				return false, err
 			}
 			if !uncertain {
-				if _, err = tx.ExecContext(ctx, `DELETE FROM source_catalog_file WHERE catalog_entry_id=? AND observed_generation<>?`, e.id, job.RunID); err != nil {
-					return false, err
+				result, deleteErr := tx.ExecContext(ctx, `DELETE FROM source_catalog_file WHERE rowid IN(SELECT rowid FROM source_catalog_file WHERE catalog_entry_id=? AND observed_generation<>? ORDER BY relative_path LIMIT ?)`, e.id, job.RunID, fileBudget)
+				if deleteErr != nil {
+					return false, deleteErr
+				}
+				n, deleteErr := result.RowsAffected()
+				if deleteErr != nil {
+					return false, deleteErr
+				}
+				fileBudget -= n
+				if fileBudget == 0 {
+					retryEntry = true
+					break
 				}
 			}
 		}
@@ -706,7 +719,7 @@ func (s *Server) settleCatalogLifecycleBatch(ctx context.Context, job workflowJo
 	if err = refreshContentTranslationBrowsableTx(ctx, tx.Tx, availableIDs); err != nil {
 		return false, err
 	}
-	if len(entries) < catalogLifecycleRows {
+	if !retryEntry && len(entries) < catalogLifecycleRows {
 		if stage == "observe" {
 			stage = "reconcile"
 			cursor = 0
@@ -801,10 +814,11 @@ func (s *Server) cleanupCatalogPublishBatch(ctx context.Context, job workflowJob
 			cleanIDs = append(cleanIDs, card.id)
 		}
 	}
+	retryCards := false
 	if len(cleanIDs) > 0 {
 		args := append(int64Args(cleanIDs), job.RunID)
 		result, deleteErr := tx.ExecContext(ctx, `DELETE FROM source_catalog_file
-			WHERE catalog_entry_id IN (`+sqlPlaceholders(len(cleanIDs))+`) AND observed_generation<>?`, args...)
+			WHERE rowid IN (SELECT rowid FROM source_catalog_file WHERE catalog_entry_id IN (`+sqlPlaceholders(len(cleanIDs))+`) AND observed_generation<>? ORDER BY catalog_entry_id,relative_path LIMIT 32)`, args...)
 		if deleteErr != nil {
 			return 0, 0, deleteErr
 		}
@@ -813,6 +827,7 @@ func (s *Server) cleanupCatalogPublishBatch(ctx context.Context, job workflowJob
 			return 0, 0, deleteErr
 		}
 		removed += n
+		retryCards = retryCards || n == 32
 	}
 	// A folder row that is now its own catalog entry belongs to that entry, not
 	// to the card above it. The batch mapping keeps each card's child paths
@@ -861,7 +876,7 @@ func (s *Server) cleanupCatalogPublishBatch(ctx context.Context, job workflowJob
 			)
 			DELETE FROM source_catalog_file
 			WHERE rowid IN (SELECT f.rowid FROM children c
-				JOIN source_catalog_file f ON f.catalog_entry_id=c.card_id AND f.relative_path=c.relative)`, args...)
+				JOIN source_catalog_file f ON f.catalog_entry_id=c.card_id AND f.relative_path=c.relative LIMIT 32)`, args...)
 		if deleteErr != nil {
 			return 0, 0, deleteErr
 		}
@@ -870,6 +885,7 @@ func (s *Server) cleanupCatalogPublishBatch(ctx context.Context, job workflowJob
 			return 0, 0, deleteErr
 		}
 		removed += n
+		retryCards = retryCards || n == 32
 	}
 	// The deletes above cleared the stored search scope of every card in this
 	// batch. Their surviving file set is what the scope must describe, so one
@@ -877,7 +893,9 @@ func (s *Server) cleanupCatalogPublishBatch(ctx context.Context, job workflowJob
 	if err = refreshContentTranslationBrowsableTx(ctx, tx.Tx, cleanIDs); err != nil {
 		return 0, 0, err
 	}
-	cursor = cards[len(cards)-1].id
+	if !retryCards {
+		cursor = cards[len(cards)-1].id
+	}
 	if _, err = tx.ExecContext(ctx, `UPDATE source_catalog_scan SET publish_cleanup_cursor=?,updated_at=CURRENT_TIMESTAMP WHERE file_source_id=?`, cursor, sourceID); err != nil {
 		return 0, 0, err
 	}

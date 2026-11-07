@@ -7,6 +7,12 @@ import (
 )
 
 func (s *Server) loadWorkTranslations(ctx context.Context, primaryCode string, baseCode string, editions []workTranslation) ([]workTranslation, error) {
+	liveCtx := ctx
+	ctx, done, err := s.beginCatalogRead(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer done()
 	familyCode := normalizeDLsiteCode(baseCode)
 	if familyCode == "" {
 		familyCode = normalizeDLsiteCode(primaryCode)
@@ -41,6 +47,10 @@ func (s *Server) loadWorkTranslations(ctx context.Context, primaryCode string, b
 			appendWorkTranslation(&translations, seen, item, primaryCode)
 		}
 	}
+	// Source-owned media flags share one published snapshot. Title inputs are
+	// live metadata and may use the only pooled database connection.
+	done()
+	ctx = liveCtx
 	ids := []int64{}
 	for _, item := range translations {
 		if item.WorkID != nil {
@@ -166,7 +176,7 @@ func (s *Server) loadMaterializedWorkTranslationsByCodes(ctx context.Context, co
 		marks[index] = "?"
 		args[index] = normalizeDLsiteCode(code)
 	}
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.catalogRead(ctx).QueryContext(ctx, `
 		SELECT
 			work.id,
 			work.primary_code,
@@ -225,7 +235,7 @@ func (s *Server) loadMaterializedWorkTranslationsByCodes(ctx context.Context, co
 }
 
 func (s *Server) loadLogicalWorkTranslations(ctx context.Context, primaryCode string) ([]workTranslation, error) {
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.catalogRead(ctx).QueryContext(ctx, `
 		SELECT
 			edition.work_id,
 			edition.primary_code,

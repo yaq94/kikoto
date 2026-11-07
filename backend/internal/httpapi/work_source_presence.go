@@ -138,7 +138,7 @@ func (s *Server) sourcePresenceForWork(ctx context.Context, workID int64, code s
 			COALESCE(presence.source_url, ''),
 			COALESCE(presence.remote_code, ''),
 			COALESCE(source.source_type, '')
-		FROM work_source_presence AS presence
+		FROM published_work_source_presence AS presence
 		LEFT JOIN file_source AS source ON source.id = presence.file_source_id
 		WHERE presence.work_id IN (
 			SELECT id FROM work WHERE id=?

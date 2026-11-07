@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"testing"
@@ -13,6 +14,10 @@ func TestSourceCatalogEpisodeDiscoveryPublishes101WithinWriteBound(t *testing.T)
 	const episodes = 101
 	audit := &catalogWriteAudit{}
 	f := newLooseWorkFixtureWithDB(t, looseEpisodeTree(episodes), openCatalogWriteAuditedDB(t, audit))
+	handler := f.handler
+	f.handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		handler.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), catalogWriteTimingKey{}, audit.recordTiming)))
+	})
 	audit.start()
 	started := time.Now()
 	f.request(t, http.MethodPost, "/catalog/scan", `{}`, http.StatusOK)
@@ -31,6 +36,8 @@ func TestSourceCatalogEpisodeDiscoveryPublishes101WithinWriteBound(t *testing.T)
 			maxEntries, maxFiles, audit.transactionsDetail())
 	}
 	t.Logf("maximum transaction: %d entry rows + %d file rows", maxEntries, maxFiles)
+	allRows, allTransactions, maxAllRows, maxTables := audit.allDetails()
+	t.Logf("all-table write audit: total=%d transactions=%d peak=%d longest_write_transaction=%s tables=%v", allRows, allTransactions, maxAllRows, audit.duration(), maxTables)
 	var publicationState string
 	if err := f.server.db.QueryRow(`SELECT state FROM source_catalog_episode_publication
 		WHERE source_id=? AND parent_root='/Example'`, f.sourceID(t)).Scan(&publicationState); err != nil {

@@ -313,7 +313,15 @@ func (s *Server) enqueueSourceCatalogIndexTx(ctx context.Context, tx *sql.Tx, so
 	if err = ensureCatalogScheduleTx(ctx, tx, sourceID, s.catalogTime()); err != nil {
 		return catalogIndexQueued{}, err
 	}
-	if runID > 0 && status != "succeeded" && !force {
+	// A cancelled operation still owns its old published snapshot. Finish that
+	// generation before honoring a replacement generation, including force.
+	var preparing bool
+	if runID > 0 {
+		if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM source_catalog_publication WHERE file_source_id=? AND owner=? AND state='preparing')`, sourceID, catalogPublicationOwner("full", runID)).Scan(&preparing); err != nil {
+			return catalogIndexQueued{}, err
+		}
+	}
+	if runID > 0 && ((status != "succeeded" && !force) || preparing) {
 		// Resume only unresolved directories. Already published identities and
 		// personal state are independent of this staging/checkpoint data.
 		for _, q := range []string{

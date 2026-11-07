@@ -12,13 +12,20 @@ func (s *Server) streamSourceCatalogMedia(w http.ResponseWriter, r *http.Request
 		writeAPIError(w, 400, "invalid_request", "invalid catalog id", false)
 		return
 	}
-	entry, source, err := s.loadSourceCatalogEntry(r.Context(), id)
+	originalCtx := r.Context()
+	readCtx, entry, source, done, err := s.beginCatalogEntryRead(originalCtx, id)
 	if err != nil {
 		writeUpstreamError(w, err)
 		return
 	}
+	defer done()
+	if !source.Enabled || source.SourceType != sourceTypeOpenList {
+		writeUpstreamError(w, errRemoteSourceNotUsable)
+		return
+	}
+	r = r.WithContext(readCtx)
 	if catalogEntryAdmissionRequired(entry) {
-		admission, admissionErr := catalogPublishedEntryAdmission(r.Context(), s.db, entry.ID)
+		admission, admissionErr := catalogPublishedEntryAdmission(r.Context(), s.catalogRead(r.Context()), entry.ID)
 		if admissionErr != nil {
 			writeError(w, admissionErr)
 			return
@@ -33,11 +40,13 @@ func (s *Server) streamSourceCatalogMedia(w http.ResponseWriter, r *http.Request
 	// The supplied path must be an exact previously listed audio file. Display
 	// names and arbitrary URLs never participate in file selection.
 	var kind, fileRoot string
-	if err = s.db.QueryRowContext(r.Context(), "SELECT kind,source_root FROM source_catalog_file WHERE catalog_entry_id=? AND relative_path=?", id, relative).Scan(&kind, &fileRoot); err != nil || kind != "audio" {
+	if err = s.catalogRead(r.Context()).QueryRowContext(r.Context(), "SELECT kind,source_root FROM source_catalog_file WHERE catalog_entry_id=? AND relative_path=?", id, relative).Scan(&kind, &fileRoot); err != nil || kind != "audio" {
 		writeAPIError(w, 404, "not_found", "catalog audio file not found", false)
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), remotePlaybackTimeout)
+	done()
+	r = r.WithContext(originalCtx)
+	ctx, cancel := context.WithTimeout(originalCtx, remotePlaybackTimeout)
 	defer cancel()
 	sourceRoot := entry.SourceRoot
 	if sourceRoot == "" {

@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+
+	"github.com/yexca/kikoto/backend/internal/openlist"
 )
 
 func TestSourceCatalogRelocationRequiresUniqueConsistentEvidence(t *testing.T) {
@@ -46,27 +48,22 @@ func TestSourceCatalogRelocationRequiresUniqueConsistentEvidence(t *testing.T) {
 			old := f.request(t, http.MethodGet, "/works", "", 200)["works"].([]any)[0].(map[string]any)
 			base := "/api/source-catalog/" + strconv.Itoa(int(old["catalogEntryId"].(float64)))
 			state := reviewRequest(t, f.handler, f.cookie, http.MethodPatch, base+"/user-state", `{"rating":4,"note":"Example original note"}`, 200)
+			if name == "reviewed_candidate" {
+				// A candidate can be reviewed only after its publication. Seed the
+				// independently published candidate before the relocation operation;
+				// the new operation must preserve that conflicting personal identity.
+				source, err := f.server.catalogIndexSource(context.Background(), f.sourceID(t))
+				if err != nil {
+					t.Fatal(err)
+				}
+				candidateID, err := f.server.persistOpenListRoot(context.Background(), source, "/Candidate A", []openlist.File{{Path: "track.mp3", Title: "track.mp3", Kind: "audio", Size: 100}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				reviewRequest(t, f.handler, f.cookie, http.MethodPatch, "/api/source-catalog/"+strconv.FormatInt(candidateID, 10)+"/user-state", `{"rating":2,"note":"Example independent note"}`, 200)
+			}
 			renamed.Store(true)
 			f.request(t, http.MethodPost, "/catalog/index", `{}`, 202)
-			if name == "reviewed_candidate" {
-				found := false
-				for range 30 {
-					if err := f.server.runNextQueuedWorkflowJob(context.Background()); err != nil {
-						t.Fatal(err)
-					}
-					list := f.request(t, http.MethodGet, "/works?q=Candidate%20A", "", 200)
-					if list["total"] == float64(1) {
-						candidate := list["works"].([]any)[0].(map[string]any)
-						id := strconv.Itoa(int(candidate["catalogEntryId"].(float64)))
-						reviewRequest(t, f.handler, f.cookie, http.MethodPatch, "/api/source-catalog/"+id+"/user-state", `{"rating":2,"note":"Example independent note"}`, 200)
-						found = true
-						break
-					}
-				}
-				if !found {
-					t.Fatal("candidate was not published before final reconciliation")
-				}
-			}
 			f.drain(t)
 			detail := reviewRequest(t, f.handler, f.cookie, http.MethodGet, base, "", 200)
 			if detail["workId"] != state["workId"] || detail["title"] != "Original Work" || detail["status"] != "missing" {

@@ -745,7 +745,7 @@ func TestTranslationPrefillLoadsProtectedNamesOncePerEntry(t *testing.T) {
 	// It must run once for the entry, not once per target language.
 	loads := 0
 	for _, statement := range counter.snapshot() {
-		if strings.Contains(statement, "SELECT sidecar_json FROM source_catalog_entry WHERE id=?") {
+		if strings.Contains(statement, publishedCatalogSQL("SELECT sidecar_json FROM source_catalog_entry WHERE id=?")) {
 			loads++
 		}
 	}
