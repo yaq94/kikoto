@@ -44,8 +44,13 @@ func (s *Server) loadWorksWithLyrics(ctx context.Context, workIDs []int64) (map[
 	if len(workIDs) == 0 {
 		return result, nil
 	}
+	ctx, done, err := s.beginCatalogRead(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer done()
 	siblings := map[int64][]int64{}
-	if err := s.queryInt64Batches(ctx, `
+	if err := s.queryCatalogInt64Batches(ctx, `
 		SELECT current.work_id, sibling.work_id
 		FROM work_edition AS current
 		INNER JOIN work_edition AS sibling ON sibling.logical_work_id = current.logical_work_id
@@ -106,11 +111,38 @@ func (s *Server) loadWorksWithLyrics(ctx context.Context, workIDs []int64) (map[
 	return result, nil
 }
 
+// Related source aggregates use the same short read transaction, including
+// every IN-list batch. This reader rewrites only publication-owned tables;
+// identities, private state, source configuration and local/cache rows are live.
+func (s *Server) queryCatalogInt64Batches(ctx context.Context, template string, values []int64, fixedArgs []any, scan func(*sql.Rows) error) error {
+	for start := 0; start < len(values); start += sqlInListBatchSize {
+		query, listArgs := int64InQuery(template, values[start:min(start+sqlInListBatchSize, len(values))])
+		args := append(append(make([]any, 0, len(fixedArgs)+len(listArgs)), fixedArgs...), listArgs...)
+		rows, err := s.catalogRead(ctx).QueryContext(ctx, query, args...)
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			if err = scan(rows); err != nil {
+				break
+			}
+		}
+		if err == nil {
+			err = rows.Err()
+		}
+		_ = rows.Close()
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // loadWorkLyricsFiles appends the usable locations of the works' media items
 // of the given kinds: available through an enabled source, and not a cache
 // copy of a file that is already listed at its source.
 func (s *Server) loadWorkLyricsFiles(ctx context.Context, workIDs []int64, kinds string, files map[int64][]workLyricsFile) error {
-	return s.queryInt64Batches(ctx, `
+	return s.queryCatalogInt64Batches(ctx, `
 		SELECT item.work_id, item.id, item.kind, location.location_type, location.file_source_id, location.path,
 			COALESCE(assignment.lyrics_media_item_id, 0)
 		FROM media_item AS item

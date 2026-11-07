@@ -341,7 +341,7 @@ func (s *Server) loadCircleAvailableWorkCounts(ctx context.Context, partyIDs []i
 		demoRemoteCatalogWhere = " AND " + contentpolicy.DemoEligibleWorkSQL("remote_work")
 	}
 
-	err := s.queryInt64Batches(ctx, `
+	err := s.queryCatalogInt64Batches(ctx, `
 		WITH catalog_codes AS (
 			SELECT DISTINCT catalog.party_id, UPPER(COALESCE(catalog_logical.canonical_code, catalog.primary_code)) AS code
 			FROM `+circleCatalogProjection+` AS catalog
@@ -357,7 +357,7 @@ func (s *Server) loadCircleAvailableWorkCounts(ctx context.Context, partyIDs []i
 			LEFT JOIN logical_work AS media_logical ON media_logical.id = media_edition.logical_work_id
 			INNER JOIN media_item AS media_item ON media_item.work_id = media_work.id
 			INNER JOIN media_file_location AS media_location ON media_location.media_item_id = media_item.id
-			WHERE media_location.availability = 'available'
+			WHERE media_location.availability = 'available' AND (media_location.location_type <> 'catalog_stream' OR EXISTS(SELECT 1 FROM file_source src WHERE src.id=media_location.file_source_id AND src.enabled=1))
 			`+demoMediaWhere+`
 		), available_presence_codes AS (
 			SELECT DISTINCT UPPER(COALESCE(presence_logical.canonical_code, presence_work.primary_code)) AS code
@@ -407,12 +407,17 @@ func (s *Server) loadCircleAvailableWorkCounts(ctx context.Context, partyIDs []i
 
 func (s *Server) fillCircleStats(ctx context.Context, userID int64, item *circleSummary) error {
 	setCircleSyncState(item, s.catalogFreshnessDays(ctx), time.Now().UTC())
+	ctx, done, err := s.beginCatalogRead(ctx)
+	if err != nil {
+		return err
+	}
+	defer done()
 	demoWhere := ""
 	if s.cfg.IsDemo() {
 		demoWhere = " AND " + contentpolicy.DemoEligibleWorkSQL("work")
 	}
 	var catalogWorks int
-	if err := s.db.QueryRowContext(ctx, `
+	if err := s.catalogRead(ctx).QueryRowContext(ctx, `
 		SELECT COUNT(DISTINCT COALESCE(logical.canonical_code, catalog.primary_code))
 		FROM `+circleCatalogProjection+` AS catalog
 		LEFT JOIN work ON UPPER(work.primary_code) = UPPER(catalog.primary_code)
@@ -465,6 +470,12 @@ func (s *Server) fillCircleStatsBatch(ctx context.Context, items []circleSummary
 	if len(items) == 0 {
 		return nil
 	}
+	freshnessDays := s.catalogFreshnessDays(ctx)
+	ctx, done, err := s.beginCatalogRead(ctx)
+	if err != nil {
+		return err
+	}
+	defer done()
 	byID := circleSummaryByID(items)
 	catalogCounts, err := s.loadCircleCatalogCounts(ctx, partyIDs)
 	if err != nil {
@@ -481,7 +492,7 @@ func (s *Server) fillCircleStatsBatch(ctx context.Context, items []circleSummary
 	}
 	applyCircleSummaryCounts(byID, localCounts, func(item *circleSummary, count int) { item.LocalWorks = count })
 	applyCircleSummaryCounts(byID, remoteCounts, func(item *circleSummary, count int) { item.RemoteWorks = count })
-	finalizeCircleStatsBatch(items, availableCounts, s.catalogFreshnessDays(ctx), time.Now().UTC())
+	finalizeCircleStatsBatch(items, availableCounts, freshnessDays, time.Now().UTC())
 	return nil
 }
 
@@ -652,7 +663,7 @@ func (s *Server) loadCircleCatalogCounts(ctx context.Context, partyIDs []int64) 
 		demoWhere = " AND " + contentpolicy.DemoEligibleWorkSQL("work")
 	}
 	result := map[int64]int{}
-	err := s.queryInt64Batches(ctx, `
+	err := s.queryCatalogInt64Batches(ctx, `
 		SELECT catalog.party_id, COUNT(DISTINCT COALESCE(logical.canonical_code, catalog.primary_code))
 		FROM `+circleCatalogProjection+` AS catalog
 		LEFT JOIN work ON UPPER(work.primary_code) = UPPER(catalog.primary_code)
@@ -702,7 +713,7 @@ func circleAvailabilityDemoWhere(isDemo bool) string {
 func (s *Server) loadCircleMediaAvailabilityCounts(ctx context.Context, partyIDs []int64, demoWhere string) (map[int64]int, map[int64]int, error) {
 	localCounts := map[int64]int{}
 	remoteCounts := map[int64]int{}
-	err := s.queryInt64Batches(ctx, `
+	err := s.queryCatalogInt64Batches(ctx, `
 		SELECT relation.party_id, location.location_type, COUNT(DISTINCT COALESCE(logical.canonical_code, work.primary_code))
 		FROM work_primary_circle AS relation
 		INNER JOIN work ON work.id = relation.work_id
@@ -711,7 +722,7 @@ func (s *Server) loadCircleMediaAvailabilityCounts(ctx context.Context, partyIDs
 		INNER JOIN media_item AS item ON item.work_id = work.id
 		INNER JOIN media_file_location AS location ON location.media_item_id = item.id
 		WHERE relation.party_id IN (%s)
-			AND location.availability = 'available'
+			AND location.availability = 'available' AND (location.location_type <> 'catalog_stream' OR EXISTS(SELECT 1 FROM file_source src WHERE src.id=location.file_source_id AND src.enabled=1))
 			`+demoWhere+`
 		GROUP BY relation.party_id, location.location_type
 	`, partyIDs, nil, func(rows *sql.Rows) error {
@@ -736,7 +747,7 @@ func (s *Server) loadCircleMediaAvailabilityCounts(ctx context.Context, partyIDs
 
 func (s *Server) loadCircleCatalogAvailabilityCounts(ctx context.Context, partyIDs []int64, demoWhere string) (map[int64]int, error) {
 	counts := map[int64]int{}
-	err := s.queryInt64Batches(ctx, `
+	err := s.queryCatalogInt64Batches(ctx, `
 		SELECT catalog.party_id, COUNT(DISTINCT COALESCE(logical.canonical_code, catalog.primary_code))
 		FROM `+circleCatalogProjection+` AS catalog
 		INNER JOIN metadata_provider AS provider ON provider.id = catalog.provider_id
@@ -766,7 +777,7 @@ func (s *Server) loadCircleCatalogAvailabilityCounts(ctx context.Context, partyI
 
 func (s *Server) loadCirclePresenceAvailabilityCounts(ctx context.Context, partyIDs []int64, demoWhere string) (map[int64]int, error) {
 	counts := map[int64]int{}
-	err := s.queryInt64Batches(ctx, `
+	err := s.queryCatalogInt64Batches(ctx, `
 		SELECT relation.party_id, COUNT(DISTINCT COALESCE(logical.canonical_code, work.primary_code))
 		FROM work_primary_circle AS relation
 		INNER JOIN work ON work.id = relation.work_id
@@ -826,7 +837,7 @@ func (s *Server) loadCircleMediaSourceStats(ctx context.Context, partyID int64) 
 	if s.cfg.IsDemo() {
 		demoWhere = " AND " + contentpolicy.DemoEligibleWorkSQL("work")
 	}
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.catalogRead(ctx).QueryContext(ctx, `
 		SELECT source.id, source.display_name, location.location_type, COUNT(DISTINCT COALESCE(logical.canonical_code, work.primary_code))
 		FROM work_primary_circle AS relation
 		INNER JOIN work ON work.id = relation.work_id
@@ -836,7 +847,7 @@ func (s *Server) loadCircleMediaSourceStats(ctx context.Context, partyID int64) 
 		INNER JOIN media_file_location AS location ON location.media_item_id = item.id
 		INNER JOIN file_source AS source ON source.id = location.file_source_id
 		WHERE relation.party_id = ?
-			AND location.availability = 'available'
+			AND location.availability = 'available' AND (location.location_type <> 'catalog_stream' OR source.enabled=1)
 			`+demoWhere+`
 		GROUP BY source.id, source.display_name, location.location_type
 		ORDER BY source.display_name ASC
@@ -886,7 +897,7 @@ func (s *Server) mergeCircleCatalogSourceStats(ctx context.Context, partyID int6
 	if s.cfg.IsDemo() {
 		demoWhere = " AND " + contentpolicy.DemoEligibleWorkSQL("work")
 	}
-	remoteRows, err := s.db.QueryContext(ctx, `
+	remoteRows, err := s.catalogRead(ctx).QueryContext(ctx, `
 		SELECT source.id, source.display_name, COUNT(DISTINCT COALESCE(logical.canonical_code, catalog.primary_code))
 		FROM `+circleCatalogProjection+` AS catalog
 		INNER JOIN metadata_provider AS provider ON provider.id = catalog.provider_id
@@ -951,6 +962,11 @@ func (s *Server) loadCircleWorks(ctx context.Context, userID int64, partyID int6
 // enrichment. Keeping this query separate prevents the detail endpoint from
 // doing the expensive enrichment queries for works that are outside the page.
 func (s *Server) circleCatalogLogicalPage(ctx context.Context, partyID int64, worksQuery circleWorksQuery) ([]string, int, error) {
+	ctx, done, err := s.beginCatalogRead(ctx)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer done()
 	demoCatalogWhere := ""
 	if s.cfg.IsDemo() {
 		demoCatalogWhere = " AND " + contentpolicy.DemoEligibleWorkSQL("catalog_work")
@@ -996,7 +1012,7 @@ func (s *Server) circleCatalogLogicalPage(ctx context.Context, partyID int64, wo
 			INNER JOIN media_file_location AS location ON location.media_item_id = item.id
 			LEFT JOIN work_edition AS edition ON edition.work_id = work.id
 			LEFT JOIN logical_work AS logical ON logical.id = edition.logical_work_id
-			WHERE relation.party_id = ? AND location.availability = 'available'` + demoWorkWhere + `
+			WHERE relation.party_id = ? AND location.availability = 'available' AND (location.location_type <> 'catalog_stream' OR EXISTS(SELECT 1 FROM file_source src WHERE src.id=location.file_source_id AND src.enabled=1))` + demoWorkWhere + `
 			GROUP BY logical_code
 			UNION ALL
 			SELECT UPPER(COALESCE(remote_logical.canonical_code, remote_catalog.primary_code)), 0, 1
@@ -1069,7 +1085,7 @@ func (s *Server) circleCatalogLogicalPage(ctx context.Context, partyID int64, wo
 	}
 	countQuery := "SELECT COUNT(*) FROM (" + query + ") AS filtered"
 	var total int
-	if err := s.db.QueryRowContext(ctx, countQuery, args...).Scan(&total); err != nil {
+	if err := s.catalogRead(ctx).QueryRowContext(ctx, countQuery, args...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 	page := worksQuery.Page
@@ -1082,7 +1098,7 @@ func (s *Server) circleCatalogLogicalPage(ctx context.Context, partyID int64, wo
 	}
 	pageQuery := query + " ORDER BY " + circleWorksOrderBy(worksQuery.Sort, worksQuery.Direction) + " LIMIT ? OFFSET ?"
 	pageArgs := append(append([]any{}, args...), pageSize, (page-1)*pageSize)
-	rows, err := s.db.QueryContext(ctx, pageQuery, pageArgs...)
+	rows, err := s.catalogRead(ctx).QueryContext(ctx, pageQuery, pageArgs...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -1606,7 +1622,7 @@ func circleSourceStatKey(item circleSourceStat) string {
 }
 
 func (s *Server) loadCircleSeries(ctx context.Context, partyID int64) ([]circleSeries, error) {
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.catalogRead(ctx).QueryContext(ctx, `
 		SELECT
 			series.id,
 			series.title_id,
@@ -1638,7 +1654,7 @@ func (s *Server) loadCircleSeries(ctx context.Context, partyID int64) ([]circleS
 				SELECT work.primary_code
 				FROM work_source_presence AS presence
 				INNER JOIN work ON work.id = presence.work_id
-				WHERE presence.availability = 'available'
+				WHERE presence.availability = 'available' AND EXISTS(SELECT 1 FROM file_source src WHERE src.id=presence.file_source_id AND src.enabled=1)
 			) AS code
 		) AS remote_presence ON remote_presence.primary_code = UPPER(series_work.primary_code)
 		WHERE series.party_id = ?
@@ -1707,6 +1723,11 @@ func splitCatalogCodes(raw string) []string {
 }
 
 func (s *Server) workSourceTags(ctx context.Context, partyID int64, code string) ([]circleSourceStat, error) {
+	ctx, done, err := s.beginCatalogRead(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer done()
 	// Keep the JSON contract stable for catalog-only works: an empty source
 	// collection must encode as [] rather than null for frontend consumers.
 	tags := workSourceTagAccumulator{items: []circleSourceStat{}, sourceIDs: map[int64]bool{}}
@@ -1751,7 +1772,7 @@ func (tags *workSourceTagAccumulator) addRemoteIfMissing(sourceID int64, sourceN
 }
 
 func (s *Server) loadWorkMediaSourceTags(ctx context.Context, code string, tags *workSourceTagAccumulator) error {
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.catalogRead(ctx).QueryContext(ctx, `
 		SELECT source.id, source.display_name, location.location_type, COUNT(*)
 		FROM work
 		INNER JOIN media_item AS item ON item.work_id = work.id
@@ -1768,7 +1789,7 @@ func (s *Server) loadWorkMediaSourceTags(ctx context.Context, code string, tags 
 				INNER JOIN work_edition AS sibling ON sibling.logical_work_id = current_edition.logical_work_id
 				WHERE UPPER(current_work.primary_code) = UPPER(?)
 			)
-			AND location.availability = 'available'
+			AND location.availability = 'available' AND (location.location_type <> 'catalog_stream' OR source.enabled=1)
 		GROUP BY source.id, source.display_name, location.location_type
 	`, code, code)
 	if err != nil {
@@ -1788,7 +1809,7 @@ func (s *Server) loadWorkMediaSourceTags(ctx context.Context, code string, tags 
 }
 
 func (s *Server) mergeWorkCatalogSourceTags(ctx context.Context, partyID int64, code string, tags *workSourceTagAccumulator) error {
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.catalogRead(ctx).QueryContext(ctx, `
 		SELECT source.id, source.display_name, COUNT(*)
 		FROM `+circleCatalogProjection+` AS catalog
 		INNER JOIN metadata_provider AS provider ON provider.id = catalog.provider_id
@@ -1815,7 +1836,7 @@ func (s *Server) mergeWorkCatalogSourceTags(ctx context.Context, partyID int64, 
 }
 
 func (s *Server) mergeWorkPresenceSourceTags(ctx context.Context, code string, tags *workSourceTagAccumulator) error {
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.catalogRead(ctx).QueryContext(ctx, `
 		SELECT source.id, source.display_name, COUNT(*)
 		FROM work
 		INNER JOIN work_source_presence AS presence ON presence.work_id = work.id

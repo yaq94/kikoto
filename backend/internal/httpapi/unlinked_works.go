@@ -279,20 +279,26 @@ type unlinkedWorkSourceCheckOutcome struct {
 }
 
 func (s *Server) processUnlinkedWorkSourceCheck(ctx context.Context, workID int64, healthySourceIDs map[int64]bool) (unlinkedWorkSourceCheckOutcome, error) {
-	family, err := resolveUnlinkedWorkFamily(ctx, s.db, workID)
+	readCtx, done, err := s.beginCatalogRead(ctx)
+	if err != nil {
+		return unlinkedWorkSourceCheckOutcome{}, err
+	}
+	defer done()
+	family, err := resolveUnlinkedWorkFamily(readCtx, s.catalogRead(readCtx), workID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return unlinkedWorkSourceCheckOutcome{Skipped: 1}, nil
 	}
 	if err != nil {
 		return unlinkedWorkSourceCheckOutcome{}, err
 	}
-	unlinked, err := isUnlinkedWorkFamily(ctx, s.db, family.WorkIDs)
+	unlinked, err := isUnlinkedWorkFamily(readCtx, s.catalogRead(readCtx), family.WorkIDs)
 	if err != nil {
 		return unlinkedWorkSourceCheckOutcome{}, err
 	}
 	if !unlinked {
 		return unlinkedWorkSourceCheckOutcome{Skipped: 1}, nil
 	}
+	done() // Do not hold a read connection across source checks or their writes.
 	response, err := s.checkWorkSourceAvailabilityForSourcesWithHealth(ctx, family.CanonicalCode, 0, healthySourceIDs, "maintenance", "unlinked_work_source_check")
 	if err != nil {
 		return unlinkedWorkSourceCheckOutcome{}, err
@@ -443,6 +449,16 @@ func eligibleUnlinkedWorkFamilies(ctx context.Context, queryer unlinkedWorkQuery
 			skipped = append(skipped, unlinkedWorkMaintenanceSkip{WorkID: workID, Code: family.CanonicalCode, Reason: "source_available"})
 			continue
 		}
+		if forDeletion {
+			pending, err := workFamilyHasPendingPublication(ctx, queryer, family.WorkIDs)
+			if err != nil {
+				return nil, nil, err
+			}
+			if pending {
+				skipped = append(skipped, unlinkedWorkMaintenanceSkip{WorkID: workID, Code: family.CanonicalCode, Reason: "publication_pending"})
+				continue
+			}
+		}
 		families = append(families, family)
 	}
 	return families, skipped, nil
@@ -570,17 +586,50 @@ func isUnlinkedWorkFamily(ctx context.Context, queryer unlinkedWorkQueryer, work
 	err := queryer.QueryRowContext(ctx, `
 		SELECT
 			NOT EXISTS (
-				SELECT 1 FROM work_source_presence
+				SELECT 1 FROM published_work_source_presence
 				WHERE availability = 'available' AND work_id IN (`+placeholders+`)
 			)
 			AND NOT EXISTS (
 				SELECT 1
-				FROM media_file_location AS location
+				FROM published_media_file_location AS location
 				INNER JOIN media_item AS item ON item.id = location.media_item_id
 				WHERE location.availability = 'available' AND item.work_id IN (`+placeholders+`)
 			)
 	`, args...).Scan(&unlinked)
 	return unlinked, err
+}
+
+// Deletion checks stable identities and private references in the caller's live
+// write transaction. Even a previously missing work must wait while a publisher
+// owns its projections: cascading deletion would destroy the resumable state.
+func workFamilyHasPendingPublication(ctx context.Context, queryer unlinkedWorkQueryer, workIDs []int64) (bool, error) {
+	if len(workIDs) == 0 {
+		return false, nil
+	}
+	ids := sqlPlaceholders(len(workIDs))
+	args := []any{}
+	for range 4 {
+		args = append(args, int64Args(workIDs)...)
+	}
+	var pending bool
+	err := queryer.QueryRowContext(ctx, `SELECT EXISTS(
+	 SELECT 1 FROM source_catalog_entry e
+	 JOIN source_catalog_publication_entity owned ON owned.entity_kind='entry' AND owned.entity_id=e.id
+	 JOIN source_catalog_publication op ON op.id=owned.operation_id
+	 WHERE e.work_id IN (`+ids+`) AND op.state='preparing'
+	 UNION ALL
+	 SELECT 1 FROM catalog_series s
+	 JOIN source_catalog_publication_entity owned ON owned.entity_kind='series' AND owned.entity_id=s.id
+	 JOIN source_catalog_publication op ON op.id=owned.operation_id
+	 WHERE s.work_id IN (`+ids+`) AND op.state='preparing'
+	 UNION ALL
+	 SELECT 1 FROM work_source_presence_publication_before b JOIN source_catalog_publication op ON op.id=b.operation_id
+	 WHERE b.work_id IN (`+ids+`) AND op.state='preparing'
+	 UNION ALL
+	 SELECT 1 FROM media_item m JOIN media_file_location_publication_before b ON b.media_item_id=m.id
+	 JOIN source_catalog_publication op ON op.id=b.operation_id
+	 WHERE m.work_id IN (`+ids+`) AND op.state='preparing')`, args...).Scan(&pending)
+	return pending, err
 }
 
 func sqlPlaceholders(count int) string {
