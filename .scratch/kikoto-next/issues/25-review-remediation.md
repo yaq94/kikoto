@@ -1,0 +1,37 @@
+# 25：现行实现的功能与资源审查整改
+
+**What to build:** 按现行规格修复重新审查复现的目录清理、恢复单集身份、译文配置版本、系列准入及有界资源处理缺陷，并用能在缺陷代码上失败的合成回归验证。原始工单要求与历史证据全部保留。
+
+**Blocked by:** None (can start immediately)
+
+**Status:** ready-for-agent
+
+**Implementation:** in-progress；按主代理指定分批交付。第一批只包含清理误删与恢复单集跨层关联，其余审查整改仍待实施，不能据此关闭完整规格。
+
+**依据:** [正式规格](../spec.md)、[20 准入合同](20-catalog-sync-and-admission.md)、[22 父级恢复](22-personal-transfer-parent-identity.md)、[23 清理保留](23-retention-and-repository-contracts.md)、[13 共享关联](13-shared-link-conflict-review.md)、[14 自动匹配](14-high-confidence-work-matching.md)、[ADR-0004](../../../docs/decisions/ADR-0004-work-identity-and-personal-state.md)、[ADR-0006](../../../docs/decisions/ADR-0006-catalog-remediation-and-translation-consistency.md)。
+
+## 验收范围
+
+当前审查基点是 `53d905e1d212e85d78cb95687044b96b4fc3ebae`。旧 `resolved` 和旧绿色日志仅证明对应历史产物，当前验收以本票证据中的提交及命令为准。迁移头为 105，本批不改迁移。
+
+## 验收清单
+
+- [x] 第一批：清理准入只计当前发布 generation 的非 folder 文件；阈值等值允许；每个删除事务复核准入，批次间变为合格的卡片保留；个人评价与稳定引用不丢失。
+- [x] 第一批：真实 v2 导入的单集保持评价层级；显式父级与旧格式 episode kind 均不能和独立作品跨层关联；人工与自动匹配共用该规则；同层关联、重启后拆分与导出保留父级及记录。
+- [ ] 单条及 batch 翻译结果绑定实际生成或命中时的配置快照；在途切换不把旧模型结果标为新版本。
+- [ ] 系列评价及翻译统一检查合格成员，并保留个人恢复的无媒体父系列及既有 missing 边界。
+- [ ] 同一 SPA 缓存页进入设置改模型后返回，复现并处理版本刷新；他人配置变化和迟到响应不能回写旧版本。
+- [ ] 单集 staging 每批消费后正确推进；101 集总 staging 量及事务数有回归，不只检查单事务上限。
+- [ ] 增量同步按页及有界批次持久化检查点，取消、低空间与恢复有效，完整集合与最终可见性保持；确需迁移时采用 106 并先记录设计。
+- [ ] 前端翻译跨 flush 保持共享并发上限，取消和失败后资源释放可验证。
+- [ ] 翻译基准查询失败明确失败并非零退出，不以 0 ms 成功输出；保留每项错误；相关夹具使用保留编号构造器。
+
+## 测试与交付边界
+
+第一批采用 H（真实 HTTP、鉴权、迁移 SQLite）及 R（关闭应用与数据库后重新打开）和 catalogprune 的公开 BuildReport/Apply 边界。不调用生产、真实来源或真实模型，不读取凭据，不隐式下载媒体。当前批次不修改 UI，不执行截图、像素或布局验收。后续浏览器回归沿用已授权的纯功能 F 边界。
+
+第一批证据见 [25 审查整改证据](../evidence/25-review-remediation.md)。原始日志保留在仓库外的工作区 reports/20261107-remediation 目录。发布账本、完整候选 CI、生产验收由主代理另行记录，本票不替代它们。
+
+## Comments
+
+2026-11-07：主代理依据 Spec/Standards 两轴报告授权整改。首次创建时 issues 最大号为 24；既有 `evidence/25-live-browser.md` 是历史证据文件，原样保留。主代理将首批交接限定为两项 P1，其余明确要求留在本票待续。

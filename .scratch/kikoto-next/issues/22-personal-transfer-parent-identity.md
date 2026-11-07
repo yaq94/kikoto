@@ -96,6 +96,8 @@ CREATE INDEX idx_work_parent_work ON work(parent_work_id);
 
 ## Comments
 
+2026-11-07：复核发现恢复后的单集在共享关联快照中被误判为独立作品。后续人工/自动关联与拆分的跨功能回归及修复见 [25](25-review-remediation.md)；本票旧 SHA 的记录不代表新候选已验收。
+
 `relationships_not_imported` 不能成为已确认父级静默丢失的完成状态。当前 `registerTransferWork` 对未知 episode 只创建独立 work；必须先完成父级数据模型和备份字段，再改导入路径。迁移编号在 096 落地后按连续链分配，不能抢占或跳号。
 
 2026-10-27：`Status` 由无效值 `in-review` 修正为 `ready-for-agent`；`Implementation` 记为 `resolved`，记录 SHA 随候选推进更新为 `f727feee`。证据文件的测试名已与当前分支对齐，旧分支测试名不再作为完成依据。
