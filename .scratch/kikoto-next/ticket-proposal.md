@@ -2,7 +2,7 @@
 
 **Status:** ready-for-agent
 **发布状态:** 用户已批准原 24 张正式工单；第 25 张承接现行实现重新审查发现的功能与资源整改。
-**Implementation:** in-progress；原始 01–24 的历史证据按原产物保留，本轮以全部工单要求重新验证。25 尚有 107 尾部、最终 CI、恢复演练与实际部署未完成，旧 resolved 不自动延续。
+**Implementation:** in-progress；原始 01–24 的历史证据按原产物保留，本轮以全部工单要求重新验证。25 的 106–108 及派生读取整改已集成，最终双轴审查、完整 CI、恢复演练与实际部署未完成，旧 resolved 不自动延续。
 **执行授权:** 用户已授权全部功能实现、必要依赖安装、测试、数据库迁移、部署与回滚；[执行记录](execution.md)维护当前状态与证据。
 **依据:** [正式规格](spec.md) · [领域词汇表](../../GLOSSARY.md) · [作品身份与个人记录 ADR](../../docs/decisions/ADR-0004-work-identity-and-personal-state.md)
 
@@ -10,7 +10,7 @@
 
 ## 当前状态
 
-2026-11-08：[25：现行实现审查整改](issues/25-review-remediation.md) 保持 `in-progress`。功能、浏览器取消及 106 资源整改已合入；107 有可审阅阶段提交但仍有明确实现缺口。根代理回归见[本轮集成证据](evidence/25-integration-20261108.md)。以下表格是旧候选状态，不代表本次审查通过。
+2026-11-08：[25：现行实现审查整改](issues/25-review-remediation.md) 保持 `in-progress`。功能、浏览器生命周期、106 翻译资源、107 发布、108 分组与有限扫描、排除任务、退役和派生读取整改已集成。定向回归及前端完整门禁已有证据；同候选双轴审查、完整 CI、目标机组合性能、恢复与部署验收待完成。见[本轮集成证据](evidence/25-integration-20261108.md)、[派生读取](evidence/25-derived-publication.md)及[前端门禁](evidence/25-frontend-dependency-gate.md)。以下表格是旧候选状态，不代表本次审查通过。
 
 | 范围 | 状态 | 说明 |
 | --- | --- | --- |
