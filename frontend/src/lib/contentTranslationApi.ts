@@ -115,18 +115,22 @@ async function sendBatch(
   language: string,
   chunk: Array<{ input: ContentTranslationInput; key: string }>,
   signal?: AbortSignal,
-): Promise<ContentTranslationBatchResponse> {
+  isActive?: (key: string) => boolean,
+): Promise<{ response: ContentTranslationBatchResponse; keys: string[] }> {
   try {
-    return await withBatchSlot(
-      () =>
-        apiTransport.sendJSONBody<ContentTranslationBatchResponse>(
-          "POST",
-          "/api/content-translations/batch",
-          { language, items: chunk.map(({ input, key }) => itemBody(input, key)) },
-          { signal },
-        ),
-      signal,
-    );
+    return await withBatchSlot(async () => {
+      // Readers may leave or join while another frame occupies the shared slots.
+      const activeChunk = isActive ? chunk.filter(({ key }) => isActive(key)) : chunk;
+      const keys = activeChunk.map(({ key }) => key);
+      if (activeChunk.length === 0) return { response: { items: [] }, keys };
+      const response = await apiTransport.sendJSONBody<ContentTranslationBatchResponse>(
+        "POST",
+        "/api/content-translations/batch",
+        { language, items: activeChunk.map(({ input, key }) => itemBody(input, key)) },
+        { signal },
+      );
+      return { response, keys };
+    }, signal);
   } catch (error) {
     toBatchError(error);
   }
@@ -191,56 +195,59 @@ export const contentTranslationApi = {
    * Inputs of different languages go out as separate requests. A request over
    * 200 items is split rather than rejected or truncated.
    */
-  async translateBatch(
-    inputs: ContentTranslationInput[],
-    signal?: AbortSignal,
-  ): Promise<Map<string, ContentTranslationResult>> {
-    const results = new Map<string, ContentTranslationResult>();
-    if (inputs.length === 0) return results;
-    const byLanguage = new Map<string, Array<{ input: ContentTranslationInput; key: string }>>();
-    for (const input of inputs) {
-      const key = input.key ?? contentTranslationRequestKey(input);
-      const group = byLanguage.get(input.language);
-      if (group) group.push({ input, key });
-      else byLanguage.set(input.language, [{ input, key }]);
-    }
-    const requests: Array<Promise<void>> = [];
-    for (const [language, items] of byLanguage) {
-      for (let offset = 0; offset < items.length; offset += CONTENT_TRANSLATION_BATCH_LIMIT) {
-        const chunk = items.slice(offset, offset + CONTENT_TRANSLATION_BATCH_LIMIT);
-        const keys = chunk.map((item) => item.key);
-        for (const key of keys) inFlightKeys.add(key);
-        requests.push(
-          sendBatch(language, chunk, signal)
-            .then((response) => {
-              if (!Array.isArray(response?.items)) {
+  translateBatch: (inputs: ContentTranslationInput[], signal?: AbortSignal) => translateBatch(inputs, signal),
+};
+
+async function translateBatch(
+  inputs: ContentTranslationInput[],
+  signal?: AbortSignal,
+  isActive?: (key: string) => boolean,
+): Promise<Map<string, ContentTranslationResult>> {
+  const results = new Map<string, ContentTranslationResult>();
+  if (inputs.length === 0) return results;
+  const byLanguage = new Map<string, Array<{ input: ContentTranslationInput; key: string }>>();
+  for (const input of inputs) {
+    const key = input.key ?? contentTranslationRequestKey(input);
+    const group = byLanguage.get(input.language);
+    if (group) group.push({ input, key });
+    else byLanguage.set(input.language, [{ input, key }]);
+  }
+  const requests: Array<Promise<void>> = [];
+  for (const [language, items] of byLanguage) {
+    for (let offset = 0; offset < items.length; offset += CONTENT_TRANSLATION_BATCH_LIMIT) {
+      const chunk = items.slice(offset, offset + CONTENT_TRANSLATION_BATCH_LIMIT);
+      const keys = chunk.map((item) => item.key);
+      for (const key of keys) inFlightKeys.add(key);
+      requests.push(
+        sendBatch(language, chunk, signal, isActive)
+          .then(({ response, keys: sentKeys }) => {
+            if (!Array.isArray(response?.items)) {
+              throw new ContentTranslationBatchError(
+                "translation batch response has no items",
+                "translation_batch_incomplete",
+              );
+            }
+            const byKey = new Map(response.items.map((item) => [item.key, item]));
+            for (const key of sentKeys) {
+              const item = byKey.get(key);
+              if (!item) {
                 throw new ContentTranslationBatchError(
-                  "translation batch response has no items",
+                  `translation batch response is missing ${key}`,
                   "translation_batch_incomplete",
                 );
               }
-              const byKey = new Map(response.items.map((item) => [item.key, item]));
-              for (const key of keys) {
-                const item = byKey.get(key);
-                if (!item) {
-                  throw new ContentTranslationBatchError(
-                    `translation batch response is missing ${key}`,
-                    "translation_batch_incomplete",
-                  );
-                }
-                results.set(key, item);
-              }
-            })
-            .finally(() => {
-              for (const key of keys) inFlightKeys.delete(key);
-            }),
-        );
-      }
+              results.set(key, item);
+            }
+          })
+          .finally(() => {
+            for (const key of keys) inFlightKeys.delete(key);
+          }),
+      );
     }
-    await Promise.all(requests);
-    return results;
-  },
-};
+  }
+  await Promise.all(requests);
+  return results;
+}
 
 type CoalescedWaiter = {
   resolve: (result: ContentTranslationResult) => void;
@@ -346,13 +353,26 @@ async function flushCoalesced() {
   let nextChunk = 0;
   const runChunkWorker = async () => {
     while (nextChunk < chunks.length) {
-      const chunk = chunks[nextChunk++];
+      const chunk = chunks[nextChunk++].filter(([key, entry]) => {
+        if (entry.waiters.size > 0) return true;
+        failEntry(key, entry, abortError());
+        return false;
+      });
+      if (chunk.length === 0) continue;
       try {
-        const results = await contentTranslationApi.translateBatch(
+        const entriesByKey = new Map(chunk);
+        const results = await translateBatch(
           chunk.map(([key, entry]) => ({ ...entry.input, key })),
           controller.signal,
+          (key) => {
+            const entry = entriesByKey.get(key)!;
+            if (entry.waiters.size > 0) return true;
+            failEntry(key, entry, abortError());
+            return false;
+          },
         );
         for (const [key, entry] of chunk) {
+          if (settled.has(key)) continue;
           const result = results.get(key);
           if (result) {
             settle(key, entry, result);
