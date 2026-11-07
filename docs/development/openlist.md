@@ -22,9 +22,11 @@ only the configured roots. It returns per-root outcomes; partial, inaccessible,
 cancelled, and over-limit observations are not complete coverage. This finite
 entry point does not perform a whole-site crawl or schedule daily updates.
 Explicit scans and card refreshes share at most three active source slots, with
-one request per source. A duplicate source or exhausted capacity returns a
-retryable `409 catalog_busy`; it does not create a waiting request queue.
-Cancellation releases the slot and preserves durable listing checkpoints.
+one request per source and at most 64 waiting requests across sources. Waiting
+respects request cancellation and the five-minute deadline; a full queue returns
+retryable `409 catalog_busy`. Cancellation releases the slot and preserves
+durable listing checkpoints. A waiting request reloads source configuration
+when it acquires its slot.
 Completed listings reconcile removed files in one keyset pass, persisting every
 64 inspected rows; removing many observations does not restart that pass.
 

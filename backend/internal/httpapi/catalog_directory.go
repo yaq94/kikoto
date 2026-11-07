@@ -50,6 +50,16 @@ func (s *Server) refreshCatalogEntry(ctx context.Context, id int64) (string, err
 		return "", err
 	}
 	defer release()
+	// A queued request must observe configuration and relocation changes that
+	// happened while another refresh owned the source.
+	lockedSourceID := source.ID
+	entry, source, err = s.loadSourceCatalogEntry(ctx, id)
+	if err != nil {
+		return "", err
+	}
+	if source.ID != lockedSourceID {
+		return "", errRemoteSourceNotUsable
+	}
 	sourceRoot := entry.SourceRoot
 	if sourceRoot == "" {
 		sourceRoot = entry.RootPath

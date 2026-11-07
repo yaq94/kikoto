@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-func TestCatalogRefreshBusySourceDoesNotQueueOrBlockOtherSources(t *testing.T) {
+func TestCatalogRefreshWaitingRequestCancelsWithoutBlockingOtherSources(t *testing.T) {
 	entered, release := make(chan struct{}), make(chan struct{})
 	var once sync.Once
 	unblock := func() { once.Do(func() { close(release) }) }
@@ -79,8 +79,35 @@ func TestCatalogRefreshBusySourceDoesNotQueueOrBlockOtherSources(t *testing.T) {
 		}
 	}
 	assertPrompt("/api/source-catalog/2/refresh", http.StatusOK)
-	assertPrompt("/api/source-catalog/1/refresh", http.StatusConflict)
-	assertPrompt("/api/remote-sources/71/catalog/scan", http.StatusConflict)
+	assertPrompt("/api/source-catalog/1/refresh", http.StatusBadGateway)
+	assertPrompt("/api/remote-sources/71/catalog/scan", http.StatusBadGateway)
+	queuedCtx, cancelQueued := context.WithCancel(context.Background())
+	defer cancelQueued()
+	queued := make(chan int, catalogRefreshQueueLimit+1)
+	for range catalogRefreshQueueLimit + 1 {
+		go func() { queued <- <-call(queuedCtx, "/api/source-catalog/1/refresh") }()
+	}
+	select {
+	case code := <-queued:
+		if code != http.StatusConflict {
+			t.Errorf("queue overflow=%d want409", code)
+		}
+	case <-time.After(3 * time.Second):
+		cancelQueued()
+		unblock()
+		t.Fatal("full refresh queue did not reject excess request")
+	}
+	cancelQueued()
+	for range catalogRefreshQueueLimit {
+		select {
+		case code := <-queued:
+			if code != http.StatusBadGateway {
+				t.Errorf("cancelled waiter=%d", code)
+			}
+		case <-time.After(3 * time.Second):
+			t.Fatal("cancelled queue did not drain")
+		}
+	}
 	unblock()
 	if code := <-first; code != http.StatusOK {
 		t.Fatalf("first refresh=%d", code)

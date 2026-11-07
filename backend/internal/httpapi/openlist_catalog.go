@@ -119,6 +119,16 @@ func (s *Server) scanOpenListCatalog(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, 400, "invalid_request", "invalid source id", false)
 		return
 	}
+	release, err := s.acquireCatalogRefresh(ctx, id)
+	if err != nil {
+		if errors.Is(err, errCatalogRefreshBusy) {
+			writeAPIError(w, http.StatusConflict, "catalog_busy", err.Error(), true)
+		} else {
+			writeUpstreamError(w, err)
+		}
+		return
+	}
+	defer release()
 	source, err := s.loadRemoteSourceForUse(ctx, id)
 	if err != nil {
 		writeError(w, err)
@@ -136,16 +146,6 @@ func (s *Server) scanOpenListCatalog(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, 400, "invalid_request", "select work directories for a finite scan, or start the full index", false)
 		return
 	}
-	release, err := s.acquireCatalogRefresh(ctx, source.ID)
-	if err != nil {
-		if errors.Is(err, errCatalogRefreshBusy) {
-			writeAPIError(w, http.StatusConflict, "catalog_busy", err.Error(), true)
-		} else {
-			writeUpstreamError(w, err)
-		}
-		return
-	}
-	defer release()
 	ctx, err = s.catalogFiniteContext(ctx, source.ID)
 	if err != nil {
 		writeError(w, err)

@@ -6,13 +6,13 @@
 
 **Status:** ready-for-agent
 
-**Implementation:** in-progress；功能、浏览器生命周期、106 翻译资源、107 目录发布、108 持久分组与有限扫描、排除任务、退役别名及派生读取整改均已集成并取得定向证据。最终同候选双轴审查、完整门禁、目标机组合性能、恢复演练及部署验收仍未完成。
+**Implementation:** in-progress；功能、浏览器生命周期、106 翻译资源、107 目录发布、108 持久分组与有限扫描、109 查询亲和性、排除任务、退役别名及派生读取整改均已集成并取得定向证据。刷新有界等待和共享关联保存屏障已修复完整门禁发现的回归。最终同候选双轴审查、完整门禁、目标机组合性能、恢复复核及部署验收仍未完成。
 
 **依据:** [正式规格](../spec.md)、[20 准入合同](20-catalog-sync-and-admission.md)、[22 父级恢复](22-personal-transfer-parent-identity.md)、[23 清理保留](23-retention-and-repository-contracts.md)、[13 共享关联](13-shared-link-conflict-review.md)、[14 自动匹配](14-high-confidence-work-matching.md)、[ADR-0004](../../../docs/decisions/ADR-0004-work-identity-and-personal-state.md)、[ADR-0006](../../../docs/decisions/ADR-0006-catalog-remediation-and-translation-consistency.md)。
 
 ## 验收范围
 
-当前审查基点是 `53d905e1d212e85d78cb95687044b96b4fc3ebae`。旧 `resolved` 和旧绿色日志仅证明对应历史产物，当前验收以本票证据中的提交及命令为准。生产迁移头仍为 105；集成分支包含 106 译文 revision、107 目录 publication、108 分组及 finite 检查点，已发布迁移保持不变。107 的初始阶段记录见[阶段证据](../evidence/25-sync107-publication.md)，后续集成见下列证据及 Comments。
+当前审查基点是 `53d905e1d212e85d78cb95687044b96b4fc3ebae`。旧 `resolved` 和旧绿色日志仅证明对应历史产物，当前验收以本票证据中的提交及命令为准。生产迁移头仍为 105；集成分支包含 106 译文 revision、107 目录 publication、108 分组及 finite 检查点、109 发布投影查询亲和性及尺寸索引，已发布迁移保持不变。107 的初始阶段记录见[阶段证据](../evidence/25-sync107-publication.md)，后续集成见下列证据及 Comments。
 
 ## 验收清单
 
@@ -32,7 +32,7 @@
 - [x] 后续独立复审：flush 后加入的重复读者计入取消所有权，已完成读者不阻止剩余请求取消；IDB 失败不留下未处理 transaction rejection，禁用或 blocked 后迟到成功关闭连接。39 个公共边界 U 与 5 个原生 IDB F 通过，含多 tab 精确预算账本，见[浏览器生命周期证据](../evidence/25-browser-lifecycle.md)。
 - [x] 独立复审 F2：排队分块失去全部读者后不再发送；取得共享槽后重新检查，保留仍有效或重新加入的读者。见[取消分块证据](../evidence/25-cancelled-chunks.md)，主集成工作区 30 项 U 复跑通过。
 - [x] 独立复审 TR2：维护等待配置锁不阻止生命周期取消，跳过的维护下个 tick 可继续；见[配置锁取消证据](../evidence/25-translation-maintenance-cancel.md)。
-- [ ] 最终集成重新复验 106–108 的语料、目录改名、发布指针与 maintenance 失效依赖，完成最终 race、规模资源、完整 CI、恢复演练及部署验收。
+- [ ] 最终集成重新复验 106–109 的语料、目录改名、发布指针与 maintenance 失效依赖，完成最终 race、规模资源、完整 CI、恢复演练及部署验收。
 
 ## 测试与交付边界
 
@@ -41,6 +41,8 @@
 第一批证据见 [25 审查整改证据](../evidence/25-review-remediation.md)。第二批服务端版本绑定、系列及单卡翻译准入见 [第二批交接证据](../evidence/25-translation-backend.md)；前端实现已保留在同分支，尚不据此关闭本票前端清单。原始日志保留在仓库外的工作区 reports/20261107-remediation 目录。发布账本、完整候选 CI、生产验收由主代理另行记录，本票不替代它们。
 
 ## Comments
+
+2026-11-08：109 将已发布投影的 work_id 固定为整数亲和性，使译文插入使用索引查询；50,001 条原回归由超时恢复为 8.31 秒通过。排除恢复拥有者、series-only 清理与尺寸查询修复见[复审修复](../evidence/25-final-review-fixes.md)。后续完整门禁暴露的同来源刷新兼容性和共享关联保存竞态、2747e05e 的真实隔离恢复演练见[完整门禁修复](../evidence/25-full-ci-corrections.md)。这些定向证据不关闭最终同候选门禁。
 
 2026-11-08 集成 `32dc7fe5`：声优、社团、歌词、来源检查时间与清理资格使用已发布投影，定向 H/R/race 证据见[派生读取](../evidence/25-derived-publication.md)。分组与有限扫描见[108 证据](../evidence/25-grouping-finite.md)，排除见[后端](../evidence/25-exclusion-resource.md)及[任务界面](../evidence/25-exclusion-task-ui.md)。前端完整门禁及开发依赖审计见[前端门禁](../evidence/25-frontend-dependency-gate.md)。下列记录保留各阶段当时的未完成项，不表示这些项尚未实现；本票最终签收条件以当前清单为准。
 

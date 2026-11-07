@@ -120,6 +120,8 @@ type Server struct {
 	catalogSidecarCooldown         *catalogSidecarSourceCooldown
 	catalogRefreshMu               sync.Mutex
 	catalogRefreshSources          map[int64]struct{}
+	catalogRefreshWaiters          int
+	catalogRefreshChanged          chan struct{}
 	catalogAvailabilityMu          sync.Mutex
 	catalogAvailabilityQueued      map[int64]struct{}
 	catalogAvailabilityQueue       chan int64

@@ -100,11 +100,24 @@ test("shared association requires each owner's UI confirmation through the real 
     await expect(panel).not.toContainText(`${owner === "A" ? "B" : "A"} first private note`);
     await panel.getByLabel("Final personal rating", { exact: true }).selectOption(owner === "A" ? "4" : "2");
     await panel.getByLabel("Final personal note", { exact: true }).fill(`${owner} chosen note`);
+    const decision = page.waitForResponse(
+      (response) =>
+        /\/api\/shared-associations\/\d+\/decision$/.test(response.url()) && response.request().method() === "POST",
+    );
     await panel.getByRole("button", { name: "Confirm my review", exact: true }).click();
+    const saved = await decision;
+    expect(saved.ok()).toBe(true);
+    expect((await saved.json()).myDecision).toMatchObject({
+      rating: owner === "A" ? 4 : 2,
+      note: `${owner} chosen note`,
+    });
     await expect(panel.getByRole("status")).toHaveText(
       owner === "A" ? "Waiting for record owners" : "Association completed",
     );
     if (owner === "A") {
+      // Waiting is also the pre-submit state. Only the saved choice proves
+      // that the first owner's mutation finished before reload cancels requests.
+      await expect(panel).toContainText("Your choice is saved. Waiting for the remaining owners.");
       expect(
         await (await page.request.get(`${backend}/api/source-catalog/${first.catalogEntryId}`)).json(),
       ).toMatchObject({ personalRating: 1, personalNote: "A first private note" });
