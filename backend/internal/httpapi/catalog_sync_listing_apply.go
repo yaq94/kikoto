@@ -147,69 +147,8 @@ func (s *Server) applyCatalogSyncListingBatch(ctx context.Context, sourceID, gen
 
 func (s *Server) removeCatalogSyncObservation(ctx context.Context, sourceID, generation int64, dir catalogSyncDirectoryState, row catalogSyncObservation, options catalogIndexOptions) error {
 	child := path.Join(dir.Path, row.Name)
-	var listingID, fileAfter int64
-	var removedName string
-	if err := s.db.QueryRowContext(ctx, `SELECT id,COALESCE(json_extract(NULLIF(remove_cursor,''),'$.name'),''),COALESCE(json_extract(NULLIF(remove_cursor,''),'$.fileAfter'),0) FROM source_catalog_listing WHERE file_source_id=? AND directory_path=? AND generation=? AND base_revision=? AND state IN ('complete','applying') ORDER BY id DESC LIMIT 1`, sourceID, dir.Path, generation, dir.Revision).Scan(&listingID, &removedName, &fileAfter); err != nil {
+	if err := s.removeCatalogSyncListingFiles(ctx, sourceID, generation, dir, options); err != nil {
 		return err
-	}
-	if removedName != row.Name {
-		fileAfter = 0
-	}
-	// Remove files by their real location, including split and format-copy rows.
-	for {
-		if err := s.checkCatalogSyncBatch(ctx, options); err != nil {
-			return err
-		}
-		tx, release, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
-		if err != nil {
-			return err
-		}
-		rows, err := tx.QueryContext(ctx, `SELECT f.rowid,f.catalog_entry_id FROM source_catalog_file f CROSS JOIN source_catalog_entry e ON e.id=f.catalog_entry_id
-			WHERE f.rowid>? AND e.file_source_id=? AND (CASE WHEN f.source_root<>'' THEN rtrim(f.source_root,'/') ELSE rtrim(CASE WHEN e.source_root<>'' THEN e.source_root ELSE e.root_path END,'/') END || '/' || f.relative_path = ?
-			OR (?='folder' AND CASE WHEN f.source_root<>'' THEN rtrim(f.source_root,'/') ELSE rtrim(CASE WHEN e.source_root<>'' THEN e.source_root ELSE e.root_path END,'/') END || '/' || f.relative_path >= ?
-			AND CASE WHEN f.source_root<>'' THEN rtrim(f.source_root,'/') ELSE rtrim(CASE WHEN e.source_root<>'' THEN e.source_root ELSE e.root_path END,'/') END || '/' || f.relative_path < ?)) ORDER BY f.rowid LIMIT ?`, fileAfter, sourceID, child, row.Kind, child+"/", child+"0", catalogSyncListingWriteRows)
-		if err != nil {
-			release()
-			return err
-		}
-		type file struct{ id, entry int64 }
-		files := []file{}
-		for rows.Next() {
-			var f file
-			if err = rows.Scan(&f.id, &f.entry); err != nil {
-				break
-			}
-			files = append(files, f)
-		}
-		if err == nil {
-			err = rows.Err()
-		}
-		_ = rows.Close()
-		if err != nil {
-			release()
-			return err
-		}
-		for _, f := range files {
-			if _, err = tx.ExecContext(ctx, `DELETE FROM source_catalog_file WHERE rowid=?`, f.id); err != nil {
-				break
-			}
-		}
-		if err == nil && len(files) > 0 {
-			_, err = tx.ExecContext(ctx, `UPDATE source_catalog_listing SET remove_cursor=json_object('name',?,'fileAfter',?) WHERE id=?`, row.Name, files[len(files)-1].id, listingID)
-		}
-		if err == nil {
-			err = tx.Commit()
-		}
-		if err == nil && len(files) > 0 {
-			fileAfter = files[len(files)-1].id
-		}
-		release()
-		if err != nil {
-			return err
-		}
-		if len(files) < catalogSyncListingWriteRows {
-			break
-		}
 	}
 	if row.Kind == "folder" {
 		for {

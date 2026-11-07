@@ -36,7 +36,9 @@ This establishes an explicit ordering for conflicting writes; different-source
 operations cannot silently overwrite the same shared entity. Interrupted work
 resumes its operation and durable checkpoints. A replacement generation first
 finishes the pending generation. Failure or cancellation cannot commit its
-marker merely to release ownership.
+marker merely to release ownership. Maintenance retains the workflow run and
+job checkpoints referenced by an exclusion publication until publication cleanup
+removes that dependency.
 
 ## Read and ownership boundaries
 

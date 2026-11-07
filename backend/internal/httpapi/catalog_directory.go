@@ -24,6 +24,10 @@ func (s *Server) refreshCatalogDirectory(w http.ResponseWriter, r *http.Request)
 	ctx, cancel := context.WithTimeout(r.Context(), catalogAvailabilityTimeout)
 	defer cancel()
 	if _, err = s.refreshCatalogEntry(ctx, id); err != nil {
+		if errors.Is(err, errCatalogRefreshBusy) {
+			writeAPIError(w, http.StatusConflict, "catalog_busy", err.Error(), true)
+			return
+		}
 		if errors.Is(err, errCatalogNoPlayableFiles) {
 			writeAPIError(w, 502, "upstream_error", "catalog directory has no playable files", true)
 			return
@@ -37,15 +41,15 @@ func (s *Server) refreshCatalogDirectory(w http.ResponseWriter, r *http.Request)
 // refreshCatalogEntry publishes a complete playable snapshot. A failed refresh
 // keeps the previous snapshot and records the failure on the card itself.
 func (s *Server) refreshCatalogEntry(ctx context.Context, id int64) (string, error) {
-	// A manual refresh and the background availability check can name the same
-	// card. One scan at a time keeps the second request from publishing an
-	// older listing after the first one succeeded.
-	s.catalogRefreshMu.Lock()
-	defer s.catalogRefreshMu.Unlock()
 	entry, source, err := s.loadSourceCatalogEntry(ctx, id)
 	if err != nil {
 		return "", err
 	}
+	release, err := s.acquireCatalogRefresh(ctx, source.ID)
+	if err != nil {
+		return "", err
+	}
+	defer release()
 	sourceRoot := entry.SourceRoot
 	if sourceRoot == "" {
 		sourceRoot = entry.RootPath

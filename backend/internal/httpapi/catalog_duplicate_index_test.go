@@ -4,8 +4,17 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 )
+
+func TestCatalogDuplicateSizeFallbackUsesRange(t *testing.T) {
+	db := openMigratedTestDB(t)
+	plan := explainCatalogPlan(t, db, catalogDuplicateSizeQuery, int64(1), int64(1000), int64(2000))
+	if !strings.Contains(plan, "size_bytes>?") || !strings.Contains(plan, "size_bytes<?") {
+		t.Fatalf("unmatched size fallback scans unrelated candidates: %s", plan)
+	}
+}
 
 func TestCatalogIndexedEqualHashCandidatesAreConsumedOnce(t *testing.T) {
 	audit := &catalogWriteAudit{}

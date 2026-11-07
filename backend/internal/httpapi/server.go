@@ -119,6 +119,7 @@ type Server struct {
 	workMatchingMu                 sync.Mutex
 	catalogSidecarCooldown         *catalogSidecarSourceCooldown
 	catalogRefreshMu               sync.Mutex
+	catalogRefreshSources          map[int64]struct{}
 	catalogAvailabilityMu          sync.Mutex
 	catalogAvailabilityQueued      map[int64]struct{}
 	catalogAvailabilityQueue       chan int64

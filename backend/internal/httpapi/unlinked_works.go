@@ -377,6 +377,12 @@ func (s *Server) deleteUnlinkedWorkFamiliesTx(ctx context.Context, tx *sql.Tx, w
 		if _, err := tx.ExecContext(ctx, "DELETE FROM metadata_snapshot WHERE work_id IN ("+placeholders+")", args...); err != nil {
 			return unlinkedWorkDeleteResult{}, err
 		}
+		// Keep the source series identity and membership while explicitly removing
+		// its unreferenced library registration. Personal and child references were
+		// checked in the same transaction before this stable link can be detached.
+		if _, err := tx.ExecContext(ctx, "UPDATE catalog_series SET work_id=NULL WHERE work_id IN ("+placeholders+")", args...); err != nil {
+			return unlinkedWorkDeleteResult{}, err
+		}
 		if _, err := tx.ExecContext(ctx, "DELETE FROM work WHERE id IN ("+placeholders+")", args...); err != nil {
 			return unlinkedWorkDeleteResult{}, err
 		}
@@ -456,6 +462,14 @@ func eligibleUnlinkedWorkFamilies(ctx context.Context, queryer unlinkedWorkQuery
 			}
 			if pending {
 				skipped = append(skipped, unlinkedWorkMaintenanceSkip{WorkID: workID, Code: family.CanonicalCode, Reason: "publication_pending"})
+				continue
+			}
+			var children bool
+			if err := queryer.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM work WHERE parent_work_id IN ("+sqlPlaceholders(len(family.WorkIDs))+") AND id NOT IN ("+sqlPlaceholders(len(family.WorkIDs))+"))", append(int64Args(family.WorkIDs), int64Args(family.WorkIDs)...)...).Scan(&children); err != nil {
+				return nil, nil, err
+			}
+			if children {
+				skipped = append(skipped, unlinkedWorkMaintenanceSkip{WorkID: workID, Code: family.CanonicalCode, Reason: "related_works"})
 				continue
 			}
 		}

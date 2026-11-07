@@ -112,14 +112,14 @@ func (s *Server) scanOpenListCatalog(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.requirePermission(w, r, "sources:write"); !ok {
 		return
 	}
-	s.catalogRefreshMu.Lock()
-	defer s.catalogRefreshMu.Unlock()
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
+	defer cancel()
 	id, err := parseInt64PathValue(r, "id")
 	if err != nil {
 		writeAPIError(w, 400, "invalid_request", "invalid source id", false)
 		return
 	}
-	source, err := s.loadRemoteSourceForUse(r.Context(), id)
+	source, err := s.loadRemoteSourceForUse(ctx, id)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -136,8 +136,16 @@ func (s *Server) scanOpenListCatalog(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, 400, "invalid_request", "select work directories for a finite scan, or start the full index", false)
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
-	defer cancel()
+	release, err := s.acquireCatalogRefresh(ctx, source.ID)
+	if err != nil {
+		if errors.Is(err, errCatalogRefreshBusy) {
+			writeAPIError(w, http.StatusConflict, "catalog_busy", err.Error(), true)
+		} else {
+			writeUpstreamError(w, err)
+		}
+		return
+	}
+	defer release()
 	ctx, err = s.catalogFiniteContext(ctx, source.ID)
 	if err != nil {
 		writeError(w, err)

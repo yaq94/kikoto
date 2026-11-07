@@ -176,6 +176,44 @@ func TestDerivedPublicationSourceDisabledAndLocalLyricsRemainLive(t *testing.T) 
 	}
 }
 
+func TestDerivedPublicationUnlinkedDeletionKeepsPendingSeriesOnlyWork(t *testing.T) {
+	s, h, cookie := newDerivedPublicationServer(t)
+	metadataReviewExec(t, s.db, `INSERT INTO work(id,primary_code,title) VALUES(10,'','Example Series');
+	 INSERT INTO catalog_series(id,title,work_id,source_id,source_key) VALUES(10,'Example Series',10,7,'synthetic:series')`)
+	ctx, op, err := s.beginCatalogPublication(context.Background(), 7, "synthetic:series-only")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.execCatalogWrite(ctx, `UPDATE catalog_series SET title='Prepared Series' WHERE id=10`); err != nil {
+		t.Fatal(err)
+	}
+	result := reviewRequest(t, h, cookie, http.MethodPost, "/api/maintenance/unlinked-works/delete", `{"workIds":[10],"confirm":true}`, 200)
+	if result["deletedWorkCount"] != float64(0) {
+		t.Fatalf("pending series lost work: %#v", result)
+	}
+	if err = s.commitCatalogPublication(ctx, op); err != nil {
+		t.Fatal(err)
+	}
+	result = reviewRequest(t, h, cookie, http.MethodPost, "/api/maintenance/unlinked-works/delete", `{"workIds":[10],"confirm":true}`, 200)
+	if result["deletedWorkCount"] != float64(1) {
+		t.Fatalf("finished series not eligible: %#v", result)
+	}
+}
+
+func TestUnlinkedSeriesCleanupPreservesEpisodeParentIdentity(t *testing.T) {
+	s, h, cookie := newDerivedPublicationServer(t)
+	metadataReviewExec(t, s.db, `INSERT INTO work(id,primary_code,title,parent_work_id) VALUES(10,'','Example Parent',NULL),(11,'','Example Episode',10);
+	 INSERT INTO catalog_series(id,title,work_id) VALUES(10,'Example Parent',10)`)
+	result := reviewRequest(t, h, cookie, http.MethodPost, "/api/maintenance/unlinked-works/delete", `{"workIds":[10],"confirm":true}`, 200)
+	if result["deletedWorkCount"] != float64(0) {
+		t.Fatalf("series parent deleted: %#v", result)
+	}
+	var parent int64
+	if err := s.db.QueryRow(`SELECT parent_work_id FROM work WHERE id=11`).Scan(&parent); err != nil || parent != 10 {
+		t.Fatalf("episode parent=%d %v", parent, err)
+	}
+}
+
 func TestDerivedPublicationAvailabilityCheckedAtUsesCommittedPresence(t *testing.T) {
 	s, h, cookie := newDerivedPublicationServer(t)
 	path := "/api/works/RJ00000000/source-availability"

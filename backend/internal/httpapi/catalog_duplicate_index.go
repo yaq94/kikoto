@@ -9,6 +9,10 @@ import (
 	"unicode"
 )
 
+// Restrict the size range before sorting by name, preserving the existing
+// deterministic one-to-one choice without scanning unrelated candidates.
+const catalogDuplicateSizeQuery = `SELECT p.name FROM source_catalog_duplicate_available p INDEXED BY source_catalog_duplicate_available_size WHERE p.comparison_id=? AND p.size_bytes BETWEEN ? AND ? ORDER BY p.name LIMIT 1`
+
 // EqualFold uses Unicode simple folding, which differs from ToLower for e.g.
 // Greek final sigma. Canonicalize each rune's complete SimpleFold cycle only
 // for the ancestor rule; the immediate-parent rule retains its lowercase key.
@@ -138,7 +142,7 @@ func (s *Server) prepareCatalogDuplicateIndex(ctx context.Context, in catalogGro
 			err = tx.QueryRowContext(ctx, query+` ORDER BY p.name LIMIT 1`, args...).Scan(&candidate)
 			if errors.Is(err, sql.ErrNoRows) && !hashes && !ancestor {
 				tolerance := max(int64(1024), i.size/1000)
-				err = tx.QueryRowContext(ctx, `SELECT p.name FROM source_catalog_duplicate_available p WHERE p.comparison_id=? AND p.size_bytes BETWEEN ? AND ? ORDER BY p.name LIMIT 1`, comparison, i.size-tolerance, i.size+tolerance).Scan(&candidate)
+				err = tx.QueryRowContext(ctx, catalogDuplicateSizeQuery, comparison, i.size-tolerance, i.size+tolerance).Scan(&candidate)
 			}
 			if errors.Is(err, sql.ErrNoRows) {
 				err = nil

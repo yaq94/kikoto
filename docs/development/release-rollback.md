@@ -1,7 +1,7 @@
 # Release Rollback
 
 This page gives the operator procedure for rolling back a Kikoto deployment
-whose schema reached `108`. It states which image can read which schema, how to
+whose schema reached `109`. It states which image can read which schema, how to
 take and restore a database snapshot, and what to check afterwards. It records
 no deployment result; run the commands on the target host and keep their output
 with the release record.
@@ -13,12 +13,13 @@ a database snapshot and starts a binary whose packaged migration catalog ends
 at that snapshot's schema. The image names are the ones used by the current
 next-release deployment; prefer a digest when the deployment recorded one.
 
-| Binary catalog | Database through `105` | `106` | `107` | `108` |
-| --- | --- | --- | --- | --- |
-| Current build (`108`) | Upgrade through numbered migrations | Upgrade to `108` | Upgrade to `108` | Keep `108` |
-| `107` build | Upgrade to `107` | Upgrade to `107` | Keep `107` | Refuse |
-| `106` build | Upgrade to `106` | Keep `106` | Refuse | Refuse |
-| `105` build | Follow the compatibility rows below | Refuse | Refuse | Refuse |
+| Binary catalog | Database through `105` | `106` | `107` | `108` | `109` |
+| --- | --- | --- | --- | --- | --- |
+| Current build (`109`) | Upgrade through numbered migrations | Upgrade to `109` | Upgrade to `109` | Upgrade to `109` | Keep `109` |
+| `108` build | Upgrade to `108` | Upgrade to `108` | Upgrade to `108` | Keep `108` | Refuse |
+| `107` build | Upgrade to `107` | Upgrade to `107` | Keep `107` | Refuse | Refuse |
+| `106` build | Upgrade to `106` | Keep `106` | Refuse | Refuse | Refuse |
+| `105` build | Follow the compatibility rows below | Refuse | Refuse | Refuse | Refuse |
 
 Older binaries always refuse a database newer than their packaged catalog.
 
@@ -105,9 +106,11 @@ invalidates a row whenever its file set changes. `105` adds the stored
 existing catalog rows as snapshot zero. `108` stores grouping and finite-scan
 checkpoints. Publication and grouping tables contain source-owned preparation
 state; stable work identity and private records remain in their existing tables.
+`109` gives the publication view consistent integer identity affinity and an
+indexed size range for format matching. It does not copy catalog or private rows.
 
-No migration deletes or rewrites card or personal rows. A `068`–`107`
-snapshot restored into the current image upgrades to `108` along the numbered chain; a
+No migration deletes or rewrites card or personal rows. A `068`–`108`
+snapshot restored into the current image upgrades to `109` along the numbered chain; a
 `105` database needs a binary whose catalog includes `105`. A `104` binary refuses
 `105`, a `103` binary refuses `104`, a `102` binary refuses `103`, a `101`
 binary refuses `102`, a `100` binary refuses `101`, an `095`
@@ -147,7 +150,7 @@ Keep a named snapshot for every schema the rollback matrix lists:
 `rollbacks/schema-098`, `rollbacks/schema-099`, `rollbacks/schema-100`,
 `rollbacks/schema-101`, `rollbacks/schema-102`, `rollbacks/schema-103`,
 `rollbacks/schema-104`, `rollbacks/schema-105`, `rollbacks/schema-106`,
-`rollbacks/schema-107` and `rollbacks/schema-108`. The automatic
+`rollbacks/schema-107`, `rollbacks/schema-108` and `rollbacks/schema-109`. The automatic
 pre-migration backup is named after the schema it leaves, so copy it to the
 matching `schema-NNN` directory before the next upgrade overwrites the
 reference. A snapshot only helps if its image is still available; record the
@@ -177,10 +180,10 @@ health check, so a deployment that uses one can wait with `up -d --wait`. A
 host that kept an older compose file should still poll `/health` as shown under
 [Verify The Restored Instance](#verify-the-restored-instance).
 
-## Restore A Schema 95 Through 108 Snapshot
+## Restore A Schema 95 Through 109 Snapshot
 
 Use this to return to the current build after a failed start or to recover a
-damaged `095` through `108` database. Use the image that packages the snapshot's
+damaged `095` through `109` database. Use the image that packages the snapshot's
 schema; to return to schema `094`, `092` or `083`, restore that schema's
 snapshot and start an image that packages it.
 

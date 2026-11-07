@@ -5,7 +5,7 @@ HTTP(S) API endpoint. `config.openListRoots` contains at most 8 explicit audio
 work directories. A root owns its audio tracks and format subdirectories. Explicit episode or
 series-directory evidence groups independent entries as described in
 [Catalog series](catalog-series.md). An explicit bounded scan visits at most 32
-directories, 8 levels, 2,000 entries, and 100 pages per root. Only a completely
+directories, 8 levels, and 100 pages of at most 100 entries per root. Only a completely
 read root containing audio becomes a catalog entry. Archives and subtitles
 alone are excluded. Password-protected directories are never unlocked.
 
@@ -21,6 +21,12 @@ finite work root.
 only the configured roots. It returns per-root outcomes; partial, inaccessible,
 cancelled, and over-limit observations are not complete coverage. This finite
 entry point does not perform a whole-site crawl or schedule daily updates.
+Explicit scans and card refreshes share at most three active source slots, with
+one request per source. A duplicate source or exhausted capacity returns a
+retryable `409 catalog_busy`; it does not create a waiting request queue.
+Cancellation releases the slot and preserves durable listing checkpoints.
+Completed listings reconcile removed files in one keyset pass, persisting every
+64 inspected rows; removing many observations does not restart that pass.
 
 ## Recoverable full index
 
