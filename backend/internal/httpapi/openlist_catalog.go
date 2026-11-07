@@ -106,10 +106,14 @@ func validateOpenListRequestConfig(config fileSourceConfig) error {
 	return nil
 }
 
+// scanOpenListCatalog uses the durable listing queue for explicit roots;
+// it never materializes the whole tree in memory before applying a snapshot.
 func (s *Server) scanOpenListCatalog(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.requirePermission(w, r, "sources:write"); !ok {
 		return
 	}
+	s.catalogRefreshMu.Lock()
+	defer s.catalogRefreshMu.Unlock()
 	id, err := parseInt64PathValue(r, "id")
 	if err != nil {
 		writeAPIError(w, 400, "invalid_request", "invalid source id", false)
@@ -124,7 +128,7 @@ func (s *Server) scanOpenListCatalog(w http.ResponseWriter, r *http.Request) {
 		writeUpstreamError(w, errRemoteSourceNotUsable)
 		return
 	}
-	if err := validateOpenListConfig(source.Config); err != nil {
+	if err = validateOpenListConfig(source.Config); err != nil {
 		writeAPIError(w, 400, "invalid_request", err.Error(), false)
 		return
 	}
@@ -134,51 +138,64 @@ func (s *Server) scanOpenListCatalog(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
 	defer cancel()
-	type rootResult struct {
-		Root           string `json:"root"`
-		Status         string `json:"status"`
-		CatalogEntryID int64  `json:"catalogEntryId,omitempty"`
+	ctx, err = s.catalogFiniteContext(ctx, source.ID)
+	if err != nil {
+		writeError(w, err)
+		return
 	}
-	results := []rootResult{}
+	results := []map[string]any{}
 	status := "complete"
 	for _, root := range source.Config.OpenListRoots {
-		files, err := s.openListClient(source).ScanRoot(ctx, root)
+		listingID, scanErr := s.stageCatalogFiniteListing(ctx, source, root)
 		if ctx.Err() != nil {
 			writeAPIError(w, 503, "service_unavailable", "catalog scan cancelled or timed out", true)
 			return
 		}
-		if err != nil {
+		if scanErr != nil {
+			status = "partial"
 			outcome := "failed"
-			if errors.Is(err, openlist.ErrChallenged) {
+			if errors.Is(scanErr, openlist.ErrChallenged) || errors.Is(scanErr, openlist.ErrRestricted) {
 				outcome = "restricted"
 			}
-			if errors.Is(err, openlist.ErrRestricted) {
-				outcome = "restricted"
-			}
-			if errors.Is(err, openlist.ErrLimit) {
+			if errors.Is(scanErr, openlist.ErrLimit) {
 				outcome = "limit_exceeded"
 			}
-			results = append(results, rootResult{Root: root, Status: outcome})
-			status = "partial"
+			results = append(results, map[string]any{"root": root, "status": outcome})
 			continue
 		}
-		playable := false
-		for _, file := range files {
-			if file.Kind == "audio" {
-				playable = true
-				break
-			}
-		}
-		if !playable {
-			results = append(results, rootResult{Root: root, Status: "excluded"})
-			continue
-		}
-		entryID, err := s.persistOpenListRoot(ctx, source, root, files)
-		if err != nil {
-			writeError(w, err)
+		ctx, op, beginErr := s.beginCatalogPublication(ctx, source.ID, "manual:"+root)
+		if beginErr != nil {
+			writeError(w, beginErr)
 			return
 		}
-		results = append(results, rootResult{Root: root, Status: "indexed", CatalogEntryID: entryID})
+		scanErr = s.applyCatalogFiniteListing(ctx, source, root, listingID, op)
+		if errors.Is(scanErr, errCatalogNoPlayableFiles) {
+			if _, scanErr = s.execCatalogWrite(ctx, `UPDATE source_catalog_listing SET state='applied' WHERE id=?`, listingID); scanErr != nil {
+				writeError(w, scanErr)
+				return
+			}
+			if scanErr = s.cleanupCatalogFiniteTargets(ctx, listingID); scanErr != nil {
+				writeError(w, scanErr)
+				return
+			}
+			results = append(results, map[string]any{"root": root, "status": "excluded"})
+			if scanErr = s.commitCatalogPublication(ctx, op); scanErr != nil {
+				writeError(w, scanErr)
+				return
+			}
+			continue
+		}
+		if scanErr != nil {
+			writeError(w, scanErr)
+			return
+		}
+		if scanErr = s.commitCatalogPublication(ctx, op); scanErr != nil {
+			writeError(w, scanErr)
+			return
+		}
+		var entryID int64
+		_ = s.db.QueryRowContext(ctx, `SELECT id FROM source_catalog_entry WHERE file_source_id=? AND (root_path=? OR source_root=?) ORDER BY root_path LIMIT 1`, source.ID, root, root).Scan(&entryID)
+		results = append(results, map[string]any{"root": root, "status": "indexed", "catalogEntryId": entryID})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": status, "roots": results})
 }
@@ -186,12 +203,15 @@ func (s *Server) scanOpenListCatalog(w http.ResponseWriter, r *http.Request) {
 func (s *Server) persistOpenListRoot(ctx context.Context, source remoteSourceForUse, root string, files []openlist.File) (result int64, resultErr error) {
 	var publicationID int64
 	var err error
-	ctx, publicationID, err = s.beginCatalogPublication(ctx, source.ID, "manual:"+root)
-	if err != nil {
-		return 0, err
+	_, joined := ctx.Value(catalogPublicationKey{}).(int64)
+	if !joined {
+		ctx, publicationID, err = s.beginCatalogPublication(ctx, source.ID, "manual:"+root)
+		if err != nil {
+			return 0, err
+		}
 	}
 	defer func() {
-		if resultErr == nil {
+		if resultErr == nil && !joined {
 			resultErr = s.commitCatalogPublication(ctx, publicationID)
 		}
 	}()

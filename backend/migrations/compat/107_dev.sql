@@ -1101,6 +1101,7 @@ CREATE TABLE source_catalog_publication_entity (
  entity_kind TEXT NOT NULL,
  entity_id INTEGER NOT NULL,
  after_translation_id INTEGER NOT NULL DEFAULT 0,
+ translation_prepared INTEGER NOT NULL DEFAULT 0,
  after_location_id INTEGER NOT NULL DEFAULT 0,
  media_prepared INTEGER NOT NULL DEFAULT 0,
  PRIMARY KEY(operation_id,entity_kind,entity_id)
@@ -2601,6 +2602,15 @@ CREATE INDEX source_catalog_observation_pending
 
 CREATE INDEX source_catalog_observation_revision ON source_catalog_observation(file_source_id,directory_path,revision,kind);
 
+CREATE INDEX source_catalog_publication_entity_identity
+ ON source_catalog_publication_entity(entity_kind,entity_id,operation_id);
+
+CREATE INDEX source_catalog_publication_entity_media_pending
+ ON source_catalog_publication_entity(operation_id,entity_kind,entity_id) WHERE media_prepared=0;
+
+CREATE INDEX source_catalog_publication_entity_translation_pending
+ ON source_catalog_publication_entity(operation_id,entity_kind,entity_id) WHERE translation_prepared=0;
+
 CREATE UNIQUE INDEX source_catalog_publication_pending ON source_catalog_publication(file_source_id) WHERE state='preparing';
 
 CREATE INDEX source_catalog_relocation_target ON source_catalog_relocation_candidate(candidate_entry_id);
@@ -3905,9 +3915,18 @@ CREATE TRIGGER publication_conflict_work_source_presence_update BEFORE UPDATE OF
  AND p.id<>(SELECT operation_id FROM source_catalog_publication_writer WHERE id=1)) AND OLD.presence_type='source' AND (OLD.work_id IS NOT NEW.work_id OR OLD.file_source_id IS NOT NEW.file_source_id OR OLD.presence_type IS NOT NEW.presence_type OR OLD.remote_id IS NOT NEW.remote_id OR OLD.remote_code IS NOT NEW.remote_code OR OLD.source_url IS NOT NEW.source_url OR OLD.availability IS NOT NEW.availability OR OLD.raw_json IS NOT NEW.raw_json OR OLD.last_seen_at IS NOT NEW.last_seen_at OR OLD.last_checked_at IS NOT NEW.last_checked_at OR OLD.created_at IS NOT NEW.created_at OR OLD.updated_at IS NOT NEW.updated_at)
  BEGIN SELECT RAISE(ABORT,'catalog publication is owned by another operation'); END;
 
+CREATE TRIGGER publication_entity_invalidate BEFORE INSERT ON source_catalog_publication_entity
+BEGIN
+ UPDATE source_catalog_publication_entity SET after_translation_id=0,translation_prepared=0,after_location_id=0,media_prepared=0
+ WHERE operation_id=NEW.operation_id AND entity_kind=NEW.entity_kind AND entity_id=NEW.entity_id;
+END;
+
 CREATE TRIGGER publication_external_translation_scope AFTER UPDATE OF source_id,browsable ON content_translation
 WHEN (SELECT operation_id FROM source_catalog_publication_writer WHERE id=1)=0
 BEGIN
+ UPDATE source_catalog_publication_entity SET after_translation_id=0,translation_prepared=0
+ WHERE entity_kind=NEW.entity_kind AND entity_id=NEW.entity_id
+   AND EXISTS(SELECT 1 FROM source_catalog_publication op WHERE op.id=operation_id AND op.state='preparing');
  UPDATE content_translation_publication_before SET source_id=NEW.source_id,browsable=NEW.browsable
  WHERE id=NEW.id AND operation_id IN(SELECT id FROM source_catalog_publication WHERE state='preparing');
 END;

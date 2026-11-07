@@ -43,7 +43,7 @@ export function OpenListScan({ sourceId, onDone }: { sourceId: number; onDone: (
         </p>
       )}
       <FullSourceIndex key={sourceId} sourceId={sourceId} onDone={onDone} />
-      <SourceCatalogExclusions key={"exclusions-" + sourceId} sourceId={sourceId} />
+      <SourceCatalogExclusions key={"exclusions-" + sourceId} sourceId={sourceId} onDone={onDone} />
     </div>
   );
 }

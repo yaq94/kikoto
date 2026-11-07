@@ -50,51 +50,51 @@ func (s *Server) refreshCatalogEntry(ctx context.Context, id int64) (string, err
 	if sourceRoot == "" {
 		sourceRoot = entry.RootPath
 	}
-	files, err := s.openListClient(source).ScanRoot(ctx, sourceRoot)
+	ctx, err = s.catalogFiniteContext(ctx, source.ID)
 	if err != nil {
-		if ctx.Err() == nil {
-			status := catalogFailureStatus(err)
-			if errors.Is(err, openlist.ErrNotFound) {
-				// A 404/410 from the source is a definite answer: the directory
-				// is gone. Reporting it as a transient failure would keep the
-				// card in a retry loop that can never succeed.
-				status = "missing"
-			}
-			if statusErr := s.setCatalogEntryStatus(ctx, entry.ID, status); statusErr != nil {
-				return status, statusErr
-			}
-			return status, err
-		}
 		return "", err
 	}
-	cardFiles := catalogSplitCardFiles(entry.RootPath, entry.SourceRoot, files)
-	playable := false
-	for _, file := range cardFiles {
-		if file.Kind == "audio" {
-			playable = true
-			break
+	listingID, err := s.stageCatalogFiniteListing(ctx, source, sourceRoot)
+	if err != nil {
+		if ctx.Err() != nil {
+			return "", err
 		}
+		status := catalogFailureStatus(err)
+		if errors.Is(err, openlist.ErrNotFound) {
+			status = "missing"
+		}
+		if statusErr := s.setCatalogEntryStatus(ctx, entry.ID, status); statusErr != nil {
+			return status, statusErr
+		}
+		return status, err
 	}
-	if !playable {
-		if err = s.setCatalogEntryStatus(ctx, entry.ID, "unconfirmed_empty"); err != nil {
+	writeCtx, operation, err := s.beginCatalogPublication(ctx, source.ID, "manual:"+entry.RootPath)
+	if err != nil {
+		return "", err
+	}
+	if entry.SourceRoot != "" {
+		writeCtx = context.WithValue(writeCtx, catalogFiniteSelectedEntryKey{}, entry)
+	}
+	err = s.applyCatalogFiniteListing(writeCtx, source, sourceRoot, listingID, operation)
+	if errors.Is(err, errCatalogNoPlayableFiles) {
+		if err = s.setCatalogEntryStatus(writeCtx, entry.ID, "unconfirmed_empty"); err != nil {
+			return "unconfirmed_empty", err
+		}
+		if _, err = s.execCatalogWrite(writeCtx, `UPDATE source_catalog_listing SET state='applied' WHERE id=?`, listingID); err != nil {
+			return "unconfirmed_empty", err
+		}
+		if err = s.cleanupCatalogFiniteTargets(writeCtx, listingID); err != nil {
+			return "unconfirmed_empty", err
+		}
+		if err = s.commitCatalogPublication(writeCtx, operation); err != nil {
 			return "unconfirmed_empty", err
 		}
 		return "unconfirmed_empty", errCatalogNoPlayableFiles
 	}
-	if entry.SourceRoot != "" {
-		// A split card refreshes only its own files; the directory scan above
-		// read the real creator folder to resolve them.
-		writeCtx, publicationID, txErr := s.beginCatalogPublication(ctx, source.ID, "manual:"+entry.RootPath)
-		if txErr != nil {
-			return "", txErr
-		}
-		if _, txErr = s.persistOpenListSnapshot(writeCtx, source.ID, entry.RootPath, entry.SourceRoot, entry.Title, cardFiles); txErr != nil {
-			return "", txErr
-		}
-		if txErr = s.commitCatalogPublication(writeCtx, publicationID); txErr != nil {
-			return "", txErr
-		}
-	} else if _, err = s.persistOpenListRoot(ctx, source, entry.RootPath, files); err != nil {
+	if err != nil {
+		return "", err
+	}
+	if err = s.commitCatalogPublication(writeCtx, operation); err != nil {
 		return "", err
 	}
 	return "available", nil

@@ -10,6 +10,7 @@ ADRs record durable design decisions.
 - [ADR-0006: Catalog remediation and translation consistency](ADR-0006-catalog-remediation-and-translation-consistency.md)
 - [ADR-0007: Source field translation cache](ADR-0007-source-field-translation-cache.md)
 - [ADR-0008: Catalog publication snapshots](ADR-0008-catalog-publication-snapshots.md)
+- [ADR-0009: Catalog grouping checkpoints](ADR-0009-catalog-grouping-checkpoints.md)
 
 ## When To Add An ADR
 

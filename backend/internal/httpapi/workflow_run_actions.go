@@ -202,6 +202,12 @@ func (s *Server) dispatchWorkflowRetry(ctx context.Context, actor currentUser, r
 		}
 		newRunID, err := s.retrySourcePresenceCheck(ctx, runID)
 		return workflowRetryDispatchResult{NewRunID: newRunID}, err
+	case sourceCatalogExclusionWorkerType:
+		if !userHasPermission(actor, "sources:write") {
+			return workflowRetryDispatchResult{}, errWorkflowRetryPermission
+		}
+		err := s.retryCatalogExclusion(ctx, runID)
+		return workflowRetryDispatchResult{NewRunID: runID, ResumedExistingRun: true}, err
 	case sourceCatalogIndexWorkerType:
 		if !userHasPermission(actor, "sources:write") {
 			return workflowRetryDispatchResult{}, errWorkflowRetryPermission

@@ -229,6 +229,10 @@ func (s *Server) startSourceCatalogIndex(w http.ResponseWriter, r *http.Request)
 	}
 	result, err := s.enqueueSourceCatalogIndex(r.Context(), id, request.catalogIndexOptions, request.Force)
 	if err != nil {
+		if errors.Is(err, errCatalogExclusionBusy) {
+			writeAPIError(w, http.StatusConflict, "conflict", err.Error(), true)
+			return
+		}
 		if errors.Is(err, errCatalogSyncRunning) {
 			// A manual refresh requested while a sync holds the writer is
 			// queued once. The scheduler consumes it after that sync settles;
@@ -294,6 +298,9 @@ func (s *Server) enqueueSourceCatalogIndex(ctx context.Context, sourceID int64, 
 }
 
 func (s *Server) enqueueSourceCatalogIndexTx(ctx context.Context, tx *sql.Tx, sourceID int64, options catalogIndexOptions, trigger string, force bool) (catalogIndexQueued, error) {
+	if err := rejectPendingCatalogExclusionTx(ctx, tx, sourceID); err != nil {
+		return catalogIndexQueued{}, err
+	}
 	syncRunning, err := catalogIncrementalSyncRunningTx(ctx, tx, sourceID)
 	if err != nil {
 		return catalogIndexQueued{}, err

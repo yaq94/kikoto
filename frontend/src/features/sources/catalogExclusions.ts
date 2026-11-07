@@ -1,4 +1,7 @@
 import { deleteJSON, getJSON, postJSONBody } from "@/lib/apiTransport";
+import { apiSessionSignal } from "@/lib/apiSession";
+import { combineAbortSignals } from "@/lib/inflightRequests";
+import { workflowApi, type WorkflowRunDetail } from "@/lib/workflowApi";
 
 export type CatalogExclusion = {
   id: number;
@@ -52,7 +55,134 @@ export const catalogExclusionApi = {
   list: (sourceId: number, signal?: AbortSignal) =>
     getJSON<CatalogExclusion[]>(`/api/remote-sources/${sourceId}/catalog/exclusions`, signal),
   create: (sourceId: number, input: CatalogExclusionInput) =>
-    postJSONBody<CatalogExclusion>(`/api/remote-sources/${sourceId}/catalog/exclusions`, input),
+    postJSONBody<CatalogExclusion & { runId: number }>(`/api/remote-sources/${sourceId}/catalog/exclusions`, input),
   remove: (sourceId: number, exclusionId: number) =>
-    deleteJSON<{ ok: boolean; path: string }>(`/api/remote-sources/${sourceId}/catalog/exclusions/${exclusionId}`),
+    deleteJSON<{ ok: boolean; path: string; mode: string; runId: number }>(
+      `/api/remote-sources/${sourceId}/catalog/exclusions/${exclusionId}`,
+    ),
 };
+
+export type CatalogExclusionTask = {
+  runId: number;
+  status: "saved" | "queued" | "running" | "succeeded" | "failed" | "cancelled" | "partial" | "unknown";
+  canRetry: boolean;
+  pauseReason: "low_space" | "source_disabled" | "maintenance" | "";
+};
+
+const exclusionWorkflow = "source_catalog_exclusion";
+
+function belongsToSource(run: WorkflowRunDetail, sourceId: number) {
+  return (
+    run.workflowCode === exclusionWorkflow &&
+    run.nodeRuns.some((node) => {
+      if (node.nodeType !== exclusionWorkflow) return false;
+      try {
+        return JSON.parse(node.inputJson)?.sourceId === sourceId;
+      } catch {
+        return false;
+      }
+    })
+  );
+}
+
+function exclusionTask(run: WorkflowRunDetail): CatalogExclusionTask {
+  const statuses = ["queued", "running", "succeeded", "failed", "cancelled", "partial"];
+  const status = statuses.includes(run.status) ? (run.status as CatalogExclusionTask["status"]) : "unknown";
+  let reason: unknown;
+  try {
+    reason = JSON.parse(run.summaryJson)?.reason;
+  } catch {
+    /* No public pause reason. */
+  }
+  return {
+    runId: run.id,
+    status,
+    canRetry: run.canManage === true && ["failed", "cancelled", "partial"].includes(status),
+    pauseReason:
+      reason === "low_disk_space"
+        ? "low_space"
+        : reason === "source_disabled" || reason === "maintenance"
+          ? reason
+          : "",
+  };
+}
+
+// The Activity list has no source filter. Inspect one bounded page at a time,
+// newest first, and match its public node input instead of a title or path.
+async function recoverExclusionTask(sourceId: number, signal: AbortSignal) {
+  for (let page = 1; ; page++) {
+    const result = await workflowApi.listWorkflowRuns(page, 25, "all", "", exclusionWorkflow, signal);
+    for (const item of result.runs) {
+      const run = await workflowApi.getWorkflowRun(item.id, signal);
+      signal.throwIfAborted();
+      if (belongsToSource(run, sourceId)) return run;
+    }
+    if (result.runs.length === 0 || result.page * result.pageSize >= result.total) return null;
+    await waitForTaskPoll(signal, 2000);
+  }
+}
+
+/** Observe the saved operation; only its succeeded status confirms publication. */
+export async function watchCatalogExclusionTask(options: {
+  sourceId: number;
+  runId: number | null;
+  signal: AbortSignal;
+  onTask: (task: CatalogExclusionTask | null) => void;
+  onComplete: () => void;
+  onError: () => void;
+}) {
+  const lifetime = combineAbortSignals(options.signal, apiSessionSignal());
+  const { signal } = lifetime;
+  let runId = options.runId;
+  let failures = 0;
+  let paused = false;
+  try {
+    while (!signal.aborted) {
+      try {
+        const run = runId
+          ? await workflowApi.getWorkflowRun(runId, signal)
+          : await recoverExclusionTask(options.sourceId, signal);
+        signal.throwIfAborted();
+        if (!run) {
+          options.onTask(null);
+          return;
+        }
+        if (!belongsToSource(run, options.sourceId)) throw new Error("Task source mismatch");
+        const recoveredSuccess = !runId && run.status === "succeeded";
+        runId = run.id;
+        failures = 0;
+        const task = exclusionTask(run);
+        paused = Boolean(task.pauseReason);
+        options.onTask(recoveredSuccess ? null : task);
+        if (run.status === "succeeded") options.onComplete();
+        if (run.status !== "queued" && run.status !== "running") return;
+      } catch {
+        if (signal.aborted) return;
+        options.onError();
+        if (++failures >= 3) return;
+      }
+      // Reads are strictly sequential. Hidden pages and deferred work poll less often.
+      const hidden = typeof document !== "undefined" && document.hidden;
+      await waitForTaskPoll(signal, failures ? Math.min(30000, 2000 * 2 ** failures) : hidden || paused ? 15000 : 2000);
+    }
+  } catch {
+    if (!signal.aborted) options.onError();
+  } finally {
+    lifetime.dispose();
+  }
+}
+
+function waitForTaskPoll(signal: AbortSignal, ms: number) {
+  return new Promise<void>((resolve, reject) => {
+    signal.throwIfAborted();
+    const cancel = () => {
+      clearTimeout(timer);
+      reject(signal.reason);
+    };
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", cancel);
+      resolve();
+    }, ms);
+    signal.addEventListener("abort", cancel, { once: true });
+  });
+}

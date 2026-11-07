@@ -47,10 +47,25 @@ CREATE TABLE source_catalog_publication_entity (
  entity_kind TEXT NOT NULL,
  entity_id INTEGER NOT NULL,
  after_translation_id INTEGER NOT NULL DEFAULT 0,
+ translation_prepared INTEGER NOT NULL DEFAULT 0,
  after_location_id INTEGER NOT NULL DEFAULT 0,
  media_prepared INTEGER NOT NULL DEFAULT 0,
  PRIMARY KEY(operation_id,entity_kind,entity_id)
 ) WITHOUT ROWID;
+CREATE INDEX source_catalog_publication_entity_translation_pending
+ ON source_catalog_publication_entity(operation_id,entity_kind,entity_id) WHERE translation_prepared=0;
+CREATE INDEX source_catalog_publication_entity_media_pending
+ ON source_catalog_publication_entity(operation_id,entity_kind,entity_id) WHERE media_prepared=0;
+CREATE INDEX source_catalog_publication_entity_identity
+ ON source_catalog_publication_entity(entity_kind,entity_id,operation_id);
+-- Source mutations invalidate existing ownership, including keys prepared
+-- before a failed marker. Run before INSERT's conflict handling so ON CONFLICT
+-- DO NOTHING cannot discard an invalidation or leave a stale keyset cursor.
+CREATE TRIGGER publication_entity_invalidate BEFORE INSERT ON source_catalog_publication_entity
+BEGIN
+ UPDATE source_catalog_publication_entity SET after_translation_id=0,translation_prepared=0,after_location_id=0,media_prepared=0
+ WHERE operation_id=NEW.operation_id AND entity_kind=NEW.entity_kind AND entity_id=NEW.entity_id;
+END;
 CREATE TRIGGER source_catalog_publication_commit AFTER UPDATE OF state ON source_catalog_publication
 WHEN OLD.state='preparing' AND NEW.state='committed'
 BEGIN
@@ -1062,6 +1077,9 @@ CREATE TRIGGER publication_before_content_translation_delete BEFORE DELETE ON co
 CREATE TRIGGER publication_external_translation_scope AFTER UPDATE OF source_id,browsable ON content_translation
 WHEN (SELECT operation_id FROM source_catalog_publication_writer WHERE id=1)=0
 BEGIN
+ UPDATE source_catalog_publication_entity SET after_translation_id=0,translation_prepared=0
+ WHERE entity_kind=NEW.entity_kind AND entity_id=NEW.entity_id
+   AND EXISTS(SELECT 1 FROM source_catalog_publication op WHERE op.id=operation_id AND op.state='preparing');
  UPDATE content_translation_publication_before SET source_id=NEW.source_id,browsable=NEW.browsable
  WHERE id=NEW.id AND operation_id IN(SELECT id FROM source_catalog_publication WHERE state='preparing');
 END;

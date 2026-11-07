@@ -708,11 +708,12 @@ type catalogSplitTarget struct {
 // that group. Everything else stays on the parent card so a refresh or a
 // generation change cannot silently drop it.
 type catalogSplitPlan struct {
-	root     string
-	grouping catalogLooseGrouping
-	titles   map[string]string
-	direct   map[string]catalogSplitTarget
-	byKey    map[string]catalogSplitTarget
+	groupingID int64
+	root       string
+	grouping   catalogLooseGrouping
+	titles     map[string]string
+	direct     map[string]catalogSplitTarget
+	byKey      map[string]catalogSplitTarget
 }
 
 func newCatalogSplitPlan(root string, names []string, mode string) catalogSplitPlan {
@@ -888,6 +889,15 @@ func decideCatalogWorkSplitTx(ctx context.Context, tx *sql.Tx, sourceID, generat
 			if duplicate {
 				_, execErr := tx.ExecContext(ctx, `UPDATE source_catalog_directory SET work_split=? WHERE file_source_id=? AND path=? AND generation=?`, catalogWorkSplitSingle, sourceID, directoryPath, generation)
 				return execErr
+			}
+			var indexedMode string
+			groupErr := tx.QueryRowContext(ctx, `SELECT mode FROM source_catalog_grouping WHERE file_source_id=? AND root_path=? AND version=? AND phase='ready'`, sourceID, directoryPath, (catalogGroupingIndexInput{Generation: generation, Revision: revision}).version()).Scan(&indexedMode)
+			if groupErr == nil {
+				_, execErr := tx.ExecContext(ctx, `UPDATE source_catalog_directory SET work_split=? WHERE file_source_id=? AND path=? AND generation=?`, indexedMode, sourceID, directoryPath, generation)
+				return execErr
+			}
+			if !errors.Is(groupErr, sql.ErrNoRows) {
+				return groupErr
 			}
 			rows, err := tx.QueryContext(ctx, `SELECT name FROM source_catalog_observation WHERE file_source_id=? AND directory_path=? AND revision=? AND kind='audio' ORDER BY name`, sourceID, directoryPath, revision)
 			if err != nil {
@@ -1571,7 +1581,13 @@ func catalogDuplicateCardRetireTargetTx(ctx context.Context, tx *sql.Tx, sourceI
 	if err != nil {
 		return 0, err
 	}
-	if len(decision.Unique) > 0 {
+	if decision.Comparison > 0 && decision.hasUnique() {
+		var uncovered bool
+		err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM source_catalog_duplicate_comparison c JOIN source_catalog_grouping g ON g.id=c.child_grouping JOIN source_catalog_grouping_name n ON n.grouping_id=g.id WHERE c.id=? AND NOT EXISTS(SELECT 1 FROM source_catalog_duplicate_match m WHERE m.comparison_id=c.id AND m.child_name=n.name) AND NOT EXISTS(SELECT 1 FROM source_catalog_file f WHERE f.catalog_entry_id=? AND f.relative_path=substr(g.root_path,length(?)+2)||'/'||n.name AND f.kind='audio' AND f.observed_generation=? AND ((n.content_hash<>'' AND f.content_hash=n.content_hash) OR (n.content_hash='' AND f.size_bytes=n.size_bytes))))`, decision.Comparison, targetID, parent, generation).Scan(&uncovered)
+		if err != nil || uncovered {
+			return 0, err
+		}
+	} else if len(decision.Unique) > 0 {
 		covered, err := catalogDuplicateUniqueCoveredByTargetTx(ctx, tx, targetID, parent, generation, decision.Unique)
 		if err != nil || !covered {
 			return 0, err
@@ -1801,10 +1817,9 @@ func (s *Server) catalogSnapshotSplitMode(ctx context.Context, sourceID int64, r
 	return catalogWorkSplitMode(files), nil
 }
 
-// catalogSplitPlanForRoot loads the split plan for one indexed root. Direct
-// audio names are read once per publish batch, so a batch boundary cannot
-// change a group title. The plan is the same one a finite scan and a card
-// refresh use; only its root-specific evidence differs.
+// catalogSplitPlanForRoot retrieves completed persistent evidence for a large
+// root. Small roots retain the bounded in-memory partitioner. Both preserve
+// stable group titles across publish batches, finite scans and card refreshes.
 func (s *Server) catalogSplitPlanForRoot(ctx context.Context, tx *sql.Tx, sourceID, generation int64, root string) (catalogSplitPlan, bool, error) {
 	var pinned int
 	if err := tx.QueryRowContext(ctx, catalogSplitPinnedSQL,
@@ -1824,6 +1839,16 @@ func (s *Server) catalogSplitPlanForRoot(ctx context.Context, tx *sql.Tx, source
 	}
 	if mode != catalogWorkSplitPrefix && mode != catalogWorkSplitFile && mode != catalogWorkSplitEpisode {
 		return catalogSplitPlan{}, false, nil
+	}
+	var groupingID int64
+	groupErr := tx.QueryRowContext(ctx, `SELECT g.id FROM source_catalog_grouping g JOIN source_catalog_directory d ON d.file_source_id=g.file_source_id AND d.path=g.root_path WHERE g.file_source_id=? AND g.root_path=? AND g.version=('observation:'||d.generation||':'||d.revision) AND g.phase='ready'`, sourceID, root).Scan(&groupingID)
+	if groupErr == nil {
+		plan := catalogSplitPlan{root: root, groupingID: groupingID}
+		needed, readErr := plan.indexedParentNeeded(ctx, tx, sourceID, generation)
+		return plan, needed, readErr
+	}
+	if !errors.Is(groupErr, sql.ErrNoRows) {
+		return catalogSplitPlan{}, false, groupErr
 	}
 	rows, err := tx.QueryContext(ctx, `SELECT o.name FROM source_catalog_observation o
 		JOIN source_catalog_directory d ON d.file_source_id=o.file_source_id AND d.path=o.directory_path

@@ -39,7 +39,7 @@ func TestCatalogPublicationMigration107UpgradeRestartAndRestore(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if err = Migrate(db, completeMigrationDir(t)); err != nil {
+				if err = Migrate(db, copyNumberedMigrationsThrough(t, filepath.Join("..", "..", "migrations"), 107)); err != nil {
 					t.Fatal(err)
 				}
 				assertSchemaVersion(t, db, 107)
@@ -51,7 +51,7 @@ func TestCatalogPublicationMigration107UpgradeRestartAndRestore(t *testing.T) {
 				if err = db.QueryRow(`SELECT count(*) FROM source_catalog_file_publication_before`).Scan(&versions); err != nil || versions != 0 {
 					t.Fatalf("migration copied baseline: %d %v", versions, err)
 				}
-				if err = Migrate(db, completeMigrationDir(t)); err != nil {
+				if err = Migrate(db, copyNumberedMigrationsThrough(t, filepath.Join("..", "..", "migrations"), 107)); err != nil {
 					t.Fatal(err)
 				}
 				assertMigrationIntegrity(t, db)

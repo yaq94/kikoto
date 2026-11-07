@@ -25,6 +25,16 @@ type catalogRootAdmission struct {
 // with 87k rows costs the same as one with 5001.
 func catalogRootAdmissionTx(ctx context.Context, tx *sql.Tx, sourceID, generation int64, root string) (catalogRootAdmission, error) {
 	var adm catalogRootAdmission
+	// A split container is not the admission unit. Each derived card is checked
+	// against its own file set before the publication marker; counting the creator's whole
+	// tree here would reject thousands of individually valid recordings.
+	var split bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM source_catalog_directory WHERE file_source_id=? AND generation=? AND path=? AND work_split IN ('prefix','file','episode'))`, sourceID, generation, root).Scan(&split); err != nil {
+		return adm, err
+	}
+	if split {
+		return adm, nil
+	}
 	err := tx.QueryRowContext(ctx, fmt.Sprintf(`SELECT
 		(SELECT count(*) FROM (
 			SELECT 1 FROM source_catalog_directory d

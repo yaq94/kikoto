@@ -216,7 +216,7 @@ func (s *Server) runNextQueuedWorkflowJobStep(ctx context.Context) (bool, error)
 // keeps the coordinator tick, which also bounds how often a failing source can
 // be retried.
 func (s *Server) workflowJobContinuesImmediately(ctx context.Context, job workflowJobRecord) bool {
-	if job.WorkerType != sourceCatalogIndexWorkerType {
+	if job.WorkerType != sourceCatalogIndexWorkerType && job.WorkerType != sourceCatalogExclusionWorkerType {
 		return false
 	}
 	// Only a job that is queued and available right now may be claimed again.
@@ -227,7 +227,7 @@ func (s *Server) workflowJobContinuesImmediately(ctx context.Context, job workfl
 	if err := s.db.QueryRowContext(context.WithoutCancel(ctx), `SELECT job.status,run.status FROM workflow_job job
 		JOIN workflow_run run ON run.id=job.workflow_run_id
 		WHERE job.id=? AND job.worker_type=? AND (job.available_at IS NULL OR job.available_at<=CURRENT_TIMESTAMP)`,
-		job.ID, sourceCatalogIndexWorkerType).Scan(&status, &runStatus); err != nil {
+		job.ID, job.WorkerType).Scan(&status, &runStatus); err != nil {
 		return false
 	}
 	return status == "queued" && runStatus == "queued"
@@ -244,30 +244,31 @@ func (s *Server) executeClaimedWorkflowJob(ctx context.Context, job workflowJobR
 	}()
 	ctx = metasync.WithWorkflowRun(ctx, job.RunID)
 	executors := map[string]func(context.Context, workflowJobRecord) error{
-		"remote_source_track":         s.executeRemoteWorkTrackJob,
-		"remote_bulk_action":          s.executeRemoteBulkActionJob,
-		"remote_work_fetch":           s.executeRemoteWorkFetchJob,
-		"remote_media_cache":          s.executeRemoteMediaCacheJob,
-		"remote_popular_collection":   s.executeRemotePopularCollectionJob,
-		"dlsite_popular_collection":   s.executeDLsitePopularCollectionJob,
-		"local_library_scan":          s.executeLocalScanJob,
-		localMediaIndexWorkerType:     s.executeLocalMediaIndexJob,
-		sourcePresenceCheckWorkerType: s.executeSourcePresenceCheckJob,
-		sourceCatalogIndexWorkerType:  s.executeSourceCatalogIndexJob,
-		"metadata_sync":               s.executeDLsiteMetadataSyncJob,
-		"metadata_family_sync":        s.executeWorkMetadataSyncJob,
-		genreNameWorkerType:           s.executeGenreNameLearningJob,
-		"media_cache_limit_cleanup":   s.executeMediaCacheLimitCleanupJob,
-		"media_cache_cleanup":         s.executeMediaCacheCleanupJob,
-		"local_media_delete":          s.executeLocalMediaDeleteJob,
-		"local_location_cleanup":      s.executeLocalLocationCleanupJob,
-		"media_location_cleanup":      s.executeMediaLocationCleanupJob,
-		"cache_orphan_cleanup":        s.executeCacheOrphanCleanupJob,
-		"unlinked_work_source_check":  s.executeUnlinkedWorkSourceCheckJob,
-		"custom_workflow":             s.executeWorkflowGraphJob,
-		"availability_watch":          s.executeAvailabilityWatchJob,
-		databaseOptimizeWorkerType:    s.executeDatabaseOptimizeJob,
-		databaseBackupWorkerType:      s.executeDatabaseBackupJob,
+		"remote_source_track":            s.executeRemoteWorkTrackJob,
+		"remote_bulk_action":             s.executeRemoteBulkActionJob,
+		"remote_work_fetch":              s.executeRemoteWorkFetchJob,
+		"remote_media_cache":             s.executeRemoteMediaCacheJob,
+		"remote_popular_collection":      s.executeRemotePopularCollectionJob,
+		"dlsite_popular_collection":      s.executeDLsitePopularCollectionJob,
+		"local_library_scan":             s.executeLocalScanJob,
+		localMediaIndexWorkerType:        s.executeLocalMediaIndexJob,
+		sourcePresenceCheckWorkerType:    s.executeSourcePresenceCheckJob,
+		sourceCatalogIndexWorkerType:     s.executeSourceCatalogIndexJob,
+		sourceCatalogExclusionWorkerType: s.executeSourceCatalogExclusionJob,
+		"metadata_sync":                  s.executeDLsiteMetadataSyncJob,
+		"metadata_family_sync":           s.executeWorkMetadataSyncJob,
+		genreNameWorkerType:              s.executeGenreNameLearningJob,
+		"media_cache_limit_cleanup":      s.executeMediaCacheLimitCleanupJob,
+		"media_cache_cleanup":            s.executeMediaCacheCleanupJob,
+		"local_media_delete":             s.executeLocalMediaDeleteJob,
+		"local_location_cleanup":         s.executeLocalLocationCleanupJob,
+		"media_location_cleanup":         s.executeMediaLocationCleanupJob,
+		"cache_orphan_cleanup":           s.executeCacheOrphanCleanupJob,
+		"unlinked_work_source_check":     s.executeUnlinkedWorkSourceCheckJob,
+		"custom_workflow":                s.executeWorkflowGraphJob,
+		"availability_watch":             s.executeAvailabilityWatchJob,
+		databaseOptimizeWorkerType:       s.executeDatabaseOptimizeJob,
+		databaseBackupWorkerType:         s.executeDatabaseBackupJob,
 	}
 	executor := executors[job.WorkerType]
 	if executor != nil {

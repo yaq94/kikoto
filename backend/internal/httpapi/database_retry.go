@@ -51,6 +51,12 @@ func beginTxWithDatabaseBusyRetry(ctx context.Context, db *sql.DB) (*catalogWrit
 			return nil, nil, err
 		}
 	}
+	if check, ok := ctx.Value(catalogExclusionLeaseKey{}).(func(*sql.Tx) error); ok && check != nil {
+		if err = check(tx.Tx); err != nil {
+			release()
+			return nil, nil, err
+		}
+	}
 	observe, _ := ctx.Value(catalogWriteTimingKey{}).(func(time.Duration))
 	wrapped := &catalogWriteTx{BoundedTx: tx, publication: id > 0, ctx: ctx, started: started, observe: observe}
 	return wrapped, func() { release(); wrapped.recordDuration() }, nil
