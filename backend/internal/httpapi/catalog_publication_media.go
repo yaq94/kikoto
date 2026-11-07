@@ -26,9 +26,10 @@ func (s *Server) prepareCatalogPublicationMedia(ctx context.Context, operation i
 			return err
 		}
 		rows, err := tx.QueryContext(ctx, `SELECT l.id,CASE WHEN e.id IS NULL OR e.file_source_id IS NULL OR e.availability_status='missing' THEN 'unavailable'
-		 WHEN e.availability_status='available' AND EXISTS(SELECT 1 FROM source_catalog_file f WHERE f.catalog_entry_id=e.id AND f.kind='audio' AND m.fingerprint='catalog:'||e.id||':'||f.relative_path) THEN 'available' ELSE l.availability END
+		 WHEN e.availability_status='available' THEN CASE WHEN EXISTS(SELECT 1 FROM source_catalog_file f WHERE f.catalog_entry_id=e.id AND f.kind='audio' AND m.fingerprint='catalog:'||e.id||':'||f.relative_path) THEN 'available' ELSE 'unavailable' END ELSE l.availability END
 		 FROM media_item m JOIN media_file_location l ON l.media_item_id=m.id LEFT JOIN source_catalog_entry e ON e.id=?
-		 WHERE m.fingerprint>=('catalog:'||?||':') AND m.fingerprint<('catalog:'||?||';') AND l.location_type='catalog_stream' AND l.id>? ORDER BY l.id LIMIT 64`, entry, entry, entry, after)
+		 WHERE m.fingerprint>=('catalog:'||?||':') AND m.fingerprint<('catalog:'||?||';') AND l.location_type='catalog_stream'
+		 AND l.file_source_id=(SELECT file_source_id FROM source_catalog_publication WHERE id=?) AND l.id>? ORDER BY l.id LIMIT 64`, entry, entry, entry, operation, after)
 		if err != nil {
 			release()
 			return err

@@ -148,21 +148,36 @@ func (s *Server) beginCatalogPublication(ctx context.Context, sourceID int64, ow
 }
 
 func (s *Server) commitCatalogPublication(ctx context.Context, id int64) error {
-	if err := s.prepareCatalogPublicationRetirements(ctx, id); err != nil {
-		return err
+	for {
+		if err := s.prepareCatalogPublicationRetirements(ctx, id); err != nil {
+			return err
+		}
+		if err := s.prepareCatalogPublicationAdmissions(ctx, id); err != nil {
+			return err
+		}
+		if err := s.prepareCatalogPublicationMedia(ctx, id); err != nil {
+			return err
+		}
+		committed, err := s.commitCatalogPublicationTranslations(ctx, id)
+		if err != nil {
+			return err
+		}
+		if committed {
+			return s.cleanupCatalogPublications(ctx)
+		}
 	}
-	if err := s.prepareCatalogPublicationMedia(ctx, id); err != nil {
-		return err
-	}
-	// Every derived admission and translation scope is staged before the marker.
-	// Both loops are bounded and share the operation's resumable before-images.
+}
+
+func (s *Server) prepareCatalogPublicationAdmissions(ctx context.Context, id int64) error {
+	// Media preparation follows admission. Completed media keys need no admission
+	// pass on a translation-only retry; source mutations reset media_prepared.
 	var after int64
 	for {
 		tx, release, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
 		if err != nil {
 			return err
 		}
-		rows, err := tx.QueryContext(ctx, `SELECT entity_id FROM source_catalog_publication_entity dirty WHERE operation_id=? AND entity_kind='entry' AND entity_id>?
+		rows, err := tx.QueryContext(ctx, `SELECT entity_id FROM source_catalog_publication_entity dirty WHERE operation_id=? AND entity_kind='entry' AND media_prepared=0 AND entity_id>?
 			AND EXISTS(SELECT 1 FROM source_catalog_entry e WHERE e.id=dirty.entity_id) ORDER BY entity_id LIMIT 64`, id, after)
 		if err != nil {
 			release()
@@ -201,26 +216,44 @@ func (s *Server) commitCatalogPublication(ctx context.Context, id int64) error {
 		}
 		after = ids[len(ids)-1]
 	}
+	return nil
+}
+
+// Keep entity ownership until cleanup so late translation writes can invalidate
+// even an already prepared entity. The empty-queue check and marker share the
+// write transaction: no external scope refresh can slip between them.
+func (s *Server) commitCatalogPublicationTranslations(ctx context.Context, id int64) (bool, error) {
 	for {
 		tx, release, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
 		if err != nil {
-			return err
+			return false, err
 		}
 		var kind string
 		var entityID, cursor int64
-		err = tx.QueryRowContext(ctx, `SELECT entity_kind,entity_id,after_translation_id FROM source_catalog_publication_entity WHERE operation_id=? ORDER BY entity_kind,entity_id LIMIT 1`, id).Scan(&kind, &entityID, &cursor)
+		err = tx.QueryRowContext(ctx, `SELECT entity_kind,entity_id,after_translation_id FROM source_catalog_publication_entity WHERE operation_id=? AND translation_prepared=0 ORDER BY entity_kind,entity_id LIMIT 1`, id).Scan(&kind, &entityID, &cursor)
 		if errors.Is(err, sql.ErrNoRows) {
+			// Source writes can arrive while translation batches are preparing.
+			// Retry admission/media preparation before publishing those keys.
+			var pending bool
+			err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM source_catalog_publication_entity WHERE operation_id=? AND entity_kind='retired_files')
+				OR EXISTS(SELECT 1 FROM source_catalog_publication_entity WHERE operation_id=? AND entity_kind='entry' AND media_prepared=0)`, id, id).Scan(&pending)
+			if err == nil && !pending {
+				_, err = tx.ExecContext(ctx, `UPDATE source_catalog_publication SET state='committed' WHERE id=? AND state='preparing'`, id)
+				if err == nil {
+					err = tx.Commit()
+				}
+			}
 			release()
-			break
+			return !pending && err == nil, err
 		}
 		if err != nil {
 			release()
-			return err
+			return false, err
 		}
 		rows, err := tx.QueryContext(ctx, `SELECT id FROM content_translation WHERE entity_kind=? AND entity_id=? AND id>? ORDER BY id LIMIT 64`, kind, entityID, cursor)
 		if err != nil {
 			release()
-			return err
+			return false, err
 		}
 		ids := []int64{}
 		for rows.Next() {
@@ -236,7 +269,7 @@ func (s *Server) commitCatalogPublication(ctx context.Context, id int64) error {
 		_ = rows.Close()
 		if err != nil {
 			release()
-			return err
+			return false, err
 		}
 		for _, row := range ids {
 			if _, err = tx.ExecContext(ctx, `UPDATE content_translation SET (source_id,browsable)=(SELECT source_id,browsable FROM content_translation_scope_live WHERE translation_id=content_translation.id) WHERE id=?`, row); err != nil {
@@ -245,7 +278,7 @@ func (s *Server) commitCatalogPublication(ctx context.Context, id int64) error {
 		}
 		if err == nil {
 			if len(ids) < 64 {
-				_, err = tx.ExecContext(ctx, `DELETE FROM source_catalog_publication_entity WHERE operation_id=? AND entity_kind=? AND entity_id=?`, id, kind, entityID)
+				_, err = tx.ExecContext(ctx, `UPDATE source_catalog_publication_entity SET translation_prepared=1 WHERE operation_id=? AND entity_kind=? AND entity_id=?`, id, kind, entityID)
 			} else {
 				_, err = tx.ExecContext(ctx, `UPDATE source_catalog_publication_entity SET after_translation_id=? WHERE operation_id=? AND entity_kind=? AND entity_id=?`, ids[len(ids)-1], id, kind, entityID)
 			}
@@ -255,22 +288,9 @@ func (s *Server) commitCatalogPublication(ctx context.Context, id int64) error {
 		}
 		release()
 		if err != nil {
-			return err
+			return false, err
 		}
 	}
-	tx, release, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
-	if err != nil {
-		return err
-	}
-	defer release()
-	_, err = tx.ExecContext(ctx, `UPDATE source_catalog_publication SET state='committed' WHERE id=? AND state='preparing'`, id)
-	if err != nil {
-		return err
-	}
-	if err = tx.Commit(); err != nil {
-		return err
-	}
-	return s.cleanupCatalogPublications(ctx)
 }
 
 // Public queries read the same source-owned projection; identity and user state
@@ -440,6 +460,31 @@ func (s *Server) cleanupCatalogPublications(ctx context.Context) error {
 			return err
 		}
 		result, err := tx.ExecContext(ctx, `DELETE FROM source_catalog_listing WHERE id IN (SELECT id FROM source_catalog_listing l WHERE state IN ('applied','invalid') AND NOT EXISTS(SELECT 1 FROM source_catalog_listing_item i WHERE i.listing_id=l.id) AND NOT EXISTS(SELECT 1 FROM source_catalog_publication pending WHERE pending.file_source_id=l.file_source_id AND pending.state='preparing') LIMIT 64)`)
+		var n int64
+		if err == nil {
+			n, err = result.RowsAffected()
+		}
+		if err == nil {
+			err = tx.Commit()
+		}
+		release()
+		if err != nil {
+			return err
+		}
+		if n < 64 {
+			break
+		}
+		if err = pauseCatalogWriter(ctx); err != nil {
+			return err
+		}
+	}
+	for {
+		tx, release, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
+		if err != nil {
+			return err
+		}
+		result, err := tx.ExecContext(ctx, `DELETE FROM source_catalog_publication_entity WHERE (operation_id,entity_kind,entity_id) IN
+			(SELECT e.operation_id,e.entity_kind,e.entity_id FROM source_catalog_publication_entity e JOIN source_catalog_publication op ON op.id=e.operation_id WHERE op.state='committed' LIMIT 64)`)
 		var n int64
 		if err == nil {
 			n, err = result.RowsAffected()
