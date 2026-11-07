@@ -39,6 +39,14 @@ Cancellation, low disk space and a failed transaction preserve completed
 checkpoints. A retry opens the same listing and publication operation. Source
 configuration and permissions remain live.
 
+Split-card retirement stores an operation-owned root queue and commits its
+entry-id cursor with each bounded batch. The publisher records roots without
+materializing the complete current or obsolete card set. Full-index orphan
+discovery consumes a bounded page of actual cards, including protected ones,
+and revisits skipped roots when a failed directory is re-observed. Retirement
+resolves replacement evidence before obsolete-file cleanup; the shared marker
+keeps every preparation batch invisible until the operation is complete.
+
 Obsolete grouping evidence is deleted in batches. The current revision and
 finite groupings whose listing still exists remain available to their owners.
 Finite target and queue rows are drained before listing-header reclamation so

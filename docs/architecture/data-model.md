@@ -29,11 +29,12 @@ card, `prefix` and `file` split its direct audio by release prefix or base
 title, `episode` creates independent episode cards, and `duplicate` marks a
 container that repeats its parent's audio. The decision is recomputed for each
 completed revision rather than frozen at the first observation. A new
-generation retires split cards it did not republish:
-their file rows are deleted and `file_source_id` and `relocated_to_id` are
-cleared, while the entry id stays resolvable for personal records. A card with
-a `work_id`, a `catalog_series_member` row, or another entry's
-`relocated_to_id` target keeps its identity and is left for explicit review.
+generation retires split cards it did not republish in bounded batches:
+their file rows are deleted and `file_source_id` is cleared, while the entry id
+stays resolvable. `relocated_to_id` names the uniquely identified replacement
+when one exists. A card with a `work_id` or a `catalog_series_member` row keeps
+its identity for explicit review. Incoming aliases also retain their target
+when no unique replacement can preserve their references.
 See [OpenList catalog boundary](../development/openlist.md) for admission,
 registration, and the separation between identity and source location.
 
@@ -90,7 +91,14 @@ each SQLite write transaction and cleared before commit.
 directory pages with generation, observed revision, expected total, next page
 and bounded-apply cursors. A page and its workflow checkpoint share a commit.
 `source_catalog_publication_entity` identifies affected admission and translation
-scope keys for bounded preparation. See
+scope keys for bounded preparation. `source_catalog_split_retirement` stores
+an operation's affected roots, generation and consumed entry-id cursor. Each
+batch examines at most 64 cards; the full-index orphan pass examines
+at most 100 cards, including protected cards. Root completeness and identity
+protection remain per-card decisions. The marker waits until queued roots and
+their deferred alias/file work finish. A publication-only retry preserves the
+orphan cursor; re-observing failed or empty directories revisits skipped roots.
+See
 [Catalog publication snapshots](../decisions/ADR-0008-catalog-publication-snapshots.md)
 for ownership, conflicting writes and read transaction boundaries.
 

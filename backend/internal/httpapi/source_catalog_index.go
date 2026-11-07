@@ -331,10 +331,25 @@ func (s *Server) enqueueSourceCatalogIndexTx(ctx context.Context, tx *sql.Tx, so
 	if runID > 0 && ((status != "succeeded" && !force) || preparing) {
 		// Resume only unresolved directories. Already published identities and
 		// personal state are independent of this staging/checkpoint data.
+		reobserving := false
 		for _, q := range []string{
 			`UPDATE source_catalog_directory SET status='pending',next_page=1,expected_total=-1,children_cursor='',revision=revision+1,error_code='',attempts=0 WHERE file_source_id=? AND generation=(SELECT workflow_run_id FROM source_catalog_scan WHERE file_source_id=?) AND (status IN ('failed','restricted','empty') OR (status='pending' AND (SELECT json_extract(options_json,'$.pageSize') FROM source_catalog_scan WHERE file_source_id=source_catalog_directory.file_source_id)<>?))`,
 		} {
-			if _, err = tx.ExecContext(ctx, q, sourceID, sourceID, options.PageSize); err != nil {
+			result, resetErr := tx.ExecContext(ctx, q, sourceID, sourceID, options.PageSize)
+			if resetErr != nil {
+				return catalogIndexQueued{}, resetErr
+			}
+			changed, resetErr := result.RowsAffected()
+			if resetErr != nil {
+				return catalogIndexQueued{}, resetErr
+			}
+			reobserving = reobserving || changed > 0
+		}
+		// Only newly observed ranges can change the orphan decisions already
+		// consumed. A pure publication retry keeps the protected-card prefix
+		// checkpoint; failed/empty directory retries revisit skipped roots.
+		if reobserving {
+			if _, err = tx.ExecContext(ctx, `UPDATE source_catalog_scan SET orphan_cleanup_cursor=0 WHERE file_source_id=?`, sourceID); err != nil {
 				return catalogIndexQueued{}, err
 			}
 		}
@@ -344,7 +359,7 @@ func (s *Server) enqueueSourceCatalogIndexTx(ctx context.Context, tx *sql.Tx, so
 		// generation; both must start over or those entries keep their previous
 		// status and older file rows forever. The sweep is idempotent: it only
 		// rewrites status and deletes rows an older generation left.
-		if _, err = tx.ExecContext(ctx, `UPDATE source_catalog_scan SET pause_reason='',options_json=?,lifecycle_stage='observe',lifecycle_cursor=0,publish_cleanup_cursor=0,orphan_cleanup_cursor=0,updated_at=CURRENT_TIMESTAMP WHERE file_source_id=?`, mustJSON(options), sourceID); err != nil {
+		if _, err = tx.ExecContext(ctx, `UPDATE source_catalog_scan SET pause_reason='',options_json=?,lifecycle_stage='observe',lifecycle_cursor=0,publish_cleanup_cursor=0,updated_at=CURRENT_TIMESTAMP WHERE file_source_id=?`, mustJSON(options), sourceID); err != nil {
 			return catalogIndexQueued{}, err
 		}
 		// The status reset above and the revision bumps can change every

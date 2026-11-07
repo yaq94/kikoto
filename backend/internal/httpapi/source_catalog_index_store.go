@@ -974,7 +974,6 @@ func (s *Server) publishCatalogBatch(ctx context.Context, job workflowJobRecord,
 	defer func() { _ = fileStatement.Close() }()
 	splitPlans := map[string]catalogSplitPlan{}
 	parentNeeded := map[string]bool{}
-	splitRoots := map[string]bool{}
 	for _, p := range items {
 		if p.split == catalogWorkSplitPrefix || p.split == catalogWorkSplitFile || p.split == catalogWorkSplitEpisode {
 			if _, ok := splitPlans[p.root]; ok {
@@ -986,7 +985,6 @@ func (s *Server) publishCatalogBatch(ctx context.Context, job workflowJobRecord,
 			}
 			splitPlans[p.root] = plan
 			parentNeeded[p.root] = needed
-			splitRoots[p.root] = true
 		}
 	}
 	firstSplit := map[string]int64{}
@@ -1230,48 +1228,19 @@ func (s *Server) publishCatalogBatch(ctx context.Context, job workflowJobRecord,
 			return 0, err
 		}
 	}
-	for root := range splitRoots {
-		if !publishIdle {
-			break
-		}
-		// A root that no longer splits (or now publishes fewer cards) must not
-		// leave the cards of an earlier generation visible. Cards that still
-		// belong to this generation, or carry a work/series/relocation, stay.
-		// The root must also be fully observed: an older card is the only
-		// playable copy while a child is still failed or unconfirmed.
-		if incomplete, err := catalogRootIncomplete(ctx, tx.Tx, sourceID, job.RunID, root); err != nil {
-			return 0, err
-		} else if incomplete {
+	// Queue every affected root while its observations are committed. Retirement
+	// reads the finished generation before the publication marker, in bounded
+	// transactions independent of this file batch.
+	queuedRoots := map[string]bool{}
+	for _, p := range items {
+		if queuedRoots[p.root] {
 			continue
 		}
-		keep := map[int64]bool{}
-		rows, err := tx.QueryContext(ctx, `SELECT id FROM source_catalog_entry
-			WHERE file_source_id=? AND source_root=? AND last_seen_generation=?`,
-			sourceID, root, job.RunID)
-		if err != nil {
-			return 0, err
-		}
-		for rows.Next() {
-			var id int64
-			if err = rows.Scan(&id); err != nil {
-				break
-			}
-			keep[id] = true
-		}
-		if err == nil {
-			err = rows.Err()
-		}
-		_ = rows.Close()
-		if err != nil {
-			return 0, err
-		}
-		retireRan = true
-		if err = retireStaleSplitCardsTx(ctx, tx.Tx, sourceID, job.RunID, root, keep); err != nil {
+		queuedRoots[p.root] = true
+		if err = queueCatalogSplitRetirementTx(ctx, tx.Tx, sourceID, job.RunID, p.root); err != nil {
 			return 0, err
 		}
 	}
-	// A root that is no longer split has a single card at parentRoot. Retire
-	// split cards from older generations that pointed at the same source root.
 	if !publishIdle {
 		// Format and split identities stay untouched until every row of this
 		// generation is published.
@@ -1305,26 +1274,6 @@ func (s *Server) publishCatalogBatch(ctx context.Context, job workflowJobRecord,
 				WHERE entity_kind='entry' AND entity_id IN (`+sqlPlaceholders(len(publishedIDs))+`)`, int64Args(publishedIDs)...)
 		}
 		return published, nil
-	}
-	for _, p := range items {
-		if p.split != "" && p.split != catalogWorkSplitSingle {
-			continue
-		}
-		if incomplete, err := catalogRootIncomplete(ctx, tx.Tx, sourceID, job.RunID, p.root); err != nil {
-			return 0, err
-		} else if incomplete {
-			continue
-		}
-		var exists int
-		if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM source_catalog_entry WHERE file_source_id=? AND source_root=? AND last_seen_generation<>?)`, sourceID, p.root, job.RunID).Scan(&exists); err != nil {
-			return 0, err
-		}
-		if exists != 0 {
-			retireRan = true
-			if err = retireStaleSplitCardsTx(ctx, tx.Tx, sourceID, job.RunID, p.root, map[int64]bool{}); err != nil {
-				return 0, err
-			}
-		}
 	}
 	// A format copy that an older generation published as its own card is an
 	// alias once the release card owns the audio. The scan below is independent

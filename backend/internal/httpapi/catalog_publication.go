@@ -149,6 +149,9 @@ func (s *Server) beginCatalogPublication(ctx context.Context, sourceID int64, ow
 
 func (s *Server) commitCatalogPublication(ctx context.Context, id int64) error {
 	for {
+		if err := s.prepareCatalogSplitRetirements(ctx, id); err != nil {
+			return err
+		}
 		if err := s.prepareCatalogPublicationRetirements(ctx, id); err != nil {
 			return err
 		}
@@ -236,7 +239,8 @@ func (s *Server) commitCatalogPublicationTranslations(ctx context.Context, id in
 			// Retry admission/media preparation before publishing those keys.
 			var pending bool
 			err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM source_catalog_publication_entity WHERE operation_id=? AND entity_kind IN ('retired_aliases','retired_files'))
-				OR EXISTS(SELECT 1 FROM source_catalog_publication_entity WHERE operation_id=? AND entity_kind='entry' AND media_prepared=0)`, id, id).Scan(&pending)
+				OR EXISTS(SELECT 1 FROM source_catalog_publication_entity WHERE operation_id=? AND entity_kind='entry' AND media_prepared=0)
+				OR EXISTS(SELECT 1 FROM source_catalog_split_retirement WHERE operation_id=?)`, id, id, id).Scan(&pending)
 			if err == nil && !pending {
 				_, err = tx.ExecContext(ctx, `UPDATE source_catalog_publication SET state='committed' WHERE id=? AND state='preparing'`, id)
 				if err == nil {
