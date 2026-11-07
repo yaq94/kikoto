@@ -6,22 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/yexca/kikoto/backend/internal/translation"
 )
 
-// translationCoverageCacheTTL bounds how stale an operator view may be. The
-// coverage query walks the whole effective corpus and the admission subqueries
-// per language; on a 41k-card source that costs seconds, and a page that polls
-// it would otherwise hold every pooled connection. The worker still calls
-// translationCorpusCoverageFor directly, so its completion decision never reads
-// this cache.
-const translationCoverageCacheTTL = 15 * time.Second
-
 type translationCoverageCacheEntry struct {
 	configKey string
-	at        time.Time
+	revision  int64
+	limits    translation.Limits
 	snapshot  translationOperatorSnapshot
 }
 
@@ -34,19 +26,21 @@ type translationOperatorSnapshot struct {
 }
 
 // cachedTranslationOperatorSnapshot serialises the expensive operator read.
-// Concurrent requests wait for one computation instead of each starting their
-// own corpus scan and dbstat walk; a page that polls the view must not hold
-// every pooled connection. The prefill worker still calls the uncached
-// coverage function, so its completion decision never reads this snapshot.
+// A durable revision invalidates all corpus dependencies, even across a restart
+// or a writer outside this server. Unchanged reads only fetch one state row.
 func (s *Server) cachedTranslationOperatorSnapshot(ctx context.Context, cfg translation.Config) (translationOperatorSnapshot, error) {
 	configKey := translation.ConfigKey(cfg)
 	s.translationCoverageMu.Lock()
 	defer s.translationCoverageMu.Unlock()
+	revision, err := s.translationMaintenanceRevision(ctx)
+	if err != nil {
+		return translationOperatorSnapshot{}, err
+	}
 	if cached := s.translationCoverage; cached != nil &&
-		cached.configKey == configKey && time.Since(cached.at) < translationCoverageCacheTTL {
+		cached.configKey == configKey && cached.revision == revision && cached.limits == cfg.Limits {
 		return cached.snapshot, nil
 	}
-	coverage, err := s.translationCorpusCoverageFor(ctx, cfg)
+	coverage, err := s.verifiedTranslationCoverage(ctx, cfg)
 	if err != nil {
 		return translationOperatorSnapshot{coverage: coverage}, err
 	}
@@ -54,14 +48,19 @@ func (s *Server) cachedTranslationOperatorSnapshot(ctx context.Context, cfg tran
 	if err != nil {
 		return translationOperatorSnapshot{coverage: coverage}, err
 	}
+	latest, err := s.translationMaintenanceRevision(ctx)
+	if err != nil {
+		return translationOperatorSnapshot{}, err
+	}
+	if latest != revision {
+		return translationOperatorSnapshot{}, errTranslationCorpusChanged
+	}
 	snapshot := translationOperatorSnapshot{coverage: coverage, overBudget: overBudget, budgetBytes: budget}
-	s.translationCoverage = &translationCoverageCacheEntry{configKey: configKey, at: time.Now(), snapshot: snapshot}
+	s.translationCoverage = &translationCoverageCacheEntry{configKey: configKey, revision: revision, limits: cfg.Limits, snapshot: snapshot}
 	return snapshot, nil
 }
 
-// invalidateTranslationCoverageCache drops the operator snapshot after a write
-// that changes the corpus, so a paused or newly configured service does not
-// keep reporting the previous coverage for a full TTL.
+// invalidateTranslationCoverageCache drops an operator snapshot explicitly.
 func (s *Server) invalidateTranslationCoverageCache() {
 	s.translationCoverageMu.Lock()
 	s.translationCoverage = nil
@@ -321,6 +320,7 @@ type translationCorpusLanguageCoverage struct {
 }
 
 type translationCorpusCoverage struct {
+	Revision  int64
 	Total     int64
 	Languages map[string]translationCorpusLanguageCoverage
 	// Native and Model aggregate every reported language, including the
@@ -331,6 +331,42 @@ type translationCorpusCoverage struct {
 	Stale   int64
 	Failed  int64
 	Retry   int64
+}
+
+var errTranslationCorpusChanged = errors.New("translation corpus changed; retry the observation")
+
+func (s *Server) translationCorpusRevision(ctx context.Context) (int64, error) {
+	var revision int64
+	err := s.db.QueryRowContext(ctx, `SELECT revision FROM translation_corpus_revision WHERE id=1`).Scan(&revision)
+	return revision, err
+}
+
+func (s *Server) translationMaintenanceRevision(ctx context.Context) (int64, error) {
+	var revision int64
+	err := s.db.QueryRowContext(ctx, `SELECT revision+cache_revision FROM translation_corpus_revision WHERE id=1`).Scan(&revision)
+	return revision, err
+}
+
+// Read the revision before the configuration. A concurrent configuration/data
+// commit makes this observation unusable; it never labels old rows complete.
+// The caller retries on its next bounded tick/request instead of looping here.
+func (s *Server) verifiedTranslationCoverage(ctx context.Context, cfg translation.Config) (translationCorpusCoverage, error) {
+	revision, err := s.translationCorpusRevision(ctx)
+	if err != nil {
+		return translationCorpusCoverage{}, err
+	}
+	current, err := translation.NewStore(s.db).Load(ctx)
+	if err != nil {
+		return translationCorpusCoverage{}, err
+	}
+	if translation.ConfigKey(current) != translation.ConfigKey(cfg) || current.Limits != cfg.Limits {
+		return translationCorpusCoverage{}, errTranslationCorpusChanged
+	}
+	coverage, err := s.translationCorpusCoverageFor(ctx, cfg)
+	if err == nil && coverage.Revision != revision {
+		err = errTranslationCorpusChanged
+	}
+	return coverage, err
 }
 
 func (c translationCorpusCoverage) complete() bool {
@@ -348,143 +384,66 @@ func translationCurrentRowSQL(alias, language string) string {
 	return `(` + alias + `.origin='native' OR (` + alias + `.origin='model' AND ` + alias + `.config_key=?))`
 }
 
-// translationStaleConditionSQL marks an effective item that has no current row
-// but has either a changed-source row or a model row from another config. It is
-// one disjoint bucket; failure counts exclude it so rows+stale+failed+missing
-// always adds up to the corpus total.
-func translationStaleConditionSQL(language, configKey string) (string, []any) {
-	current := translationCurrentRowSQL("ct", language)
-	args := []any{language}
-	if language != translation.SourceHant {
-		args = append(args, configKey)
-	}
-	args = append(args, language, language)
-	if language != translation.SourceHant {
-		args = append(args, configKey)
-	}
-	return `NOT EXISTS(
-			SELECT 1 FROM content_translation ct
-			WHERE ct.entity_kind=c.entity_kind AND ct.entity_id=c.entity_id
-			  AND ct.field=c.field AND ct.language=? AND ct.source_text=c.source_text
-			  AND ` + current + `)
-		AND (
-			EXISTS(
-				SELECT 1 FROM content_translation ct
-				WHERE ct.entity_kind=c.entity_kind AND ct.entity_id=c.entity_id
-				  AND ct.field=c.field AND ct.language=? AND ct.source_text<>c.source_text)
-			OR EXISTS(
-				SELECT 1 FROM content_translation ct
-				WHERE ct.entity_kind=c.entity_kind AND ct.entity_id=c.entity_id
-				  AND ct.field=c.field AND ct.language=? AND ct.source_text=c.source_text
-				  AND ct.origin='model' AND ct.config_key<>?))`, args
-}
-
 // translationCorpusCoverageFor computes the operator view and the prefill
 // completion decision from one definition. A current row must match the
 // effective entity, the current field text, the requested language and either
 // a native origin or the current config key.
 func (s *Server) translationCorpusCoverageFor(ctx context.Context, cfg translation.Config) (translationCorpusCoverage, error) {
 	coverage := translationCorpusCoverage{Languages: map[string]translationCorpusLanguageCoverage{}}
-	configKey := translation.ConfigKey(cfg)
-	corpus := `WITH corpus AS MATERIALIZED (` + translationCorpusSQL() + `)`
-	if err := s.db.QueryRowContext(ctx, corpus+` SELECT count(*) FROM corpus`).Scan(&coverage.Total); err != nil {
-		return coverage, fmt.Errorf("count effective translation corpus: %w", err)
+	// One statement gives every language the same SQLite snapshot and constructs
+	// the admitted corpus once. Aggregate rows per item before counting coverage:
+	// a native row and a model row can coexist without covering two items.
+	rows, err := s.db.QueryContext(ctx, `WITH corpus AS MATERIALIZED (`+translationCorpusSQL()+`),
+		languages(language) AS (VALUES ('en'),('zh-Hans'),('ja'),('ko'),('zh-Hant')),
+		items AS MATERIALIZED (
+			SELECT c.entity_kind,c.entity_id,c.field,l.language,
+				sum(CASE WHEN ct.source_text=c.source_text AND ct.origin='native' THEN 1 ELSE 0 END) AS native,
+				sum(CASE WHEN l.language<>'zh-Hant' AND ct.source_text=c.source_text
+					AND ct.origin='model' AND ct.config_key=? THEN 1 ELSE 0 END) AS model,
+				max(CASE WHEN ct.source_text<>c.source_text OR (ct.origin='model' AND ct.config_key<>?)
+					THEN 1 ELSE 0 END) AS stale,
+				COALESCE(max(f.attempts),0) AS attempts
+			FROM corpus c CROSS JOIN languages l
+			LEFT JOIN content_translation ct ON ct.entity_kind=c.entity_kind AND ct.entity_id=c.entity_id
+				AND ct.field=c.field AND ct.language=l.language
+			LEFT JOIN translation_prefill_failure f ON f.entity_kind=c.entity_kind AND f.entity_id=c.entity_id
+				AND f.field=c.field AND f.language=l.language AND f.config_key=?
+				AND f.source_hash=`+translationSourceHashFunction+`(c.source_text)
+			GROUP BY c.entity_kind,c.entity_id,c.field,l.language
+		)
+		SELECT l.language,(SELECT revision FROM translation_corpus_revision WHERE id=1),(SELECT count(*) FROM corpus),
+			COALESCE(sum(CASE WHEN i.native+i.model>0 THEN 1 ELSE 0 END),0),
+			COALESCE(sum(i.native),0),COALESCE(sum(i.model),0),
+			COALESCE(sum(CASE WHEN l.language<>'zh-Hant' AND i.native+i.model=0 AND i.stale=1 THEN 1 ELSE 0 END),0),
+			COALESCE(sum(CASE WHEN l.language<>'zh-Hant' AND i.native+i.model=0 AND i.stale=0 AND i.attempts>=? THEN 1 ELSE 0 END),0),
+			COALESCE(sum(CASE WHEN l.language<>'zh-Hant' AND i.native+i.model=0 AND i.stale=0 AND i.attempts>0 AND i.attempts<? THEN 1 ELSE 0 END),0)
+		FROM languages l LEFT JOIN items i ON i.language=l.language GROUP BY l.language`,
+		translation.ConfigKey(cfg), translation.ConfigKey(cfg), translation.ConfigKey(cfg),
+		translationPrefillFailureStop, translationPrefillFailureStop)
+	if err != nil {
+		return coverage, fmt.Errorf("read effective translation coverage: %w", err)
 	}
-	for _, language := range translationModelLanguages {
-		item := translationCorpusLanguageCoverage{Language: language}
-		current := translationCurrentRowSQL("ct", language)
-		// One scan returns the covered item count and the current native/model
-		// row counts. Counting them in separate statements would scan the same
-		// corpus three times. Rows counts items; a native and a model row can
-		// coexist for one item, so Native+Model may exceed Rows.
-		rowsQuery := corpus + `, current AS MATERIALIZED (
-				SELECT c.entity_kind,c.entity_id,c.field,ct.origin
-				FROM corpus c
-				JOIN content_translation ct
-				  ON ct.entity_kind=c.entity_kind AND ct.entity_id=c.entity_id
-				 AND ct.field=c.field AND ct.language=? AND ct.source_text=c.source_text
-				 AND ` + current + `
-			),
-			items AS MATERIALIZED (
-				SELECT DISTINCT entity_kind,entity_id,field FROM current
-			)
-			SELECT
-				(SELECT count(*) FROM items),
-				(SELECT count(*) FROM current WHERE origin='native'),
-				(SELECT count(*) FROM current WHERE origin='model')`
-		rowsArgs := []any{language}
-		if language != translation.SourceHant {
-			rowsArgs = append(rowsArgs, configKey)
+	defer rows.Close()
+	for rows.Next() {
+		var item translationCorpusLanguageCoverage
+		if err := rows.Scan(&item.Language, &coverage.Revision, &coverage.Total, &item.Rows, &item.Native, &item.Model,
+			&item.Stale, &item.Failed, &item.Retry); err != nil {
+			return coverage, err
 		}
-		if err := s.db.QueryRowContext(ctx, rowsQuery, rowsArgs...).Scan(&item.Rows, &item.Native, &item.Model); err != nil {
-			return coverage, fmt.Errorf("count %s coverage: %w", language, err)
-		}
-		staleCondition, staleArgs := translationStaleConditionSQL(language, configKey)
-		staleQuery := corpus + ` SELECT count(*) FROM corpus c WHERE ` + staleCondition
-		if err := s.db.QueryRowContext(ctx, staleQuery, staleArgs...).Scan(&item.Stale); err != nil {
-			return coverage, fmt.Errorf("count %s stale rows: %w", language, err)
-		}
-		failureQuery := corpus + ` SELECT
-			COALESCE(sum(CASE WHEN f.attempts>=? THEN 1 ELSE 0 END),0),
-			COALESCE(sum(CASE WHEN f.attempts<? THEN 1 ELSE 0 END),0)
-			FROM corpus c
-			JOIN translation_prefill_failure f
-			  ON f.entity_kind=c.entity_kind AND f.entity_id=c.entity_id
-			 AND f.field=c.field AND f.language=?
-			 AND f.config_key=? AND f.source_hash=` + translationSourceHashFunction + `(c.source_text)
-			WHERE NOT EXISTS(
-				SELECT 1 FROM content_translation ct
-				WHERE ct.entity_kind=c.entity_kind AND ct.entity_id=c.entity_id
-				  AND ct.field=c.field AND ct.language=? AND ct.source_text=c.source_text
-				  AND ` + current + `)
-			  AND NOT (` + staleCondition + `)`
-		failureArgs := []any{translationPrefillFailureStop, translationPrefillFailureStop,
-			language, configKey, language, configKey}
-		failureArgs = append(failureArgs, staleArgs...)
-		if err := s.db.QueryRowContext(ctx, failureQuery, failureArgs...).Scan(&item.Failed, &item.Retry); err != nil {
-			return coverage, fmt.Errorf("count %s failures: %w", language, err)
-		}
-		// A retry is still missing from coverage; only a terminal failure is
-		// counted as failed. Retry is reported separately but included in
-		// missing, so rows+stale+failed+missing adds up to the total.
 		item.Missing = max64(coverage.Total-item.Rows-item.Stale-item.Failed, 0)
-		coverage.Languages[language] = item
+		coverage.Languages[item.Language] = item
 		coverage.Native += item.Native
 		coverage.Model += item.Model
-		coverage.Missing += item.Missing
-		coverage.Stale += item.Stale
-		coverage.Failed += item.Failed
-		coverage.Retry += item.Retry
+		// Traditional Chinese is a native-only projection; zh-tw can use the
+		// current Simplified row and conversion, so this gap does not block.
+		if item.Language != translation.SourceHant {
+			coverage.Missing += item.Missing
+			coverage.Stale += item.Stale
+			coverage.Failed += item.Failed
+			coverage.Retry += item.Retry
+		}
 	}
-	// zh-Hant is a native-only display projection. A missing native Traditional
-	// title is visible in this language's Missing/Rows counts but is not added to
-	// the global Missing total, so it does not block completion: zh-tw reads the
-	// current zh-Hans row and converts it locally.
-	hant := translationCorpusLanguageCoverage{Language: translation.SourceHant}
-	current := translationCurrentRowSQL("ct", translation.SourceHant)
-	hantQuery := corpus + `, current AS MATERIALIZED (
-			SELECT c.entity_kind,c.entity_id,c.field,ct.origin
-			FROM corpus c
-			JOIN content_translation ct
-			  ON ct.entity_kind=c.entity_kind AND ct.entity_id=c.entity_id
-			 AND ct.field=c.field AND ct.language=? AND ct.source_text=c.source_text
-			 AND ` + current + `
-		),
-		items AS MATERIALIZED (
-			SELECT DISTINCT entity_kind,entity_id,field FROM current
-		)
-		SELECT
-			(SELECT count(*) FROM items),
-			(SELECT count(*) FROM current WHERE origin='native'),
-			(SELECT count(*) FROM current WHERE origin='model')`
-	if err := s.db.QueryRowContext(ctx, hantQuery, translation.SourceHant).Scan(&hant.Rows, &hant.Native, &hant.Model); err != nil {
-		return coverage, fmt.Errorf("count native Traditional coverage: %w", err)
-	}
-	hant.Missing = max64(coverage.Total-hant.Rows, 0)
-	coverage.Languages[translation.SourceHant] = hant
-	coverage.Native += hant.Native
-	coverage.Model += hant.Model
-	return coverage, nil
+	return coverage, rows.Err()
 }
 
 func (s *Server) translationCorpusItemCurrent(ctx context.Context, item translationCorpusItem, configKey string) (bool, error) {

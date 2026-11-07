@@ -109,6 +109,8 @@ type Server struct {
 	translationCache               *translation.Cache
 	translationPrefillMu           sync.Mutex
 	translationRetentionWrites     atomic.Int64
+	translationRetentionMu         sync.Mutex
+	translationRetentionRevision   *int64
 	translationPrefillWrites       []time.Time
 	translationCoverageMu          sync.Mutex
 	translationCoverage            *translationCoverageCacheEntry

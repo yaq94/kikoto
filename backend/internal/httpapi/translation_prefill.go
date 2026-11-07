@@ -38,20 +38,23 @@ type translationPrefillLanguage struct {
 }
 
 type translationPrefillView struct {
-	Status         string                       `json:"status"`
-	Cursor         int64                        `json:"cursor"`
-	CursorLanguage string                       `json:"cursorLanguage,omitempty"`
-	CursorKind     string                       `json:"cursorKind,omitempty"`
-	CursorField    string                       `json:"cursorField,omitempty"`
-	ConfigKey      string                       `json:"configKey"`
-	Total          int64                        `json:"total"`
-	Languages      []translationPrefillLanguage `json:"languages"`
-	NightWindow    bool                         `json:"nightWindow"`
-	LastError      string                       `json:"lastError,omitempty"`
-	UpdatedAt      string                       `json:"updatedAt,omitempty"`
-	RatePerMinute  float64                      `json:"ratePerMinute"`
-	OverBudget     bool                         `json:"overBudget"`
-	BudgetBytes    int64                        `json:"budgetBytes"`
+	checkedRevision int64
+	revision        int64
+	entities        int64
+	Status          string                       `json:"status"`
+	Cursor          int64                        `json:"cursor"`
+	CursorLanguage  string                       `json:"cursorLanguage,omitempty"`
+	CursorKind      string                       `json:"cursorKind,omitempty"`
+	CursorField     string                       `json:"cursorField,omitempty"`
+	ConfigKey       string                       `json:"configKey"`
+	Total           int64                        `json:"total"`
+	Languages       []translationPrefillLanguage `json:"languages"`
+	NightWindow     bool                         `json:"nightWindow"`
+	LastError       string                       `json:"lastError,omitempty"`
+	UpdatedAt       string                       `json:"updatedAt,omitempty"`
+	RatePerMinute   float64                      `json:"ratePerMinute"`
+	OverBudget      bool                         `json:"overBudget"`
+	BudgetBytes     int64                        `json:"budgetBytes"`
 }
 
 // translationPrefillState reads only the durable cursor/status row. The worker
@@ -60,9 +63,10 @@ func (s *Server) translationPrefillState(ctx context.Context) (translationPrefil
 	view := translationPrefillView{Status: "idle", Languages: []translationPrefillLanguage{}}
 	var updated string
 	err := s.db.QueryRowContext(ctx, `SELECT cursor_language,cursor_kind,cursor_field,cursor_id,
-		config_key,status,last_error,updated_at FROM translation_prefill_state WHERE id=1`).
+		config_key,status,last_error,updated_at,checked_revision,r.revision,r.entities
+		FROM translation_prefill_state p CROSS JOIN translation_corpus_revision r WHERE p.id=1 AND r.id=1`).
 		Scan(&view.CursorLanguage, &view.CursorKind, &view.CursorField, &view.Cursor,
-			&view.ConfigKey, &view.Status, &view.LastError, &updated)
+			&view.ConfigKey, &view.Status, &view.LastError, &updated, &view.checkedRevision, &view.revision, &view.entities)
 	if errors.Is(err, sql.ErrNoRows) {
 		view.Status = "idle"
 	} else if err != nil {
@@ -168,7 +172,7 @@ func (s *Server) noteTranslationPrefillWrite(count int) {
 func (s *Server) runTranslationPrefillWorker(ctx context.Context) {
 	timer := time.NewTimer(5 * time.Second)
 	defer timer.Stop()
-	retentionTick := 0
+	retentionTick := 3 // Recover deferred maintenance on the first worker tick.
 	for {
 		select {
 		case <-ctx.Done():
@@ -182,11 +186,15 @@ func (s *Server) runTranslationPrefillWorker(ctx context.Context) {
 		retentionTick++
 		if retentionTick >= 4 {
 			retentionTick = 0
+			// Configuration cannot switch between choosing protected rows and
+			// deleting historical rows. Translation requests do not take this lock.
+			s.translationConfigMu.Lock()
 			if cfg, err := translation.NewStore(s.db).Load(ctx); err == nil {
 				if err = s.pruneContentTranslations(ctx, cfg); err != nil {
 					slog.Warn("translation corpus retention failed", "error", err)
 				}
 			}
+			s.translationConfigMu.Unlock()
 		}
 		timer.Reset(translationPrefillInterval)
 	}
@@ -216,24 +224,33 @@ func (s *Server) runTranslationPrefillBatch(ctx context.Context) (bool, error) {
 		}
 		state.ConfigKey = configKey
 		state.CursorLanguage, state.CursorKind, state.CursorField, state.Cursor = "", "entry", "title", 0
+		if state.Status == "complete" {
+			state.Status = "running"
+		}
 	}
 	if state.Status == "complete" {
-		// A complete cursor is only a stored observation. Verify the effective
-		// corpus so a model change, changed title or skipped entry resumes work
-		// instead of leaving the pass permanently complete.
-		coverage, err := s.translationCorpusCoverageFor(ctx, cfg)
+		// The revision commits with every semantic corpus mutation. A matching
+		// checked revision survives restarts and makes the idle tick constant cost.
+		if state.checkedRevision == state.revision {
+			return false, nil
+		}
+		coverage, err := s.verifiedTranslationCoverage(ctx, cfg)
 		if err != nil {
 			return false, err
 		}
 		if coverage.complete() {
-			return false, nil
+			_, err := s.db.ExecContext(ctx, `UPDATE translation_prefill_state SET checked_revision=?
+				WHERE id=1 AND (SELECT revision FROM translation_corpus_revision WHERE id=1)=?`, coverage.Revision, coverage.Revision)
+			return false, err
 		}
 		if _, err = s.db.ExecContext(ctx, `UPDATE translation_prefill_state
-			SET status='running',last_error=?,updated_at=CURRENT_TIMESTAMP WHERE id=1`,
+			SET status='running',last_error=?,cursor_language='',cursor_kind='entry',cursor_field='title',cursor_id=0,
+			updated_at=CURRENT_TIMESTAMP WHERE id=1`,
 			coverageMessage(coverage)); err != nil {
 			return false, err
 		}
 		state.Status = "running"
+		state.CursorLanguage, state.CursorKind, state.CursorField, state.Cursor = "", "entry", "title", 0
 	}
 	if state.Status == "paused" {
 		// A manual pause waits for the operator. A low-disk pause is a
@@ -322,7 +339,7 @@ func (s *Server) runTranslationPrefillBatch(ctx context.Context) (bool, error) {
 	// Only the end of the scan can settle the whole-corpus status. A full page
 	// mid-scan stays running because later ids may still need rows.
 	if endOfScan {
-		coverage, err = s.translationCorpusCoverageFor(ctx, cfg)
+		coverage, err = s.verifiedTranslationCoverage(ctx, cfg)
 		if err != nil {
 			return false, err
 		}
@@ -339,17 +356,28 @@ func (s *Server) runTranslationPrefillBatch(ctx context.Context) (bool, error) {
 			status, message = "failed", coverageMessage(coverage)
 		}
 	}
-	if _, err = s.db.ExecContext(ctx, `UPDATE translation_prefill_state SET
+	result, err := s.db.ExecContext(ctx, `UPDATE translation_prefill_state SET
 		cursor_language=?,cursor_kind=?,cursor_field=?,cursor_id=?,
-		config_key=?,status=?,last_error=?,updated_at=CURRENT_TIMESTAMP WHERE id=1`,
-		next.Language, next.Kind, next.Field, next.ID, configKey, status, message); err != nil {
+		config_key=?,status=?,last_error=?,checked_revision=?,updated_at=CURRENT_TIMESTAMP WHERE id=1
+		AND (SELECT entities FROM translation_corpus_revision WHERE id=1)=?
+		AND (?<>'complete' OR (SELECT revision FROM translation_corpus_revision WHERE id=1)=?)`,
+		next.Language, next.Kind, next.Field, next.ID, configKey, status, message, coverage.Revision,
+		state.entities, status, coverage.Revision)
+	if err != nil {
 		return false, err
+	}
+	if changed, err := result.RowsAffected(); err != nil {
+		return false, err
+	} else if changed == 0 {
+		// Entity/configuration writes while the model was running invalidate the
+		// scanned prefix. Keep a manual pause but revisit earlier ids next time.
+		_, err = s.db.ExecContext(ctx, `UPDATE translation_prefill_state SET cursor_language='',cursor_kind='entry',
+			cursor_field='title',cursor_id=0,status=CASE WHEN status='paused' THEN status ELSE 'running' END WHERE id=1`)
+		return true, err
 	}
 	s.noteTranslationPrefillWrite(written)
 	if status != state.Status {
-		// A status transition is what an operator acts on; ordinary progress
-		// stays behind the short snapshot TTL instead of forcing a full corpus
-		// recount after every batch.
+		// Publish status-only changes to the operator snapshot as well.
 		s.invalidateTranslationCoverageCache()
 	}
 	if status == "complete" {

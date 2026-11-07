@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -552,7 +553,18 @@ func assertCurrentSourceFieldTranslationSchema(t *testing.T, db *sql.DB) {
 	if err != nil {
 		t.Fatalf("read source_field_translation schema: %v", err)
 	}
-	if err := compareSourceFieldTranslationSchema(sourceFieldTranslationSchemaDefinition(true), actual); err != nil {
+	expected := sourceFieldTranslationSchemaDefinition(true)
+	var version int
+	if err := db.QueryRow(`SELECT current_version FROM schema_state WHERE id=1`).Scan(&version); err != nil {
+		t.Fatal(err)
+	}
+	if version >= 106 {
+		expected.Triggers = []string{"translation_revision_source_field_translation_delete", "translation_revision_source_field_translation_insert", "translation_revision_source_field_translation_update"}
+		if err := validateSourceTranslationRevisionTriggers(db); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := compareSourceFieldTranslationSchema(expected, actual); err != nil {
 		t.Fatalf("source_field_translation is not the current schema: %v", err)
 	}
 	if len(actual.ForeignKeys) != 1 ||
@@ -560,6 +572,51 @@ func assertCurrentSourceFieldTranslationSchema(t *testing.T, db *sql.DB) {
 		actual.ForeignKeys[0].From != "source_id" ||
 		actual.ForeignKeys[0].OnDelete != "CASCADE" {
 		t.Fatalf("source_field_translation foreign keys = %+v, want source_id -> file_source CASCADE", actual.ForeignKeys)
+	}
+}
+
+// The legacy preflight fingerprint remains exact and unchanged. Only the
+// post-upgrade assertion accepts these three authored revision triggers.
+func validateSourceTranslationRevisionTriggers(db *sql.DB) error {
+	columns := "source_id,work_code,field,path,language,source_text,translated_text"
+	for _, operation := range []string{"DELETE", "INSERT", "UPDATE"} {
+		name := "translation_revision_source_field_translation_" + strings.ToLower(operation)
+		prefix := "CREATE TRIGGER " + name + " AFTER " + operation
+		when := ""
+		if operation == "UPDATE" {
+			prefix += " OF " + columns
+			var conditions []string
+			for _, column := range strings.Split(columns, ",") {
+				conditions = append(conditions, "OLD."+column+" IS NOT NEW."+column)
+			}
+			when = " WHEN " + strings.Join(conditions, " OR ")
+		}
+		want := prefix + " ON source_field_translation" + when + " BEGIN UPDATE translation_corpus_revision SET cache_revision=cache_revision+1 WHERE id=1; END"
+		var actual string
+		if err := db.QueryRow(`SELECT sql FROM sqlite_schema WHERE type='trigger' AND name=?`, name).Scan(&actual); err != nil {
+			return err
+		}
+		if strings.Join(strings.Fields(actual), " ") != want {
+			return fmt.Errorf("revision trigger %s definition differs", name)
+		}
+	}
+	return nil
+}
+
+func TestTranslationRevisionTriggerAssertionRejectsChangedBody(t *testing.T) {
+	db := openMigrationManagerDB(t)
+	if err := Migrate(db, completeMigrationDir(t)); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateSourceTranslationRevisionTriggers(db); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`DROP TRIGGER translation_revision_source_field_translation_insert;
+		CREATE TRIGGER translation_revision_source_field_translation_insert AFTER INSERT ON source_field_translation BEGIN SELECT 1; END;`); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateSourceTranslationRevisionTriggers(db); err == nil {
+		t.Fatal("modified revision trigger accepted")
 	}
 }
 

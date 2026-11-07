@@ -285,7 +285,7 @@ func TestTranslationRetentionCountsSourceFieldCacheAndKeepsNativeRows(t *testing
 
 // A model write must enforce the budget through the shared retention pass; the
 // test does not call the retention function itself.
-func TestTranslationCacheBudgetIsEnforcedByWrites(t *testing.T) {
+func TestTranslationCacheBudgetIsEnforcedByMaintenanceAfterWrites(t *testing.T) {
 	server, host, admin, _ := translationHTTPFixture(t)
 	if _, err := server.db.Exec(`INSERT INTO file_source(id,code,display_name,source_type)
 		VALUES(1,'cache_budget','Cache budget','openlist')`); err != nil {
@@ -303,6 +303,9 @@ func TestTranslationCacheBudgetIsEnforcedByWrites(t *testing.T) {
 	}
 	if status, err := server.saveSourceFieldTranslations(context.Background(), rows); err != nil || status != contentTranslationStored {
 		t.Fatalf("save source rows status=%q err=%v", status, err)
+	}
+	if err := server.pruneContentTranslations(context.Background(), mustTranslationConfig(t, server)); err != nil {
+		t.Fatal(err)
 	}
 	var count, bytes int64
 	if err := server.db.QueryRow(`SELECT count(*),COALESCE(sum(

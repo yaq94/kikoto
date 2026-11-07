@@ -8,12 +8,12 @@ import (
 	"testing"
 )
 
-// The integration branch's chain head is 105. These tests pin the whole
+// These tests pin the released 105 boundary and its whole
 // upgrade path rather than one migration: a fresh install, the two boundaries
 // that exist in the field (68 and 84), a restart, and database integrity.
 func TestMigrationChain105FreshInstall(t *testing.T) {
 	db := openMigrationManagerDB(t)
-	if err := Migrate(db, completeMigrationDir(t)); err != nil {
+	if err := Migrate(db, copyNumberedMigrationsThrough(t, filepath.Join("..", "..", "migrations"), 105)); err != nil {
 		t.Fatalf("fresh install: %v", err)
 	}
 
@@ -22,7 +22,7 @@ func TestMigrationChain105FreshInstall(t *testing.T) {
 	if err := db.QueryRow("SELECT COUNT(*) FROM schema_migration").Scan(&history); err != nil {
 		t.Fatal(err)
 	}
-	if want := 1 + 105 - latestReleasedBaselineVersion; history != want {
+	if want := 105; history != want {
 		t.Fatalf("fresh install history = %d rows, want %d", history, want)
 	}
 	var filename string
@@ -45,7 +45,7 @@ func TestMigrationChain105Upgrades068AndKeepsUserData(t *testing.T) {
 		t.Fatalf("seed user data: %v", err)
 	}
 
-	if err := Migrate(db, completeMigrationDir(t)); err != nil {
+	if err := Migrate(db, copyNumberedMigrationsThrough(t, filepath.Join("..", "..", "migrations"), 105)); err != nil {
 		t.Fatalf("upgrade 068 to 105: %v", err)
 	}
 	assertSchemaVersion(t, db, 105)
@@ -74,7 +74,7 @@ func TestMigrationChain105Upgrades084ToCurrentShape(t *testing.T) {
 		t.Fatalf("seed 084 rows: %v", err)
 	}
 
-	if err := Migrate(db, completeMigrationDir(t)); err != nil {
+	if err := Migrate(db, copyNumberedMigrationsThrough(t, filepath.Join("..", "..", "migrations"), 105)); err != nil {
 		t.Fatalf("upgrade 084 to 105: %v", err)
 	}
 	assertSchemaVersion(t, db, 105)

@@ -3,11 +3,12 @@ package httpapi
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
-	"log/slog"
 	"strings"
-	"sync"
+	"time"
 
+	"github.com/yexca/kikoto/backend/internal/sqlutil"
 	"github.com/yexca/kikoto/backend/internal/translation"
 )
 
@@ -31,28 +32,16 @@ const (
 	contentTranslationDiskBudgetFloor = 1 << 20
 )
 
-// One maintenance pass at a time keeps concurrent model completions from
-// issuing overlapping delete statements against the single SQLite writer.
-var contentTranslationRetentionMu sync.Mutex
+const translationRetentionTimeBudget = 10 * time.Second
 
-// pruneTranslationCacheAfterWrite applies the same retention pass after a
-// durable write. It is best effort: the translated text is already usable, and
-// the periodic worker will retry a failed maintenance query. Single-row
-// completions are checked in small batches so the predicate does not scan the
-// whole corpus on every translation; a large batch runs a pass immediately.
-func (s *Server) pruneTranslationCacheAfterWrite(ctx context.Context, cfg translation.Config, written int) {
-	if cfg.MaxEntries <= 0 && cfg.CacheBytes <= 0 {
-		return
-	}
-	if written < 16 {
-		if s.translationRetentionWrites.Add(int64(max(written, 1))) < 32 {
-			return
-		}
-	}
-	s.translationRetentionWrites.Store(0)
-	if err := s.pruneTranslationCache(ctx, cfg, false); err != nil {
-		slog.Warn("translation cache retention failed after write", "error", err)
-	}
+var errTranslationRetentionBusy = errors.New("translation retention already running")
+
+// pruneTranslationCacheAfterWrite coalesces durable writes into one pending
+// maintenance request. The existing lifetime-owned worker drains it at most once
+// per minute; request completion never scans the corpus or starts a goroutine.
+// A restart is recovered by the worker's initial maintenance pass.
+func (s *Server) pruneTranslationCacheAfterWrite(_ context.Context, _ translation.Config, _ int) {
+	s.translationRetentionWrites.Store(1)
 }
 
 // pruneContentTranslations runs the periodic cleanup and applies the two
@@ -63,7 +52,29 @@ func (s *Server) pruneTranslationCacheAfterWrite(ctx context.Context, cfg transl
 // Source identities and personal records live in other tables and are never
 // touched.
 func (s *Server) pruneContentTranslations(ctx context.Context, cfg translation.Config) error {
-	return s.pruneTranslationCache(ctx, cfg, true)
+	// One runner, no waiting queue, one ten-second attempt per worker minute.
+	// Errors leave the revision unacknowledged for the next tick. A new server
+	// always attempts maintenance, recovering a lost in-memory notification.
+	if !s.translationRetentionMu.TryLock() {
+		return errTranslationRetentionBusy
+	}
+	defer s.translationRetentionMu.Unlock()
+	ctx, cancel := context.WithTimeout(ctx, translationRetentionTimeBudget)
+	defer cancel()
+	revision, err := s.translationMaintenanceRevision(ctx)
+	if err != nil {
+		return err
+	}
+	if s.translationRetentionRevision != nil && *s.translationRetentionRevision == revision && s.translationRetentionWrites.Load() == 0 {
+		return nil
+	}
+	s.translationRetentionWrites.Swap(0)
+	if err := s.pruneTranslationCache(ctx, cfg, true); err != nil {
+		s.translationRetentionWrites.Store(1)
+		return err
+	}
+	s.translationRetentionRevision = &revision
+	return nil
 }
 
 // translationBudgetReport compares the rebuildable cache against the soft
@@ -108,9 +119,6 @@ func (s *Server) persistentTranslationTextBytes(ctx context.Context, cfg transla
 // enforces the budgets; the periodic pass also removes historical rows even
 // while the budgets are not exceeded.
 func (s *Server) pruneTranslationCache(ctx context.Context, cfg translation.Config, removeSuperseded bool) error {
-	contentTranslationRetentionMu.Lock()
-	defer contentTranslationRetentionMu.Unlock()
-
 	// The periodic pass first removes rows that can no longer answer a current
 	// lookup, even when the size budgets are not exceeded. This is bounded like
 	// every other writer.
@@ -230,7 +238,7 @@ func (s *Server) deleteStaleTranslationPrefillFailures(ctx context.Context, cfg 
 	}
 	configKey := translation.ConfigKey(cfg)
 	corpus := translationCorpusSQL()
-	result, err := s.db.ExecContext(ctx, `DELETE FROM translation_prefill_failure WHERE rowid IN (
+	result, err := sqlutil.ExecBounded(ctx, s.db, `DELETE FROM translation_prefill_failure WHERE rowid IN (
 		SELECT f.rowid FROM translation_prefill_failure f
 		WHERE f.config_key<>?
 		   OR NOT EXISTS (
@@ -262,7 +270,7 @@ func (s *Server) deleteStaleTranslationPrefillFailures(ctx context.Context, cfg 
 	if remove > limit {
 		remove = limit
 	}
-	result, err = s.db.ExecContext(ctx, `DELETE FROM translation_prefill_failure WHERE rowid IN (
+	result, err = sqlutil.ExecBounded(ctx, s.db, `DELETE FROM translation_prefill_failure WHERE rowid IN (
 		SELECT rowid FROM translation_prefill_failure
 		WHERE config_key=?
 		ORDER BY rowid
@@ -348,7 +356,7 @@ func (s *Server) deleteHistoricalContentTranslations(ctx context.Context, cfg tr
 		return 0, nil
 	}
 	configKey := translation.ConfigKey(cfg)
-	result, err := s.db.ExecContext(ctx, `DELETE FROM content_translation WHERE id IN (
+	result, err := sqlutil.ExecBounded(ctx, s.db, `DELETE FROM content_translation WHERE id IN (
 		SELECT ct.id FROM content_translation ct
 		WHERE ct.origin='model'
 		  AND NOT `+translationPersistentCorpusSQL("ct")+`
@@ -366,7 +374,7 @@ func (s *Server) deleteSupersededSourceTranslations(ctx context.Context, limit i
 	if limit <= 0 {
 		return 0, nil
 	}
-	result, err := s.db.ExecContext(ctx, `DELETE FROM source_field_translation WHERE id IN (
+	result, err := sqlutil.ExecBounded(ctx, s.db, `DELETE FROM source_field_translation WHERE id IN (
 		SELECT id FROM source_field_translation old
 		WHERE EXISTS(
 			SELECT 1 FROM source_field_translation cur
