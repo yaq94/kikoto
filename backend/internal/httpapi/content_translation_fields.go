@@ -35,6 +35,9 @@ func (s *Server) loadTranslationField(ctx context.Context, in contentTranslation
 		if s.cfg.IsDemo() || in.Field != "title" {
 			return readableTranslationField{}, sql.ErrNoRows
 		}
+		if err := requireCatalogSeriesReadable(ctx, s.db, in.SeriesID); err != nil {
+			return readableTranslationField{}, err
+		}
 		var title string
 		err := s.db.QueryRowContext(ctx, `SELECT title FROM catalog_series WHERE id=?`, in.SeriesID).Scan(&title)
 		field := readableTranslationField{Text: title, Original: title}
@@ -47,6 +50,15 @@ func (s *Server) loadTranslationField(ctx context.Context, in contentTranslation
 		entry, _, err := s.loadSourceCatalogEntry(ctx, in.CatalogEntryID)
 		if err != nil {
 			return readableTranslationField{}, err
+		}
+		if catalogEntryAdmissionRequired(entry) {
+			admitted, err := catalogPublishedEntryAdmitted(ctx, s.db, entry.ID)
+			if err != nil {
+				return readableTranslationField{}, err
+			}
+			if !admitted {
+				return readableTranslationField{}, sql.ErrNoRows
+			}
 		}
 		names, err := s.catalogEntryProtectedNames(ctx, entry)
 		if err != nil {

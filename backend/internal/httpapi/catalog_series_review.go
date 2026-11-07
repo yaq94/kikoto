@@ -10,6 +10,10 @@ import (
 // A series evaluation has its own work identity. Its members are neither
 // registered nor rewritten by this transaction.
 func (s *Server) updateCatalogSeriesReview(w http.ResponseWriter, r *http.Request) {
+	if s.cfg.IsDemo() {
+		writeAPIError(w, 404, "not_found", "series not found", false)
+		return
+	}
 	user, ok := s.requirePermission(w, r, "favorites:write")
 	if !ok {
 		return
@@ -52,6 +56,10 @@ func (s *Server) updateCatalogSeriesReview(w http.ResponseWriter, r *http.Reques
 	}
 	var title string
 	var workID sql.NullInt64
+	if err = requireCatalogSeriesReadable(r.Context(), tx, id); err != nil {
+		writeCatalogGroupingError(w, err)
+		return
+	}
 	if err = tx.QueryRowContext(r.Context(), `SELECT title,work_id FROM catalog_series WHERE id=?`, id).Scan(&title, &workID); err != nil {
 		writeCatalogGroupingError(w, err)
 		return

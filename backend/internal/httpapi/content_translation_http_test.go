@@ -227,6 +227,7 @@ func TestContentTranslationProtectsNamesForCatalogAndSeries(t *testing.T) {
 		INSERT INTO file_source(id,code,display_name,source_type) VALUES (7,'example_catalog','Example Catalog','openlist');
 		INSERT INTO file_source_endpoint(file_source_id,api_url,base_url) VALUES (7,'https://catalog.example.invalid','https://catalog.example.invalid');
 		INSERT INTO source_catalog_entry(id,file_source_id,root_path,title,work_id) VALUES (1,7,'/Example title','Example title',1);
+		INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes) VALUES(1,'audio.mp3','Audio','audio',1);
 		INSERT INTO catalog_series(id,title) VALUES (1,'Example title');
 		INSERT INTO catalog_series_member(series_id,catalog_entry_id,position,evidence) VALUES (1,1,1,'manual');`)
 	if err != nil {
@@ -395,6 +396,7 @@ func TestContentTranslationRemoteDescriptionUsesAHigherPriorityResource(t *testi
 	if _, err := s.db.Exec(`INSERT INTO source_catalog_entry(id,file_source_id,root_path,title,work_id) VALUES(3,?,'/Example Work','Example title',1)`, sourceID); err != nil {
 		t.Fatal(err)
 	}
+	metadataReviewExec(t, s.db, `INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes) VALUES(3,'audio.mp3','Audio','audio',1)`)
 	cfg, _ := json.Marshal(map[string]any{"baseUrl": upstream.URL, "minFreeBytes": 0})
 	translationRequest(t, host, admin, "PATCH", "/api/settings/translation", string(cfg), 200)
 	result := translationRequest(t, host, listener, "POST", "/api/content-translations", `{"catalogEntryId":3,"sourceId":7,"workId":1,"field":"title","text":"Example title","language":"zh-cn"}`, 200)
@@ -422,6 +424,7 @@ func TestContentTranslationReusesAWorkTitleOnACatalogCard(t *testing.T) {
 		INSERT INTO source_catalog_entry(id,file_source_id,root_path,title,work_id) VALUES(3,7,'/Example Work','Example title',1);`); err != nil {
 		t.Fatal(err)
 	}
+	metadataReviewExec(t, s.db, `INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes) VALUES(3,'audio.mp3','Audio','audio',1)`)
 	cfg, _ := json.Marshal(map[string]any{"baseUrl": upstream.URL, "minFreeBytes": 0})
 	translationRequest(t, host, admin, "PATCH", "/api/settings/translation", string(cfg), 200)
 	result := translationRequest(t, host, listener, "POST", "/api/content-translations", `{"catalogEntryId":3,"field":"title","text":"Example title","language":"zh-cn"}`, 200)
@@ -461,6 +464,7 @@ func TestContentTranslationProtectsSidecarNamesOfAnUnregisteredCard(t *testing.T
 		INSERT INTO source_catalog_entry(id,file_source_id,root_path,title,sidecar_json) VALUES(3,7,'/Example Work','A collection by Example Circle with Example Voice',?)`, string(sidecar)); err != nil {
 		t.Fatal(err)
 	}
+	metadataReviewExec(t, s.db, `INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes) VALUES(3,'audio.mp3','Audio','audio',1)`)
 	cfg, _ := json.Marshal(map[string]any{"baseUrl": upstream.URL, "minFreeBytes": 0})
 	translationRequest(t, host, admin, "PATCH", "/api/settings/translation", string(cfg), 200)
 	result := translationRequest(t, host, listener, "POST", "/api/content-translations", `{"catalogEntryId":3,"field":"title","text":"A collection by Example Circle with Example Voice","language":"zh-cn"}`, 200)
