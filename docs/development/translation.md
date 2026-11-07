@@ -26,8 +26,11 @@ Administrator routes require `sources:write`:
   the translation responses embed. It is readable by any `library:read` caller
   and lets the browser reject a cached row from another model, endpoint,
   reasoning switch or prompt template before the first translation of a
-  session. Every single, batch and trial response carries the same `version`;
-  the browser stores it with the row and deletes a row whose version differs.
+  session. Each successful single-field or batch item carries the `version`
+  of the configuration snapshot used to generate or retrieve its text. A settings
+  change during generation cannot relabel an earlier model's answer. Batch items
+  may carry different versions when a configuration changes while they start.
+  Trial responses report their model and template separately.
 - `GET /api/settings/translation/prefill` returns the durable prefill cursor,
   per-language coverage (`rows`, `native`, `model`, `missing`, `stale`,
   `failed`, `retry`), the night-window flag, the recent rate and the last error.
@@ -65,7 +68,11 @@ preserves the selected edition and does not require a product code.
 resource. Its title is checked against the stored entry title; directory fields
 require the exact real relative `path` and its stored display title. The shared
 catalog loaders recheck source enabled/type and Demo restrictions before cache
-lookup. Content reads do not register works or download media.
+lookup. Source-backed entries also pass the published-generation file admission
+rule; a retained missing record keeps its existing exception. Series titles use
+the detail route's readable membership, including restored parent/episode works,
+before native, authored or cached text can answer. Content reads do not register
+works or download media.
 
 The server reloads the selected public field and verifies the exact text before
 reading cache or generating. Changed text returns 409; missing content returns

@@ -141,6 +141,9 @@ editor **Episode review** with the episode title. `PATCH
 also requires `remote:track` and registers only the series' own numberless work,
 logical work and edition in the same transaction as the personal update. It
 never registers the members, creates a download, or assigns media to a series.
+The write transaction requires the same readable membership as series detail.
+A series with no qualified or retained missing member returns 404; restored
+parent/episode work relationships remain readable without source membership.
 
 The payload accepts `rating` (0–5 or null) and `note` (string). Omitted fields
 remain unchanged; null rating clears only the score and an empty note clears
