@@ -316,31 +316,42 @@ func catalogDirectAudioNames(files []openlist.File) []string {
 	return names
 }
 
-func persistOpenListEntryTx(ctx context.Context, tx *sql.Tx, sourceID any, root, sourceRoot, title string) (int64, error) {
+const openListEntryUpsertSQL = `INSERT INTO source_catalog_entry(file_source_id,root_path,source_root,primary_code,title)
+	VALUES(?,?,?,?,?) ON CONFLICT(file_source_id,root_path) DO UPDATE SET source_root=excluded.source_root,primary_code=excluded.primary_code,title=excluded.title,availability_status='available',status_checked_at=CURRENT_TIMESTAMP,content_fingerprint='',layout_fingerprint='',updated_at=CURRENT_TIMESTAMP
+	RETURNING id`
+
+func openListEntryArgs(sourceID any, root, sourceRoot, title string) []any {
 	// The same parser the resumable index uses: a code may sit in brackets, be
 	// prefixed directly to a title, or be the whole folder name.
 	code := catalogEntryCode(root)
 	if title == "" {
 		title = path.Base(root)
 	}
+	return []any{sourceID, root, sourceRoot, code, title}
+}
+
+func persistOpenListEntryTx(ctx context.Context, tx *sql.Tx, sourceID any, root, sourceRoot, title string) (int64, error) {
 	var id int64
-	err := tx.QueryRowContext(ctx, `INSERT INTO source_catalog_entry(file_source_id,root_path,source_root,primary_code,title)
-				VALUES(?,?,?,?,?) ON CONFLICT(file_source_id,root_path) DO UPDATE SET source_root=excluded.source_root,primary_code=excluded.primary_code,title=excluded.title,availability_status='available',status_checked_at=CURRENT_TIMESTAMP,content_fingerprint='',layout_fingerprint='',updated_at=CURRENT_TIMESTAMP
-		RETURNING id`, sourceID, root, sourceRoot, code, title).Scan(&id)
+	err := tx.QueryRowContext(ctx, openListEntryUpsertSQL, openListEntryArgs(sourceID, root, sourceRoot, title)...).Scan(&id)
 	if err != nil {
 		return 0, err
 	}
 	return id, nil
 }
 
+// A manual snapshot is the card's current published file set, so it carries
+// the same generation as the entry. Admission compares the two; leaving the
+// default zero here would make a refreshed card look fileless.
+const openListFileUpsertSQL = `INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes,observed_generation)
+	VALUES(?,?,?,?,?,(SELECT last_seen_generation FROM source_catalog_entry WHERE id=?)) ON CONFLICT(catalog_entry_id,relative_path) DO UPDATE SET
+	title=excluded.title,kind=excluded.kind,size_bytes=excluded.size_bytes,observed_generation=excluded.observed_generation`
+
+func openListFileArgs(entryID int64, file openlist.File) []any {
+	return []any{entryID, file.Path, file.Title, file.Kind, file.Size, entryID}
+}
+
 func persistOpenListFileTx(ctx context.Context, tx *sql.Tx, entryID int64, file openlist.File) error {
-	// A manual snapshot is the card's current published file set, so it carries
-	// the same generation as the entry. Admission compares the two; leaving the
-	// default zero here would make a refreshed card look fileless.
-	_, err := tx.ExecContext(ctx, `INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes,observed_generation)
-		VALUES(?,?,?,?,?,(SELECT last_seen_generation FROM source_catalog_entry WHERE id=?)) ON CONFLICT(catalog_entry_id,relative_path) DO UPDATE SET
-		title=excluded.title,kind=excluded.kind,size_bytes=excluded.size_bytes,observed_generation=excluded.observed_generation`,
-		entryID, file.Path, file.Title, file.Kind, file.Size, entryID)
+	_, err := tx.ExecContext(ctx, openListFileUpsertSQL, openListFileArgs(entryID, file)...)
 	return err
 }
 

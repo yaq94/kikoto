@@ -33,7 +33,11 @@ bounded compatibility partitioner, including its episode compensation rules.
 Larger inputs partition into durable target and file tables.
 
 Target creation, previous-file removal, file application and target readiness
-use separate bounded checkpoints. These writes enter the shared publication
+use separate bounded checkpoints. Finite target writes reuse entry and file
+statements within each transaction, including their trigger programs. Statements
+close before the transaction commits or rolls back; no global statement cache
+owns a connection. Status and admission preparation use the same bounded target
+batch. These writes enter the shared publication
 operation; only its committed marker changes the readable source projection.
 Cancellation, low disk space and a failed transaction preserve completed
 checkpoints. A retry opens the same listing and publication operation. Source

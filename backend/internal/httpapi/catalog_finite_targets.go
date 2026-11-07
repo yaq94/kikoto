@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 
 	"github.com/yexca/kikoto/backend/internal/openlist"
 )
@@ -31,16 +32,29 @@ func (s *Server) applyCatalogFiniteTargets(ctx context.Context, sourceID, listin
 			err = rows.Err()
 		}
 		_ = rows.Close()
+		if err != nil {
+			release()
+			return err
+		}
+		// The entry's publication/search triggers compile once for this batch.
+		// Close explicitly before commit (also on an execution error) so no
+		// prepared statement survives this transaction or retains its connection.
+		entryStatement, err := tx.PrepareContext(ctx, openListEntryUpsertSQL)
+		if err != nil {
+			release()
+			return err
+		}
 		for _, t := range batch {
 			if err != nil {
 				break
 			}
 			var id int64
-			id, err = persistOpenListEntryTx(ctx, tx.Tx, sourceID, t.root, t.sourceRoot, t.title)
+			err = entryStatement.QueryRowContext(ctx, openListEntryArgs(sourceID, t.root, t.sourceRoot, t.title)...).Scan(&id)
 			if err == nil {
 				_, err = tx.ExecContext(ctx, `UPDATE source_catalog_finite_target SET catalog_entry_id=? WHERE listing_id=? AND root_path=?`, id, listingID, t.root)
 			}
 		}
+		err = errors.Join(err, entryStatement.Close())
 		if err == nil {
 			err = tx.Commit()
 		}
@@ -96,13 +110,23 @@ func (s *Server) applyCatalogFiniteTargets(ctx context.Context, sourceID, listin
 			err = rows.Err()
 		}
 		_ = rows.Close()
+		if err != nil {
+			release()
+			return err
+		}
+		deleteStatement, err := tx.PrepareContext(ctx, `DELETE FROM source_catalog_file WHERE catalog_entry_id=? AND relative_path=?`)
+		if err != nil {
+			release()
+			return err
+		}
 		for _, d := range batch {
 			if err != nil {
 				break
 			}
-			_, err = tx.ExecContext(ctx, `DELETE FROM source_catalog_file WHERE catalog_entry_id=? AND relative_path=?`, d.id, d.path)
+			_, err = deleteStatement.ExecContext(ctx, d.id, d.path)
 			cursor.Root, cursor.Path = d.root, d.path
 		}
+		err = errors.Join(err, deleteStatement.Close())
 		n := len(batch)
 		if err == nil {
 			next := mustJSON(cursor)
@@ -149,12 +173,22 @@ func (s *Server) applyCatalogFiniteTargets(ctx context.Context, sourceID, listin
 			err = rows.Err()
 		}
 		_ = rows.Close()
+		if err != nil {
+			release()
+			return err
+		}
+		fileStatement, err := tx.PrepareContext(ctx, openListFileUpsertSQL)
+		if err != nil {
+			release()
+			return err
+		}
 		for _, i := range batch {
 			if err != nil {
 				break
 			}
-			err = persistOpenListFileTx(ctx, tx.Tx, i.id, i.file)
+			_, err = fileStatement.ExecContext(ctx, openListFileArgs(i.id, i.file)...)
 		}
+		err = errors.Join(err, fileStatement.Close())
 		if err == nil && len(batch) > 0 {
 			_, err = tx.ExecContext(ctx, `UPDATE source_catalog_listing SET apply_cursor=? WHERE id=?`, batch[len(batch)-1].input, listingID)
 		}
@@ -195,6 +229,10 @@ func (s *Server) applyCatalogFiniteTargets(ctx context.Context, sourceID, listin
 			err = rows.Err()
 		}
 		_ = rows.Close()
+		// Reuse the bounded publisher forms: one trigger compilation for the
+		// status update and one for admission, with the same 50 target limit.
+		updates := make([]catalogEntryStatusUpdate, 0, len(batch))
+		ids := make([]int64, 0, len(batch))
 		for _, t := range batch {
 			if err != nil {
 				break
@@ -209,15 +247,17 @@ func (s *Server) applyCatalogFiniteTargets(ctx context.Context, sourceID, listin
 			} else if t.sourceRoot == "" {
 				err = attachCatalogSeriesForRootTx(ctx, tx.Tx, t.id, sourceID, t.root)
 			}
-			if err == nil {
-				err = setCatalogEntryStatusTx(ctx, tx.Tx, t.id, "available")
-			}
-			if err == nil {
-				err = refreshCatalogEntryAdmissionTx(ctx, tx.Tx, t.id)
-			}
+			updates = append(updates, catalogEntryStatusUpdate{ID: t.id, Status: "available"})
+			ids = append(ids, t.id)
 			if err == nil {
 				_, err = tx.ExecContext(ctx, `UPDATE source_catalog_finite_target SET prepared=1 WHERE listing_id=? AND root_path=?`, listingID, t.root)
 			}
+		}
+		if err == nil {
+			err = setCatalogEntryStatusesTx(ctx, tx.Tx, updates)
+		}
+		if err == nil {
+			err = refreshCatalogEntryAdmissionsTx(ctx, tx.Tx, ids)
 		}
 		if err == nil {
 			err = tx.Commit()
