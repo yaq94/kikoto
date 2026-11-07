@@ -18,11 +18,7 @@ type translatedContent struct {
 // translateStoredContent resolves one field from the persistent corpus. A
 // native row is written without a model call; a model row is written only after
 // a successful call and a successful placeholder restore.
-func (s *Server) translateStoredContent(ctx context.Context, in contentTranslationRequest, field readableTranslationField, text string, target translationTarget, kind string, entityID int64, entityKey string) (translatedContent, string, error) {
-	cfg, err := translation.NewStore(s.db).Load(ctx)
-	if err != nil {
-		return translatedContent{}, "", err
-	}
+func (s *Server) translateStoredContent(ctx context.Context, cfg translation.Config, in contentTranslationRequest, field readableTranslationField, text string, target translationTarget, kind string, entityID int64, entityKey string) (translatedContent, string, error) {
 	if nativeLanguage, ok := nativeContentLanguage(text, target); ok {
 		key := contentTranslationCacheKey(kind, entityID, entityKey, in.Field, nativeLanguage, text, "native", "", "", "", false)
 		row := contentTranslationRow{
@@ -196,11 +192,7 @@ func (s *Server) translateOnLane(ctx context.Context, cfg translation.Config, ke
 // display cache only and never enters the searchable content_translation
 // corpus. The key includes the source work, real directory path, original text,
 // target language, model and template, so unrelated fields cannot share it.
-func (s *Server) translateThroughModel(ctx context.Context, in contentTranslationRequest, field readableTranslationField, text string, target translationTarget) (translatedContent, string, error) {
-	cfg, err := translation.NewStore(s.db).Load(ctx)
-	if err != nil {
-		return translatedContent{}, "", err
-	}
+func (s *Server) translateThroughModel(ctx context.Context, cfg translation.Config, in contentTranslationRequest, field readableTranslationField, text string, target translationTarget) (translatedContent, string, error) {
 	if nativeLanguage, ok := nativeContentLanguage(text, target); ok {
 		display, err := displayText(text, nativeLanguage, target, field.Names)
 		if err != nil {
