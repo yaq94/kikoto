@@ -22,16 +22,18 @@ import (
 )
 
 type catalogWriteAudit struct {
-	mu           sync.Mutex
-	active       bool
-	rows         int
-	entries      int
-	files        int
-	maxRows      int
-	maxEntries   int
-	maxFiles     int
-	transactions int
-	history      []string
+	mu               sync.Mutex
+	active           bool
+	rows             int
+	entries          int
+	files            int
+	maxRows          int
+	maxEntries       int
+	maxFiles         int
+	transactions     int
+	totalFiles       int
+	fileTransactions int
+	history          []string
 }
 
 func (a *catalogWriteAudit) start() {
@@ -45,6 +47,8 @@ func (a *catalogWriteAudit) start() {
 	a.maxEntries = 0
 	a.maxFiles = 0
 	a.transactions = 0
+	a.totalFiles = 0
+	a.fileTransactions = 0
 	a.history = nil
 }
 
@@ -64,6 +68,12 @@ func (a *catalogWriteAudit) transactionsDetail() []string {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return append([]string(nil), a.history...)
+}
+
+func (a *catalogWriteAudit) fileWork() (files, transactions int) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.totalFiles, a.fileTransactions
 }
 
 func (a *catalogWriteAudit) rowChanged(data sqlite.SQLitePreUpdateData) {
@@ -87,6 +97,10 @@ func (a *catalogWriteAudit) committed() int32 {
 	defer a.mu.Unlock()
 	if a.active && a.rows > 0 {
 		a.transactions++
+		if a.files > 0 {
+			a.totalFiles += a.files
+			a.fileTransactions++
+		}
 		if a.rows > a.maxRows {
 			a.maxRows = a.rows
 			a.maxEntries = a.entries

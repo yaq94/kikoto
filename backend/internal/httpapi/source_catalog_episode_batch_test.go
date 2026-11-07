@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"testing"
+	"time"
 )
 
 // Episode discovery writes in bounded batches, but every episode in one series
@@ -13,8 +14,14 @@ func TestSourceCatalogEpisodeDiscoveryPublishes101WithinWriteBound(t *testing.T)
 	audit := &catalogWriteAudit{}
 	f := newLooseWorkFixtureWithDB(t, looseEpisodeTree(episodes), openCatalogWriteAuditedDB(t, audit))
 	audit.start()
+	started := time.Now()
 	f.request(t, http.MethodPost, "/catalog/scan", `{}`, http.StatusOK)
 	audit.stop()
+	filesWritten, stagingTransactions := audit.fileWork()
+	t.Logf("episodes=%d stage_file_writes=%d staging_transactions=%d elapsed=%s", episodes, filesWritten, stagingTransactions, time.Since(started))
+	if filesWritten != episodes || stagingTransactions != 3 {
+		t.Errorf("staging work=%d file writes/%d transactions, want 101/3", filesWritten, stagingTransactions)
+	}
 	maxRows, maxEntries, maxFiles, transactions := audit.details()
 	if transactions == 0 {
 		t.Fatal("write audit saw no catalog entry/file transaction")
