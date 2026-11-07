@@ -5,7 +5,7 @@
 **Blocked by:** [17：组合验收与部署回退](17-integrated-acceptance-release-plan.md)、[18](18-ci-migration-completion-state.md)、[19](19-ci-browser-reliability.md)、[20](20-catalog-sync-and-admission.md)、[21](21-translation-corpus-and-search.md)、[22](22-personal-transfer-parent-identity.md)、[23](23-retention-and-repository-contracts.md)。
 
 **Status:** ready-for-agent
-**Implementation:** resolved；当前候选 `15b84ed2` 已部署，schema 105，/health 200，主包 `index-DNjiWLrG.js`。上一候选 `907391f2` 的 run `40596212856` success（26 job）；`c7d793e4` 的 run `40587302416` 曾因 race 用例超时失败，已在 `15b84ed2` 消除。候选账本见 [24-candidate-15b84ed2.md](../evidence/24-candidate-15b84ed2.md)，生产浏览器证据见 [25-live-browser.md](../evidence/25-live-browser.md)，模板为 [24-candidate-ledger.md](../evidence/24-candidate-ledger.md)。`0aaa83fd`、`cf4ada56`、`fe8d3d3d` 与 `8fa8465e` 的记录保留为历史候选。
+**Implementation:** in-progress；2026-11-07 实际部署为 `53d905e1`，该 SHA 的 Full CI 失败于证据扫描且其余门禁未运行；25 号复核确认功能及资源缺陷。旧候选账本保留为历史，最终同一修复候选的完整审查、CI、恢复和部署验收仍待完成。
 
 **依据:** [正式规格](../spec.md)、[整改计划](../review-remediation-plan.md)、[执行记录](../execution.md)。
 

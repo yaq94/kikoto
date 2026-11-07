@@ -2,7 +2,7 @@
 
 **Status:** ready-for-agent
 **设计状态:** 已确认（Q31）；用户故事、验收要求与测试边界作为实施合同。
-**Implementation:** resolved；01–19 的历史证据按对应产物保留。20–24 承接审查发现的目录、译文、个人恢复、保留与发布缺口；当前迁移头为 105，候选 `15b84ed2` 已部署（schema 105，`/health` 200 `v0.8.3`，主包 `index-DNjiWLrG.js`），20–24 的证据由 24 汇总，见[执行记录](execution.md)与[24 候选账本](evidence/24-candidate-15b84ed2.md)。`907391f2` 的 run `40596212856` 为 success；`15b84ed2` 的 run `40602372253` 见该账本第 6 节。
+**Implementation:** in-progress；2026-11-07 复核当前实现后确认功能与资源处理缺陷，整改见 [25 号工单](issues/25-review-remediation.md)。旧验收仅保留为历史证据；全部要求继续有效，修复后的同一候选必须重新完成审查、测试、Full CI 与部署验收。
 **执行授权:** 用户已授权本规格全部功能实现、必要依赖安装、测试、数据库迁移、部署与回滚；进度及证据见[执行记录](execution.md)。
 **领域依据:** [GLOSSARY](../../GLOSSARY.md) · [作品身份与个人记录 ADR](../../docs/decisions/ADR-0004-work-identity-and-personal-state.md) · [整改一致性 ADR](../../docs/decisions/ADR-0006-catalog-remediation-and-translation-consistency.md)
 

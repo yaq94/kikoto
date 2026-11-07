@@ -1,16 +1,16 @@
 # Kikoto 下一阶段执行记录
 
 **Status:** ready-for-agent
-**Implementation:** resolved；01–19 的历史证据按对应产物保留；20–24 的整改已汇总到当前候选 `15b84ed2`，部署与部署后验收已完成，见 [24 候选账本](evidence/24-candidate-15b84ed2.md)。上一候选 `907391f2` 的 Full CI run `40596212856` 为 success（26 job）；`15b84ed2` 的 run `40602372253` 见该账本第 6 节。
+**Implementation:** in-progress；2026-11-07 按当前代码重新审查，确认四项功能缺陷及算法与资源控制问题。25 号整改已开始；旧 resolved 与绿色日志不能关闭本轮目标。
 
 ## 当前状态
 
-**当前部署：** 生产运行 `kikoto:next-15b84ed2`（schema 105，`/health` 200 `v0.8.3`，主包 `assets/index-DNjiWLrG.js`）；部署前为同 schema 的 `907391f2`，再前为 `c7d793e4`（均保留为回滚目标）。部署脚本在切换前完成一致性快照（`quick_check=ok`、`foreign_key_violations=0`），`/health` 门禁通过，未触发回滚。部署版本、备份与回滚路径见 [24 候选账本](evidence/24-candidate-15b84ed2.md)。
-**集成状态（2026-10-28 复核）：** 集成分支 `codex/kikoto-catalog-remediation` 已推进到当前候选 `15b84ed2`；提交清单见 [24 候选账本](evidence/24-candidate-15b84ed2.md) 第 2 节。迁移头仍为 `105`，本候选未改迁移。相对 `c7d793e4` 新增四个提交：`38965f64` 让未进入视口的字段不再声称“正在翻译”（/voices/4 首屏 113 个字段曾永不结算）；`c2057b7c` 把可见性闩锁按请求键作用域并让已定结果优先；`907391f2` 与 `15b84ed2` 修 CI race 用例（该用例在 race 下耗时 300.71 s 触发 503，现为 22.70 s）。部署后实测：`/voices/4` 首屏 60 existing / 7 translated / 113 original、0 pending、0 failed；滚动 8 屏后 159 / 20 / 1、仍 0 pending、0 failed；asmr.one 基线 35 的卡片无徽章，有真实收藏信号后分数升至 40–54；索引详情默认折叠；目录卡入队与两张无编号卡的独立标记均通过。详见 [25 号证据](evidence/25-live-browser.md) 第 14 节。
+**当前部署（2026-11-07 实际核实）：** `kikoto:next-53d905e1`，schema 105，`/health` 200；对应快照和可执行回滚入口存在。该版本的 Full CI run `42362300174` 失败于旧证据脱敏门禁，后续 jobs 被跳过，不能计为通过。重新审查确认的缺陷仍在整改，生产清理 apply 暂不执行。
+**2026-10-28 历史集成记录：** 集成分支 `codex/kikoto-catalog-remediation` 已推进到当前候选 `15b84ed2`；提交清单见 [24 候选账本](evidence/24-candidate-15b84ed2.md) 第 2 节。迁移头仍为 `105`，本候选未改迁移。相对 `c7d793e4` 新增四个提交：`38965f64` 让未进入视口的字段不再声称“正在翻译”（/voices/4 首屏 113 个字段曾永不结算）；`c2057b7c` 把可见性闩锁按请求键作用域并让已定结果优先；`907391f2` 与 `15b84ed2` 修 CI race 用例（该用例在 race 下耗时 300.71 s 触发 503，现为 22.70 s）。部署后实测：`/voices/4` 首屏 60 existing / 7 translated / 113 original、0 pending、0 failed；滚动 8 屏后 159 / 20 / 1、仍 0 pending、0 failed；asmr.one 基线 35 的卡片无徽章，有真实收藏信号后分数升至 40–54；索引详情默认折叠；目录卡入队与两张无编号卡的独立标记均通过。详见 [25 号证据](evidence/25-live-browser.md) 第 14 节。
 
 **审查快照：** 审查时文档基线 `6122b7bf`；代码审查基线 `301e6c63`。`6b4a02ec`（096 与系列暂存）、`728651a6`（v2 可选 `parent`）、`47df9c11`（wall-clock/partial 调度）均已并入当前分支，但仍需在当前候选上重新验收；不要把它们当作已签收的外部交付。历史 run 53 为 partial，不能当作完整覆盖。2026-10-25 的逐项审查见 [audit-20261025-review.md](audit-20261025-review.md)。
 
-**当前候选：** 已部署 `15b84ed2`（见 [24 候选账本](evidence/24-candidate-15b84ed2.md)）。01–19 的 `resolved` 仅表示其记录 SHA 上的历史本地证据；本候选重跑了后端构建与 `internal/httpapi` 整包测试、前端全量、构建与部署后真实服务验收，迁移链沿用上一候选证据，逐项结论见账本。`0aaa83fd`、`cf4ada56`、`fe8d3d3d`、`8fa8465e`、`c7d793e4`、`907391f2` 只作历史候选记录。
+**当前整改候选：** 集成分支 `codex/kikoto-catalog-remediation` 已在 `e3a43ca2` 合入清理准入和恢复单集层级修复，并同步 GitHub；完整整改尚未完成、未部署。详见 [25 号工单](issues/25-review-remediation.md)、[P1 证据](evidence/25-review-remediation.md)及[资源基线](evidence/25-resource-baseline.md)。最终发布候选在全部整改与复验完成后确定。
 
 `final-spec-review-20261024.md` 曾在 `a711bc39` 记录 AC-14 的系列发现失败（单集/格式副本/Bonus、成员上限）和 AC-26 的部署证据缺口；后续未提交工作区改动不能替代当前 SHA 的回归，24 必须把 AC-14 列入首要门禁。
 
