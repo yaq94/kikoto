@@ -114,7 +114,7 @@ func (s *Server) persistCatalogEpisodeRoots(ctx context.Context, source remoteSo
 		return 0, true, err
 	}
 	stages := planCatalogEpisodeStages(roots, split)
-	for start := 0; start < len(stages); start++ {
+	for start := 0; start < len(stages); {
 		end := start
 		writes := 0
 		for end < len(stages) && writes+stages[end].writes <= catalogEpisodeWriteRows {
@@ -128,6 +128,7 @@ func (s *Server) persistCatalogEpisodeRoots(ctx context.Context, source remoteSo
 		if pinned {
 			return 0, false, s.discardCatalogEpisodePending(ctx, source.ID, root, nil)
 		}
+		start = end
 	}
 	first, err = s.activateCatalogEpisodeRoots(ctx, source.ID, root, roots, parentFiles)
 	if errors.Is(err, errCatalogEpisodeParentPinned) {

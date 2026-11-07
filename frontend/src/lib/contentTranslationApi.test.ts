@@ -195,6 +195,62 @@ describe("contentTranslationApi.translateBatch", () => {
     expect(first.text).toBe(second.text);
   });
 
+  it("counts a duplicate reader that joins after the request has started", async () => {
+    let release!: () => void;
+    let networkSignal!: AbortSignal;
+    sendJSONBody.mockImplementation(
+      (_method, _path, body, options) =>
+        new Promise((resolve, reject) => {
+          networkSignal = options.signal;
+          release = () => resolve(echoResponse(body));
+          networkSignal.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")));
+        }),
+    );
+    const firstController = new AbortController();
+    const first = translateCoalesced(input(80), firstController.signal, "late-reader").catch((error) => error);
+    await vi.waitFor(() => expect(sendJSONBody).toHaveBeenCalledTimes(1));
+    const second = translateCoalesced(input(80), undefined, "late-reader").catch((error) => error);
+    firstController.abort();
+    const aborted = networkSignal.aborted;
+    release();
+    expect((await first).name).toBe("AbortError");
+    expect(await second).toMatchObject({ text: "translated:title 80" });
+    expect(aborted).toBe(false);
+    expect(sendJSONBody).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([false, true])("releases abandoned chunks after an earlier chunk settles (failure=%s)", async (failure) => {
+    const requests: Array<{ signal: AbortSignal; release: (fail?: boolean) => void }> = [];
+    sendJSONBody.mockImplementation(
+      (_method, _path, body, options) =>
+        new Promise((resolve, reject) => {
+          requests.push({
+            signal: options.signal,
+            release: (fail) => (fail ? reject(new Error("synthetic failure")) : resolve(echoResponse(body))),
+          });
+          options.signal.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")));
+        }),
+    );
+    const controllers = Array.from({ length: 33 }, () => new AbortController());
+    const pending = controllers.map((controller, i) =>
+      translateCoalesced(input(100 + i), controller.signal, "settled-readers").catch((error) => error),
+    );
+    await vi.waitFor(() => expect(requests).toHaveLength(2));
+    requests[0].release(failure);
+    await vi.waitFor(() => expect(requests).toHaveLength(3));
+    for (let i = 16; i < 33; i++) controllers[i].abort();
+    await Promise.all(pending);
+    const aborted = requests.slice(1).map((request) => request.signal.aborted);
+    // Drain the transport even on the old implementation, so this regression
+    // cannot leave occupied global slots for another test.
+    requests.slice(1).forEach((request) => request.release());
+    sendJSONBody.mockImplementation(async (_method, _path, body) => echoResponse(body));
+    await expect(translateCoalesced(input(150), undefined, "next-language")).resolves.toMatchObject({
+      status: "translated",
+    });
+    expect(aborted).toEqual([true, true]);
+  });
+
   it("aborts a coalesced batch once every reader of that frame has left", async () => {
     let signal: AbortSignal | undefined;
     sendJSONBody.mockImplementation((_method, _path, _body, options) => {

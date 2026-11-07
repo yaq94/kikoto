@@ -174,11 +174,15 @@ function requestResult<T>(request: IDBRequest<T>): Promise<T> {
 }
 
 function transactionDone(transaction: IDBTransaction): Promise<void> {
-  return new Promise((resolve, reject) => {
+  const done = new Promise<void>((resolve, reject) => {
     transaction.oncomplete = () => resolve();
     transaction.onerror = () => reject(transaction.error ?? new Error("IndexedDB transaction failed"));
     transaction.onabort = () => reject(transaction.error ?? new Error("IndexedDB transaction aborted"));
   });
+  // A request can reject before its caller reaches await done. Observe the
+  // transaction immediately while preserving its rejection for normal awaits.
+  void done.catch(() => undefined);
+  return done;
 }
 
 export function createContentTranslationCache(options: ContentTranslationCacheOptions = {}): ContentTranslationCache {
@@ -195,6 +199,7 @@ export function createContentTranslationCache(options: ContentTranslationCacheOp
   const expectedVersions = new Map<string, string>();
   const hashes = new Map<string, Promise<string>>();
   let dbPromise: Promise<IDBDatabase | null> | null = null;
+  let database: IDBDatabase | null = null;
   let persistenceDisabled = !factory;
   let pruneTimer: ReturnType<typeof setTimeout> | null = null;
   let pruneRunning: Promise<void> | null = null;
@@ -229,7 +234,12 @@ export function createContentTranslationCache(options: ContentTranslationCacheOp
 
   function disablePersistence() {
     persistenceDisabled = true;
+    database?.close();
+    database = null;
     dbPromise = null;
+    if (pruneTimer !== null) clearTimeout(pruneTimer);
+    pruneTimer = null;
+    pruneRequested = false;
   }
 
   function openDatabase(): Promise<IDBDatabase | null> {
@@ -260,8 +270,15 @@ export function createContentTranslationCache(options: ContentTranslationCacheOp
       };
       request.onsuccess = () => {
         const db = request.result;
+        if (persistenceDisabled) {
+          db.close();
+          resolve(null);
+          return;
+        }
+        database = db;
         db.onversionchange = () => {
           db.close();
+          if (database === db) database = null;
           dbPromise = null;
         };
         resolve(db);

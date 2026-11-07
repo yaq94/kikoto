@@ -13,6 +13,7 @@ package main
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"math"
@@ -25,6 +26,7 @@ import (
 	"github.com/yexca/kikoto/backend/internal/library"
 	"github.com/yexca/kikoto/backend/internal/migrationfixture"
 	"github.com/yexca/kikoto/backend/internal/storage"
+	"github.com/yexca/kikoto/backend/internal/testfixture"
 	"github.com/yexca/kikoto/backend/internal/translation"
 	_ "modernc.org/sqlite"
 )
@@ -49,6 +51,22 @@ type queryResult struct {
 	Runs     int       `json:"runs"`
 	Samples  []float64 `json:"samplesMs"`
 	Plan     []string  `json:"plan,omitempty"`
+	Error    string    `json:"error,omitempty"`
+}
+
+// Failed samples have no valid latency distribution. Keep diagnostic context
+// separate from EXPLAIN so a successful plan cannot overwrite the failure.
+func (q queryResult) MarshalJSON() ([]byte, error) {
+	if q.Error != "" {
+		return json.Marshal(struct {
+			Error   string    `json:"error"`
+			Runs    int       `json:"runs"`
+			Samples []float64 `json:"samplesMs"`
+			Plan    []string  `json:"plan,omitempty"`
+		}{q.Error, q.Runs, q.Samples, q.Plan})
+	}
+	type result queryResult
+	return json.Marshal(result(q))
 }
 
 type languageReport struct {
@@ -90,13 +108,15 @@ func main() {
 		sizes = append(sizes, value)
 	}
 	reports := []sizeReport{}
+	var failures []error
 	for _, size := range sizes {
 		report, err := measure(size, *runs)
+		reports = append(reports, report)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "rows=%d: %v\n", size, err)
-			os.Exit(1)
+			failures = append(failures, err)
+			continue
 		}
-		reports = append(reports, report)
 		fmt.Printf("rows=%-7d entities=%-6d insert=%.1fs db=%.1fMB fts=%.1fMB vacuum=%.1fMB exact-code p95=%.2fms\n",
 			size, report.Entities, report.InsertSeconds, mb(report.DBBytes),
 			mb(report.FTSBytes), mb(report.AfterVacuum), report.ExactCode.P95MS)
@@ -112,6 +132,9 @@ func main() {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
+	}
+	if len(failures) > 0 {
+		os.Exit(1)
 	}
 }
 
@@ -144,6 +167,9 @@ func measure(rows, runs int) (sizeReport, error) {
 	entities := rows / len(benchLanguages)
 	if entities < 1 {
 		return sizeReport{}, fmt.Errorf("rows must cover at least one entity")
+	}
+	if entities > 400000 {
+		return sizeReport{}, fmt.Errorf("entity count exceeds the 400000 synthetic fixture identities")
 	}
 	report := sizeReport{Rows: entities * len(benchLanguages), Entities: entities}
 	start := time.Now()
@@ -205,7 +231,24 @@ func measure(rows, runs int) (sizeReport, error) {
 		return report, err
 	}
 	report.AfterVacuum = fileSize(path)
-	return report, nil
+	return report, report.queryError()
+}
+
+func (r sizeReport) queryError() error {
+	var failures []error
+	check := func(label string, result queryResult) {
+		if result.Error != "" {
+			failures = append(failures, fmt.Errorf("%s: %s", label, result.Error))
+		}
+	}
+	check("exact-code", r.ExactCode)
+	for _, language := range r.Languages {
+		check(language.Language+" exact-title", language.ExactTitle)
+		check(language.Language+" fts", language.FTS)
+		check(language.Language+" short", language.Short)
+		check(language.Language+" short-complete", language.ShortComplete)
+	}
+	return errors.Join(failures...)
 }
 
 // insertBatch writes one entity per iteration: a work row plus one translation
@@ -256,9 +299,8 @@ func indexOf(language string) int {
 	return 0
 }
 
-// benchCode produces a realistic release code. Non-empty codes stay unique,
-// which the partial unique index requires.
-func benchCode(id int64) string { return fmt.Sprintf("RJ%08d", id) }
+// The benchmark only uses the bounded identity range reserved for scale data.
+func benchCode(id int64) string { return testfixture.HighCardinalityWorkCodeAt(int(id - 1)) }
 
 func sourceTitle(index int) string {
 	switch index % 3 {
@@ -415,7 +457,7 @@ func explainPlan(db *sql.DB, query string, args ...any) []string {
 // benchmark cannot look fast.
 func timeQuery(runs int, fn func() (int, error)) queryResult {
 	if _, err := fn(); err != nil {
-		return queryResult{Runs: 0, Plan: []string{"warmup failed: " + err.Error()}}
+		return queryResult{Error: "warmup failed: " + err.Error()}
 	}
 	samples := make([]float64, 0, runs)
 	rows := 0
@@ -423,7 +465,7 @@ func timeQuery(runs int, fn func() (int, error)) queryResult {
 		start := time.Now()
 		count, err := fn()
 		if err != nil {
-			return queryResult{Runs: 0, Plan: []string{"measure failed: " + err.Error()}}
+			return queryResult{Runs: len(samples), Samples: samples, Error: "measure failed: " + err.Error()}
 		}
 		samples = append(samples, float64(time.Since(start).Microseconds())/1000)
 		rows = count
