@@ -420,8 +420,9 @@ function translationFieldRank(field: ContentTranslationInput["field"]) {
 export function translateCoalesced(
   input: ContentTranslationInput,
   signal?: AbortSignal,
+  scope = "",
 ): Promise<ContentTranslationResult> {
-  const key = contentTranslationRequestKey(input);
+  const key = scope + contentTranslationRequestKey(input);
   if (signal?.aborted) return Promise.reject(abortError());
   const inflight = coalescedInflight.get(key);
   if (inflight) {

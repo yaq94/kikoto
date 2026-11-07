@@ -1,4 +1,5 @@
 import { apiTransport } from "@/lib/apiTransport";
+import { CONTENT_TRANSLATION_CONFIG_CHANGED } from "@/lib/contentTranslationEvents";
 
 export type TranslationSettings = {
   baseUrl: string;
@@ -34,8 +35,11 @@ export type TranslationTarget = "en" | "zh-Hans" | "ja" | "ko";
 const path = "/api/settings/translation";
 export const translationApi = {
   settings: (signal?: AbortSignal) => apiTransport.getJSON<TranslationSettings>(path, signal),
-  update: (patch: TranslationSettingsPatch, signal?: AbortSignal) =>
-    apiTransport.sendJSONBody<TranslationSettings>("PATCH", path, patch, { signal }),
+  update: async (patch: TranslationSettingsPatch, signal?: AbortSignal) => {
+    const result = await apiTransport.sendJSONBody<TranslationSettings>("PATCH", path, patch, { signal });
+    window.dispatchEvent(new Event(CONTENT_TRANSLATION_CONFIG_CHANGED));
+    return result;
+  },
   test: (text: string, targetLanguage: TranslationTarget, signal?: AbortSignal) =>
     apiTransport.sendJSONBody<TranslationResult>("POST", `${path}/test`, { text, targetLanguage }, { signal }),
 };

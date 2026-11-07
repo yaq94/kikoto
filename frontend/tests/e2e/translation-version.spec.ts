@@ -7,10 +7,14 @@ const backend = process.env.KIKOTO_CONTENT_TRANSLATION_URL ?? "http://127.0.0.1:
 
 test("cached detail observes a model change through settings in the same SPA @desktop", async ({ page }) => {
   await page.request.post(`${backend}/__fixture/mode`, { data: { mode: "ok" } });
-  await page.request.post(`${backend}/api/auth/login`, { data: { username: "synthetic-user", password: "synthetic-password" } });
+  await page.request.post(`${backend}/api/auth/login`, {
+    data: { username: "synthetic-user", password: "synthetic-password" },
+  });
   await page.request.patch(`${backend}/api/auth/me`, { data: { uiLocale: "en" } });
   await page.request.patch(`${backend}/api/auth/me/preferences`, { data: { metadataLanguages: ["zh-cn", "origin"] } });
-  await page.request.post(`${backend}/api/library/onboarding/complete`, { data: { startupScan: false, watchFolders: false } });
+  await page.request.post(`${backend}/api/library/onboarding/complete`, {
+    data: { startupScan: false, watchFolders: false },
+  });
   await page.request.patch(`${backend}/api/settings/translation`, { data: { model: "Review Model A" } });
   const versions: string[] = [];
   page.on("response", async (response) => {
@@ -31,8 +35,29 @@ test("cached detail observes a model change through settings in the same SPA @de
   await expect(page.getByRole("status")).toContainText("Translation settings saved.");
   // Browser history returns to the retained detail; no reload, language change
   // or new account can invalidate the cache on this path.
-  await page.goto("/RJ00000000");
+  await page.goBack();
   await expect(page.getByTestId("detail-hero")).toContainText("ZH: Example title by Example Voice");
   const current = await (await page.request.get(`${backend}/api/content-translations/version`)).json();
   await expect.poll(() => versions.includes(current.version)).toBe(true);
+});
+
+test("another administrator's configuration is observed on SPA return @desktop", async ({ page }) => {
+  await page.request.post(`${backend}/api/auth/login`, {
+    data: { username: "synthetic-user", password: "synthetic-password" },
+  });
+  await page.request.patch(`${backend}/api/auth/me/preferences`, { data: { metadataLanguages: ["zh-cn", "origin"] } });
+  await page.request.patch(`${backend}/api/settings/translation`, { data: { model: "Review external A" } });
+  await page.goto("/RJ00000000");
+  await expect(page.getByTestId("detail-hero")).toContainText("ZH: Example title by Example Voice");
+  await page.getByRole("button", { name: "Settings", exact: true }).first().click();
+  await expect(page.getByRole("tab", { name: "Translation", exact: true })).toBeVisible();
+  await page.request.patch(`${backend}/api/settings/translation`, { data: { model: "Review external B" } });
+  const response = page.waitForResponse(async (res) => {
+    if (!res.url().endsWith("/api/content-translations/batch") || res.status() !== 200) return false;
+    const body = await res.json();
+    return body.items.some((item: { version?: string }) => item.version?.startsWith("Review external B|"));
+  });
+  await page.goBack();
+  await response;
+  await expect(page.getByTestId("detail-hero")).toContainText("ZH: Example title by Example Voice");
 });
