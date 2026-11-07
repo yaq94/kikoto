@@ -259,5 +259,3 @@ WHEN OLD.key='translation_service'
 BEGIN
   UPDATE translation_corpus_revision SET revision=revision+1,entities=entities+1 WHERE id=1;
 END;
-
-
