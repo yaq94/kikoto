@@ -253,13 +253,115 @@ test("a second visit reuses the browser translation cache without new requests @
   });
   await page.goto("/RJ00000026");
   await chooseLanguage(page, "Simplified Chinese");
-  await expect(page.getByTestId("detail-hero")).toContainText("听见森林里的音乐");
+  const hero = page.getByTestId("detail-hero");
+  const description = page.getByRole("region", { name: "Description", exact: true });
+  const file = page.getByTestId("directory-file-row");
+  const expectDetail = async () => {
+    await expect(hero).toContainText("听见森林里的音乐");
+    await description.scrollIntoViewIfNeeded();
+    await expect(description).toContainText("风吹过树叶 <script>音乐</script>");
+    await file.scrollIntoViewIfNeeded();
+    await expect(file).toContainText("听见风声.wav");
+    await hero.scrollIntoViewIfNeeded();
+  };
+  await expectDetail();
+  // Fields settle separately, and painting a result does not await its IDB
+  // commit. Revisit only after the complete detail has durable cached rows.
+  await expect
+    .poll(() =>
+      page.evaluate(async () => {
+        const db = await new Promise<IDBDatabase>((resolve, reject) => {
+          const request = indexedDB.open("kikoto-translations");
+          request.onsuccess = () => resolve(request.result);
+          request.onerror = () => reject(request.error);
+        });
+        try {
+          return await new Promise<string[]>((resolve, reject) => {
+            const request = db.transaction("entries").objectStore("entries").getAll();
+            request.onsuccess = () => resolve(request.result.map((row: { original: string }) => row.original));
+            request.onerror = () => reject(request.error);
+          });
+        } finally {
+          db.close();
+        }
+      }),
+    )
+    .toEqual(
+      expect.arrayContaining([
+        "Example conversion title 示例声优 示例社团",
+        "Example conversion description",
+        "Example folder",
+        "Example conversion track.wav",
+      ]),
+    );
   const first = requests;
   expect(first).toBeGreaterThan(0);
 
-  await page.reload();
-  await expect(page.getByTestId("detail-hero")).toContainText("听见森林里的音乐");
-  // The row also exists server-side, so the durable browser cache is proven by
-  // the page painting the translated title before any translation call.
+  // A fresh visit may load preferences before the authoritative cache version.
+  // Keep that response pending while the browser runs its translation timers.
+  let releaseVersion!: () => void;
+  const version = new Promise<void>((resolve) => {
+    releaseVersion = resolve;
+  });
+  await page.route("**/api/content-translations/version", async (route) => {
+    await version;
+    await route.continue();
+  });
+  await page.clock.install();
+  try {
+    await page.reload();
+    await expect(hero).toContainText("Example conversion title");
+    await expect(hero).toContainText("Translating…");
+    await page.clock.runFor(100);
+    expect(requests).toBe(first);
+  } finally {
+    releaseVersion();
+    await page.unrouteAll({ behavior: "wait" });
+  }
+  await expectDetail();
+  // All translated fields must survive reload without a generation call,
+  // even though matching rows also exist in the server cache.
   expect(requests).toBe(first);
+});
+
+test("an unavailable cache version keeps the original, times out and retries the version read @desktop", async ({
+  page,
+}) => {
+  await page.request.post(`${backend}/api/auth/login`, {
+    data: { username: "synthetic-user", password: "synthetic-password" },
+  });
+  await page.request.patch(`${backend}/api/auth/me`, { data: { uiLocale: "en" } });
+  await page.request.patch(`${backend}/api/auth/me/preferences`, { data: { metadataLanguages: ["zh-cn", "origin"] } });
+  await page.request.post(`${backend}/api/library/onboarding/complete`, {
+    data: { startupScan: false, watchFolders: false },
+  });
+  let versionReads = 0;
+  let generationRequests = 0;
+  page.on("request", (request) => {
+    if (request.method() === "POST" && request.url().includes("/api/content-translations")) generationRequests++;
+  });
+  await page.route("**/api/content-translations/version", async (route) => {
+    versionReads++;
+    if (versionReads === 1) {
+      await route.fulfill({ status: 503, json: { error: "Example version unavailable" } });
+      return;
+    }
+    await route.continue();
+  });
+  await page.clock.install();
+  try {
+    await page.goto("/RJ00000026");
+    const hero = page.getByTestId("detail-hero");
+    await expect(hero).toContainText("Translating…");
+    await page.clock.runFor(21_000);
+    await expect(hero).toContainText("Translation has not finished yet. You can retry.");
+    await expect(hero).toContainText("Example conversion title");
+    expect(generationRequests).toBe(0);
+    await hero.getByRole("button", { name: "Retry translation", exact: true }).click();
+    await expect.poll(() => versionReads).toBe(2);
+    await expect(hero).toContainText("听见森林里的音乐");
+    expect(generationRequests).toBeGreaterThan(0);
+  } finally {
+    await page.unrouteAll({ behavior: "wait" });
+  }
 });
