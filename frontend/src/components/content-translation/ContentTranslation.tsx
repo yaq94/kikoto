@@ -60,8 +60,9 @@ const LanguageContext = createContext({
   session: "",
   revision: 0,
   canRead: false,
-  /** Model/template that produced the newest response; "" until one arrives. */
+  /** Authoritative server configuration; "" until the version read succeeds. */
   cacheVersion: "",
+  refreshVersion: (): void => undefined,
   noteVersion: (_version?: string): void => undefined,
 });
 const ScopeContext = createContext<{
@@ -96,6 +97,7 @@ export function ContentLanguageProvider({ children }: { children: ReactNode }) {
   const [versionState, setVersionState] = useState({ session: "", version: "" });
   const cacheVersion = versionState.session === session ? versionState.version : "";
   const [versionRevision, setVersionRevision] = useState(0);
+  const refreshVersion = useCallback(() => setVersionRevision((value) => value + 1), []);
   // Responses may describe an earlier model. Only the current-version endpoint
   // is authoritative; a differing response asks it to refresh, never rewinds it.
   const noteVersion = useCallback(
@@ -189,8 +191,8 @@ export function ContentLanguageProvider({ children }: { children: ReactNode }) {
   // successful language until its own read completes.
   const language = loaded.session === session ? loaded.language : "origin";
   const value = useMemo(
-    () => ({ language, accountScope, session, revision, canRead, cacheVersion, noteVersion }),
-    [language, accountScope, session, revision, canRead, cacheVersion, noteVersion],
+    () => ({ language, accountScope, session, revision, canRead, cacheVersion, noteVersion, refreshVersion }),
+    [language, accountScope, session, revision, canRead, cacheVersion, noteVersion, refreshVersion],
   );
   return <LanguageContext.Provider value={value}>{children}</LanguageContext.Provider>;
 }
@@ -206,8 +208,8 @@ export function useContentLanguageScope() {
 }
 
 /**
- * The model/template version of the newest response, or "" while this session
- * has not seen one. An unknown version keeps the permissive cache read.
+ * The authoritative configuration version, or "" until this session reads it.
+ * Visible fields and prefetch wait for it before looking up or generating text.
  */
 export function useContentLanguageCacheVersion() {
   return useContext(LanguageContext).cacheVersion;
@@ -220,6 +222,7 @@ export function ContentTranslationScope({
   resource?: ContentTranslationResource;
   children: ReactNode;
 }) {
+  const { cacheVersion, refreshVersion } = useContext(LanguageContext);
   const [original, setOriginal] = useState(false);
   const [revision, setRevision] = useState(0);
   return (
@@ -229,7 +232,10 @@ export function ContentTranslationScope({
         original,
         toggle: () => setOriginal((value) => !value),
         revision,
-        retry: () => setRevision((value) => value + 1),
+        retry: () => {
+          if (!cacheVersion) refreshVersion();
+          setRevision((value) => value + 1);
+        },
       }}
     >
       {children}
@@ -343,14 +349,16 @@ export function TranslatedText({
       if (!cancelled && !controller.signal.aborted) setTimedOut(true);
     }, CONTENT_TRANSLATION_PENDING_TIMEOUT_MS);
     void (async () => {
+      // Preferences can arrive before the authoritative version. Keep the
+      // original and the same bounded pending state until cache lookup is safe;
+      // generating here would bypass durable rows on every such reload.
+      if (!cacheVersion) return;
       // A cached display language paints without touching the network. A
       // storage failure must not surface as an unhandled rejection, so the
       // lookup is contained here rather than trusted to stay non-throwing.
-      const cached = cacheVersion
-        ? await contentTranslationCache
-            .get(accountScope, translationInput, cacheVersion || undefined)
-            .catch(() => undefined)
-        : undefined;
+      const cached = await contentTranslationCache
+        .get(accountScope, translationInput, cacheVersion)
+        .catch(() => undefined);
       if (cancelled || controller.signal.aborted) return;
       if (cached) {
         setSettled({

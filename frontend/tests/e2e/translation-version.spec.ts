@@ -85,37 +85,71 @@ test("a delayed old-model response cannot rewind an observed newer version @desk
     if (version.startsWith("Review slow B|")) announcedB = true;
     if (oldReleased && announcedB && version.startsWith("Review slow A|")) rewound = true;
   });
+  let oldTitleReleased = false;
   await page.route("**/api/content-translations/batch", async (route) => {
     const response = await route.fetch();
-    const body = await response.json();
-    if (body.items.some((item: { version?: string }) => item.version?.startsWith("Review slow A|"))) {
-      intercepted();
-      await held;
+    try {
+      const body = await response.json();
+      const oldTitle = body.items.some(
+        (item: { original: string; version?: string }) =>
+          item.original === "Example title by Example Voice" && item.version?.startsWith("Review slow A|"),
+      );
+      if (body.items.some((item: { version?: string }) => item.version?.startsWith("Review slow A|"))) {
+        if (oldTitle) intercepted();
+        await held;
+      }
+      await route.fulfill({ response });
+      if (oldTitle) oldTitleReleased = true;
+    } finally {
+      await response.dispose();
     }
-    await route.fulfill({ response }).catch(() => undefined);
   });
-  await page.goto("/RJ00000000");
-  await waiting;
-  await page.request.patch(`${backend}/api/settings/translation`, { data: { model: "Review slow B" } });
-  await page.getByRole("button", { name: "Settings", exact: true }).first().click();
-  await expect.poll(() => announcedB).toBe(true);
-  oldReleased = true;
-  release();
-  await page.goBack();
-  await expect(page.getByTestId("detail-hero")).toContainText("ZH: Example title by Example Voice");
-  const models = await page.evaluate(async () => {
-    const db = await new Promise<IDBDatabase>((resolve) => {
-      const r = indexedDB.open("kikoto-translations");
-      r.onsuccess = () => resolve(r.result);
+  const titleVersions = () =>
+    page.evaluate(async () => {
+      const db = await new Promise<IDBDatabase>((resolve, reject) => {
+        const r = indexedDB.open("kikoto-translations");
+        r.onsuccess = () => resolve(r.result);
+        r.onerror = () => reject(r.error);
+      });
+      try {
+        const rows = await new Promise<Array<{ original: string; version?: string }>>((resolve, reject) => {
+          const r = db.transaction("entries").objectStore("entries").getAll();
+          r.onsuccess = () => resolve(r.result);
+          r.onerror = () => reject(r.error);
+        });
+        return rows.filter((row) => row.original === "Example title by Example Voice").map((row) => row.version);
+      } finally {
+        db.close();
+      }
     });
-    const rows = await new Promise<Array<{ original: string; version?: string }>>((resolve) => {
-      const r = db.transaction("entries").objectStore("entries").getAll();
-      r.onsuccess = () => resolve(r.result);
-    });
-    db.close();
-    return rows.filter((row) => row.original === "Example title by Example Voice").map((row) => row.version);
-  });
-  expect(models.length).toBeGreaterThan(0);
-  expect(models.every((version) => version?.startsWith("Review slow B|"))).toBe(true);
-  expect(rewound).toBe(false);
+  try {
+    await page.goto("/RJ00000000");
+    await waiting;
+    await page.request.patch(`${backend}/api/settings/translation`, { data: { model: "Review slow B" } });
+    await page.getByRole("button", { name: "Settings", exact: true }).first().click();
+    await expect.poll(() => announcedB).toBe(true);
+    await page.goBack();
+    const hero = page.getByTestId("detail-hero");
+    await expect(hero).toContainText("ZH: Example title by Example Voice");
+    const current = await (await page.request.get(`${backend}/api/content-translations/version`)).json();
+    // Commit B before releasing A, so B cannot hide a stale write by simply
+    // arriving last. Painting the title alone does not prove its IDB commit.
+    await expect.poll(titleVersions).toEqual([current.version]);
+    oldReleased = true;
+    release();
+    // Drain every held A and in-flight B callback while their API responses are
+    // still owned by this test. Errors remain test failures, never ignored.
+    await page.unrouteAll({ behavior: "wait" });
+    await page.removeAllListeners("response", { behavior: "wait" });
+    expect(oldTitleReleased).toBe(true);
+    const models = await titleVersions();
+    expect(models.length).toBeGreaterThan(0);
+    expect(models.every((version) => version?.startsWith("Review slow B|"))).toBe(true);
+    await expect(hero).toContainText("ZH: Example title by Example Voice");
+    expect(rewound).toBe(false);
+  } finally {
+    release();
+    await page.unrouteAll({ behavior: "wait" });
+    await page.removeAllListeners("response", { behavior: "wait" });
+  }
 });
