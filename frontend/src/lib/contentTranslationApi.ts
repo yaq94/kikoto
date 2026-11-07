@@ -267,7 +267,7 @@ const COALESCE_DELAY_MS = 16;
 const CONTENT_TRANSLATION_CHUNK_SIZE = 16;
 const CONTENT_TRANSLATION_CHUNK_CONCURRENCY = 2;
 const coalesced = new Map<string, CoalescedEntry>();
-const coalescedInflight = new Map<string, Promise<ContentTranslationResult>>();
+const coalescedInflight = new Map<string, CoalescedEntry>();
 let coalesceTimer: ReturnType<typeof setTimeout> | null = null;
 
 function abortError() {
@@ -287,56 +287,41 @@ async function flushCoalesced() {
   for (const [key] of entries) coalesced.delete(key);
   if (entries.length === 0) return;
 
-  const deferred = new Map<
-    string,
-    {
-      promise: Promise<ContentTranslationResult>;
-      resolve: (value: ContentTranslationResult) => void;
-      reject: (reason: unknown) => void;
-    }
-  >();
-  for (const [key] of entries) {
-    let resolve!: (value: ContentTranslationResult) => void;
-    let reject!: (reason: unknown) => void;
-    const promise = new Promise<ContentTranslationResult>((res, rej) => {
-      resolve = res;
-      reject = rej;
-    });
-    // The promise is a join point for later callers; a caller-less failure
-    // must not surface as an unhandled rejection.
-    void promise.catch(() => undefined);
-    deferred.set(key, { promise, resolve, reject });
-    coalescedInflight.set(key, promise);
-  }
-
-  // A key stays in `coalescedInflight` until it is settled. A reader that
-  // arrives after a page unmounted must never join a promise whose request was
-  // aborted, so the error path settles every unsettled key, not just the chunk
-  // that happened to be in flight.
+  for (const [key, entry] of entries) coalescedInflight.set(key, entry);
+  // The same entry owns every reader, including readers joining after flush.
+  // An abandoned request is removed before a replacement reader can join it.
+  const forget = (key: string, entry: CoalescedEntry) => {
+    if (coalescedInflight.get(key) === entry) coalescedInflight.delete(key);
+  };
   const settled = new Set<string>();
   const settle = (key: string, entry: CoalescedEntry, result: ContentTranslationResult) => {
     settled.add(key);
-    coalescedInflight.delete(key);
-    deferred.get(key)?.resolve(result);
+    forget(key, entry);
     for (const waiter of entry.waiters) {
       waiter.cleanup();
       waiter.resolve(result);
     }
+    entry.waiters.clear();
+    entry.empty?.();
   };
   const failEntry = (key: string, entry: CoalescedEntry, error: unknown) => {
     settled.add(key);
-    coalescedInflight.delete(key);
-    deferred.get(key)?.reject(error);
+    forget(key, entry);
     for (const waiter of entry.waiters) {
       waiter.cleanup();
       waiter.reject(error);
     }
+    entry.waiters.clear();
+    entry.empty?.();
   };
 
   const controller = new AbortController();
   for (const [, entry] of entries) {
     entry.empty = () => {
-      if (entries.every(([, item]) => item.waiters.size === 0)) controller.abort();
+      if (entries.every(([, item]) => item.waiters.size === 0)) {
+        for (const [key, item] of entries) forget(key, item);
+        controller.abort();
+      }
     };
   }
 
@@ -424,24 +409,7 @@ export function translateCoalesced(
 ): Promise<ContentTranslationResult> {
   const key = scope + contentTranslationRequestKey(input);
   if (signal?.aborted) return Promise.reject(abortError());
-  const inflight = coalescedInflight.get(key);
-  if (inflight) {
-    return new Promise<ContentTranslationResult>((resolve, reject) => {
-      const onAbort = () => reject(abortError());
-      signal?.addEventListener("abort", onAbort, { once: true });
-      inflight.then(
-        (result) => {
-          signal?.removeEventListener("abort", onAbort);
-          resolve(result);
-        },
-        (error) => {
-          signal?.removeEventListener("abort", onAbort);
-          reject(error);
-        },
-      );
-    });
-  }
-  let entry = coalesced.get(key);
+  let entry = coalescedInflight.get(key) ?? coalesced.get(key);
   if (!entry) {
     entry = { input, waiters: new Set() };
     coalesced.set(key, entry);
@@ -452,7 +420,7 @@ export function translateCoalesced(
     const onAbort = () => {
       target.waiters.delete(waiter);
       if (target.waiters.size === 0) {
-        coalesced.delete(key);
+        if (coalesced.get(key) === target) coalesced.delete(key);
         target.empty?.();
       }
       reject(abortError());
