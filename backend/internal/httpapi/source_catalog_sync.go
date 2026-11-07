@@ -271,6 +271,10 @@ func (s *Server) executeCatalogIncrementalSync(ctx context.Context, runID, sourc
 	if err = s.seedCatalogSyncDirectories(ctx, sourceID, generation, state.Force); err != nil {
 		return err
 	}
+	probeAfter, err := s.loadCatalogSyncProbeAfter(ctx, runID, generation)
+	if err != nil {
+		return err
+	}
 	lease, err := s.beginCatalogSyncLease(ctx, runID, generation)
 	if err != nil {
 		return err
@@ -307,7 +311,7 @@ func (s *Server) executeCatalogIncrementalSync(ctx context.Context, runID, sourc
 			deferredUntil = catalogDeferralDeadline(s.catalogTime())
 			return nil
 		}
-		probes, queryErr := s.pendingCatalogSyncProbes(ctx, sourceID, generation, runID, catalogSyncBatch)
+		probes, queryErr := s.pendingCatalogSyncProbes(ctx, sourceID, generation, runID, probeAfter, catalogSyncBatch)
 		if queryErr != nil {
 			return queryErr
 		}
@@ -326,11 +330,12 @@ func (s *Server) executeCatalogIncrementalSync(ctx context.Context, runID, sourc
 				}
 				results = append(results, catalogSyncProbeResult{Dir: dir, Children: children, Err: requestErr})
 			}
-			changed, applyErr := s.applyCatalogSyncProbes(ctx, sourceID, generation, runID, results)
+			changed, applyErr := s.applyCatalogSyncProbes(ctx, sourceID, generation, runID, lease.Job.ID, results)
 			if applyErr != nil {
 				return applyErr
 			}
 			state.DirsChanged += changed
+			probeAfter = probes[len(probes)-1].Path
 			_ = s.persistCatalogSyncProgress(ctx, state)
 			continue
 		}
@@ -345,6 +350,17 @@ func (s *Server) executeCatalogIncrementalSync(ctx context.Context, runID, sourc
 			return queryErr
 		}
 		if len(changedDirs) == 0 {
+			// New observations may make a smaller path eligible after the cursor
+			// passed it. Sweep once before settling, not once per probe batch.
+			// Committed per-directory markers prevent replay during this wrap.
+			remainingProbes, probeErr := s.pendingCatalogSyncProbes(ctx, sourceID, generation, runID, "", 1)
+			if probeErr != nil {
+				return probeErr
+			}
+			if len(remainingProbes) > 0 {
+				probeAfter = ""
+				continue
+			}
 			// A listing can insert a child directory that sorts before the last
 			// path already consumed. One extra pass sees those leftovers; a row
 			// that fails to list stays 'changed' and must not spin the worker,
@@ -551,14 +567,14 @@ func (s *Server) seedCatalogSyncDirectories(ctx context.Context, sourceID, gener
 	return tx.Commit()
 }
 
-func (s *Server) pendingCatalogSyncProbes(ctx context.Context, sourceID, generation, runID int64, limit int) ([]catalogSyncDirectoryState, error) {
+func (s *Server) pendingCatalogSyncProbes(ctx context.Context, sourceID, generation, runID int64, after string, limit int) ([]catalogSyncDirectoryState, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT d.path,d.partition_path,d.catalog_root,d.revision,d.status,d.sync_state,d.observed_version,d.listing_digest
 		FROM source_catalog_directory d
 		WHERE d.file_source_id=? AND d.generation=? AND d.sync_state<>'excluded' AND d.last_verified_run<>?
 			AND (d.path='/' OR EXISTS(
 				SELECT 1 FROM source_catalog_observation o
 				WHERE o.file_source_id=d.file_source_id AND o.directory_path=d.path AND o.revision=d.revision AND o.kind='folder'))
-		ORDER BY d.path LIMIT ?`, sourceID, generation, runID, limit)
+			AND d.path>? ORDER BY d.path LIMIT ?`, sourceID, generation, runID, after, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -597,7 +613,7 @@ func (s *Server) pendingCatalogSyncListings(ctx context.Context, sourceID, gener
 	return dirs, rows.Err()
 }
 
-func (s *Server) applyCatalogSyncProbes(ctx context.Context, sourceID, generation, runID int64, results []catalogSyncProbeResult) (int, error) {
+func (s *Server) applyCatalogSyncProbes(ctx context.Context, sourceID, generation, runID, jobID int64, results []catalogSyncProbeResult) (int, error) {
 	tx, release, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
 	if err != nil {
 		return 0, err
@@ -617,7 +633,27 @@ func (s *Server) applyCatalogSyncProbes(ctx context.Context, sourceID, generatio
 		}
 		changed += count
 	}
+	if len(results) > 0 {
+		if _, err = tx.ExecContext(ctx, `UPDATE workflow_job SET checkpoint_json=json_set(checkpoint_json,'$.probeGeneration',?,'$.probeAfter',?) WHERE id=?`, generation, results[len(results)-1].Dir.Path, jobID); err != nil {
+			return 0, err
+		}
+	}
 	return changed, tx.Commit()
+}
+
+// A checkpoint is a scan accelerator, never proof that a directory succeeded.
+// last_verified_run is committed with it. A fresh scheduled run has its own id
+// and starts a new pass; a resumed invocation can reuse the same run's position.
+func (s *Server) loadCatalogSyncProbeAfter(ctx context.Context, runID, generation int64) (string, error) {
+	var after string
+	err := s.db.QueryRowContext(ctx, `SELECT json_extract(checkpoint_json,'$.probeAfter') FROM workflow_job
+		WHERE worker_type=? AND json_extract(payload_json,'$.syncRunId')=?
+		AND json_extract(checkpoint_json,'$.probeGeneration')=?
+		ORDER BY id DESC LIMIT 1`, sourceCatalogSyncWorkerType, runID, generation).Scan(&after)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return after, err
 }
 
 func (s *Server) applyCatalogSyncProbeTx(ctx context.Context, tx *sql.Tx, sourceID, generation, runID int64, result catalogSyncProbeResult) (int, error) {
