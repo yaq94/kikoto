@@ -7,7 +7,7 @@
 - 工作分支：`codex/kikoto-publication-retry-media`
 - 按已确认的 source/HTTP/真实 SQLite 边界执行 `implement-spec` 与 `tdd`，逐项红绿验证；没有新增架构或产品决定。
 - 测试数据库：真实迁移 SQLite；所有来源、作品、译文和媒体均为仓库合成夹具。
-- 原始日志：`E:/项目/服务器/.kikoto-work/reports/20261107-remediation/`
+- 原始日志：仓库外 `.kikoto-work/reports/20261107-remediation/`
 
 ## PUB1：marker 失败后的迟到译文
 
