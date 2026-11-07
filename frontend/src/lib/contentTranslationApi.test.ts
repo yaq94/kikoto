@@ -251,6 +251,148 @@ describe("contentTranslationApi.translateBatch", () => {
     expect(aborted).toEqual([true, true]);
   });
 
+  it("skips a queued chunk whose only reader cancels while another chunk still waits", async () => {
+    vi.useFakeTimers();
+    const requests: Array<{ signal: AbortSignal; release: () => void }> = [];
+    sendJSONBody.mockImplementation(
+      (_method, _path, body, options) =>
+        new Promise((resolve) => {
+          requests.push({ signal: options.signal, release: () => resolve(echoResponse(body)) });
+        }),
+    );
+    const controllers = Array.from({ length: 33 }, () => new AbortController());
+    const pending = controllers.map((controller, i) =>
+      translateCoalesced(input(200 + i), controller.signal, "cancelled-tail").catch((error) => error),
+    );
+    try {
+      await vi.advanceTimersByTimeAsync(17);
+      expect(requests).toHaveLength(2);
+      controllers[32].abort();
+      requests[0].release();
+      await vi.advanceTimersByTimeAsync(0);
+      const sentTexts = sendJSONBody.mock.calls.flatMap((call) =>
+        call[2].items.map((item: { text: string }) => item.text),
+      );
+      const remainingAborted = requests[1].signal.aborted;
+      // Drain even the buggy implementation before asserting the transport boundary.
+      requests.forEach((request) => request.release());
+      const results = await Promise.all(pending);
+      expect(sentTexts).not.toContain("title 232");
+      expect(remainingAborted).toBe(false);
+      expect(results.slice(0, 32).every((result) => result.status === "translated")).toBe(true);
+      expect(results[32]).toMatchObject({ name: "AbortError" });
+      expect(isContentTranslationInFlight("cancelled-tail" + contentTranslationRequestKey(input(232)))).toBe(false);
+    } finally {
+      requests.forEach((request) => request.release());
+      await vi.runAllTimersAsync();
+      vi.useRealTimers();
+    }
+  });
+
+  it("rechecks readers after waiting for a shared slot and passes an empty chunk's slot onward", async () => {
+    vi.useFakeTimers();
+    let drain = false;
+    const releases: Array<() => void> = [];
+    sendJSONBody.mockImplementation(
+      (_method, _path, body) =>
+        new Promise((resolve) => {
+          const release = () => resolve(echoResponse(body));
+          if (drain) release();
+          else releases.push(release);
+        }),
+    );
+    const blockers = [
+      contentTranslationApi.translateBatch([input(280)]),
+      contentTranslationApi.translateBatch([input(281)]),
+    ];
+    const controllers = Array.from({ length: 17 }, () => new AbortController());
+    const pending = controllers.map((controller, i) =>
+      translateCoalesced(input(300 + i), controller.signal, "waiting-slot").catch((error) => error),
+    );
+    try {
+      await vi.advanceTimersByTimeAsync(17);
+      expect(sendJSONBody).toHaveBeenCalledTimes(2);
+      controllers.slice(0, 16).forEach((controller) => controller.abort());
+      releases[0]();
+      await vi.advanceTimersByTimeAsync(0);
+      const sentAfterRelease = sendJSONBody.mock.calls
+        .slice(2)
+        .flatMap((call) => call[2].items.map((item: { text: string }) => item.text));
+      const cancelledStillInflight = isContentTranslationInFlight(
+        "waiting-slot" + contentTranslationRequestKey(input(300)),
+      );
+      const replacement = translateCoalesced(input(300), undefined, "waiting-slot");
+      await vi.advanceTimersByTimeAsync(17);
+      drain = true;
+      releases.forEach((release) => release());
+      const results = await Promise.all(pending);
+      await Promise.all(blockers);
+      await expect(replacement).resolves.toMatchObject({ text: "translated:title 300" });
+      expect(sentAfterRelease).toEqual(["title 316"]);
+      expect(cancelledStillInflight).toBe(false);
+      expect(results.slice(0, 16).every((result) => result.name === "AbortError")).toBe(true);
+      expect(results[16]).toMatchObject({ text: "translated:title 316" });
+    } finally {
+      drain = true;
+      releases.forEach((release) => release());
+      await vi.runAllTimersAsync();
+      vi.useRealTimers();
+    }
+  });
+
+  it.each(["none", "before-cancel", "after-cancel"] as const)(
+    "keeps only active fields across queued languages, including a duplicate reader (%s)",
+    async (join) => {
+      vi.useFakeTimers();
+      let drain = false;
+      const releases: Array<() => void> = [];
+      sendJSONBody.mockImplementation(
+        (_method, _path, body) =>
+          new Promise((resolve) => {
+            const release = () => resolve(echoResponse(body));
+            if (drain) release();
+            else releases.push(release);
+          }),
+      );
+      const blockers = [
+        contentTranslationApi.translateBatch([input(360)]),
+        contentTranslationApi.translateBatch([input(361)]),
+      ];
+      const cancelledField = new AbortController();
+      const cancelledLanguage = new AbortController();
+      const pending = [
+        translateCoalesced(input(380), undefined, "queued-readers"),
+        translateCoalesced(input(381), cancelledField.signal, "queued-readers").catch((error) => error),
+        translateCoalesced(input(382, "en"), cancelledLanguage.signal, "queued-readers").catch((error) => error),
+      ];
+      try {
+        await vi.advanceTimersByTimeAsync(17);
+        expect(sendJSONBody).toHaveBeenCalledTimes(2);
+        if (join === "before-cancel") pending.push(translateCoalesced(input(381), undefined, "queued-readers"));
+        cancelledField.abort();
+        cancelledLanguage.abort();
+        if (join === "after-cancel") pending.push(translateCoalesced(input(381), undefined, "queued-readers"));
+        drain = true;
+        releases.forEach((release) => release());
+        const results = await Promise.all(pending);
+        await Promise.all(blockers);
+        const sentTexts = sendJSONBody.mock.calls
+          .slice(2)
+          .flatMap((call) => call[2].items.map((item: { text: string }) => item.text));
+        expect(sentTexts).toEqual(join === "none" ? ["title 380"] : ["title 380", "title 381"]);
+        expect(results[0]).toMatchObject({ text: "translated:title 380" });
+        expect(results[1]).toMatchObject({ name: "AbortError" });
+        expect(results[2]).toMatchObject({ name: "AbortError" });
+        if (join !== "none") expect(results[3]).toMatchObject({ text: "translated:title 381" });
+      } finally {
+        drain = true;
+        releases.forEach((release) => release());
+        await vi.runAllTimersAsync();
+        vi.useRealTimers();
+      }
+    },
+  );
+
   it("aborts a coalesced batch once every reader of that frame has left", async () => {
     let signal: AbortSignal | undefined;
     sendJSONBody.mockImplementation((_method, _path, _body, options) => {
