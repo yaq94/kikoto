@@ -138,7 +138,6 @@ func (s *Server) translateContent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	result.Status = status
-	result.Version = s.contentTranslationVersion(r.Context())
 	writeJSON(w, http.StatusOK, result)
 }
 
@@ -160,6 +159,10 @@ func (s *Server) contentTranslationVersion(ctx context.Context) string {
 	if err != nil {
 		return ""
 	}
+	return contentTranslationVersionForConfig(cfg)
+}
+
+func contentTranslationVersionForConfig(cfg translation.Config) string {
 	sum := sha256.Sum256([]byte(cfg.BaseURL))
 	return cfg.Model + "|" + strconv.FormatBool(cfg.DisableThinking) + "|" + hex.EncodeToString(sum[:8]) + "|" + translation.TemplateVersion
 }
@@ -195,6 +198,10 @@ func (s *Server) translationWorkReadable(ctx context.Context, workID int64) (boo
 }
 
 func (s *Server) translateContentField(ctx context.Context, in contentTranslationRequest) (contentTranslationResponse, string, error) {
+	cfg, err := translation.NewStore(s.db).Load(ctx)
+	if err != nil {
+		return contentTranslationResponse{}, "", err
+	}
 	field, err := s.loadTranslationField(ctx, in)
 	if err != nil {
 		return contentTranslationResponse{}, "", err
@@ -207,7 +214,7 @@ func (s *Server) translateContentField(ctx context.Context, in contentTranslatio
 	if original == "" {
 		original = text
 	}
-	result := contentTranslationResponse{Text: text, Original: original, Language: in.Language}
+	result := contentTranslationResponse{Text: text, Original: original, Language: in.Language, Version: contentTranslationVersionForConfig(cfg)}
 	if in.Language == "origin" {
 		result.Text = original
 		return result, "original", nil
@@ -238,7 +245,7 @@ func (s *Server) translateContentField(ctx context.Context, in contentTranslatio
 	if kind == "" {
 		// A source-level field has its own display cache, outside the searchable
 		// content_translation corpus.
-		translated, status, err := s.translateThroughModel(ctx, in, field, text, target)
+		translated, status, err := s.translateThroughModel(ctx, cfg, in, field, text, target)
 		if err != nil {
 			return result, "", err
 		}
@@ -246,7 +253,7 @@ func (s *Server) translateContentField(ctx context.Context, in contentTranslatio
 		result.CacheStatus = translated.CacheStatus
 		return result, status, nil
 	}
-	row, status, err := s.translateStoredContent(ctx, in, field, text, target, kind, entityID, entityKey)
+	row, status, err := s.translateStoredContent(ctx, cfg, in, field, text, target, kind, entityID, entityKey)
 	if err != nil {
 		return result, "", err
 	}

@@ -26,8 +26,11 @@ Administrator routes require `sources:write`:
   the translation responses embed. It is readable by any `library:read` caller
   and lets the browser reject a cached row from another model, endpoint,
   reasoning switch or prompt template before the first translation of a
-  session. Every single, batch and trial response carries the same `version`;
-  the browser stores it with the row and deletes a row whose version differs.
+  session. Each successful single-field or batch item carries the `version`
+  of the configuration snapshot used to generate or retrieve its text. A settings
+  change during generation cannot relabel an earlier model's answer. Batch items
+  may carry different versions when a configuration changes while they start.
+  Trial responses report their model and template separately.
 - `GET /api/settings/translation/prefill` returns the durable prefill cursor,
   per-language coverage (`rows`, `native`, `model`, `missing`, `stale`,
   `failed`, `retry`), the night-window flag, the recent rate and the last error.
@@ -65,7 +68,11 @@ preserves the selected edition and does not require a product code.
 resource. Its title is checked against the stored entry title; directory fields
 require the exact real relative `path` and its stored display title. The shared
 catalog loaders recheck source enabled/type and Demo restrictions before cache
-lookup. Content reads do not register works or download media.
+lookup. Source-backed entries also pass the published-generation file admission
+rule; a retained missing record keeps its existing exception. Series titles use
+the detail route's readable membership, including restored parent/episode works,
+before native, authored or cached text can answer. Content reads do not register
+works or download media.
 
 The server reloads the selected public field and verifies the exact text before
 reading cache or generating. Changed text returns 409; missing content returns
@@ -122,6 +129,26 @@ language instead of the whole page the reader has visited. A field that has not
 asked shows its original text and no progress note. The content-language
 event refreshes text without remounting the detail or changing the selected
 directory, edition, media identity or player state.
+
+The provider refreshes the authoritative configuration version on navigation,
+settings saves, focus and visibility changes, and once a minute while visible.
+Translation responses can request a version refresh but cannot replace the
+authoritative version with an older one. Account identity, permissions and API
+session generation scope pending requests; persistent rows also distinguish
+the original text, language and configured model version.
+
+All browser batch requests share two transport slots across render frames,
+languages and title prefetch. Cancelled queued requests release their waiters;
+settled or failed requests release their slots. Prefetch checks the same scoped
+in-flight keys as visible fields.
+
+The browser's IndexedDB display cache has a 100,000-entry and 50 MiB budget.
+Its metadata ledger tracks byte counts and recency in the same transactions as
+payload writes. Maintenance reads the ledger and oldest metadata index, with
+at most 128 entries per transaction, yielding between batches. Existing v1 rows
+are accounted through a resumable cursor before eviction. Concurrent callers
+share one maintenance run, and writes during maintenance request another pass.
+These rebuildable display rows are separate from the server's searchable corpus.
 
 ## Resource budgets and cache
 

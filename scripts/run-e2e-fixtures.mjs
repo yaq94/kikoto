@@ -147,6 +147,18 @@ export const groups = [
     env: { KIKOTO_CONTENT_TRANSLATION_URL: "{fixture}" },
   },
   {
+    name: "translation-version",
+    fixture: "content-translation-fixture",
+    spec: "translation-version",
+    env: { KIKOTO_CONTENT_TRANSLATION_URL: "{fixture}" },
+  },
+  {
+    name: "translation-cache",
+    fixture: "content-translation-fixture",
+    spec: "translation-cache",
+    env: { KIKOTO_CONTENT_TRANSLATION_URL: "{fixture}" },
+  },
+  {
     // The fixture does not serve static files, so this group builds the
     // production bundle with the fixture URL baked in and runs `vite preview`.
     name: "integrated-acceptance",
@@ -201,7 +213,12 @@ export const bundles = {
     "source-playback-live-api",
     "source-resource-limits-live",
   ],
-  "content-translation": ["content-translation", "traditional-translation"],
+  "content-translation": [
+    "content-translation",
+    "traditional-translation",
+    "translation-version",
+    "translation-cache",
+  ],
   "integrated-acceptance": ["integrated-acceptance"],
   "translation-settings": ["translation-settings"],
   mocked: ["mocked"],

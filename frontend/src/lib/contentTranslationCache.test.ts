@@ -12,31 +12,26 @@ type StoredRow = CachedTranslationRecord;
 
 function fakeIndexedDB() {
   const stores = new Map<string, Map<string, StoredRow>>();
+  const databases = new Map<string, Map<string, Map<string, Record<string, unknown>>>>();
   const factory = {
     open(name: string) {
       const request = {
         result: undefined as unknown,
         onupgradeneeded: null as null | (() => void),
         onsuccess: null as null | (() => void),
-        onerror: null as null | (() => void),
-        onblocked: null as null | (() => void),
       };
       queueMicrotask(() => {
-        let rows = stores.get(name);
-        const upgraded = !rows;
-        if (!rows) {
-          rows = new Map();
-          stores.set(name, rows);
-        }
-        const storeRows = rows;
-        const store = {
-          createIndex() {
-            return {};
-          },
-        };
+        const upgraded = !databases.has(name);
+        const tables = databases.get(name) ?? new Map<string, Map<string, Record<string, unknown>>>();
+        databases.set(name, tables);
         const db = {
-          objectStoreNames: { contains: () => !upgraded },
-          createObjectStore: () => store,
+          objectStoreNames: { contains: (table: string) => tables.has(table) },
+          createObjectStore: (table: string) => {
+            const rows = new Map<string, Record<string, unknown>>();
+            tables.set(table, rows);
+            if (table === "entries") stores.set(name, rows as unknown as Map<string, StoredRow>);
+            return { createIndex: () => ({}) };
+          },
           transaction: () => {
             let pending = 0;
             let completed = false;
@@ -46,10 +41,8 @@ function fakeIndexedDB() {
                 queueMicrotask(() => transaction.oncomplete?.());
               }
             };
-            const run = <T>(
-              apply: () => T,
-            ): { result: T; onsuccess: null | (() => void); onerror: null | (() => void) } => {
-              pending += 1;
+            const run = <T>(apply: () => T) => {
+              pending++;
               const req = {
                 result: undefined as T,
                 onsuccess: null as null | (() => void),
@@ -58,33 +51,62 @@ function fakeIndexedDB() {
               queueMicrotask(() => {
                 req.result = apply();
                 req.onsuccess?.();
-                pending -= 1;
+                pending--;
                 queueMicrotask(finish);
               });
+              return req;
+            };
+            const cursor = (rows: Map<string, Record<string, unknown>>, indexed: boolean) => {
+              const keys = [...rows.keys()].sort((a, b) =>
+                indexed
+                  ? Number(rows.get(a)?.lastUsedAt) - Number(rows.get(b)?.lastUsedAt) || a.localeCompare(b)
+                  : a.localeCompare(b),
+              );
+              let index = 0;
+              const req = {
+                result: null as unknown,
+                onsuccess: null as null | (() => void),
+                onerror: null as null | (() => void),
+              };
+              const advance = () => {
+                pending++;
+                queueMicrotask(() => {
+                  const key = keys[index++];
+                  req.result =
+                    key === undefined
+                      ? null
+                      : {
+                          value: structuredClone(rows.get(key)),
+                          continue: advance,
+                          delete: () => run(() => rows.delete(key)),
+                        };
+                  req.onsuccess?.();
+                  pending--;
+                  queueMicrotask(finish);
+                });
+              };
+              advance();
               return req;
             };
             const transaction = {
               oncomplete: null as null | (() => void),
               onerror: null as null | (() => void),
               onabort: null as null | (() => void),
-              error: null as unknown,
-              objectStore: () => ({
-                get: (key: string) => run(() => storeRows.get(key) as StoredRow | undefined),
-                getAll: () => run(() => [...storeRows.values()].map((row) => ({ ...row }))),
-                put: (row: StoredRow) =>
-                  run(() => {
-                    storeRows.set(row.key, { ...row });
-                    return undefined;
-                  }),
-                delete: (key: string) =>
-                  run(() => {
-                    storeRows.delete(key);
-                    return undefined;
-                  }),
-              }),
+              objectStore: (table: string) => {
+                const rows = tables.get(table)!;
+                return {
+                  get: (key: string) => run(() => structuredClone(rows.get(key))),
+                  getAll: () => run(() => structuredClone([...rows.values()])),
+                  put: (row: Record<string, unknown>) => run(() => rows.set(String(row.key), structuredClone(row))),
+                  delete: (key: string) => run(() => rows.delete(key)),
+                  openCursor: () => cursor(rows, false),
+                  index: () => ({ openCursor: () => cursor(rows, true) }),
+                };
+              },
             };
             return transaction;
           },
+          close: () => undefined,
         };
         request.result = db;
         if (upgraded) request.onupgradeneeded?.();
@@ -142,10 +164,16 @@ describe("content translation cache key", () => {
 
   it("keeps distinct remote identities apart", () => {
     const scope = "srv:user-7";
-    const base: ContentTranslationInput = { sourceId: 2, code: "RJ1", field: "title", text: "x", language: "ko" };
+    const base: ContentTranslationInput = {
+      sourceId: 2,
+      code: "RJ00000000",
+      field: "title",
+      text: "x",
+      language: "ko",
+    };
     const key = (overrides: Partial<ContentTranslationInput>) =>
       buildContentTranslationCacheKey(scope, { ...base, ...overrides }, "abc");
-    expect(key({ code: "RJ2" })).not.toBe(key({}));
+    expect(key({ code: "RJ00000001" })).not.toBe(key({}));
     expect(key({ sourceId: 3 })).not.toBe(key({}));
     expect(key({ language: "zh-cn" })).not.toBe(key({}));
     expect(key({ field: "tag" })).not.toBe(key({}));
@@ -254,6 +282,13 @@ describe("content translation cache", () => {
 });
 
 describe("contentTranslationCache model and template versioning", () => {
+  it("rejects a late old-model write after the current version is known", async () => {
+    const cache = createContentTranslationCache({ indexedDB: null, subtle: null, hashText });
+    cache.setVersion("scope", "model-b");
+    await cache.put("scope", input(1), { ...success("new"), version: "model-b" });
+    await expect(cache.put("scope", input(1), { ...success("old"), version: "model-a" })).resolves.toBe(false);
+    await expect(cache.get("scope", input(1), "model-b")).resolves.toMatchObject({ text: "t:new" });
+  });
   it("invalidates a row produced by another model", async () => {
     const cache = createContentTranslationCache({ indexedDB: null, subtle: null, hashText });
     const item = input(1);

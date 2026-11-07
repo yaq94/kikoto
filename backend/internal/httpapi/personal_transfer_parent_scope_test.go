@@ -256,6 +256,11 @@ func TestPersonalTransferRestoredSeriesAndEpisodeReviewIndependently(t *testing.
 	if series["personalRating"] != float64(5) || series["personalNote"] != "Series note" {
 		t.Fatalf("series review = %v/%v", series["personalRating"], series["personalNote"])
 	}
+	translated := translationRequest(t, app, admin, http.MethodPost, "/api/content-translations",
+		mustJSON(map[string]any{"seriesId": seriesID, "field": "title", "text": "Series A", "language": "en-us"}), http.StatusOK)
+	if translated["text"] != "Series A" || translated["status"] != "native" {
+		t.Fatalf("restored series translation = %#v", translated)
+	}
 	var episode map[string]any
 	workReferenceRequest(t, app, admin, http.MethodGet, fmt.Sprintf("/api/works/%d?includeMedia=false", episodeWork), "", http.StatusOK, &episode)
 	assertReview(t, episode, float64(2), "Episode note")

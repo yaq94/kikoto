@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "@/auth/AuthProvider";
 import { api } from "@/lib/api";
@@ -18,6 +18,8 @@ import {
 import { contentTranslationCache } from "@/lib/contentTranslationCache";
 import { USER_PREFERENCES_CHANGED } from "@/lib/recommendationSession";
 import { CONTENT_LANGUAGE_CHANGED } from "@/lib/contentLanguageEvents";
+import { CONTENT_TRANSLATION_CONFIG_CHANGED } from "@/lib/contentTranslationEvents";
+import { NAVIGATION_EVENT } from "@/lib/browserHistory";
 
 /**
  * How long a visible field may wait for a translation before it stops claiming
@@ -84,13 +86,24 @@ export function createCacheVersionNotifier(setVersion: (update: (current: string
 
 // Account language is shared by visible content, but never changes media state.
 export function ContentLanguageProvider({ children }: { children: ReactNode }) {
-  const { user, demoMode } = useAuth();
+  const { user, demoMode, hasPermission } = useAuth();
   const userId = user?.id;
   const scope = currentClientStorageScope(user?.id ?? null);
-  const session = scope + ":" + apiSessionVersion();
+  const accountScope = scope + ":" + JSON.stringify([user?.username, [...(user?.permissions ?? [])].sort()]);
+  const session = accountScope + ":" + apiSessionVersion();
+  const canRead = Boolean(userId && !demoMode && hasPermission("library:read"));
   const [revision, setRevision] = useState(0);
-  const [cacheVersion, setCacheVersion] = useState("");
-  const noteVersion = useMemo(() => createCacheVersionNotifier(setCacheVersion), []);
+  const [versionState, setVersionState] = useState({ session: "", version: "" });
+  const cacheVersion = versionState.session === session ? versionState.version : "";
+  const [versionRevision, setVersionRevision] = useState(0);
+  // Responses may describe an earlier model. Only the current-version endpoint
+  // is authoritative; a differing response asks it to refresh, never rewinds it.
+  const noteVersion = useCallback(
+    (version?: string) => {
+      if (version && version !== cacheVersion) setVersionRevision((value) => value + 1);
+    },
+    [cacheVersion],
+  );
   const [loaded, setLoaded] = useState({ session: "", revision: 0, language: "origin" });
   useEffect(() => {
     const refresh = (event: Event) => {
@@ -108,19 +121,46 @@ export function ContentLanguageProvider({ children }: { children: ReactNode }) {
   // rejected before it paints, instead of staying visible until some later
   // translation happens to announce the new version.
   useEffect(() => {
-    if (!userId || demoMode) return;
-    const controller = new AbortController();
-    void contentTranslationApi
-      .version(controller.signal)
-      .then((value) => {
-        if (!controller.signal.aborted) noteVersion(value?.version);
-      })
-      .catch(() => {
-        // An unknown version keeps the permissive read; a later response
-        // announces the version it used.
-      });
-    return () => controller.abort();
-  }, [userId, demoMode, noteVersion]);
+    if (!canRead) return;
+    let controller: AbortController | undefined;
+    const refresh = () => {
+      controller?.abort();
+      const current = new AbortController();
+      controller = current;
+      void contentTranslationApi
+        .version(current.signal)
+        .then((value) => {
+          if (!current.signal.aborted && value.version) {
+            contentTranslationCache.setVersion(accountScope, value.version);
+            setVersionState((previous) =>
+              previous.session === session && previous.version === value.version
+                ? previous
+                : { session, version: value.version },
+            );
+          }
+        })
+        .catch(() => undefined);
+    };
+    const visible = () => {
+      if (document.visibilityState === "visible") refresh();
+    };
+    refresh();
+    window.addEventListener(NAVIGATION_EVENT, refresh);
+    window.addEventListener("popstate", refresh);
+    window.addEventListener("focus", refresh);
+    window.addEventListener(CONTENT_TRANSLATION_CONFIG_CHANGED, refresh);
+    document.addEventListener("visibilitychange", visible);
+    const timer = window.setInterval(visible, 60_000);
+    return () => {
+      controller?.abort();
+      window.clearInterval(timer);
+      window.removeEventListener(NAVIGATION_EVENT, refresh);
+      window.removeEventListener("popstate", refresh);
+      window.removeEventListener("focus", refresh);
+      window.removeEventListener(CONTENT_TRANSLATION_CONFIG_CHANGED, refresh);
+      document.removeEventListener("visibilitychange", visible);
+    };
+  }, [canRead, session, accountScope, versionRevision]);
   useEffect(() => {
     if (!userId || demoMode) return;
     const controller = new AbortController();
@@ -148,10 +188,9 @@ export function ContentLanguageProvider({ children }: { children: ReactNode }) {
   // value from another session is never shown. A newer revision keeps the last
   // successful language until its own read completes.
   const language = loaded.session === session ? loaded.language : "origin";
-  const canRead = Boolean(userId && !demoMode);
   const value = useMemo(
-    () => ({ language, accountScope: scope, session, revision, canRead, cacheVersion, noteVersion }),
-    [language, scope, session, revision, canRead, cacheVersion, noteVersion],
+    () => ({ language, accountScope, session, revision, canRead, cacheVersion, noteVersion }),
+    [language, accountScope, session, revision, canRead, cacheVersion, noteVersion],
   );
   return <LanguageContext.Provider value={value}>{children}</LanguageContext.Provider>;
 }
@@ -251,6 +290,7 @@ export function TranslatedText({
     mediaId,
     path,
     scope.revision,
+    cacheVersion,
   ]);
   const workId = resource?.workId,
     sourceId = resource?.sourceId,
@@ -306,9 +346,11 @@ export function TranslatedText({
       // A cached display language paints without touching the network. A
       // storage failure must not surface as an unhandled rejection, so the
       // lookup is contained here rather than trusted to stay non-throwing.
-      const cached = await contentTranslationCache
-        .get(accountScope, translationInput, cacheVersion || undefined)
-        .catch(() => undefined);
+      const cached = cacheVersion
+        ? await contentTranslationCache
+            .get(accountScope, translationInput, cacheVersion || undefined)
+            .catch(() => undefined)
+        : undefined;
       if (cancelled || controller.signal.aborted) return;
       if (cached) {
         setSettled({
@@ -318,7 +360,12 @@ export function TranslatedText({
         return;
       }
       try {
-        const result = await translateCoalesced(translationInput, controller.signal);
+        const result = await translateCoalesced(translationInput, controller.signal, session + ":" + cacheVersion);
+        if (cancelled || controller.signal.aborted) return;
+        if (cacheVersion && result.version && result.version !== cacheVersion) {
+          noteVersion(result.version);
+          return;
+        }
         if (result.status !== "failed") {
           // `put` stores `result.version`, so a later read with the same
           // expected version finds this row and a different one does not.
@@ -329,7 +376,7 @@ export function TranslatedText({
           void contentTranslationCache
             .put(accountScope, translationInput, result)
             .then((cached) => {
-              if (cached && result.version) noteVersion(result.version);
+              if (cached && result.version && !cancelled && !controller.signal.aborted) noteVersion(result.version);
             })
             .catch(() => undefined);
         }
@@ -350,7 +397,7 @@ export function TranslatedText({
       window.clearTimeout(timeout);
       controller.abort();
     };
-  }, [enabled, visible, key, input, text, language, accountScope, cacheVersion, noteVersion]);
+  }, [enabled, visible, key, input, text, language, accountScope, cacheVersion, noteVersion, session]);
   const result = settled?.key === key ? settled.result : null;
   const success =
     enabled && result && (result.status === "translated" || result.status === "existing" || result.status === "native");

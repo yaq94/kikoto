@@ -2,7 +2,13 @@ import type { ContentTranslationInput, ContentTranslationResult } from "@/lib/co
 
 export const CONTENT_TRANSLATION_DB_NAME = "kikoto-translations";
 export const CONTENT_TRANSLATION_STORE_NAME = "entries";
-export const CONTENT_TRANSLATION_DB_VERSION = 1;
+export const CONTENT_TRANSLATION_DB_VERSION = 2;
+const METADATA_STORE = "entry_metadata";
+const MAINTENANCE_STORE = "maintenance";
+const MAINTENANCE_BATCH = 128;
+type CacheMetadata = { key: string; bytes: number; lastUsedAt: number };
+type CacheBudget = { key: "budget"; entries: number; bytes: number; ready: boolean; after?: string };
+const emptyBudget = (): CacheBudget => ({ key: "budget", entries: 0, bytes: 0, ready: false });
 export const CONTENT_TRANSLATION_MEMORY_LIMIT = 4_000;
 export const CONTENT_TRANSLATION_IDB_ENTRY_LIMIT = 100_000;
 export const CONTENT_TRANSLATION_IDB_BYTE_LIMIT = 50 * 1024 * 1024;
@@ -28,6 +34,8 @@ export type CachedTranslation = {
 export type CachedTranslationRecord = CachedTranslation & { key: string };
 
 export type ContentTranslationCache = {
+  /** Pins writes to the server version confirmed for an account session. */
+  setVersion(scope: string, version: string): void;
   /**
    * Reads a successful row. When `expectedVersion` is known, a row produced by
    * another model or template — or a row with no version at all — is deleted
@@ -184,11 +192,13 @@ export function createContentTranslationCache(options: ContentTranslationCacheOp
   const hashText = options.hashText ?? ((text: string) => contentTranslationContentHash(text, subtle));
 
   const memory = new Map<string, CachedTranslationRecord>();
+  const expectedVersions = new Map<string, string>();
   const hashes = new Map<string, Promise<string>>();
   let dbPromise: Promise<IDBDatabase | null> | null = null;
   let persistenceDisabled = !factory;
   let pruneTimer: ReturnType<typeof setTimeout> | null = null;
   let pruneRunning: Promise<void> | null = null;
+  let pruneRequested = false;
 
   function contentHash(text: string): Promise<string> {
     let pending = hashes.get(text);
@@ -240,8 +250,22 @@ export function createContentTranslationCache(options: ContentTranslationCacheOp
           const store = db.createObjectStore(CONTENT_TRANSLATION_STORE_NAME, { keyPath: "key" });
           store.createIndex("lastUsedAt", "lastUsedAt");
         }
+        if (!db.objectStoreNames.contains(METADATA_STORE)) {
+          const metadata = db.createObjectStore(METADATA_STORE, { keyPath: "key" });
+          metadata.createIndex("lastUsedAt", ["lastUsedAt", "key"]);
+        }
+        if (!db.objectStoreNames.contains(MAINTENANCE_STORE)) {
+          db.createObjectStore(MAINTENANCE_STORE, { keyPath: "key" });
+        }
       };
-      request.onsuccess = () => resolve(request.result);
+      request.onsuccess = () => {
+        const db = request.result;
+        db.onversionchange = () => {
+          db.close();
+          dbPromise = null;
+        };
+        resolve(db);
+      };
       request.onerror = () => {
         disablePersistence();
         resolve(null);
@@ -272,9 +296,23 @@ export function createContentTranslationCache(options: ContentTranslationCacheOp
     const db = await openDatabase();
     if (!db) return;
     try {
-      const transaction = db.transaction(CONTENT_TRANSLATION_STORE_NAME, "readwrite");
+      const transaction = writeTransaction(db);
+      const done = transactionDone(transaction);
+      const metadata = transaction.objectStore(METADATA_STORE);
+      const state = transaction.objectStore(MAINTENANCE_STORE);
+      const [previous, saved] = await Promise.all([
+        requestResult(metadata.get(key)),
+        requestResult(state.get("budget")),
+      ]);
+      const budget: CacheBudget = saved ?? emptyBudget();
+      if (previous) {
+        budget.entries -= 1;
+        budget.bytes -= previous.bytes;
+        metadata.delete(key);
+      }
       transaction.objectStore(CONTENT_TRANSLATION_STORE_NAME).delete(key);
-      await transactionDone(transaction);
+      state.put(budget);
+      await done;
     } catch {
       disablePersistence();
     }
@@ -284,9 +322,22 @@ export function createContentTranslationCache(options: ContentTranslationCacheOp
     const db = await openDatabase();
     if (!db) return false;
     try {
-      const transaction = db.transaction(CONTENT_TRANSLATION_STORE_NAME, "readwrite");
+      const bytes = estimateBytes(record);
+      const transaction = writeTransaction(db);
+      const done = transactionDone(transaction);
+      const metadata = transaction.objectStore(METADATA_STORE);
+      const state = transaction.objectStore(MAINTENANCE_STORE);
+      const [previous, saved] = await Promise.all([
+        requestResult(metadata.get(record.key)),
+        requestResult(state.get("budget")),
+      ]);
+      const budget: CacheBudget = saved ?? emptyBudget();
+      budget.entries += previous ? 0 : 1;
+      budget.bytes += bytes - (previous?.bytes ?? 0);
       transaction.objectStore(CONTENT_TRANSLATION_STORE_NAME).put(record);
-      await transactionDone(transaction);
+      metadata.put({ key: record.key, bytes, lastUsedAt: record.lastUsedAt } satisfies CacheMetadata);
+      state.put(budget);
+      await done;
       return true;
     } catch {
       // Quota exhaustion and private-mode failures leave the memory cache intact.
@@ -295,60 +346,171 @@ export function createContentTranslationCache(options: ContentTranslationCacheOp
     }
   }
 
-  async function runPrune() {
+  function writeTransaction(db: IDBDatabase) {
+    return db.transaction([CONTENT_TRANSLATION_STORE_NAME, METADATA_STORE, MAINTENANCE_STORE], "readwrite");
+  }
+
+  // A memory hit changes only recency, never an old payload read before a newer
+  // write. All tabs use the same transactional metadata and budget ledger.
+  async function idbTouch(key: string, lastUsedAt: number) {
     const db = await openDatabase();
     if (!db) return;
-    let records: CachedTranslationRecord[];
     try {
-      records = (await requestResult(
-        db.transaction(CONTENT_TRANSLATION_STORE_NAME, "readonly").objectStore(CONTENT_TRANSLATION_STORE_NAME).getAll(),
-      )) as CachedTranslationRecord[];
-    } catch {
-      disablePersistence();
-      return;
-    }
-    let bytes = records.reduce((sum, record) => sum + estimateBytes(record), 0);
-    let entries = records.length;
-    if (entries <= idbEntryLimit && bytes <= idbByteLimit) return;
-    // A memory hit refreshes recency without a synchronous disk write, so the
-    // in-memory timestamp is the newer one for rows read in this session.
-    const recency = new Map<string, number>();
-    for (const [key, record] of memory) recency.set(key, record.lastUsedAt);
-    const lastUsed = (record: CachedTranslationRecord) => recency.get(record.key) ?? record.lastUsedAt;
-    records.sort((first, second) => lastUsed(first) - lastUsed(second));
-    const expired: string[] = [];
-    for (const record of records) {
-      if (entries <= idbEntryLimit && bytes <= idbByteLimit) break;
-      bytes -= estimateBytes(record);
-      entries -= 1;
-      expired.push(record.key);
-    }
-    if (expired.length === 0) return;
-    try {
-      const transaction = db.transaction(CONTENT_TRANSLATION_STORE_NAME, "readwrite");
-      const store = transaction.objectStore(CONTENT_TRANSLATION_STORE_NAME);
-      for (const key of expired) store.delete(key);
-      await transactionDone(transaction);
+      const transaction = writeTransaction(db);
+      const done = transactionDone(transaction);
+      const store = transaction.objectStore(METADATA_STORE);
+      const metadata: CacheMetadata | undefined = await requestResult(store.get(key));
+      if (metadata) store.put({ ...metadata, lastUsedAt: Math.max(metadata.lastUsedAt, lastUsedAt) });
+      else {
+        const state = transaction.objectStore(MAINTENANCE_STORE);
+        const [record, saved] = await Promise.all([
+          requestResult(transaction.objectStore(CONTENT_TRANSLATION_STORE_NAME).get(key)),
+          requestResult(state.get("budget")),
+        ]);
+        if (record) {
+          const bytes = estimateBytes(record);
+          const budget: CacheBudget = saved ?? emptyBudget();
+          budget.entries += 1;
+          budget.bytes += bytes;
+          store.put({ key, bytes, lastUsedAt } satisfies CacheMetadata);
+          state.put(budget);
+        }
+      }
+      await done;
     } catch {
       disablePersistence();
     }
   }
 
+  // Legacy payloads are accounted once, in bounded restartable transactions.
+  // Concurrent writes already have metadata and are not counted twice.
+  async function migrateBatch(db: IDBDatabase): Promise<boolean> {
+    const transaction = writeTransaction(db);
+    const done = transactionDone(transaction);
+    const state = transaction.objectStore(MAINTENANCE_STORE);
+    const budget: CacheBudget = (await requestResult(state.get("budget"))) ?? emptyBudget();
+    if (budget.ready) {
+      await done;
+      return true;
+    }
+    const store = transaction.objectStore(CONTENT_TRANSLATION_STORE_NAME);
+    const metadata = transaction.objectStore(METADATA_STORE);
+    const request = store.openCursor(
+      budget.after === undefined ? undefined : IDBKeyRange.lowerBound(budget.after, true),
+    );
+    let visited = 0;
+    await new Promise<void>((resolve, reject) => {
+      request.onerror = () => reject(request.error);
+      request.onsuccess = () => {
+        const cursor = request.result;
+        if (!cursor) {
+          budget.ready = true;
+          state.put(budget);
+          resolve();
+          return;
+        }
+        const record = cursor.value as CachedTranslationRecord;
+        const lookup = metadata.get(record.key);
+        lookup.onerror = () => reject(lookup.error);
+        lookup.onsuccess = () => {
+          if (!lookup.result) {
+            const bytes = estimateBytes(record);
+            metadata.put({ key: record.key, bytes, lastUsedAt: record.lastUsedAt } satisfies CacheMetadata);
+            budget.entries += 1;
+            budget.bytes += bytes;
+          }
+          budget.after = record.key;
+          visited += 1;
+          if (visited >= MAINTENANCE_BATCH) {
+            state.put(budget);
+            resolve();
+          } else cursor.continue();
+        };
+      };
+    });
+    await done;
+    return budget.ready;
+  }
+
+  async function evictBatch(db: IDBDatabase): Promise<boolean> {
+    const transaction = writeTransaction(db);
+    const done = transactionDone(transaction);
+    const state = transaction.objectStore(MAINTENANCE_STORE);
+    const budget: CacheBudget = (await requestResult(state.get("budget"))) ?? emptyBudget();
+    const overBudget = () => budget.entries > idbEntryLimit || budget.bytes > idbByteLimit;
+    if (!overBudget()) {
+      await done;
+      return false;
+    }
+    const store = transaction.objectStore(CONTENT_TRANSLATION_STORE_NAME);
+    const metadata = transaction.objectStore(METADATA_STORE);
+    const request = metadata.index("lastUsedAt").openCursor();
+    const expired: string[] = [];
+    await new Promise<void>((resolve, reject) => {
+      request.onerror = () => reject(request.error);
+      request.onsuccess = () => {
+        const cursor = request.result;
+        if (!cursor || !overBudget() || expired.length >= MAINTENANCE_BATCH) {
+          state.put(budget);
+          resolve();
+          return;
+        }
+        const record = cursor.value as CacheMetadata;
+        store.delete(record.key);
+        cursor.delete();
+        budget.entries -= 1;
+        budget.bytes -= record.bytes;
+        expired.push(record.key);
+        cursor.continue();
+      };
+    });
+    await done;
+    for (const key of expired) memory.delete(key);
+    return overBudget() && expired.length > 0;
+  }
+
+  async function runPrune() {
+    const db = await openDatabase();
+    if (!db) return;
+    try {
+      while (!(await migrateBatch(db))) await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      while (await evictBatch(db)) await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    } catch {
+      disablePersistence();
+    }
+  }
+
+  function startPrune(): Promise<void> {
+    if (pruneRunning) return pruneRunning;
+    pruneRunning = (async () => {
+      do {
+        pruneRequested = false;
+        await runPrune();
+      } while (pruneRequested && !persistenceDisabled);
+    })().finally(() => {
+      pruneRunning = null;
+    });
+    return pruneRunning;
+  }
+
   function schedulePrune() {
-    if (persistenceDisabled || pruneTimer !== null) return;
+    if (persistenceDisabled) return;
+    pruneRequested = true;
+    if (pruneTimer !== null || pruneRunning) return;
     pruneTimer = setTimeout(() => {
       pruneTimer = null;
-      // One prune at a time; a write during the walk waits for the next tick.
-      pruneRunning = runPrune().finally(() => {
-        pruneRunning = null;
-      });
+      void startPrune();
     }, pruneDelayMs);
   }
 
   return {
+    setVersion(scope, version) {
+      expectedVersions.set(scope, version);
+    },
     async get(scope, input, expectedVersion) {
       const key = await keyFor(scope, input);
       if (!key) return null;
+      expectedVersion = expectedVersions.get(scope) || expectedVersion;
       const inMemory = memory.get(key);
       if (inMemory) {
         if (!contentTranslationVersionMatches(inMemory.version, expectedVersion)) {
@@ -361,7 +523,7 @@ export function createContentTranslationCache(options: ContentTranslationCacheOp
         remember(key, touched);
         // Recency is what the persistent eviction order reads; keep it fresh
         // without delaying the caller.
-        void idbPut(touched);
+        void idbTouch(key, touched.lastUsedAt);
         return withoutKey(touched);
       }
       const stored = await idbGet(key);
@@ -373,13 +535,14 @@ export function createContentTranslationCache(options: ContentTranslationCacheOp
       const touched = { ...stored, lastUsedAt: now() };
       remember(key, touched);
       // Persist the recency so a later prune does not evict a row just read.
-      await idbPut(touched);
+      await idbTouch(key, touched.lastUsedAt);
       return withoutKey(touched);
     },
 
     async has(scope, input, expectedVersion) {
       const key = await keyFor(scope, input);
       if (!key) return false;
+      expectedVersion = expectedVersions.get(scope) || expectedVersion;
       const inMemory = memory.get(key);
       if (inMemory) {
         if (!contentTranslationVersionMatches(inMemory.version, expectedVersion)) {
@@ -403,6 +566,8 @@ export function createContentTranslationCache(options: ContentTranslationCacheOp
       if (!isCacheableTranslationStatus(result.status)) return false;
       const key = await keyFor(scope, input);
       if (!key) return false;
+      const expected = expectedVersions.get(scope);
+      if (expected && result.version !== expected) return false;
       const timestamp = now();
       const record: CachedTranslationRecord = {
         key,
@@ -426,11 +591,7 @@ export function createContentTranslationCache(options: ContentTranslationCacheOp
         clearTimeout(pruneTimer);
         pruneTimer = null;
       }
-      if (pruneRunning) await pruneRunning;
-      pruneRunning = runPrune().finally(() => {
-        pruneRunning = null;
-      });
-      await pruneRunning;
+      await startPrune();
     },
 
     clearMemory() {

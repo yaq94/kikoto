@@ -83,10 +83,6 @@ func (s *Server) translateContentBatch(w http.ResponseWriter, r *http.Request) {
 	}
 	close(jobs)
 	wg.Wait()
-	version := s.contentTranslationVersion(r.Context())
-	for index := range results {
-		results[index].Version = version
-	}
 	writeJSON(w, http.StatusOK, contentTranslationBatchResponse{Items: results})
 }
 
@@ -149,5 +145,6 @@ func (s *Server) translateBatchItem(ctx context.Context, language string, item c
 	result.Text = translated.Text
 	result.Original = translated.Original
 	result.Status = status
+	result.Version = translated.Version
 	return result
 }
