@@ -563,7 +563,7 @@ export const workflowApi = {
       `/api/workflow-runs?page=${page}&pageSize=${pageSize}&view=${encodeURIComponent(view)}${query.trim() ? `&q=${encodeURIComponent(query.trim())}` : ""}${workflowCode.trim() ? `&workflowCode=${encodeURIComponent(workflowCode.trim())}` : ""}`,
       signal,
     ),
-  getWorkflowRun: (id: number) => getJSON<WorkflowRunDetail>(`/api/workflow-runs/${id}`),
+  getWorkflowRun: (id: number, signal?: AbortSignal) => getJSON<WorkflowRunDetail>(`/api/workflow-runs/${id}`, signal),
   listWorkflowRunEvents: (id: number, afterId = 0) =>
     getJSON<WorkflowEvent[]>(`/api/workflow-runs/${id}/events${afterId > 0 ? `?afterId=${afterId}` : ""}`),
   streamWorkflowRunEvents: (
