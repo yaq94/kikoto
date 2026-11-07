@@ -60,8 +60,13 @@ func openTransferApplication(t *testing.T, root string, first bool) (*sql.DB, *h
 
 func TestPersonalTransferEmptyLibraryRoundTripAndRestart(t *testing.T) {
 	db, source, owner, _, closeSource := openTransferApplication(t, t.TempDir(), true)
+	// Export from an admitted source catalog; restore into a separate empty library
+	// below without rebuilding its source, membership or media.
 	metadataReviewExec(t, db, `INSERT INTO work(id,primary_code,title) VALUES(10,'RJ00000000','Example Numbered');
-	 INSERT INTO source_catalog_entry(id,root_path,title) VALUES(1,'/Example Standalone','Example Standalone'),(2,'/Example Episode','Example Episode');
+	 INSERT INTO file_source(id,code,display_name,source_type) VALUES(7,'example_remote_a','Example Remote A','openlist');
+	 INSERT INTO file_source_endpoint(file_source_id,base_url,api_url) VALUES(7,'https://source.example.invalid','https://source.example.invalid');
+	 INSERT INTO source_catalog_entry(id,file_source_id,root_path,title) VALUES(1,7,'/Example Standalone','Example Standalone'),(2,7,'/Example Episode','Example Episode');
+	 INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes) VALUES(1,'example.mp3','Example audio','audio',1),(2,'example.mp3','Example audio','audio',1);
 	 INSERT INTO catalog_series(id,title) VALUES(1,'Example Series');
 	 INSERT INTO catalog_series_member(series_id,catalog_entry_id,position,evidence) VALUES(1,2,1,'manual');`)
 	for _, path := range []string{"/api/works/10", "/api/source-catalog/1", "/api/source-catalog/2", "/api/catalog-series/1"} {
