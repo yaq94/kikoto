@@ -184,11 +184,13 @@ func (s *Server) runTranslationPrefillWorker(ctx context.Context) {
 		// runs once a minute and may delete several bounded batches; this
 		// keeps up with a prefill burst without taking the writer every tick.
 		retentionTick++
-		if retentionTick >= 4 {
+		// A settings request can hold the configuration lock while its body is
+		// still arriving. Skip this tick instead of waiting beyond cancellation
+		// and the maintenance budget; leave retention due for the next tick.
+		if retentionTick >= 4 && s.translationConfigMu.TryLock() {
 			retentionTick = 0
 			// Configuration cannot switch between choosing protected rows and
 			// deleting historical rows. Translation requests do not take this lock.
-			s.translationConfigMu.Lock()
 			if cfg, err := translation.NewStore(s.db).Load(ctx); err == nil {
 				if err = s.pruneContentTranslations(ctx, cfg); err != nil {
 					slog.Warn("translation corpus retention failed", "error", err)
