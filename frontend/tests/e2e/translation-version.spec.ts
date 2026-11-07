@@ -61,3 +61,61 @@ test("another administrator's configuration is observed on SPA return @desktop",
   await response;
   await expect(page.getByTestId("detail-hero")).toContainText("ZH: Example title by Example Voice");
 });
+
+test("a delayed old-model response cannot rewind an observed newer version @desktop", async ({ page }) => {
+  await page.request.post(`${backend}/api/auth/login`, {
+    data: { username: "synthetic-user", password: "synthetic-password" },
+  });
+  await page.request.patch(`${backend}/api/auth/me/preferences`, { data: { metadataLanguages: ["zh-cn", "origin"] } });
+  await page.request.patch(`${backend}/api/settings/translation`, { data: { model: "Review slow A" } });
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let intercepted!: () => void;
+  const waiting = new Promise<void>((resolve) => {
+    intercepted = resolve;
+  });
+  let oldReleased = false;
+  let announcedB = false;
+  let rewound = false;
+  page.on("response", async (response) => {
+    if (!response.url().endsWith("/api/content-translations/version") || response.status() !== 200) return;
+    const { version } = await response.json();
+    if (version.startsWith("Review slow B|")) announcedB = true;
+    if (oldReleased && announcedB && version.startsWith("Review slow A|")) rewound = true;
+  });
+  await page.route("**/api/content-translations/batch", async (route) => {
+    const response = await route.fetch();
+    const body = await response.json();
+    if (body.items.some((item: { version?: string }) => item.version?.startsWith("Review slow A|"))) {
+      intercepted();
+      await held;
+    }
+    await route.fulfill({ response }).catch(() => undefined);
+  });
+  await page.goto("/RJ00000000");
+  await waiting;
+  await page.request.patch(`${backend}/api/settings/translation`, { data: { model: "Review slow B" } });
+  await page.getByRole("button", { name: "Settings", exact: true }).first().click();
+  await expect.poll(() => announcedB).toBe(true);
+  oldReleased = true;
+  release();
+  await page.goBack();
+  await expect(page.getByTestId("detail-hero")).toContainText("ZH: Example title by Example Voice");
+  const models = await page.evaluate(async () => {
+    const db = await new Promise<IDBDatabase>((resolve) => {
+      const r = indexedDB.open("kikoto-translations");
+      r.onsuccess = () => resolve(r.result);
+    });
+    const rows = await new Promise<Array<{ original: string; version?: string }>>((resolve) => {
+      const r = db.transaction("entries").objectStore("entries").getAll();
+      r.onsuccess = () => resolve(r.result);
+    });
+    db.close();
+    return rows.filter((row) => row.original === "Example title by Example Voice").map((row) => row.version);
+  });
+  expect(models.length).toBeGreaterThan(0);
+  expect(models.every((version) => version?.startsWith("Review slow B|"))).toBe(true);
+  expect(rewound).toBe(false);
+});

@@ -131,6 +131,7 @@ export function ContentLanguageProvider({ children }: { children: ReactNode }) {
         .version(current.signal)
         .then((value) => {
           if (!current.signal.aborted && value.version) {
+            contentTranslationCache.setVersion(accountScope, value.version);
             setVersionState((previous) =>
               previous.session === session && previous.version === value.version
                 ? previous
@@ -159,7 +160,7 @@ export function ContentLanguageProvider({ children }: { children: ReactNode }) {
       window.removeEventListener(CONTENT_TRANSLATION_CONFIG_CHANGED, refresh);
       document.removeEventListener("visibilitychange", visible);
     };
-  }, [canRead, session, versionRevision]);
+  }, [canRead, session, accountScope, versionRevision]);
   useEffect(() => {
     if (!userId || demoMode) return;
     const controller = new AbortController();

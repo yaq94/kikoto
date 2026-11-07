@@ -1,6 +1,9 @@
 import { createContext, useContext, useMemo, type ReactNode } from "react";
 
-import { useContentLanguageCacheVersion } from "@/components/content-translation/ContentTranslation";
+import {
+  useContentLanguageCacheVersion,
+  useContentLanguageScope,
+} from "@/components/content-translation/ContentTranslation";
 import { contentTranslationApi, isContentTranslationInFlight } from "@/lib/contentTranslationApi";
 import { contentTranslationCache } from "@/lib/contentTranslationCache";
 import { createTitlePrefetchQueue, type TitlePrefetchRequest } from "@/lib/contentTranslationPrefetch";
@@ -17,6 +20,7 @@ const PrefetchContext = createContext<ContentTranslationPrefetchValue>({ warmTit
  */
 export function ContentTranslationPrefetchProvider({ children }: { children: ReactNode }) {
   const cacheVersion = useContentLanguageCacheVersion();
+  const accountScope = useContentLanguageScope();
   const value = useMemo<ContentTranslationPrefetchValue>(() => {
     const queue = createTitlePrefetchQueue({
       cache: contentTranslationCache,
@@ -27,10 +31,10 @@ export function ContentTranslationPrefetchProvider({ children }: { children: Rea
       // The version is read when the warm-up starts; a request that names its
       // own version keeps it.
       warmTitles: (request) => {
-        void queue.enqueue({ ...request, version: request.version ?? (cacheVersion || undefined) });
+        if (cacheVersion) void queue.enqueue({ ...request, scope: accountScope, version: cacheVersion });
       },
     };
-  }, [cacheVersion]);
+  }, [accountScope, cacheVersion]);
   return <PrefetchContext.Provider value={value}>{children}</PrefetchContext.Provider>;
 }
 
