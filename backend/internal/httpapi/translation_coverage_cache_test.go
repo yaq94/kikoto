@@ -3,13 +3,10 @@ package httpapi
 import (
 	"context"
 	"testing"
-	"time"
 )
 
-// The operator view walks the whole corpus plus dbstat. A page that polls it
-// must not start one such read per request, so consecutive reads inside the
-// snapshot window reuse the first answer.
-func TestTranslationOperatorSnapshotIsReusedWithinItsWindow(t *testing.T) {
+// A committed semantic change invalidates the operator snapshot immediately.
+func TestTranslationOperatorSnapshotTracksCommittedCorpus(t *testing.T) {
 	s, host, admin, _ := translationHTTPFixture(t)
 	seedPrefillCard(t, s, 1, "Example title")
 	cfg := mustTranslationConfig(t, s)
@@ -20,16 +17,14 @@ func TestTranslationOperatorSnapshotIsReusedWithinItsWindow(t *testing.T) {
 	if first.coverage.Total != 1 {
 		t.Fatalf("coverage total = %d, want 1", first.coverage.Total)
 	}
-	// A second read inside the window returns the same snapshot without
-	// recomputing it. Bumping the corpus behind the cache proves the reuse: an
-	// uncached read would now see two cards.
+	// Inserting a card changes the durable revision even without an API hook.
 	seedPrefillCard(t, s, 2, "Second title")
 	second, err := s.cachedTranslationOperatorSnapshot(context.Background(), cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if second.coverage.Total != first.coverage.Total {
-		t.Fatalf("second total = %d, want the cached %d", second.coverage.Total, first.coverage.Total)
+	if second.coverage.Total != 2 {
+		t.Fatalf("second total = %d, want 2 after committed corpus change", second.coverage.Total)
 	}
 	// A status transition drops the snapshot, so the next read reflects the
 	// corpus as it is now.
@@ -48,19 +43,16 @@ func TestTranslationOperatorSnapshotIsReusedWithinItsWindow(t *testing.T) {
 	}
 }
 
-// A stale snapshot must expire on its own even without a status change, so a
-// long-running pass cannot leave the operator view frozen.
-func TestTranslationOperatorSnapshotExpires(t *testing.T) {
+// Explicit invalidation remains available for status-only changes.
+func TestTranslationOperatorSnapshotExplicitInvalidation(t *testing.T) {
 	s, _, _, _ := translationHTTPFixture(t)
 	seedPrefillCard(t, s, 1, "Example title")
 	cfg := mustTranslationConfig(t, s)
 	if _, err := s.cachedTranslationOperatorSnapshot(context.Background(), cfg); err != nil {
 		t.Fatal(err)
 	}
+	s.invalidateTranslationCoverageCache()
 	seedPrefillCard(t, s, 2, "Second title")
-	s.translationCoverageMu.Lock()
-	s.translationCoverage.at = time.Now().Add(-2 * translationCoverageCacheTTL)
-	s.translationCoverageMu.Unlock()
 	next, err := s.cachedTranslationOperatorSnapshot(context.Background(), cfg)
 	if err != nil {
 		t.Fatal(err)

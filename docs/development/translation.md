@@ -203,6 +203,13 @@ translations. When `minFreeBytes` is not met, new rows are not written at all:
 the caller still returns the translation it already fetched, reports
 `paused_low_disk`, and the durable copy waits for space.
 
+Durable writes coalesce into one pending maintenance notification. The single
+prefill worker attempts maintenance at startup and at most once per minute,
+with a ten-second context budget and at most twenty batches of 500 rows per
+cleanup phase. A failed or incomplete pass resumes on a later tick; request
+completion does not wait for retention. An unchanged durable revision skips
+the maintenance scan. Application restart always rechecks maintenance.
+
 A content change produces a new `cache_key` because the source text is part of
 it. The previous row is stale and the periodic retention pass removes it as
 superseded; it is never counted as current coverage. `zh-tw` viewers read the
@@ -226,6 +233,18 @@ not a separate prefill queue; native `zh-Hant` rows are reported with their own
 `rows`, `native`, `model` and `missing` counts, but a missing one is excluded
 from the global missing total and does not block completion because the
 `zh-Hans` projection still serves the reader.
+
+`translation_corpus_revision` advances in the same transaction as semantic
+changes to entities, source enablement/type, published generations, admission,
+series membership, translations, failures and translation settings. A separate
+cache revision tracks source display-cache writes without restarting completed
+prefill. Timestamp, playback and unrelated metadata writes do not invalidate
+coverage. One SQL snapshot materializes the effective corpus once for every
+language; completion records its checked revision only if no concurrent entity
+or configuration change invalidated the scanned prefix. The persisted checked
+revision makes unchanged complete ticks constant-cost across restarts. Operator
+snapshots are reused only for the matching revision and configuration; changing
+the corpus during an observation returns an error and a later poll retries.
 
 Display-language search applies only to text clauses and covers `title` for
 entries and series, plus `title` and `description` for works; `tag` and
