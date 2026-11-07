@@ -267,6 +267,9 @@ func (s *Server) removeCatalogSyncObservation(ctx context.Context, sourceID, gen
 }
 
 func (s *Server) finishCatalogSyncListing(ctx context.Context, sourceID, generation, runID int64, dir catalogSyncDirectoryState, listing catalogSyncListing) error {
+	if _, err := s.prepareCatalogLargeGrouping(ctx, catalogGroupingIndexInput{SourceID: sourceID, Generation: generation, Root: dir.Path, Revision: dir.Revision + 1}); err != nil {
+		return err
+	}
 	digest := sha256.New()
 	rows, err := s.db.QueryContext(ctx, `SELECT name,kind,size_bytes,content_hash,modified_at FROM source_catalog_listing_item WHERE listing_id=? ORDER BY name`, listing.ID)
 	if err != nil {
@@ -306,6 +309,19 @@ func (s *Server) finishCatalogSyncListing(ctx context.Context, sourceID, generat
 		}
 		root = d.Root
 		if _, err = tx.ExecContext(ctx, `UPDATE source_catalog_directory SET catalog_root=? WHERE file_source_id=? AND path=?`, root, sourceID, dir.Path); err != nil {
+			return err
+		}
+	}
+	// The direct listing owns its grouping decision. A changed existing root
+	// must select the newly persisted plan too; a nested change invalidates only
+	// the parent's cached completeness result.
+	if root == dir.Path && status == "complete" {
+		if err = decideCatalogWorkSplitTx(ctx, tx.Tx, sourceID, generation, dir.Path, dir.Revision+1); err != nil {
+			return err
+		}
+	}
+	if root != "" {
+		if _, err = tx.ExecContext(ctx, `UPDATE source_catalog_grouping SET parent_ready=0,parent_cursor_path='',parent_cursor_name='' WHERE id=(SELECT g.id FROM source_catalog_grouping g JOIN source_catalog_directory d ON d.file_source_id=g.file_source_id AND d.path=g.root_path WHERE g.file_source_id=? AND g.root_path=? AND g.version=('observation:'||d.generation||':'||d.revision))`, sourceID, root); err != nil {
 			return err
 		}
 	}

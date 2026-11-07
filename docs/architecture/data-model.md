@@ -94,6 +94,17 @@ scope keys for bounded preparation. See
 [Catalog publication snapshots](../decisions/ADR-0008-catalog-publication-snapshots.md)
 for ownership, conflicting writes and read transaction boundaries.
 
+`source_catalog_grouping` identifies derived classification evidence for one
+complete observation revision or finite listing. Its name, folder, bucket and
+target tables support bounded preparation and indexed publication lookups.
+`source_catalog_duplicate_comparison` and `source_catalog_duplicate_match`
+persist one-to-one copy evidence and its cursor; `source_catalog_duplicate_available`
+contains the comparison's remaining candidates. `source_catalog_finite_directory`
+stores the finite traversal queue; `source_catalog_finite_target` and
+`source_catalog_finite_file` store the partition until its publication is ready.
+These tables hold preparation state, not stable work identities. See
+[Catalog grouping checkpoints](../decisions/ADR-0009-catalog-grouping-checkpoints.md).
+
 ## Work Metadata
 
 Important tables:

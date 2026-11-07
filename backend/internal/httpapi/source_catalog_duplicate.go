@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"path"
 	"strings"
 )
@@ -23,24 +24,43 @@ const (
 )
 
 type catalogDuplicateDecision struct {
-	Duplicate bool
-	Root      string
-	Matched   []catalogAudioFile
-	Unique    []catalogAudioFile
+	Comparison  int64
+	UniqueCount int
+	Duplicate   bool
+	Root        string
+	Matched     []catalogAudioFile
+	Unique      []catalogAudioFile
 }
+
+func (d catalogDuplicateDecision) hasUnique() bool { return d.UniqueCount > 0 || len(d.Unique) > 0 }
 
 func catalogDuplicateDirectoryTx(ctx context.Context, tx *sql.Tx, sourceID, generation int64, directoryPath string) (bool, error) {
 	decision, err := catalogDuplicateDirectoryDecisionTx(ctx, tx, sourceID, generation, directoryPath)
 	if err != nil {
 		return false, err
 	}
-	return decision.Duplicate && len(decision.Unique) == 0, nil
+	return decision.Duplicate && !decision.hasUnique(), nil
 }
 
 // catalogDuplicateDirectoryDecisionTx separates a harmless format copy from
 // one that carries extra recordings. The caller consumes only matched files:
 // a unique bonus stays pending and publishes into the canonical parent card.
 func catalogDuplicateDirectoryDecisionTx(ctx context.Context, tx *sql.Tx, sourceID, generation int64, directoryPath string) (catalogDuplicateDecision, error) {
+	var indexed catalogDuplicateDecision
+	err := tx.QueryRowContext(ctx, `SELECT c.id,c.duplicate,p.root_path,c.unique_count FROM source_catalog_duplicate_comparison c JOIN source_catalog_grouping g ON g.id=c.child_grouping JOIN source_catalog_grouping p ON p.id=c.parent_grouping JOIN source_catalog_directory d ON d.file_source_id=g.file_source_id AND d.path=g.root_path JOIN source_catalog_directory pd ON pd.file_source_id=p.file_source_id AND pd.path=p.root_path WHERE g.file_source_id=? AND g.root_path=? AND d.generation=? AND g.version=('observation:'||d.generation||':'||d.revision) AND p.version=('observation:'||pd.generation||':'||pd.revision) AND c.complete=1 ORDER BY c.id DESC LIMIT 1`, sourceID, directoryPath, generation).Scan(&indexed.Comparison, &indexed.Duplicate, &indexed.Root, &indexed.UniqueCount)
+	if err == nil {
+		return indexed, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return indexed, err
+	}
+	var indexedChild bool
+	if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM source_catalog_grouping g JOIN source_catalog_directory d ON d.file_source_id=g.file_source_id AND d.path=g.root_path WHERE g.file_source_id=? AND g.root_path=? AND g.version=('observation:'||d.generation||':'||d.revision) AND g.phase='ready')`, sourceID, directoryPath).Scan(&indexedChild); err != nil {
+		return indexed, err
+	}
+	if indexedChild {
+		return indexed, nil
+	}
 	parent := path.Dir(directoryPath)
 	if directoryPath == "/" || parent == "." || parent == directoryPath {
 		return catalogDuplicateDecision{}, nil

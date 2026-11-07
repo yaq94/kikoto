@@ -67,7 +67,9 @@ func newLooseWorkFixtureWithDB(t *testing.T, tree map[string][]map[string]any, d
 			_, _ = w.Write([]byte("data"))
 		default:
 			var input struct {
-				Path string `json:"path"`
+				Path    string `json:"path"`
+				Page    int    `json:"page"`
+				PerPage int    `json:"per_page"`
 			}
 			_ = json.NewDecoder(r.Body).Decode(&input)
 			f.mu.Lock()
@@ -82,7 +84,12 @@ func newLooseWorkFixtureWithDB(t *testing.T, tree map[string][]map[string]any, d
 				http.NotFound(w, r)
 				return
 			}
-			_ = json.NewEncoder(w).Encode(map[string]any{"code": 200, "data": map[string]any{"content": items, "total": len(items)}})
+			page := items
+			if input.Page > 0 && input.PerPage > 0 {
+				start := min(len(items), (input.Page-1)*input.PerPage)
+				page = items[start:min(len(items), start+input.PerPage)]
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": 200, "data": map[string]any{"content": page, "total": len(items)}})
 		}
 	})
 	var fixture catalogIndexFixture

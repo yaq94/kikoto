@@ -152,45 +152,67 @@ func catalogEpisodeFormatCopy(name string) (string, bool) {
 	return episode, true
 }
 
-// catalogEpisodePositionsTx counts distinct episode numbers among the direct
-// child folders of one parent. A format variant and its bare sibling count as
-// the same position; two format folders for one episode do not create a
-// series by themselves.
-func catalogEpisodePositionsTx(ctx context.Context, tx *sql.Tx, sourceID, generation int64, parent string) (int, map[string]int, error) {
+// catalogEpisodePositionsTx returns evidence counts saturated at two: callers
+// only need to distinguish a single episode from a series or paired copies.
+func catalogEpisodePositionsTx(ctx context.Context, tx *sql.Tx, sourceID, generation int64, parent, wanted string) (int, int, error) {
 	if generation == 0 {
-		if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(generation),0)
-			FROM source_catalog_directory WHERE file_source_id=? AND path=?`,
-			sourceID, parent).Scan(&generation); err != nil {
-			return 0, nil, err
+		if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(generation),0) FROM source_catalog_directory WHERE file_source_id=? AND path=?`, sourceID, parent).Scan(&generation); err != nil {
+			return 0, 0, err
 		}
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT o.name FROM source_catalog_observation o
-		JOIN source_catalog_directory d ON d.file_source_id=o.file_source_id AND d.path=o.directory_path
-		WHERE o.file_source_id=? AND o.directory_path=? AND o.kind='folder'
-			AND o.revision=d.revision AND d.generation=?`, sourceID, parent, generation)
+	var groupingID int64
+	err := tx.QueryRowContext(ctx, `SELECT g.id FROM source_catalog_grouping g JOIN source_catalog_directory d ON d.file_source_id=g.file_source_id AND d.path=g.root_path WHERE g.file_source_id=? AND g.root_path=? AND d.generation=? AND g.version=('observation:'||d.generation||':'||d.revision) AND g.phase='ready'`, sourceID, parent, generation).Scan(&groupingID)
+	if err == nil {
+		b, readErr := catalogReadGroupingBucket(ctx, tx, groupingID, "folder_positions", "all")
+		if readErr != nil {
+			return 0, 0, readErr
+		}
+		positions := 0
+		if b.Count > 0 {
+			positions = 1
+		}
+		if b.Min != b.Max {
+			positions = 2
+		}
+		copies, readErr := catalogReadGroupingBucket(ctx, tx, groupingID, "folder", wanted)
+		return positions, min(copies.Count, 2), readErr
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return 0, 0, err
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT o.name FROM source_catalog_observation o JOIN source_catalog_directory d ON d.file_source_id=o.file_source_id AND d.path=o.directory_path WHERE o.file_source_id=? AND o.directory_path=? AND o.kind='folder' AND o.revision=d.revision AND d.generation=?`, sourceID, parent, generation)
 	if err != nil {
-		return 0, nil, err
+		return 0, 0, err
 	}
 	defer func() { _ = rows.Close() }()
-	positions := map[int]bool{}
-	canonicalCounts := map[string]int{}
+	first, positions, copies := 0, 0, 0
 	for rows.Next() {
 		var name string
 		if err = rows.Scan(&name); err != nil {
-			return 0, nil, err
+			return 0, 0, err
 		}
-		canonical, formatCopy := catalogEpisodeFormatCopy(name)
-		if !formatCopy {
+		canonical, copy := catalogEpisodeFormatCopy(name)
+		if !copy {
 			canonical = name
 		}
 		evidence, ok := catalogEpisodeEvidence(path.Join(parent, canonical))
 		if !ok || evidence.Position <= 0 {
 			continue
 		}
-		positions[evidence.Position] = true
-		canonicalCounts[canonical]++
+		if positions == 0 {
+			first = evidence.Position
+			positions = 1
+		} else if first != evidence.Position {
+			positions = 2
+		}
+		if wanted != "" && canonical == wanted {
+			copies++
+		}
+		if positions == 2 || copies == 2 {
+			return positions, copies, nil
+		}
 	}
-	return len(positions), canonicalCounts, rows.Err()
+	return positions, copies, rows.Err()
 }
 
 // catalogLooseEpisode groups direct audio files that name their episode
@@ -505,7 +527,7 @@ func attachCatalogSeriesEvidenceTx(ctx context.Context, tx *sql.Tx, entryID, sou
 		if !ok {
 			return nil
 		}
-		positions, _, err := catalogEpisodePositionsTx(ctx, tx, sourceID, 0, parent)
+		positions, _, err := catalogEpisodePositionsTx(ctx, tx, sourceID, 0, parent, "")
 		if err != nil {
 			return err
 		}

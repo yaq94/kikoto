@@ -271,7 +271,16 @@ func (s *Server) persistCatalogPage(ctx context.Context, job workflowJobRecord, 
 		}
 	}
 	if status == "listing_complete" {
-		if err = completeCatalogDirectoryTx(ctx, tx.Tx, sourceID, job.RunID, &d); err != nil {
+		needsIndex, indexErr := catalogDirectoryNeedsGroupingIndexTx(ctx, tx.Tx, sourceID, job.RunID, d.Path, d.Revision)
+		if indexErr != nil {
+			return indexErr
+		}
+		if needsIndex {
+			_, err = tx.ExecContext(ctx, `UPDATE source_catalog_directory SET classification_pending=1 WHERE file_source_id=? AND path=?`, sourceID, d.Path)
+		} else {
+			err = completeCatalogDirectoryTx(ctx, tx.Tx, sourceID, job.RunID, &d)
+		}
+		if err != nil {
 			return err
 		}
 	}
@@ -373,7 +382,7 @@ func completeCatalogDirectoryTx(ctx context.Context, tx *sql.Tx, sourceID, gener
 				AND status<>'empty')`, sourceID, sibling, generation).Scan(&exists); err != nil {
 			return err
 		}
-		positions, canonicalCounts, err := catalogEpisodePositionsTx(ctx, tx, sourceID, generation, path.Dir(d.Path))
+		positions, canonicalCopies, err := catalogEpisodePositionsTx(ctx, tx, sourceID, generation, path.Dir(d.Path), episode)
 		if err != nil {
 			return err
 		}
@@ -382,7 +391,7 @@ func completeCatalogDirectoryTx(ctx context.Context, tx *sql.Tx, sourceID, gener
 		// parent with at least two distinct episode positions establish the
 		// canonical root. An isolated format copy keeps its own card, which lets
 		// a deleted episode stay missing instead of being revived by its copy.
-		if exists != 0 || canonicalCounts[episode] >= 2 || positions >= 2 {
+		if exists != 0 || canonicalCopies >= 2 || positions >= 2 {
 			d.Root = sibling
 			return decideCatalogWorkSplitTx(ctx, tx, sourceID, generation, d.Path, d.Revision)
 		}
@@ -448,7 +457,7 @@ func completeCatalogDirectoryTx(ctx context.Context, tx *sql.Tx, sourceID, gener
 					// publisher as a second card.
 					d.Root = decision.Root
 					mode := catalogWorkSplitSingle
-					if len(decision.Unique) == 0 {
+					if !decision.hasUnique() {
 						mode = catalogWorkSplitDuplicate
 					}
 					if _, err := tx.ExecContext(ctx, `UPDATE source_catalog_directory
@@ -456,6 +465,9 @@ func completeCatalogDirectoryTx(ctx context.Context, tx *sql.Tx, sourceID, gener
 						WHERE file_source_id=? AND path=? AND generation=?`,
 						mode, sourceID, d.Path, generation); err != nil {
 						return err
+					}
+					if decision.Comparison > 0 {
+						return nil
 					}
 					for _, file := range decision.Matched {
 						if _, err := tx.ExecContext(ctx, `UPDATE source_catalog_observation
@@ -586,6 +598,9 @@ func completeCatalogDirectoryTx(ctx context.Context, tx *sql.Tx, sourceID, gener
 // expandCatalogDirectory releases the writer after at most 100 child enqueues.
 // A large directory is not marked complete until its child cursor is exhausted.
 func (s *Server) expandCatalogDirectory(ctx context.Context, job workflowJobRecord, sourceID int64) (bool, error) {
+	if err := s.finalizeCatalogGroupingDirectory(ctx, job, sourceID); err != nil {
+		return false, err
+	}
 	tx, release, err := beginTxWithDatabaseBusyRetry(ctx, s.db)
 	if err != nil {
 		return false, err
@@ -895,6 +910,9 @@ ORDER BY d.path,o.name LIMIT ?3`
 // Publish a bounded number of validated observations. The first playable
 // observation creates a catalog identity; it never registers a library work.
 func (s *Server) publishCatalogBatch(ctx context.Context, job workflowJobRecord, sourceID int64) (int, error) {
+	if err := s.prepareCatalogPublicationGrouping(ctx, sourceID, job.RunID); err != nil {
+		return 0, err
+	}
 	started := time.Now()
 	published := 0
 	defer func() { observeCatalogWrite(ctx, "publish_batch", started, published) }()
@@ -1022,7 +1040,11 @@ func (s *Server) publishCatalogBatch(ctx context.Context, job workflowJobRecord,
 			// container, so a disc folder with an unrelated name is not
 			// silently dropped.
 			rel := strings.TrimPrefix(path.Join(p.dir, p.name), strings.TrimRight(p.root, "/")+"/")
-			if target, ok := plan.targetFor(rel); ok {
+			target, ok, targetErr := plan.indexedTargetFor(ctx, tx.Tx, rel)
+			if targetErr != nil {
+				return 0, targetErr
+			}
+			if ok {
 				root, sourceRoot, title = target.Root, target.SourceRoot, target.Title
 				episodeEvidence, hasEpisode = target.Episode, target.HasEpisode
 			}
@@ -1168,7 +1190,7 @@ func (s *Server) publishCatalogBatch(ctx context.Context, job workflowJobRecord,
 	// anything; all other increments stay incremental.
 	retireRan := false
 	for root, plan := range splitPlans {
-		if parentNeeded[root] || len(plan.direct) == 0 {
+		if parentNeeded[root] || (plan.groupingID == 0 && len(plan.direct) == 0) {
 			continue
 		}
 		// Retire the creator card only after every observation below this
