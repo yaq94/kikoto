@@ -145,9 +145,20 @@ func loadAssociationObject(ctx context.Context, tx *sql.Tx, subject associationS
 			return o, errAssociationLimit
 		}
 		var series, episode int
-		err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM catalog_series WHERE work_id=?),EXISTS(SELECT 1 FROM catalog_series_member m JOIN source_catalog_entry e ON e.id=m.catalog_entry_id WHERE e.work_id=?)`, *o.WorkID, *o.WorkID).Scan(&series, &episode)
+		// Personal restores have no source membership. Their explicit parent and
+		// primary portable kind still define the evaluation object, including
+		// legacy episodes whose backup did not carry a parent.
+		err = tx.QueryRowContext(ctx, `SELECT
+			EXISTS(SELECT 1 FROM catalog_series WHERE work_id=w.id) OR COALESCE(r.object_kind,'work')='series',
+			w.parent_work_id IS NOT NULL OR COALESCE(r.object_kind,'work')='episode'
+				OR EXISTS(SELECT 1 FROM catalog_series_member m JOIN source_catalog_entry e ON e.id=m.catalog_entry_id WHERE e.work_id=w.id)
+			FROM work w LEFT JOIN personal_transfer_ref r ON r.work_id=w.id AND r.is_primary=1
+			WHERE w.id=?`, *o.WorkID).Scan(&series, &episode)
 		if err != nil {
 			return o, err
+		}
+		if series != 0 && episode != 0 {
+			return o, errAssociationInvalid
 		}
 		if series != 0 {
 			o.Level = "series"

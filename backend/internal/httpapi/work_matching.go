@@ -172,6 +172,12 @@ func loadWorkMatchMember(ctx context.Context, tx *sql.Tx, subject associationSub
 	}
 	if e.Level == "episode" {
 		err = tx.QueryRowContext(ctx, `SELECT s.title,m.position FROM catalog_series_member m JOIN catalog_series s ON s.id=m.series_id JOIN source_catalog_entry e ON e.id=m.catalog_entry_id WHERE (?='catalog' AND e.id=?) OR (?='work' AND e.work_id=?) ORDER BY e.id LIMIT 1`, subject.Kind, subject.ID, subject.Kind, subject.ID).Scan(&e.Series, &e.Position)
+		// A restored episode can lack source membership and episode position.
+		// Keep its level while leaving that evidence absent; matching must not
+		// invent a position or report the existing work itself as missing.
+		if errors.Is(err, sql.ErrNoRows) {
+			err = nil
+		}
 		if err != nil {
 			return e, err
 		}
