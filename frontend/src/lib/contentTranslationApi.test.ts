@@ -125,6 +125,67 @@ describe("contentTranslationApi.translateBatch", () => {
     expect(second.text).toBe("translated:title 2");
   });
 
+  it("shares two network slots across separate coalescing frames", async () => {
+    vi.useFakeTimers();
+    let active = 0;
+    let maximum = 0;
+    let drain = false;
+    const releases: Array<() => void> = [];
+    sendJSONBody.mockImplementation((_method, _path, body) => {
+      active += 1;
+      maximum = Math.max(maximum, active);
+      return new Promise((resolve) => {
+        const release = () => {
+          active -= 1;
+          resolve(echoResponse(body));
+        };
+        if (drain) release();
+        else releases.push(release);
+      });
+    });
+    const requests = [];
+    for (let frame = 0; frame < 4; frame += 1) {
+      requests.push(translateCoalesced(input(50 + frame)));
+      await vi.advanceTimersByTimeAsync(17);
+    }
+    const beforeRelease = sendJSONBody.mock.calls.length;
+    drain = true;
+    for (const release of releases) release();
+    const results = await Promise.all(requests);
+    vi.useRealTimers();
+    expect(beforeRelease).toBe(2);
+    expect(maximum).toBe(2);
+    expect(results.map((result) => result.text)).toEqual([50, 51, 52, 53].map((i) => `translated:title ${i}`));
+  });
+
+  it("removes an aborted queued batch and releases slots after failures", async () => {
+    const releases: Array<(fail?: boolean) => void> = [];
+    sendJSONBody.mockImplementation(
+      (_method, _path, body) =>
+        new Promise((resolve, reject) => {
+          releases.push((fail) =>
+            fail ? reject(new Error("synthetic transport failure")) : resolve(echoResponse(body)),
+          );
+        }),
+    );
+    const first = contentTranslationApi.translateBatch([input(60)]).catch((error) => error);
+    const second = contentTranslationApi.translateBatch([input(61)]);
+    const cancelled = new AbortController();
+    const third = contentTranslationApi.translateBatch([input(62)], cancelled.signal).catch((error) => error);
+    const fourth = contentTranslationApi.translateBatch([input(63)]);
+    expect(sendJSONBody).toHaveBeenCalledTimes(2);
+    cancelled.abort();
+    expect((await third).name).toBe("AbortError");
+    releases[0](true);
+    await first;
+    expect(sendJSONBody).toHaveBeenCalledTimes(3);
+    expect(sendJSONBody.mock.calls[2][2].items[0].text).toBe("title 63");
+    releases[1]();
+    releases[2]();
+    await Promise.all([second, fourth]);
+    expect(isContentTranslationInFlight(contentTranslationRequestKey(input(62)))).toBe(false);
+  });
+
   it("shares one queued request for the same field", async () => {
     sendJSONBody.mockImplementation(async (_method, _path, body) => echoResponse(body));
     const [first, second] = await Promise.all([translateCoalesced(input(1)), translateCoalesced(input(1))]);

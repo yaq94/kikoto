@@ -117,15 +117,60 @@ async function sendBatch(
   signal?: AbortSignal,
 ): Promise<ContentTranslationBatchResponse> {
   try {
-    return await apiTransport.sendJSONBody<ContentTranslationBatchResponse>(
-      "POST",
-      "/api/content-translations/batch",
-      { language, items: chunk.map(({ input, key }) => itemBody(input, key)) },
-      { signal },
+    return await withBatchSlot(
+      () =>
+        apiTransport.sendJSONBody<ContentTranslationBatchResponse>(
+          "POST",
+          "/api/content-translations/batch",
+          { language, items: chunk.map(({ input, key }) => itemBody(input, key)) },
+          { signal },
+        ),
+      signal,
     );
   } catch (error) {
     toBatchError(error);
   }
+}
+
+// The transport budget belongs to the session, not to one render frame. Every
+// batch uses it, including mixed-language chunks and overlapping prefetch calls.
+let activeBatches = 0;
+const waitingBatches: Array<() => void> = [];
+function withBatchSlot<T>(run: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => {
+      const index = waitingBatches.indexOf(start);
+      if (index >= 0) waitingBatches.splice(index, 1);
+      reject(abortError());
+    };
+    const start = () => {
+      signal?.removeEventListener("abort", onAbort);
+      if (signal?.aborted) {
+        reject(abortError());
+        return;
+      }
+      activeBatches += 1;
+      void (async () => {
+        try {
+          resolve(await run());
+        } catch (error) {
+          reject(error);
+        } finally {
+          activeBatches -= 1;
+          waitingBatches.shift()?.();
+        }
+      })();
+    };
+    if (signal?.aborted) {
+      reject(abortError());
+      return;
+    }
+    if (activeBatches < CONTENT_TRANSLATION_CHUNK_CONCURRENCY) start();
+    else {
+      waitingBatches.push(start);
+      signal?.addEventListener("abort", onAbort, { once: true });
+    }
+  });
 }
 
 export const contentTranslationApi = {
