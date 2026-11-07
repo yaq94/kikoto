@@ -5,6 +5,7 @@ import {
   useContentLanguageScope,
 } from "@/components/content-translation/ContentTranslation";
 import { contentTranslationApi, isContentTranslationInFlight } from "@/lib/contentTranslationApi";
+import { apiSessionVersion } from "@/lib/apiSession";
 import { contentTranslationCache } from "@/lib/contentTranslationCache";
 import { createTitlePrefetchQueue, type TitlePrefetchRequest } from "@/lib/contentTranslationPrefetch";
 
@@ -25,7 +26,9 @@ export function ContentTranslationPrefetchProvider({ children }: { children: Rea
     const queue = createTitlePrefetchQueue({
       cache: contentTranslationCache,
       translateBatch: (inputs) => contentTranslationApi.translateBatch(inputs),
-      isInFlight: isContentTranslationInFlight,
+      isInFlight: (key) =>
+        isContentTranslationInFlight(key) ||
+        isContentTranslationInFlight(`${accountScope}:${apiSessionVersion()}:${cacheVersion}${key}`),
     });
     return {
       // The version is read when the warm-up starts; a request that names its

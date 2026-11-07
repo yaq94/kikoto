@@ -397,7 +397,7 @@ export function TranslatedText({
       window.clearTimeout(timeout);
       controller.abort();
     };
-  }, [enabled, visible, key, input, text, language, accountScope, cacheVersion, noteVersion]);
+  }, [enabled, visible, key, input, text, language, accountScope, cacheVersion, noteVersion, session]);
   const result = settled?.key === key ? settled.result : null;
   const success =
     enabled && result && (result.status === "translated" || result.status === "existing" || result.status === "native");

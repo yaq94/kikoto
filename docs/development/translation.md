@@ -130,6 +130,26 @@ asked shows its original text and no progress note. The content-language
 event refreshes text without remounting the detail or changing the selected
 directory, edition, media identity or player state.
 
+The provider refreshes the authoritative configuration version on navigation,
+settings saves, focus and visibility changes, and once a minute while visible.
+Translation responses can request a version refresh but cannot replace the
+authoritative version with an older one. Account identity, permissions and API
+session generation scope pending requests; persistent rows also distinguish
+the original text, language and configured model version.
+
+All browser batch requests share two transport slots across render frames,
+languages and title prefetch. Cancelled queued requests release their waiters;
+settled or failed requests release their slots. Prefetch checks the same scoped
+in-flight keys as visible fields.
+
+The browser's IndexedDB display cache has a 100,000-entry and 50 MiB budget.
+Its metadata ledger tracks byte counts and recency in the same transactions as
+payload writes. Maintenance reads the ledger and oldest metadata index, with
+at most 128 entries per transaction, yielding between batches. Existing v1 rows
+are accounted through a resumable cursor before eviction. Concurrent callers
+share one maintenance run, and writes during maintenance request another pass.
+These rebuildable display rows are separate from the server's searchable corpus.
+
 ## Resource budgets and cache
 
 | Setting | Default | Accepted range |
