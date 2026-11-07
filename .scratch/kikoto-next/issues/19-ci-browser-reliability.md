@@ -2,10 +2,10 @@
 
 **What to build:** 修复既有 Playwright 套件中目录骨架、收藏与移动封面触摸三类不稳定用例，使同一断言在重复运行时稳定通过，并保留原有的非视觉回归保护。
 
+**Blocked by:** None (can start immediately)
+
 **Status:** ready-for-agent
 **Implementation:** verified-local；本地实现与 F 已验收；最终候选的 Full CI 及生产部署验收由 24 汇总，不能用旧 SHA 的 run 关闭。
-
-**Blocked by:** none
 
 **依据:** 已确认的 CI 收尾要求；本票在 17 整体验收前集成。范围限既有骨架、收藏与移动封面触摸行为，保留原断言。完整 Full/Gate 由集成流程执行。
 

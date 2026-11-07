@@ -14,8 +14,17 @@ See [the identity decision](../decisions/ADR-0005-shared-identity-preserves-play
 `POST /api/shared-associations/previews` requires `library:write` and accepts
 `left` and `right`, each `{kind: "work" | "catalog" | "series", id}`. It stores
 a durable preview without registering works or changing shared identity.
-Different evaluation levels are rejected. A preview contains titles, retained
-work ids, public source labels and only the requesting user's review values.
+Different evaluation levels are rejected. The shared snapshot used by manual
+association, automatic matching and splitting derives the level from series
+ownership, source membership, `work.parent_work_id` and the work's primary
+portable reference. A restored episode stays an episode without source members,
+including a legacy backup that records its kind without a parent. Missing
+source position is absent matching evidence, never permission to infer a position
+or treat the episode as a standalone work. Contradictory series/episode evidence
+rejects the operation.
+
+A preview contains titles, retained work ids, public source labels and only the
+requesting user's review values.
 Private source paths and other users' records remain in the protected snapshot.
 
 `POST /api/shared-associations/{id}/start` requires `library:write`, the original

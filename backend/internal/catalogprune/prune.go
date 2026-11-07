@@ -175,9 +175,9 @@ func BuildReport(ctx context.Context, db *sql.DB, options Options) (Report, erro
 	report := Report{GeneratedAt: time.Now().UTC().Format(time.RFC3339), Whitelist: whitelist, Entries: []Entry{}, Skipped: []Skipped{}}
 
 	rows, err := db.QueryContext(ctx, `SELECT e.id, COALESCE(e.file_source_id,0), e.root_path, e.source_root, e.title,
-		(SELECT count(*) FROM source_catalog_file f WHERE f.catalog_entry_id=e.id),
-		(SELECT count(*) FROM source_catalog_file f WHERE f.catalog_entry_id=e.id AND f.kind='audio'),
-			(SELECT count(*) FROM source_catalog_file f WHERE f.catalog_entry_id=e.id AND f.kind<>'audio'),
+		(SELECT count(*) FROM source_catalog_file f WHERE f.catalog_entry_id=e.id AND f.observed_generation=e.last_seen_generation AND f.kind<>'folder'),
+		(SELECT count(*) FROM source_catalog_file f WHERE f.catalog_entry_id=e.id AND f.observed_generation=e.last_seen_generation AND f.kind='audio'),
+			(SELECT count(*) FROM source_catalog_file f WHERE f.catalog_entry_id=e.id AND f.observed_generation=e.last_seen_generation AND f.kind NOT IN ('audio','folder')),
 			e.work_id
 		FROM source_catalog_entry e
 		WHERE e.relocated_to_id IS NULL AND e.file_source_id IS NOT NULL
@@ -762,9 +762,14 @@ func applyBatch(ctx context.Context, db *sql.DB, batch []Entry, paths map[int64]
 		return BatchResult{}, err
 	}
 	for _, entry := range batch {
-		var files, refs int
+		var files, audio, nonAudio, refs int
 		var workID sql.NullInt64
-		if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM source_catalog_file WHERE catalog_entry_id=?`, entry.EntryID).Scan(&files); err != nil {
+		// Recheck the current published set inside the deleting transaction. A
+		// prior batch or another writer may have changed admission since planning.
+		if err = tx.QueryRowContext(ctx, `SELECT count(*),
+			COALESCE(sum(f.kind='audio'),0),COALESCE(sum(f.kind<>'audio'),0)
+			FROM source_catalog_file f JOIN source_catalog_entry e ON e.id=f.catalog_entry_id
+			WHERE e.id=? AND f.observed_generation=e.last_seen_generation AND f.kind<>'folder'`, entry.EntryID).Scan(&files, &audio, &nonAudio); err != nil {
 			return BatchResult{}, err
 		}
 		if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM personal_transfer_ref WHERE catalog_entry_id=?`, entry.EntryID).Scan(&refs); err != nil {
@@ -773,8 +778,8 @@ func applyBatch(ctx context.Context, db *sql.DB, batch []Entry, paths map[int64]
 		if err = tx.QueryRowContext(ctx, `SELECT work_id FROM source_catalog_entry WHERE id=?`, entry.EntryID).Scan(&workID); err != nil {
 			return BatchResult{}, err
 		}
-		if files != entry.Files || refs != entry.TransferRefs {
-			return BatchResult{}, fmt.Errorf("entry %d counts changed: files %d->%d refs %d->%d", entry.EntryID, entry.Files, files, entry.TransferRefs, refs)
+		if files != entry.Files || audio != entry.Audio || nonAudio != entry.NonAudio || refs != entry.TransferRefs || catalogadmission.Admissible(files, audio, nonAudio) {
+			return BatchResult{}, fmt.Errorf("%w: entry %d admission or references changed", errReportChanged, entry.EntryID)
 		}
 		if refs > 0 && !workID.Valid {
 			return BatchResult{}, fmt.Errorf("entry %d has an unresolved source-only transfer alias", entry.EntryID)

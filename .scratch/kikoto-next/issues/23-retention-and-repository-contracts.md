@@ -59,4 +59,6 @@
 
 ## Comments
 
+2026-11-07：复核发现清理计数包含 folder 和旧 generation，并在批次删除时遗漏完整准入复查。修复与能在缺陷版本失败的回归见 [25](25-review-remediation.md)；旧 dry-run 不可用于新候选 apply。
+
 本票不拥有 `docs/development/translation.md` 或译文保留代码；21 先冻结该合同。任何人不得把 096 用于迁移修复；096 已提交，097 必须在其后连续。
