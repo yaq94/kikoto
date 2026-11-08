@@ -343,6 +343,16 @@ func registerAssociationObject(ctx context.Context, tx *sql.Tx, o *associationOb
 		if err != nil {
 			return err
 		}
+		// The published card can still name an alias while retirement prepares
+		// its successor. A shared change needs a preview of that successor; do
+		// not register or merge an identity onto the retiring row.
+		var target sql.NullInt64
+		if err := tx.QueryRowContext(ctx, `SELECT relocated_to_id FROM source_catalog_entry WHERE id=?`, entry.ID).Scan(&target); err != nil {
+			return err
+		}
+		if target.Valid {
+			return errAssociationStale
+		}
 		subjectID = entry.ID
 	}
 	if o.WorkID != nil {
