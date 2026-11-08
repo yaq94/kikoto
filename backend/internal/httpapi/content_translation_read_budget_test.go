@@ -53,15 +53,23 @@ func TestContentTranslationProseKeepsManualFieldsAndProtectedNames(t *testing.T)
 		_, text, _ := strings.Cut(prompt, "\n\n")
 		text = strings.ReplaceAll(text, "Authored title", "手写标题")
 		text = strings.ReplaceAll(text, "Authored description", "手写简介")
+		text = strings.ReplaceAll(text, "Example description", "原始简介")
 		encoded, _ := json.Marshal(map[string]any{"choices": []any{map[string]any{"message": map[string]string{"content": text}, "finish_reason": "stop"}}})
 		_, _ = w.Write(encoded)
 	}))
 	defer model.Close()
 	cfg, _ := json.Marshal(map[string]any{"baseUrl": model.URL, "minFreeBytes": 0})
 	translationRequest(t, host, admin, "PATCH", "/api/settings/translation", string(cfg), 200)
+	detail := translationRequest(t, host, listener, "GET", "/api/works/1?includeMedia=false", "", 200)
+	presentation := detail["metadataPresentation"].(map[string]any)
+	variants := presentation["variants"].([]any)
+	if len(variants) == 0 || variants[0].(map[string]any)["description"] != "Example description" {
+		t.Fatalf("published original description missing: %#v", presentation)
+	}
 	for _, sample := range []struct{ field, text, translated, original string }{
 		{"title", "Authored title Example Circle Example Voice", "手写标题 Example Circle Example Voice", "Authored title Example Circle Example Voice"},
 		{"description", "Authored description Example Voice", "手写简介 Example Voice", "Example description"},
+		{"description", "Example description", "原始简介", "Example description"},
 	} {
 		body, _ := json.Marshal(map[string]any{"workId": 1, "field": sample.field, "text": sample.text, "language": "zh-cn"})
 		result := translationRequest(t, host, listener, "POST", "/api/content-translations", string(body), 200)

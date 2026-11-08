@@ -72,6 +72,11 @@ func (s *Server) loadWorkProseTranslationField(ctx context.Context, in contentTr
 			candidates[0] = *overrides.Description
 		}
 		originDescription := metadatatitles.Original(input.Variants, input.Fallback).Description
+		// Manual titles without provider editions also publish a presentation
+		// variant carrying the original description, even with a manual summary.
+		if len(input.Variants) == 0 && len(input.Manual) > 0 {
+			candidates = append(candidates, originDescription)
+		}
 		for _, variant := range input.Variants {
 			candidates = append(candidates, variant.Description)
 			if field.Existing == "" && variant.Language == in.Language && variant.Description != "" &&
