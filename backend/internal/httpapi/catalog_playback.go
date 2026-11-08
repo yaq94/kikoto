@@ -97,9 +97,9 @@ func (s *Server) prepareCatalogPlaybackTargets(ctx context.Context, entry catalo
 	if err != nil {
 		return nil, err
 	}
-	if tx, ok := ctx.Value(catalogReadTxKey{}).(*sql.Tx); ok {
-		_ = tx.Rollback()
-		ctx = context.WithValue(ctx, catalogReadTxKey{}, (*sql.Tx)(nil))
+	if snapshot, _ := ctx.Value(catalogReadTxKey{}).(*catalogReadSnapshot); snapshot != nil {
+		_ = snapshot.tx.Rollback()
+		ctx = context.WithValue(ctx, catalogReadTxKey{}, (*catalogReadSnapshot)(nil))
 	}
 	unique := make([]catalogPlaybackFile, 0, len(files))
 	seen := map[string]bool{}

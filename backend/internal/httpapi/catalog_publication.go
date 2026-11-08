@@ -316,6 +316,11 @@ func publishedCatalogSQL(query string) string {
 
 type catalogReadTxKey struct{}
 
+type catalogReadSnapshot struct {
+	tx        *sql.Tx
+	preparing bool
+}
+
 type publishedCatalogRows struct{ catalogEntryQueryer }
 
 func (q publishedCatalogRows) QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row {
@@ -379,26 +384,32 @@ func (q catalogReadQueryer) QueryRowContext(ctx context.Context, query string, a
 	return q.db.QueryRowContext(ctx, query, args...)
 }
 func (s *Server) catalogRead(ctx context.Context) catalogReadQueryer {
-	tx, _ := ctx.Value(catalogReadTxKey{}).(*sql.Tx)
 	_, working := ctx.Value(catalogPublicationKey{}).(int64)
-	return catalogReadQueryer{db: s.db, tx: tx, working: working}
+	if snapshot, _ := ctx.Value(catalogReadTxKey{}).(*catalogReadSnapshot); snapshot != nil {
+		return catalogReadQueryer{db: s.db, tx: snapshot.tx, working: working || !snapshot.preparing}
+	}
+	return catalogReadQueryer{db: s.db, working: working}
 }
 
 func (s *Server) beginCatalogRead(ctx context.Context) (context.Context, func(), error) {
-	if _, ok := ctx.Value(catalogReadTxKey{}).(*sql.Tx); ok {
+	if snapshot, _ := ctx.Value(catalogReadTxKey{}).(*catalogReadSnapshot); snapshot != nil {
 		return ctx, func() {}, nil
 	}
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return ctx, nil, err
 	}
-	// Establish the SQLite read snapshot before any source-owned projection.
-	var id int
-	if err = tx.QueryRowContext(ctx, `SELECT id FROM source_catalog_publication_writer WHERE id=1`).Scan(&id); err != nil {
+	// Establish the read snapshot while checking the partial pending index. With
+	// no preparing operation every projection is identical to its live table.
+	// This fact belongs only to this transaction: a later publication cannot
+	// change its snapshot, and reads outside it still use the published views.
+	var preparing bool
+	if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM source_catalog_publication WHERE state='preparing')`).Scan(&preparing); err != nil {
 		_ = tx.Rollback()
 		return ctx, nil, err
 	}
-	return context.WithValue(ctx, catalogReadTxKey{}, tx), func() { _ = tx.Rollback() }, nil
+	snapshot := &catalogReadSnapshot{tx: tx, preparing: preparing}
+	return context.WithValue(ctx, catalogReadTxKey{}, snapshot), func() { _ = tx.Rollback() }, nil
 }
 
 func catalogPublicationOwner(kind string, generation int64) string {
