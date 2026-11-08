@@ -51,7 +51,7 @@ test("shards partition every listed test and spread each package", () => {
     ["example/c", new Set(["TestShared", "TestC1"])],
   ]);
   const all = new Set([...tests.values()].flatMap((names) => [...names]));
-  for (const total of [1, 2, 3, 4, 7, 20]) {
+  for (const total of [1, 2, 3, 4, 7, 8, 20]) {
     const seen = [];
     for (let index = 1; index <= total; index++) {
       const selection = selectShard(tests, { index, total });

@@ -17,6 +17,10 @@ import (
 
 func openContentTranslationTestServer(t *testing.T) *Server {
 	t.Helper()
+	return &Server{db: openMigratedTestDBWithProductionPool(t)}
+}
+
+func TestContentTranslationStoreMigrationCreatesSchema(t *testing.T) {
 	db, err := storage.Open(filepath.Join(t.TempDir(), "library.db"))
 	if err != nil {
 		t.Fatalf("open database: %v", err)
@@ -26,11 +30,7 @@ func openContentTranslationTestServer(t *testing.T) *Server {
 		t.Fatalf("migrate: %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	return &Server{db: db}
-}
-
-func TestContentTranslationStoreMigrationCreatesSchema(t *testing.T) {
-	s := openContentTranslationTestServer(t)
+	s := &Server{db: db}
 
 	for _, name := range []string{"content_translation", "source_field_translation", "translation_prefill_state"} {
 		var kind string

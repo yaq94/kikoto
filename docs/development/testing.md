@@ -127,8 +127,8 @@ CI runs `ci-backend-static`, `ci-backend-coverage`, and the race suite as
 independent matrix jobs. The local `ci-backend` target composes the same checks.
 
 Tests inside a package run one after another, and the race detector slows the
-SQLite-heavy packages many times over, so CI runs the race suite as four
-slices on separate runners. `make RACE_SHARD=1/4 backend-race-shard` runs one
+SQLite-heavy packages many times over, so CI runs the race suite as eight
+slices on separate runners. `make RACE_SHARD=1/8 backend-race-shard` runs one
 slice; `make backend-race` still runs the whole suite in one process.
 `scripts/go-test-shard.mjs` lists every test, example, and fuzz target, deals
 the names out in package order so each package spreads over all slices, and

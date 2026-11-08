@@ -86,21 +86,37 @@ jobs:
             target: source-index-contract
             cache: contract
             save-cache: true
-          - check: race 1/4
-            target: RACE_SHARD=1/4 backend-race-shard
+          - check: race 1/8
+            target: RACE_SHARD=1/8 backend-race-shard
             cache: race
             timeout: 45
             save-cache: true
-          - check: race 2/4
-            target: RACE_SHARD=2/4 backend-race-shard
+          - check: race 2/8
+            target: RACE_SHARD=2/8 backend-race-shard
             cache: race
             timeout: 45
-          - check: race 3/4
-            target: RACE_SHARD=3/4 backend-race-shard
+          - check: race 3/8
+            target: RACE_SHARD=3/8 backend-race-shard
             cache: race
             timeout: 45
-          - check: race 4/4
-            target: RACE_SHARD=4/4 backend-race-shard
+          - check: race 4/8
+            target: RACE_SHARD=4/8 backend-race-shard
+            cache: race
+            timeout: 45
+          - check: race 5/8
+            target: RACE_SHARD=5/8 backend-race-shard
+            cache: race
+            timeout: 45
+          - check: race 6/8
+            target: RACE_SHARD=6/8 backend-race-shard
+            cache: race
+            timeout: 45
+          - check: race 7/8
+            target: RACE_SHARD=7/8 backend-race-shard
+            cache: race
+            timeout: 45
+          - check: race 8/8
+            target: RACE_SHARD=8/8 backend-race-shard
             cache: race
             timeout: 45
     steps:
