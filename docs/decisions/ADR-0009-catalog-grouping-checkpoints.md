@@ -10,9 +10,13 @@ publication boundary in [ADR-0008](ADR-0008-catalog-publication-snapshots.md).
 Directory classification stores derived evidence by source, root and complete
 observation revision, or by durable finite-listing id. A grouping is preparation
 state, not a work identity, a published catalog or a user record. Its names,
-folder evidence, aggregate buckets and targets use indexed keys. Name, bucket,
+folder evidence, aggregate buckets and targets use indexed keys. Observation and
+listing ranges filter by directory, revision where applicable, and kind before
+paginating by name, so absent folders do not require scanning audio rows.
+Name, bucket,
 target and parent-retention phases commit their input cursor with each bounded
-batch. A bucket containing many names is reduced in input batches; limiting only
+batch. Repeated name, fold and target writes prepare each SQL statement once
+inside that batch and close it before committing or rolling back. A bucket containing many names is reduced in input batches; limiting only
 the number of output groups does not bound a transaction.
 
 Global sequence rules use fixed-size numeric accumulators. Per-file rules keep

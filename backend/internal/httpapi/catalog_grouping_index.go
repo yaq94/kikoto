@@ -193,7 +193,7 @@ func nextCatalogGroupingPhase(phase string) string {
 	}
 }
 
-func stageCatalogGroupingNames(ctx context.Context, tx *sql.Tx, id int64, in catalogGroupingIndexInput, after string) (string, bool, error) {
+func stageCatalogGroupingNames(ctx context.Context, tx *sql.Tx, id int64, in catalogGroupingIndexInput, after string) (cursor string, done bool, err error) {
 	query := `SELECT name,size_bytes,content_hash FROM source_catalog_observation WHERE file_source_id=? AND directory_path=? AND revision=? AND kind='audio' AND name>? ORDER BY name LIMIT 64`
 	args := []any{in.SourceID, in.Root, in.Revision, after}
 	if in.ListingID != 0 {
@@ -219,12 +219,17 @@ func stageCatalogGroupingNames(ctx context.Context, tx *sql.Tx, id int64, in cat
 	if err != nil {
 		return after, false, err
 	}
+	insert, err := tx.PrepareContext(ctx, `INSERT INTO source_catalog_grouping_name(grouping_id,name,normalized_name,folded_name,size_bytes,content_hash,work_prefix,identity_title,base_title,part_base,part_rank,structured_key,structured_position,prefix_position,episode_series,episode_position,episode_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+	if err != nil {
+		return after, false, err
+	}
+	defer func() { err = errors.Join(err, insert.Close()) }()
 	for _, file := range names {
 		name := file.Name
 		observeCatalogGrouping(ctx, "timing:classify", 0)
 		e := classifyCatalogName(in.Root, name)
 		observeCatalogGrouping(ctx, "timing:insert", 0)
-		_, err = tx.ExecContext(ctx, `INSERT INTO source_catalog_grouping_name(grouping_id,name,normalized_name,folded_name,size_bytes,content_hash,work_prefix,identity_title,base_title,part_base,part_rank,structured_key,structured_position,prefix_position,episode_series,episode_position,episode_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, id, name, strings.ToLower(strings.TrimSpace(name)), catalogSimpleFoldKey(name), file.Size, strings.TrimSpace(file.Hash), e.Prefix, e.Identity, e.Base, e.Part, e.PartRank, e.Structured, e.StructuredPosition, e.PrefixPosition, e.EpisodeSeries, e.EpisodePosition, mustJSON(e.Episode))
+		_, err = insert.ExecContext(ctx, id, name, strings.ToLower(strings.TrimSpace(name)), catalogSimpleFoldKey(name), file.Size, strings.TrimSpace(file.Hash), e.Prefix, e.Identity, e.Base, e.Part, e.PartRank, e.Structured, e.StructuredPosition, e.PrefixPosition, e.EpisodeSeries, e.EpisodePosition, mustJSON(e.Episode))
 		if err != nil {
 			return after, false, err
 		}
@@ -262,7 +267,7 @@ func catalogReadGroupingBucket(ctx context.Context, tx *sql.Tx, id int64, kind, 
 	return b, err
 }
 
-func stageCatalogGroupingFold(ctx context.Context, tx *sql.Tx, id int64, after string) (string, bool, error) {
+func stageCatalogGroupingFold(ctx context.Context, tx *sql.Tx, id int64, after string) (cursor string, done bool, err error) {
 	rows, err := tx.QueryContext(ctx, `SELECT n.name,CASE WHEN json_extract(b.payload,'$.first')=1 AND json_extract(b.payload,'$.second')=1 THEN n.part_base ELSE n.base_title END FROM source_catalog_grouping_name n LEFT JOIN source_catalog_grouping_bucket b ON b.grouping_id=n.grouping_id AND b.kind='part' AND b.key=n.part_base WHERE n.grouping_id=? AND n.name>? ORDER BY n.name LIMIT 64`, id, after)
 	if err != nil {
 		return after, false, err
@@ -283,8 +288,13 @@ func stageCatalogGroupingFold(ctx context.Context, tx *sql.Tx, id int64, after s
 	if err != nil {
 		return after, false, err
 	}
+	update, err := tx.PrepareContext(ctx, `UPDATE source_catalog_grouping_name SET folded_base=? WHERE grouping_id=? AND name=?`)
+	if err != nil {
+		return after, false, err
+	}
+	defer func() { err = errors.Join(err, update.Close()) }()
 	for _, e := range batch {
-		_, err = tx.ExecContext(ctx, `UPDATE source_catalog_grouping_name SET folded_base=? WHERE grouping_id=? AND name=?`, e.base, id, e.name)
+		_, err = update.ExecContext(ctx, e.base, id, e.name)
 		if err != nil {
 			return after, false, err
 		}
@@ -293,7 +303,7 @@ func stageCatalogGroupingFold(ctx context.Context, tx *sql.Tx, id int64, after s
 	return after, len(batch) < catalogGroupingRows, nil
 }
 
-func stageCatalogGroupingTargets(ctx context.Context, tx *sql.Tx, id int64, root, after string) (string, bool, error) {
+func stageCatalogGroupingTargets(ctx context.Context, tx *sql.Tx, id int64, root, after string) (cursor string, done bool, err error) {
 	var mode string
 	if err := tx.QueryRowContext(ctx, `SELECT mode FROM source_catalog_grouping WHERE id=?`, id).Scan(&mode); err != nil {
 		return after, false, err
@@ -318,6 +328,16 @@ func stageCatalogGroupingTargets(ctx context.Context, tx *sql.Tx, id int64, root
 	if err != nil {
 		return after, false, err
 	}
+	insert, err := tx.PrepareContext(ctx, `INSERT INTO source_catalog_grouping_target(grouping_id,key,target_json) VALUES(?,?,?) ON CONFLICT DO NOTHING`)
+	if err != nil {
+		return after, false, err
+	}
+	defer func() { err = errors.Join(err, insert.Close()) }()
+	update, err := tx.PrepareContext(ctx, `UPDATE source_catalog_grouping_name SET group_key=?,target_json=(SELECT target_json FROM source_catalog_grouping_target WHERE grouping_id=? AND key=?) WHERE grouping_id=? AND name=?`)
+	if err != nil {
+		return after, false, err
+	}
+	defer func() { err = errors.Join(err, update.Close()) }()
 	for _, e := range batch {
 		g := catalogLooseGrouping{mode: mode, splitPrefixes: map[string]bool{}, partFold: map[string]string{}, structured: map[string]string{}, episodes: map[string]catalogLooseEpisode{}}
 		b, err := catalogReadGroupingBucket(ctx, tx, id, "part", e.part)
@@ -363,11 +383,11 @@ func stageCatalogGroupingTargets(ctx context.Context, tx *sql.Tx, id int64, root
 			target.Episode = episode.Evidence
 			target.HasEpisode = true
 		}
-		_, err = tx.ExecContext(ctx, `INSERT INTO source_catalog_grouping_target(grouping_id,key,target_json) VALUES(?,?,?) ON CONFLICT DO NOTHING`, id, key, mustJSON(target))
+		_, err = insert.ExecContext(ctx, id, key, mustJSON(target))
 		if err != nil {
 			return after, false, err
 		}
-		_, err = tx.ExecContext(ctx, `UPDATE source_catalog_grouping_name SET group_key=?,target_json=(SELECT target_json FROM source_catalog_grouping_target WHERE grouping_id=? AND key=?) WHERE grouping_id=? AND name=?`, key, id, key, id, e.name)
+		_, err = update.ExecContext(ctx, key, id, key, id, e.name)
 		if err != nil {
 			return after, false, err
 		}
