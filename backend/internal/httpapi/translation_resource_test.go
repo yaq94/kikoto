@@ -297,6 +297,23 @@ func TestTranslationCoverageTracksSeriesMembershipAndPublication(t *testing.T) {
 	readTotal(1)
 }
 
+func TestTranslationRuntimeLanguagesUseEffectiveCorpus(t *testing.T) {
+	s, host, admin, _ := translationHTTPFixture(t)
+	seedPrefillCard(t, s, 1, "Example current title")
+	insertTranslatedContent(t, s.db, "entry", 1, "title", "en", "Example current title", "Example current title", "native")
+	insertTranslatedContent(t, s.db, "entry", 1, "title", "ja", "Example old title", "Example historical text", "native")
+	insertTranslatedContent(t, s.db, "entry", 1, "tag", "ko", "Example tag", "Example display text", "native")
+	view := translationRequest(t, host, admin, "GET", "/api/settings/translation/runtime", "", 200)
+	languages := view["languages"].([]any)
+	if len(languages) != 1 {
+		t.Fatalf("runtime counted historical or display-only rows: %+v", languages)
+	}
+	current := languages[0].(map[string]any)
+	if current["language"] != "en" || current["rows"] != float64(1) || current["native"] != float64(1) {
+		t.Fatalf("current runtime corpus = %+v", current)
+	}
+}
+
 func TestTranslationPrefillConfigurationSwitchDuringModelCallCannotCompleteOldConfig(t *testing.T) {
 	s, host, admin, _ := translationHTTPFixture(t)
 	seedPrefillCard(t, s, 1, "Example title")

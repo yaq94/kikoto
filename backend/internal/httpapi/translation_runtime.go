@@ -70,10 +70,11 @@ func (s *Server) getTranslationRuntime(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	counts, err := s.translationLanguageCounts(r.Context(), cfg)
-	if err != nil {
-		writeError(w, err)
-		return
+	counts := []translationLanguageCount{}
+	for _, item := range prefill.Languages {
+		if item.Rows > 0 {
+			counts = append(counts, translationLanguageCount{item.Language, item.Rows, item.Native, item.Model})
+		}
 	}
 	writeJSON(w, 200, struct {
 		Languages  []translationLanguageCount `json:"languages"`
@@ -82,27 +83,4 @@ func (s *Server) getTranslationRuntime(w http.ResponseWriter, r *http.Request) {
 		Queue      translation.QueueStats     `json:"queue"`
 		OverBudget bool                       `json:"overBudget"`
 	}{counts, cfg.CacheBytes, prefill, s.contentTranslationQueue(cfg).Stats(), prefill.OverBudget})
-}
-
-func (s *Server) translationLanguageCounts(ctx context.Context, cfg translation.Config) ([]translationLanguageCount, error) {
-	configKey := translation.ConfigKey(cfg)
-	rows, err := s.db.QueryContext(ctx, `SELECT language,count(*),
-		sum(CASE WHEN origin='native' THEN 1 ELSE 0 END),
-		sum(CASE WHEN origin='model' THEN 1 ELSE 0 END)
-		FROM content_translation
-		WHERE origin='native' OR (origin='model' AND config_key=?)
-		GROUP BY language ORDER BY language`, configKey)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	counts := []translationLanguageCount{}
-	for rows.Next() {
-		var item translationLanguageCount
-		if err = rows.Scan(&item.Language, &item.Rows, &item.Native, &item.Model); err != nil {
-			return nil, err
-		}
-		counts = append(counts, item)
-	}
-	return counts, rows.Err()
 }

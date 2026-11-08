@@ -20,8 +20,9 @@ Administrator routes require `sources:write`:
 - `POST /api/settings/translation/test` accepts `text` and `targetLanguage`
   (`zh-Hans`, `en`, `ja` or `ko`). It returns complete plain text, the configured
   model name, template version and elapsed milliseconds.
-- `GET /api/settings/translation/runtime` returns per-language corpus counts,
-  the soft byte budget, the prefill view and the queue counters.
+- `GET /api/settings/translation/runtime` returns nonzero per-language counts
+  from the same effective-corpus snapshot as its prefill view, plus the soft byte
+  budget and queue counters. Historical text and display-only fields are excluded.
 - `GET /api/content-translations/version` returns the opaque `version` string
   the translation responses embed. It is readable by any `library:read` caller
   and lets the browser reject a cached row from another model, endpoint,
