@@ -5,12 +5,12 @@
 
 ## 当前状态
 
-**当前部署（2026-11-08 再次核实）：** `kikoto:next-53d905e1`，schema 105，容器 healthy，`/health` 返回 ok/v0.8.3；可用盘约 17 GiB，可用内存约 1.7 GiB。对应快照和可执行回滚入口存在，恢复副本启动验收仍待最终候选。该版本的 Full CI run `42362300174` 失败于旧证据脱敏门禁，后续 jobs 被跳过，不能计为通过。重新审查确认的缺陷仍在整改，生产清理 apply 暂不执行。
+**当前部署（2026-11-09 核实）：** `kikoto:next-53d905e1`，schema 105，容器保持运行且未重启；可用盘约 13.6 GiB、可用内存约 1.6 GiB。新候选仍须完成 105→111→105 的隔离恢复及部署验收。旧部署 Full CI 的失败记录保留；生产清理 apply 暂不执行。
 **2026-10-28 历史集成记录：** 集成分支 `codex/kikoto-catalog-remediation` 已推进到当前候选 `15b84ed2`；提交清单见 [24 候选账本](evidence/24-candidate-15b84ed2.md) 第 2 节。迁移头仍为 `105`，本候选未改迁移。相对 `c7d793e4` 新增四个提交：`38965f64` 让未进入视口的字段不再声称“正在翻译”（/voices/4 首屏 113 个字段曾永不结算）；`c2057b7c` 把可见性闩锁按请求键作用域并让已定结果优先；`907391f2` 与 `15b84ed2` 修 CI race 用例（该用例在 race 下耗时 300.71 s 触发 503，现为 22.70 s）。部署后实测：`/voices/4` 首屏 60 existing / 7 translated / 113 original、0 pending、0 failed；滚动 8 屏后 159 / 20 / 1、仍 0 pending、0 failed；asmr.one 基线 35 的卡片无徽章，有真实收藏信号后分数升至 40–54；索引详情默认折叠；目录卡入队与两张无编号卡的独立标记均通过。详见 [25 号证据](evidence/25-live-browser.md) 第 14 节。
 
 **审查快照：** 审查时文档基线 `6122b7bf`；代码审查基线 `301e6c63`。`6b4a02ec`（096 与系列暂存）、`728651a6`（v2 可选 `parent`）、`47df9c11`（wall-clock/partial 调度）均已并入当前分支，但仍需在当前候选上重新验收；不要把它们当作已签收的外部交付。历史 run 53 为 partial，不能当作完整覆盖。2026-10-25 的逐项审查见 [audit-20261025-review.md](audit-20261025-review.md)。
 
-**当前整改候选：** 集成分支 `codex/kikoto-catalog-remediation` 的 `32dc7fe5` 包含 106 翻译资源、107 发布、108 持久分组与有限扫描、排除任务、退役别名和派生读取；`fc6a7334` 更新通过审计的前端开发依赖。生产仍为 105。各批定向证据保留，最终固定候选的双轴审查、完整 CI、目标机组合性能、实际恢复演练与部署尚未完成。根代理的对应测试与工具链诊断见[本轮集成证据](evidence/25-integration-20261108.md)、[派生读取](evidence/25-derived-publication.md)及[前端门禁](evidence/25-frontend-dependency-gate.md)。
+**当前整改候选：** 集成分支 `codex/kikoto-catalog-remediation` 已集成 106–111；`f33e51be` 的双轴审查发现三项行为问题，已由 `2c149784` 与 `90559f13` 修复，`76c4a4c7` 修复版本切换测试的迟到响应投递。准备期评价身份和共享预览见[发布与个人记录](evidence/25-publication-records.md)，多根恢复见[有限扫描恢复](evidence/25-finite-root-resume.md)，浏览器版本证据见[响应顺序](evidence/25-version-response-order.md)。`f33e51be` Full CI run `42498479864` 失败于缓存写竞争、三个 race 分片整包超时及版本测试；新候选继续处理并复验，未部署。
 
 `final-spec-review-20261024.md` 曾在 `a711bc39` 记录 AC-14 的系列发现失败（单集/格式副本/Bonus、成员上限）和 AC-26 的部署证据缺口；后续未提交工作区改动不能替代当前 SHA 的回归，24 必须把 AC-14 列入首要门禁。
 
@@ -24,7 +24,7 @@
 | [21 有效译文语料与严格语言搜索](issues/21-translation-corpus-and-search.md)                                                             | 有效语料、覆盖、严格搜索、短查询          | verified-local | 099/102/105、严格语言搜索、共享短查询生成器与 `failed` 终态已合入；1–2 字查询的返回条数与 `total` 共用 1000 张预算并以 `truncated` 标记，目标机卡片页与同预算总数达标（数值见 21 号票与 docs/development/translation.md）；最终候选复验由 24 记录 |
 | [22 个人备份父级归属](issues/22-personal-transfer-parent-identity.md)                                                                   | 空库单集与父系列恢复                      | resolved（记录 SHA `f727feee`，历史） | 100 与 `parent_work_id`、v2 + 可选 `parent`、`parent_alias_not_imported`、多父级导出改为可审阅 `parent_conflict`；9 项验收全部勾选并有测试名；权限 403 与往返身份均有 H/R 证据                                                     |
 | [23 保留与仓库规范](issues/23-retention-and-repository-contracts.md)                                                                    | 清理保护、迁移链、模型文档、证据脱敏      | verified-local | 6 项清理回归、合成 dry-run、095 历史与 096–105 连续链、旧 095 preflight 三路径、文档与 tracked-evidence 扫描全部通过                                                                                                                |
-| [24 同候选集成与发布证据](issues/24-release-candidate-evidence.md)                                                                      | 全部修复、双轴审查、部署验收              | resolved       | 候选 `8fa8465e`：Full CI run `40574379570` 终态 success（27/27 job）；迁移链四项沿用 `f727feee` 的证据，后端整包、前端全量与部署后 LIVE 翻译、媒体 Range、多来源切换与播放重载通过；证据见 [24 候选账本](evidence/24-candidate-8fa8465e.md) |
+| [24 同候选集成与发布证据](issues/24-release-candidate-evidence.md)                                                                      | 全部修复、双轴审查、部署验收              | in-progress       | 106–111 当前候选必须取得同 SHA 双轴审查、Full CI、目标机资源、恢复及部署后证据；历史结果保留在原候选账本。 |
 | 17 不依赖 20–24；24 依赖 17–23。以上新票不覆盖旧 evidence 文件，原 01–19 的需求与主责继续有效。任何 `resolved` 都必须满足当前产物定义。 |
 
 ## 历史执行记录
@@ -39,7 +39,7 @@
 
 ## 迁移协调
 
-- 生产为 105；当前已跟踪迁移头为 110。106 为持久语料 revision，107 为目录发布及分页持久化，108 为分组与有限扫描检查点，109 为发布投影查询亲和性及尺寸索引，110 为旧拆分卡退役游标；development compat 已生成。2747e05e 与 e9b1cd38 已在目标机隔离副本实际完成 105→109→105 并启动新旧应用、回读作品 API 与核对六表逐行哈希，生产容器未变。110 的新候选仍须恢复复核。新编号须连续并协调，001–109 均不修改。
+- 生产为 105；当前已跟踪迁移头为 111。106 为持久语料 revision，107 为目录发布及分页持久化，108 为分组与有限扫描检查点，109 为发布投影查询亲和性及尺寸索引，110 为旧拆分卡退役游标，111 为分组输入按种类及名称读取的索引；development compat 已生成。2747e05e 与 e9b1cd38 的隔离 105→109→105 恢复证据保留；111 的最终候选须完成新旧应用启动、作品 API 回读、个人记录完整性和实际恢复复核。001–111 均不修改，下一迁移号为 112。
 - 096 已被系列暂存占用，不得把其他 DDL 塞入 096。
 - 编号：097 为固定的 095 表重建槽位；098 为目录调度；099 为译文语料契约；100 为 work 父级；101 为父级回填报告；102 为 prefill `failed` 状态与失败表 `(config_key, source_hash)` 索引；103 为短查询扫描索引；104 为每卡准入计数行；105 为译文短查询的 `browsable` 物化与 scope 触发器。任何编号变化必须同步迁移头、compat 文件和测试常量。
 - 095 曾在 `25f96c22` 首次加入（无外键），后在 `5defaa1c` 改为带 `ON DELETE CASCADE`；两个文件 SHA-256 不同。已执行旧 095 的数据库会触发 checksum 门禁，必须在 097 前提供兼容路径。是否存在旧 095 数据库仍待核实。
@@ -92,6 +92,8 @@
 文档、基础设施准备、单元测试、健康检查或代理报告都不能代替完整验收；由集成负责核对实际差异、产物版本和证据。
 
 ## Comments
+
+2026-11-09：`2ad90b32` 以有界候选判断避免历史缓存淘汰反复编译完整保护查询；`c8a7de2a` 复用真实 schema 夹具并以八个分片运行完整 race 集合。原预算、样本与断言保持，证据见[淘汰候选](evidence/25-retention-selection.md)和[race 成本](evidence/25-ci-race-budget.md)。`88ecb825` 补共享关联的准备退役检查，12 项相关 race 通过；`dae881e2` 证明仍有订阅的旧响应会经过客户端版本判断，并取得错误逻辑失败、还原后通过的对照。见[关联退役](evidence/25-association-retirement.md)及[活跃订阅版本](evidence/25-version-stale-response.md)。两轴最终复核和新候选完整门禁、目标机及部署验收仍待完成。
 
 2026-10-27：候选 `0aaa83fd` 已部署；Full CI run `40496141828` 终态 success（27/27 job），迁移链四项沿用上一候选 `f727feee` 的证据，LIVE 翻译、媒体 Range 与生产浏览器逐项复验完成。24 记为 `resolved`，证据见 [24 候选账本](evidence/24-candidate-0aaa83fd.md)（历史）。
 

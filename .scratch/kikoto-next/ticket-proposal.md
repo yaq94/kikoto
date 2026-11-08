@@ -2,7 +2,7 @@
 
 **Status:** ready-for-agent
 **发布状态:** 用户已批准原 24 张正式工单；第 25 张承接现行实现重新审查发现的功能与资源整改。
-**Implementation:** in-progress；原始 01–24 的历史证据按原产物保留，本轮以全部工单要求重新验证。25 的 106–109 及派生读取整改已集成，刷新等待与共享关联回归已修，最终双轴审查、完整 CI、恢复复核与实际部署未完成，旧 resolved 不自动延续。
+**Implementation:** in-progress；原始 01–24 的历史证据按原产物保留，本轮以全部工单要求重新验证。25 的 106–111 及派生读取整改已集成，刷新等待与共享关联回归已修，最终双轴审查、完整 CI、恢复复核与实际部署未完成，旧 resolved 不自动延续。
 **执行授权:** 用户已授权全部功能实现、必要依赖安装、测试、数据库迁移、部署与回滚；[执行记录](execution.md)维护当前状态与证据。
 **依据:** [正式规格](spec.md) · [领域词汇表](../../GLOSSARY.md) · [作品身份与个人记录 ADR](../../docs/decisions/ADR-0004-work-identity-and-personal-state.md)
 
@@ -10,7 +10,7 @@
 
 ## 当前状态
 
-当前新增 110 旧拆分卡退役游标已在 `5f78ae45` 集成，详见[资源证据](evidence/25-split-retirement-bounds.md)。`e9b1cd38` 的 Full CI 仍失败；已通过的真实试译及 105→109→105 恢复仅记录对应候选，当前门禁与待修项见[续验记录](evidence/25-ci-publication-and-split.md)。
+当前已集成迁移 111，分组批次及索引验证见[分组成本证据](evidence/25-grouping-lock-cost.md)。`f33e51be` Full CI run `42498479864` 失败于三个 race 分片整包超时、缓存写竞争与迟到版本响应测试；逐项修复及最终候选复验由 25 承接。阶段证据不关闭实际部署和全量来源覆盖要求。
 
 2026-11-08：[25：现行实现审查整改](issues/25-review-remediation.md) 保持 `in-progress`。功能、浏览器生命周期、106 翻译资源、107 发布、108 分组与有限扫描、109 查询亲和性、排除任务、退役和派生读取整改已集成。定向回归及前端完整门禁已有证据；2747e05e 的隔离 105→109→105 恢复演练通过。同候选双轴审查、完整 CI、目标机组合性能、恢复复核与部署验收待完成。见[复审修复](evidence/25-final-review-fixes.md)、[翻译浏览器回归](evidence/25-browser-final-regressions.md)及[完整门禁修复](evidence/25-full-ci-corrections.md)。以下表格是旧候选状态，不代表本次审查通过。
 
@@ -18,13 +18,13 @@
 | --- | --- | --- |
 | 01–07、09–16 | resolved | 代码与各票要求的本地 H/F（06、09 为 H/R）已验收；生产部署验收见 17。 |
 | 08 | verified-local | 完整合成树、恢复与资源限制已验收；run 53 仍为 partial，真实全量覆盖与 095–105 迁移链待 24。 |
-| 17 | resolved | 当前候选 `15b84ed2` 的组合验收完成：H/R 四条低空间用例、F 低空间播放组合、真实 Index 生成、媒体 Range、播放进度、迁移与快照恢复演练均通过；证据见 [17 组合验收](evidence/17-integrated-acceptance.md)。 |
+| 17 | in-progress | 106–111 候选的组合负载、真实接口、恢复及部署验收待重新完成；[17 组合验收](evidence/17-integrated-acceptance.md)保留原 SHA 的历史结果。 |
 | 18、19 | verified-local | 历史本地 H/R、F 证据保留；最终候选 Full CI 由 24 汇总。 |
 | 20 | verified-local | `531acdf4` 落地 098 状态机与系列准入；`9f3d82f0` 补资源重查。单卡评价／播放／媒体流／目录标签准入、零可见成员 404、零文件与旧 generation 集合统一、due 推进顺序、诊断过滤与真实 plan 断言已并入集成分支；42k 卡浏览与 5,001 文件卡拒绝路径的 p95 已在目标机达标。 |
 | 21 | verified-local | 099/102/105、严格语言搜索、共享短查询生成器与 `failed` 终态已合入；1–2 字查询的返回条数与 `total` 共用 1000 张预算并以 `truncated` 标记还有更多，目标机卡片页与同预算总数 p95 均 ≤13 ms；最终候选复验由 24 记录。 |
 | 22 | resolved（记录 SHA `f727feee`，历史） | 迁移 100、`work.parent_work_id`、v2 + 可选 `parent`、`parent_alias_not_imported` 与多父级 `parent_conflict` 已落地；9 项验收勾选并有测试名。 |
 | 23 | verified-local | 095–105 已合入，`compat/105_dev.sql` 已生成；文档与证据收口完成。 |
-| 24 | resolved | 候选 `15b84ed2` 已部署（schema 105）；上一候选 `907391f2` 的 run `40596212856` success（26 job）；`15b84ed2` 的 run `40602372253` 见 24 账本第 6 节；迁移链沿用上一候选证据，LIVE 与部署后逐项验收完成。 |
+| 24 | in-progress | 当前候选必须取得同 SHA 的双轴审查、Full CI、目标机资源、恢复、全量来源与部署后验收；旧候选账本保留。 |
 
 11 的历史 `resolved` 只证明其记录 SHA；AC-14 的单集、格式副本、Bonus 和成员上限必须在 24 的当前候选上重新通过，不能由未提交系列修复替代。
 

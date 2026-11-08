@@ -12,7 +12,7 @@
 
 ## 验收范围
 
-当前审查基点是 `53d905e1d212e85d78cb95687044b96b4fc3ebae`。旧 `resolved` 和旧绿色日志仅证明对应历史产物，当前验收以本票证据中的提交及命令为准。生产迁移头仍为 105；集成分支包含 106 译文 revision、107 目录 publication、108 分组及 finite 检查点、109 发布投影查询亲和性及尺寸索引，已发布迁移保持不变。107 的初始阶段记录见[阶段证据](../evidence/25-sync107-publication.md)，后续集成见下列证据及 Comments。
+当前审查基点是 `53d905e1d212e85d78cb95687044b96b4fc3ebae`。旧 `resolved` 和旧绿色日志仅证明对应历史产物，当前验收以本票证据中的提交及命令为准。生产迁移头仍为 105；集成分支包含 106 译文 revision、107 目录 publication、108 分组及 finite 检查点、109 发布投影查询亲和性及尺寸索引、110 旧拆分卡退役游标与 111 分组读取索引，001–111 保持不变。107 的初始阶段记录见[阶段证据](../evidence/25-sync107-publication.md)，后续集成见下列证据及 Comments。
 
 ## 验收清单
 
@@ -32,7 +32,7 @@
 - [x] 后续独立复审：flush 后加入的重复读者计入取消所有权，已完成读者不阻止剩余请求取消；IDB 失败不留下未处理 transaction rejection，禁用或 blocked 后迟到成功关闭连接。39 个公共边界 U 与 5 个原生 IDB F 通过，含多 tab 精确预算账本，见[浏览器生命周期证据](../evidence/25-browser-lifecycle.md)。
 - [x] 独立复审 F2：排队分块失去全部读者后不再发送；取得共享槽后重新检查，保留仍有效或重新加入的读者。见[取消分块证据](../evidence/25-cancelled-chunks.md)，主集成工作区 30 项 U 复跑通过。
 - [x] 独立复审 TR2：维护等待配置锁不阻止生命周期取消，跳过的维护下个 tick 可继续；见[配置锁取消证据](../evidence/25-translation-maintenance-cancel.md)。
-- [ ] 最终集成重新复验 106–110 的语料、目录改名、发布指针与 maintenance 失效依赖，完成最终 race、规模资源、完整 CI、恢复演练及部署验收。
+- [ ] 最终集成重新复验 106–111 的语料、目录改名、发布指针与 maintenance 失效依赖，完成最终 race、规模资源、完整 CI、恢复演练及部署验收。
 
 ## 测试与交付边界
 
@@ -41,6 +41,8 @@
 第一批证据见 [25 审查整改证据](../evidence/25-review-remediation.md)。第二批服务端版本绑定、系列及单卡翻译准入见 [第二批交接证据](../evidence/25-translation-backend.md)；前端实现已保留在同分支，尚不据此关闭本票前端清单。原始日志保留在仓库外的工作区 reports/20261107-remediation 目录。发布账本、完整候选 CI、生产验收由主代理另行记录，本票不替代它们。
 
 ## Comments
+
+2026-11-09：分组索引 111 与事务内语句复用已集成，见[分组成本](../evidence/25-grouping-lock-cost.md)。最新缓存候选、CI 运行成本及两项复审遗漏已修复，见[淘汰候选](../evidence/25-retention-selection.md)、[race 分片](../evidence/25-ci-race-budget.md)、[关联退役](../evidence/25-association-retirement.md)和[活跃订阅版本](../evidence/25-version-stale-response.md)。上述证据保持原功能与资源门槛，当前票仍待同候选 Full CI、目标机及部署验收。
 
 2026-11-08：`5f78ae45` 修复完整索引及增量恢复中的整根旧拆分卡退役，新增 110 持久游标；1,103 张旧卡的单事务 entry 写入由 1,104 降至 64，故障、低空间和取消后实际重启恢复保留个人评分，见[退役资源证据](../evidence/25-split-retirement-bounds.md)。完整 CI 的工作表观察和拆分保存屏障修正及未解决 race 问题见[完整门禁续验](../evidence/25-ci-publication-and-split.md)。本票继续 in-progress。
 

@@ -5,7 +5,7 @@
 **Blocked by:** [03：简繁转换与受保护名称保持](03-traditional-chinese-conversion.md)；[05：多源目录刷新与播放状态隔离](05-multi-source-directory-playback.md)；[09：每日更新与已有扫描复用](09-daily-index-update.md)；[10：来源目录改名、失联、删除与恢复](10-source-lifecycle-retention.md)；[14：高置信唯一候选自动关联](14-high-confidence-work-matching.md)；[15：拆分预览与本人记录归属选择](15-split-personal-record-allocation.md)；[16：编号、无码、系列与单集个人数据导入导出](16-personal-data-transfer-compatibility.md)；[18：迁移完成状态与维护状态一致发布](18-ci-migration-completion-state.md)；[19：既有浏览器测试可靠性](19-ci-browser-reliability.md)。
 
 **Status:** ready-for-agent
-**Implementation:** resolved；当前候选 `15b84ed2` 的组合验收见 [17 组合验收](../evidence/17-integrated-acceptance.md)；历史章节只证明其注明版本。
+**Implementation:** in-progress；当前 106–111 候选的组合负载、真实接口、恢复与部署验收须重新完成。`15b84ed2` 的结果保留在 [17 组合验收](../evidence/17-integrated-acceptance.md)，仅证明该历史产物。
 
 **依据:** [正式规格](../spec.md) · [工单总览](../ticket-proposal.md) · [整改计划](../review-remediation-plan.md)。
 
