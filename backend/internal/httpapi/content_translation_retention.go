@@ -149,7 +149,7 @@ func (s *Server) pruneTranslationCache(ctx context.Context, cfg translation.Conf
 	if cfg.MaxEntries <= 0 && cfg.CacheBytes <= 0 {
 		return nil
 	}
-	for range batches {
+	for batches > 0 {
 		rows, logicalBytes, err := s.evictableTranslationStats(ctx, cfg)
 		if err != nil {
 			return err
@@ -189,10 +189,6 @@ func (s *Server) pruneTranslationCache(ctx context.Context, cfg translation.Conf
 			// and keep only what fits. For real budgets `bytes` is the measured
 			// page footprint of both cache tables and their indexes/FTS shadow
 			// tables, so the configured disk limit includes page overhead.
-			average := bytes / max(rows, 1)
-			if average < 1 {
-				average = 1
-			}
 			fits := cfg.CacheBytes * rows / max(bytes, 1)
 			if fits < keep {
 				keep = fits
@@ -203,26 +199,27 @@ func (s *Server) pruneTranslationCache(ctx context.Context, cfg translation.Conf
 			return nil
 		}
 		if overBytes && measuredDisk {
-			// A measured page budget can be one page over while the row-count
-			// estimate says nothing must go. Free at least a page's worth of
-			// rows so dbstat can observe the reduction and the loop converges.
-			average := bytes / max(rows, 1)
-			pageSize := int64(4096)
-			_ = s.db.QueryRowContext(ctx, `PRAGMA page_size`).Scan(&pageSize)
-			pageRows := pageSize*2/max(average, 1) + 1
-			if remove < pageRows {
-				remove = min(pageRows, rows)
+			// Removing a few rows need not free a B-tree page. Use at least one
+			// existing bounded batch while measured pages exceed the budget, then
+			// measure again; tiny estimated deletions can spend every batch without
+			// releasing a page. Other limits retain their calculated removal count.
+			remove = max(remove, min(int64(contentTranslationRetentionBatch), rows))
+		}
+		// Consume this measured excess in bounded transactions before measuring
+		// again. Recounting and walking dbstat after every 500-row chunk repeats
+		// the same full-cache work while the planned excess is still outstanding.
+		// Each selection rechecks corpus protection in its delete transaction.
+		for remove > 0 && batches > 0 {
+			batch := min(remove, contentTranslationRetentionBatch)
+			affected, err := s.deleteOldestTranslationRows(ctx, cfg, batch)
+			if err != nil {
+				return err
 			}
-		}
-		if remove > contentTranslationRetentionBatch {
-			remove = contentTranslationRetentionBatch
-		}
-		affected, err := s.deleteOldestTranslationRows(ctx, cfg, remove)
-		if err != nil {
-			return err
-		}
-		if affected < int64(remove) {
-			return nil
+			batches--
+			if affected < batch {
+				return nil
+			}
+			remove -= affected
 		}
 	}
 	return nil
@@ -419,17 +416,33 @@ func (s *Server) deleteOldestTranslationRows(ctx context.Context, cfg translatio
 		return 0, err
 	}
 	defer release()
-	rows, err := tx.QueryContext(ctx, `
-		SELECT kind,id FROM (
-			SELECT 'content' AS kind,ct.id,ct.updated_at
-			FROM content_translation ct
-			WHERE ct.origin='model' AND NOT `+translationPersistentCorpusSQL("ct")+`
-			UNION ALL
-			SELECT 'source' AS kind,id,updated_at
-			FROM source_field_translation
-		)
-		ORDER BY updated_at,kind,id
-		LIMIT ?`, translation.ConfigKey(cfg), translation.ConfigKey(cfg), translation.ConfigKey(cfg), limit)
+	// The source-field cache can exist before any durable content translations.
+	// In that case there is no corpus to classify. Check inside the same write
+	// transaction, so a concurrently inserted corpus row is never overlooked.
+	var hasContent bool
+	if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM content_translation LIMIT 1)`).Scan(&hasContent); err != nil {
+		return 0, err
+	}
+	var rows *sql.Rows
+	if hasContent {
+		rows, err = tx.QueryContext(ctx, `
+			SELECT kind,id FROM (
+				SELECT 'content' AS kind,id,updated_at FROM (
+					SELECT ct.id,ct.updated_at FROM content_translation ct
+					WHERE ct.origin='model' AND NOT `+translationPersistentCorpusSQL("ct")+`
+					ORDER BY ct.updated_at,ct.id LIMIT ?
+				)
+				UNION ALL
+				SELECT 'source' AS kind,id,updated_at FROM (
+					SELECT id,updated_at FROM source_field_translation
+					ORDER BY updated_at,id LIMIT ?
+				)
+			)
+			ORDER BY updated_at,kind,id
+			LIMIT ?`, translation.ConfigKey(cfg), translation.ConfigKey(cfg), translation.ConfigKey(cfg), limit, limit, limit)
+	} else {
+		rows, err = tx.QueryContext(ctx, `SELECT 'source',id FROM source_field_translation ORDER BY updated_at,id LIMIT ?`, limit)
+	}
 	if err != nil {
 		return 0, fmt.Errorf("select translation cache rows: %w", err)
 	}

@@ -206,9 +206,14 @@ the caller still returns the translation it already fetched, reports
 Durable writes coalesce into one pending maintenance notification. The single
 prefill worker attempts maintenance at startup and at most once per minute,
 with a ten-second context budget and at most twenty batches of 500 rows per
-cleanup phase. A failed or incomplete pass resumes on a later tick; request
-completion does not wait for retention. An unchanged durable revision skips
-the maintenance scan. Application restart always rechecks maintenance.
+cleanup phase. Each short transaction checks current corpus protection before
+removing the oldest evictable rows. A source-only cache bypasses corpus
+classification only when the same transaction confirms the content table is empty. A measured excess is consumed before the next
+page measurement; while a page budget remains exceeded, at least one bounded
+batch is removed because small deletions need not release a B-tree page.
+A failed or incomplete pass resumes on a later tick; request completion does not
+wait for retention. An unchanged durable revision skips the maintenance scan.
+Application restart always rechecks maintenance.
 
 A content change produces a new `cache_key` because the source text is part of
 it. The previous row is stale and the periodic retention pass removes it as

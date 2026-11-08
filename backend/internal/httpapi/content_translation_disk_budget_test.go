@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/yexca/kikoto/backend/internal/translation"
 )
@@ -30,9 +31,12 @@ func TestContentTranslationRetentionMeasuresCachePages(t *testing.T) {
 	if !measured || before <= 1<<20 {
 		t.Fatalf("cache pages=%d measured=%v, want a footprint above the test budget", before, measured)
 	}
-	if err := server.pruneContentTranslations(ctx, translation.Config{
+	started := time.Now()
+	err := server.pruneContentTranslations(ctx, translation.Config{
 		Limits: translation.Limits{CacheBytes: 1 << 20},
-	}); err != nil {
+	})
+	t.Logf("maintenance elapsed=%s", time.Since(started))
+	if err != nil {
 		t.Fatal(err)
 	}
 	after, measured := server.translationCacheDiskBytes(ctx)
