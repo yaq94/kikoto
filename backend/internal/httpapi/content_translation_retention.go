@@ -416,55 +416,65 @@ func (s *Server) deleteOldestTranslationRows(ctx context.Context, cfg translatio
 		return 0, err
 	}
 	defer release()
-	// The source-field cache can exist before any durable content translations.
-	// In that case there is no corpus to classify. Check inside the same write
-	// transaction, so a concurrently inserted corpus row is never overlooked.
-	var hasContent bool
-	if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM content_translation LIMIT 1)`).Scan(&hasContent); err != nil {
-		return 0, err
-	}
-	var rows *sql.Rows
-	if hasContent {
-		rows, err = tx.QueryContext(ctx, `
-			SELECT kind,id FROM (
-				SELECT 'content' AS kind,id,updated_at FROM (
-					SELECT ct.id,ct.updated_at FROM content_translation ct
-					WHERE ct.origin='model' AND NOT `+translationPersistentCorpusSQL("ct")+`
+	// Inspect only the oldest candidate batch before compiling corpus joins.
+	// If no candidate can be current corpus, the batch is already safe to evict.
+	// Otherwise select again with full protection, so protected rows never stop
+	// eviction of later cache rows. Both selections share the writer lock.
+	configKey := translation.ConfigKey(cfg)
+	var contentIDs, sourceIDs []int64
+	for _, protect := range []bool{false, true} {
+		protection := ""
+		var args []any
+		if protect {
+			protection = " AND NOT " + translationPersistentCorpusSQL("ct")
+			args = append(args, configKey, configKey, configKey)
+		}
+		args = append(args, limit, limit, limit)
+		rows, err := tx.QueryContext(ctx, `
+				SELECT kind,id,config_key,field FROM (
+					SELECT 'content' AS kind,id,updated_at,config_key,field FROM (
+						SELECT ct.id,ct.updated_at,ct.config_key,ct.field FROM content_translation ct
+						WHERE ct.origin='model'`+protection+`
 					ORDER BY ct.updated_at,ct.id LIMIT ?
 				)
 				UNION ALL
-				SELECT 'source' AS kind,id,updated_at FROM (
+					SELECT 'source' AS kind,id,updated_at,'' AS config_key,'' AS field FROM (
 					SELECT id,updated_at FROM source_field_translation
 					ORDER BY updated_at,id LIMIT ?
 				)
 			)
 			ORDER BY updated_at,kind,id
-			LIMIT ?`, translation.ConfigKey(cfg), translation.ConfigKey(cfg), translation.ConfigKey(cfg), limit, limit, limit)
-	} else {
-		rows, err = tx.QueryContext(ctx, `SELECT 'source',id FROM source_field_translation ORDER BY updated_at,id LIMIT ?`, limit)
-	}
-	if err != nil {
-		return 0, fmt.Errorf("select translation cache rows: %w", err)
-	}
-	var contentIDs, sourceIDs []int64
-	for rows.Next() {
-		var kind string
-		var id int64
-		if err := rows.Scan(&kind, &id); err != nil {
-			rows.Close()
-			return 0, fmt.Errorf("scan translation cache row: %w", err)
+				LIMIT ?`, args...)
+		if err != nil {
+			return 0, fmt.Errorf("select translation cache rows: %w", err)
 		}
-		if kind == "source" {
-			sourceIDs = append(sourceIDs, id)
-		} else {
-			contentIDs = append(contentIDs, id)
+		contentIDs, sourceIDs = contentIDs[:0], sourceIDs[:0]
+		needsProtection := false
+		for rows.Next() {
+			var kind, rowConfig, field string
+			var id int64
+			if err := rows.Scan(&kind, &id, &rowConfig, &field); err != nil {
+				_ = rows.Close()
+				return 0, fmt.Errorf("scan translation cache row: %w", err)
+			}
+			if kind == "source" {
+				sourceIDs = append(sourceIDs, id)
+			} else {
+				contentIDs = append(contentIDs, id)
+				needsProtection = needsProtection || (rowConfig == configKey && (field == "title" || field == "description"))
+			}
+		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return 0, fmt.Errorf("select translation cache rows: %w", err)
+		}
+		if err := rows.Close(); err != nil {
+			return 0, err
+		}
+		if protect || !needsProtection {
+			break
 		}
 	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
-		return 0, fmt.Errorf("select translation cache rows: %w", err)
-	}
-	rows.Close()
 	var affected int64
 	deleteRows := func(table string, ids []int64) error {
 		if len(ids) == 0 {
