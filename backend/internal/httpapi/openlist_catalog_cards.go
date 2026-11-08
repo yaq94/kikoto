@@ -180,7 +180,6 @@ func openListCatalogCardsQueryFiltered(sourceID int64, query string, entryIDs, s
 	}
 	entryHasAudio := catalogEntryHasAudioSQL("e")
 	entryAdmitted := catalogEntryAdmittedSQL("e")
-	seriesMemberAdmitted := entryAdmitted
 	// `exact` only exists on a search hit set. A browse has no needle, so every
 	// card is equally inexact.
 	entryExact := "0 AS exact"
@@ -195,33 +194,44 @@ func openListCatalogCardsQueryFiltered(sourceID int64, query string, entryIDs, s
 				JOIN requested_entry exact_entry ON exact_entry.id=exact_member.catalog_entry_id
 				WHERE exact_member.series_id=s.id AND exact_entry.exact=1),0) AS exact`
 	}
-	seriesPlayable := `CASE WHEN EXISTS(
-			SELECT 1 FROM catalog_series_member mm JOIN source_catalog_entry ee ON ee.id=mm.catalog_entry_id
-			JOIN source_catalog_file ff INDEXED BY source_catalog_file_parent ON ff.catalog_entry_id=ee.id AND ff.kind='audio'
-			WHERE mm.series_id=s.id AND ee.relocated_to_id IS NULL AND ` + catalogVerdictPlayableSQL("ee.availability_status") + ` AND ` + catalogEntryAdmittedSQL("ee") + `
+	// Evaluate admitted members once for source eligibility, audio and verdicts.
+	// Repeated joins of the published UNION views expand their before-images for
+	// every series while a publication is preparing. Admission already requires
+	// current-generation audio; another join to every audio file is redundant.
+	seriesPlayable := `CASE WHEN s.id IN (
+				SELECT series_id FROM admitted_series_member WHERE ` + catalogVerdictPlayableSQL("availability_status") + `
 		) THEN 'available' ELSE 'missing' END`
-	seriesHasAudio := `EXISTS(
-			SELECT 1 FROM catalog_series_member mm JOIN source_catalog_entry ee ON ee.id=mm.catalog_entry_id
-			JOIN source_catalog_file ff INDEXED BY source_catalog_file_parent ON ff.catalog_entry_id=ee.id AND ff.kind='audio'
-			WHERE mm.series_id=s.id AND ee.relocated_to_id IS NULL AND ` + catalogEntryAdmittedSQL("ee") + `
-		)`
+	seriesHasAudio := `s.id IN (SELECT series_id FROM admitted_series_member)`
+	seriesInSource := `SELECT series_id FROM admitted_series_member WHERE file_source_id=?`
 	if trustedScope {
 		// A stored `browsable` row already passed admission and has audio. The
 		// series arm still needs a member's availability, but its admission and
 		// audio probes are known to succeed.
 		entryHasAudio = "1"
 		entryAdmitted = "1=1"
-		seriesMemberAdmitted = "1=1"
-		seriesPlayable = `CASE WHEN EXISTS(
-			SELECT 1 FROM catalog_series_member mm JOIN source_catalog_entry ee ON ee.id=mm.catalog_entry_id
+		seriesInSource = `SELECT m.series_id FROM catalog_series_member m CROSS JOIN source_catalog_entry e ON e.rowid=m.catalog_entry_id
+			WHERE e.file_source_id=? AND e.relocated_to_id IS NULL`
+		seriesPlayable = `CASE WHEN s.id IN (
+			SELECT mm.series_id FROM catalog_series_member mm JOIN source_catalog_entry ee ON ee.id=mm.catalog_entry_id
 			JOIN source_catalog_file ff INDEXED BY source_catalog_file_parent ON ff.catalog_entry_id=ee.id AND ff.kind='audio'
-			WHERE mm.series_id=s.id AND ee.relocated_to_id IS NULL AND ` + catalogVerdictPlayableSQL("ee.availability_status") + `
+			WHERE ee.relocated_to_id IS NULL AND ` + catalogVerdictPlayableSQL("ee.availability_status") + `
 		) THEN 'available' ELSE 'missing' END`
-		seriesHasAudio = `EXISTS(
-			SELECT 1 FROM catalog_series_member mm JOIN source_catalog_entry ee ON ee.id=mm.catalog_entry_id
+		seriesHasAudio = `s.id IN (
+			SELECT mm.series_id FROM catalog_series_member mm JOIN source_catalog_entry ee ON ee.id=mm.catalog_entry_id
 			JOIN source_catalog_file ff INDEXED BY source_catalog_file_parent ON ff.catalog_entry_id=ee.id AND ff.kind='audio'
-			WHERE mm.series_id=s.id AND ee.relocated_to_id IS NULL
+			WHERE ee.relocated_to_id IS NULL
 		)`
+	} else {
+		prefix = catalogStatementPrefix(prefix)
+		if prefix == "" {
+			prefix = "WITH "
+		} else {
+			prefix += ", "
+		}
+		prefix += `admitted_series_member AS MATERIALIZED (
+			SELECT m.series_id,e.file_source_id,e.availability_status
+			FROM catalog_series_member m CROSS JOIN source_catalog_entry e ON e.rowid=m.catalog_entry_id
+			WHERE e.relocated_to_id IS NULL AND ` + entryAdmitted + `) `
 	}
 	arms := `(
 		SELECT e.id,0 AS series_id,e.primary_code,e.title,e.work_id,e.updated_at,e.availability_status,` + entryExact + `,
@@ -232,10 +242,8 @@ func openListCatalogCardsQueryFiltered(sourceID int64, query string, entryIDs, s
 		UNION ALL
 		SELECT 0,s.id,'',s.title,s.work_id,s.created_at,` + seriesPlayable + `,` + seriesExact + `,
 			` + seriesHasAudio + ` AS has_audio FROM catalog_series s
-		WHERE (SELECT COUNT(*) FROM catalog_series_member all_members WHERE all_members.series_id=s.id)>=2` + seriesScope + `
-		AND EXISTS(SELECT 1 FROM catalog_series_member m CROSS JOIN source_catalog_entry e ON e.rowid=m.catalog_entry_id
-		WHERE m.series_id=s.id AND e.file_source_id=? AND e.relocated_to_id IS NULL AND ` +
-		seriesMemberAdmitted + seriesSearch + `)
+		WHERE s.id IN (SELECT series_id FROM catalog_series_member GROUP BY series_id HAVING count(*)>=2)` + seriesScope + `
+		AND s.id IN (` + seriesInSource + `)` + seriesSearch + `
 	)`
 	if searched {
 		rankSuffix = `FROM (SELECT candidates.*,ROW_NUMBER() OVER (PARTITION BY CASE WHEN work_id IS NOT NULL THEN 'work:' || (SELECT identity_work_id FROM shared_work_identity WHERE work_id=candidates.work_id) WHEN series_id>0 THEN 'series:' || series_id ELSE 'catalog:' || id END ORDER BY series_id,id) AS identity_rank FROM ` + arms + ` AS candidates) AS cards WHERE identity_rank=1`
