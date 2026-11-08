@@ -85,12 +85,13 @@ func matchingSubject(ctx context.Context, tx *sql.Tx, subject associationSubject
 	return subject, nil
 }
 
-func loadWorkMatchEvidence(ctx context.Context, tx *sql.Tx, subject associationSubject) (workMatchEvidence, error) {
-	return loadWorkMatchMember(ctx, tx, subject, true)
+func loadWorkMatchEvidence(ctx context.Context, queries *workMatchObjectQueries, subject associationSubject) (workMatchEvidence, error) {
+	return loadWorkMatchMember(ctx, queries, subject, true)
 }
 
-func loadWorkMatchMember(ctx context.Context, tx *sql.Tx, subject associationSubject, peers bool) (workMatchEvidence, error) {
-	o, err := loadAssociationObject(ctx, tx, subject)
+func loadWorkMatchMember(ctx context.Context, queries *workMatchObjectQueries, subject associationSubject, peers bool) (workMatchEvidence, error) {
+	tx := queries.Tx
+	o, err := loadAssociationObject(ctx, queries, subject)
 	e := workMatchEvidence{Subject: subject, Voices: []int64{}, Circles: []int64{}, VoiceNames: []string{}, CircleNames: []string{}}
 	if err != nil {
 		return e, err
@@ -163,7 +164,7 @@ func loadWorkMatchMember(ctx context.Context, tx *sql.Tx, subject associationSub
 			if member == *o.WorkID {
 				continue
 			}
-			peer, readErr := loadWorkMatchMember(ctx, tx, associationSubject{Kind: "work", ID: member}, false)
+			peer, readErr := loadWorkMatchMember(ctx, queries, associationSubject{Kind: "work", ID: member}, false)
 			if readErr != nil {
 				return e, readErr
 			}
@@ -353,7 +354,12 @@ func matchCatalogCredits(leftIDs, rightIDs []int64, leftNames, rightNames []stri
 
 func evaluateWorkMatchTx(ctx context.Context, tx *sql.Tx, subject associationSubject) (workMatchResult, error) {
 	result := workMatchResult{Status: "no_match", Rule: "insufficient_evidence", Candidates: []workMatchCandidate{}}
-	a, err := loadWorkMatchEvidence(ctx, tx, subject)
+	queries, err := prepareWorkMatchObjectQueries(ctx, tx)
+	if err != nil {
+		return result, err
+	}
+	defer queries.Close()
+	a, err := loadWorkMatchEvidence(ctx, queries, subject)
 	if err != nil {
 		return result, err
 	}
@@ -442,7 +448,7 @@ func evaluateWorkMatchTx(ctx context.Context, tx *sql.Tx, subject associationSub
 	seen := map[int64]bool{}
 	best, count := 0, 0
 	for _, candidate := range subjects {
-		b, e := loadWorkMatchEvidence(ctx, tx, candidate)
+		b, e := loadWorkMatchEvidence(ctx, queries, candidate)
 		if e != nil {
 			return result, e
 		}

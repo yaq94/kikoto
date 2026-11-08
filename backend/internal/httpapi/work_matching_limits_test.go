@@ -30,7 +30,11 @@ func TestWorkMatchingBudgetDoesNotHideLaterCandidates(t *testing.T) {
 		t.Fatalf("truncated range became unique: %#v", result)
 	}
 	workReferenceRequest(t, app, cookie, "PUT", "/api/work-matching/settings", `{"candidateLimit":200}`, 200, nil)
-	workReferenceRequest(t, app, cookie, "POST", "/api/work-matching", `{"kind":"work","id":11}`, 200, &result)
+	func() {
+		started := time.Now()
+		defer func() { t.Logf("102-candidate matching request: %v", time.Since(started)) }()
+		workReferenceRequest(t, app, cookie, "POST", "/api/work-matching", `{"kind":"work","id":11}`, 200, &result)
+	}()
 	if result["status"] != "review" || result["rule"] != "ambiguous_evidence" || result["candidateCount"] != float64(102) {
 		t.Fatalf("later candidate disappeared: %#v", result)
 	}
