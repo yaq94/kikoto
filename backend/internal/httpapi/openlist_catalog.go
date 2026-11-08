@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -153,7 +154,26 @@ func (s *Server) scanOpenListCatalog(w http.ResponseWriter, r *http.Request) {
 	}
 	results := []map[string]any{}
 	status := "complete"
-	for _, root := range source.Config.OpenListRoots {
+	roots := slices.Clone(source.Config.OpenListRoots)
+	var owner string
+	err = s.db.QueryRowContext(ctx, `SELECT owner FROM source_catalog_publication WHERE file_source_id=? AND state='preparing'`, source.ID).Scan(&owner)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		writeError(w, err)
+		return
+	}
+	if err == nil {
+		// One source has one pending publication. Resume its configured root
+		// before starting another root, including after a process restart.
+		pending, manual := strings.CutPrefix(owner, "manual:")
+		index := slices.Index(roots, pending)
+		if !manual || index < 0 {
+			writeAPIError(w, http.StatusConflict, "catalog_busy", "resume the pending catalog operation or restore its configured root before scanning", true)
+			return
+		}
+		copy(roots[1:index+1], roots[:index])
+		roots[0] = pending
+	}
+	for _, root := range roots {
 		listingID, scanErr := s.stageCatalogFiniteListing(ctx, source, root)
 		if ctx.Err() != nil {
 			writeAPIError(w, 503, "service_unavailable", "catalog scan cancelled or timed out", true)
