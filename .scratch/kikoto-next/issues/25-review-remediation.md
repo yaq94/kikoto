@@ -42,6 +42,8 @@
 
 ## Comments
 
+2026-11-09：最新隔离服务的系列来源列表连续两次超过15秒，补充含成员与preparing快照的规模H红测并由`fded2950`修复重复查询，见[系列卡片成本](../evidence/25-series-browse-cost.md)。本批保持原样本与预算；新的同候选CI、目标机及实际服务复验继续待办。
+
 2026-11-09：实际隔离服务的组合负载初始化复现覆盖统计超过 15 秒。新增包含系列与 preparing 发布操作的规模回归，修复成员查询重复展开及预算统计重复扫描，见[系列覆盖成本](../evidence/25-translation-series-coverage-cost.md)。本批保持原验收预算和 schema 111；同候选真实组合负载及部署仍待完成。
 
 2026-11-09：分组索引 111 与事务内语句复用已集成，见[分组成本](../evidence/25-grouping-lock-cost.md)。最新缓存候选、CI 运行成本及两项复审遗漏已修复，见[淘汰候选](../evidence/25-retention-selection.md)、[race 分片](../evidence/25-ci-race-budget.md)、[关联退役](../evidence/25-association-retirement.md)和[活跃订阅版本](../evidence/25-version-stale-response.md)。上述证据保持原功能与资源门槛，当前票仍待同候选 Full CI、目标机及部署验收。
