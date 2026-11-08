@@ -276,7 +276,7 @@ Validation runs in two tiers that share one set of job definitions:
 a tier never depends on the event or branch that started a run.
 
 ```text
-Style + plan -> Backend (static / coverage / race 1-4), Frontend,
+Style + plan -> Backend (static / coverage / race 1-8), Frontend,
                 E2E (1-4), Smoke (production build + runtime),
                 Development Compose, Android, iOS
 All planned jobs -> Gate
