@@ -107,7 +107,7 @@ func loadAssociationObject(ctx context.Context, tx *sql.Tx, subject associationS
 		}
 	case "series":
 		o.Level = "series"
-		err = tx.QueryRowContext(ctx, `SELECT title,work_id FROM catalog_series WHERE id=?`, subject.ID).Scan(&o.Title, &o.WorkID)
+		err = tx.QueryRowContext(ctx, publishedCatalogSQL(`SELECT title,work_id FROM catalog_series WHERE id=?`), subject.ID).Scan(&o.Title, &o.WorkID)
 	default:
 		return o, errAssociationInvalid
 	}
@@ -148,12 +148,12 @@ func loadAssociationObject(ctx context.Context, tx *sql.Tx, subject associationS
 		// Personal restores have no source membership. Their explicit parent and
 		// primary portable kind still define the evaluation object, including
 		// legacy episodes whose backup did not carry a parent.
-		err = tx.QueryRowContext(ctx, `SELECT
+		err = tx.QueryRowContext(ctx, publishedCatalogSQL(`SELECT
 			EXISTS(SELECT 1 FROM catalog_series WHERE work_id=w.id) OR COALESCE(r.object_kind,'work')='series',
 			w.parent_work_id IS NOT NULL OR COALESCE(r.object_kind,'work')='episode'
 				OR EXISTS(SELECT 1 FROM catalog_series_member m JOIN source_catalog_entry e ON e.id=m.catalog_entry_id WHERE e.work_id=w.id)
 			FROM work w LEFT JOIN personal_transfer_ref r ON r.work_id=w.id AND r.is_primary=1
-			WHERE w.id=?`, *o.WorkID).Scan(&series, &episode)
+				WHERE w.id=?`), *o.WorkID).Scan(&series, &episode)
 		if err != nil {
 			return o, err
 		}
@@ -167,7 +167,7 @@ func loadAssociationObject(ctx context.Context, tx *sql.Tx, subject associationS
 		}
 	} else if subject.Kind == "catalog" {
 		var exists int
-		err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM catalog_series_member WHERE catalog_entry_id=?)`, subject.ID).Scan(&exists)
+		err = tx.QueryRowContext(ctx, publishedCatalogSQL(`SELECT EXISTS(SELECT 1 FROM catalog_series_member WHERE catalog_entry_id=?)`), subject.ID).Scan(&exists)
 		if err != nil {
 			return o, err
 		}
@@ -175,12 +175,12 @@ func loadAssociationObject(ctx context.Context, tx *sql.Tx, subject associationS
 			o.Level = "episode"
 		}
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT e.id,COALESCE(e.file_source_id,0),COALESCE(fs.display_name,''),e.title,e.root_path,e.work_id,m.series_id,COALESCE(m.position,0),COALESCE(r.revision,0),COALESCE(sr.revision,0)
+	rows, err := tx.QueryContext(ctx, publishedCatalogSQL(`SELECT e.id,COALESCE(e.file_source_id,0),COALESCE(fs.display_name,''),e.title,e.root_path,e.work_id,m.series_id,COALESCE(m.position,0),COALESCE(r.revision,0),COALESCE(sr.revision,0)
 	 FROM source_catalog_entry e LEFT JOIN file_source fs ON fs.id=e.file_source_id LEFT JOIN catalog_series_member m ON m.catalog_entry_id=e.id
 	 LEFT JOIN shared_identity_revision r ON r.kind='catalog' AND r.entity_id=e.id LEFT JOIN shared_identity_revision sr ON sr.kind='source' AND sr.entity_id=e.file_source_id
 	 WHERE (?='catalog' AND e.id=?) OR e.work_id IN (SELECT work_id FROM shared_work_identity WHERE identity_work_id=? AND ?>0)
 	 OR m.series_id IN (SELECT id FROM catalog_series WHERE (?='series' AND id=?) OR (work_id IN (SELECT work_id FROM shared_work_identity WHERE identity_work_id=? AND ?>0)))
-	 ORDER BY e.id LIMIT 101`, subject.Kind, subject.ID, o.IdentityWorkID, o.IdentityWorkID, subject.Kind, subject.ID, o.IdentityWorkID, o.IdentityWorkID)
+	 ORDER BY e.id LIMIT 101`), subject.Kind, subject.ID, o.IdentityWorkID, o.IdentityWorkID, subject.Kind, subject.ID, o.IdentityWorkID, o.IdentityWorkID)
 	if err != nil {
 		return o, err
 	}
@@ -206,12 +206,12 @@ func loadAssociationObject(ctx context.Context, tx *sql.Tx, subject associationS
 	}
 	// Numbered/local sources also belong to the evidence, without publishing
 	// endpoints, remote paths or protected source configuration in the preview.
-	rows, err = tx.QueryContext(ctx, `SELECT p.work_id,p.file_source_id,fs.display_name,p.remote_id,COALESCE(r.revision,0)
+	rows, err = tx.QueryContext(ctx, publishedCatalogSQL(`SELECT p.work_id,p.file_source_id,fs.display_name,p.remote_id,COALESCE(r.revision,0)
 	 FROM work_source_presence p JOIN file_source fs ON fs.id=p.file_source_id
 	 LEFT JOIN shared_identity_revision r ON r.kind='source' AND r.entity_id=fs.id
 	 WHERE p.work_id IN (SELECT work_id FROM shared_work_identity WHERE identity_work_id=?)
 	 AND NOT EXISTS(SELECT 1 FROM source_catalog_entry e WHERE e.work_id=p.work_id AND e.file_source_id=p.file_source_id)
-	 ORDER BY p.work_id,p.file_source_id,p.presence_type LIMIT 101`, o.IdentityWorkID)
+	 ORDER BY p.work_id,p.file_source_id,p.presence_type LIMIT 101`), o.IdentityWorkID)
 	if err != nil {
 		return o, err
 	}

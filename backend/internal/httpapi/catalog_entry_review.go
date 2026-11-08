@@ -33,20 +33,33 @@ func lockCatalogEntry(ctx context.Context, tx *sql.Tx, retainedID int64) (catalo
 	if err != nil {
 		return catalogEntry{}, err
 	}
-	if entry.SourceID == 0 {
-		return entry, nil
-	}
-	admission, err := catalogPublishedEntryAdmission(ctx, tx, entry.ID)
-	if err != nil {
-		return catalogEntry{}, err
-	}
 	// A retained missing record has no current published file set to judge;
 	// every other source-backed card must pass the same admission rule as the
 	// detail, tracks and browse routes.
-	if catalogEntryAdmissionRequired(entry) && !admission.Admitted() {
-		return catalogEntry{}, catalogEntryUnavailableError{admission: admission}
+	if entry.SourceID != 0 {
+		admission, err := catalogPublishedEntryAdmission(ctx, tx, entry.ID)
+		if err != nil {
+			return catalogEntry{}, err
+		}
+		if catalogEntryAdmissionRequired(entry) && !admission.Admitted() {
+			return catalogEntry{}, catalogEntryUnavailableError{admission: admission}
+		}
 	}
-	return entry, nil
+	// Retirement moves identity before its source snapshot is published. Check
+	// admission against the visible card, but bind personal records to the live
+	// successor under this same lock. Keep the title the user actually saw.
+	for range 8 {
+		var target sql.NullInt64
+		if err = tx.QueryRowContext(ctx, `SELECT COALESCE(file_source_id,0),primary_code,work_id,relocated_to_id
+			FROM source_catalog_entry WHERE id=?`, entry.ID).Scan(&entry.SourceID, &entry.PrimaryCode, &entry.WorkID, &target); err != nil {
+			return catalogEntry{}, err
+		}
+		if !target.Valid {
+			return entry, nil
+		}
+		entry.ID = target.Int64
+	}
+	return catalogEntry{}, sql.ErrNoRows
 }
 
 // ensureCatalogEntryWork returns the work a catalog entry stands for, reusing
@@ -54,6 +67,9 @@ func lockCatalogEntry(ctx context.Context, tx *sql.Tx, retainedID int64) (catalo
 // its first publication. The caller holds the writer lock and has already
 // accepted the entry.
 func ensureCatalogEntryWork(ctx context.Context, tx *sql.Tx, entry catalogEntry, mayRegister bool) (int64, error) {
+	if entry.WorkID != nil {
+		return *entry.WorkID, nil
+	}
 	var resolvedID int64
 	var err error
 	if entry.PrimaryCode != "" {
@@ -65,22 +81,13 @@ func ensureCatalogEntryWork(ctx context.Context, tx *sql.Tx, entry catalogEntry,
 			resolvedID = 0
 		}
 	}
-	var workID sql.NullInt64
-	if err = tx.QueryRowContext(ctx, "SELECT work_id FROM source_catalog_entry WHERE id=?", entry.ID).Scan(&workID); err != nil {
-		return 0, err
-	}
-	if !workID.Valid && resolvedID > 0 {
+	if resolvedID > 0 {
 		return resolvedID, nil
 	}
-	if !workID.Valid {
-		if !mayRegister {
-			return 0, errCatalogWorkRegistrationForbidden
-		}
-		if workID.Int64, err = insertWorkWithEdition(ctx, tx, entry.PrimaryCode, entry.Title); err != nil {
-			return 0, err
-		}
+	if !mayRegister {
+		return 0, errCatalogWorkRegistrationForbidden
 	}
-	return workID.Int64, nil
+	return insertWorkWithEdition(ctx, tx, entry.PrimaryCode, entry.Title)
 }
 
 // linkCatalogEntryWork records the resolved identity on the entry and keeps the
