@@ -63,70 +63,71 @@ test("another administrator's configuration is observed on SPA return @desktop",
 });
 
 test("a delayed old-model response cannot rewind an observed newer version @desktop", async ({ page }) => {
-  await page.request.post(`${backend}/api/auth/login`, {
+  const title = "Example title by Example Voice";
+  await page.request.post(backend + "/api/auth/login", {
     data: { username: "synthetic-user", password: "synthetic-password" },
   });
-  await page.request.patch(`${backend}/api/auth/me/preferences`, { data: { metadataLanguages: ["zh-cn", "origin"] } });
-  await page.request.patch(`${backend}/api/settings/translation`, { data: { model: "Review slow A" } });
-  // Delay an already received response at the browser transport boundary.
-  // Navigation can cancel an intercepted network route before route.fulfill;
-  // this completed response must still reach the stale-result check.
-  await page.addInitScript(() => {
-    const originalFetch = window.fetch.bind(window);
-    let release!: () => void;
-    const held = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const state = { titleHeld: false, titleReleased: false, release };
-    Object.assign(window, { translationResponseHold: state });
-    window.fetch = async (...args) => {
-      const response = await originalFetch(...args);
-      if (!response.url.endsWith("/api/content-translations/batch") || response.status !== 200) return response;
-      const text = await response.text();
-      const body = JSON.parse(text);
-      const oldTitle = body.items.some(
-        (item: { original: string; version?: string }) =>
-          item.original === "Example title by Example Voice" && item.version?.startsWith("Review slow A|"),
-      );
-      if (oldTitle) {
-        state.titleHeld = true;
-        await held;
-      }
-      if (oldTitle) state.titleReleased = true;
-      return new Response(text, { status: response.status, headers: response.headers });
-    };
+  await page.request.patch(backend + "/api/auth/me/preferences", { data: { metadataLanguages: ["zh-cn", "origin"] } });
+  await page.request.patch(backend + "/api/settings/translation", { data: { model: "Review slow A" } });
+  const oldResponse = page.waitForResponse(async (response) => {
+    if (!response.url().endsWith("/api/content-translations/batch") || response.status() !== 200) return false;
+    const result = await response.json();
+    return result.items.some((item: { original: string }) => item.original === title);
   });
-  let oldReleased = false;
-  let announcedB = false;
-  let rewound = false;
-  page.on("response", async (response) => {
-    if (!response.url().endsWith("/api/content-translations/version") || response.status() !== 200) return;
-    const { version } = await response.json();
-    if (version.startsWith("Review slow B|")) announcedB = true;
-    if (oldReleased && announcedB && version.startsWith("Review slow A|")) rewound = true;
+  await page.goto("/RJ00000000");
+  const oldBody = await (await oldResponse).json();
+  const oldTitle = oldBody.items.find((item: { original: string }) => item.original === title);
+  expect(oldTitle.version).toMatch(/^Review slow A\|/);
+  await expect(page.getByTestId("detail-hero")).toContainText("ZH: " + title);
+
+  await page.request.patch(backend + "/api/settings/translation", { data: { model: "Review slow B" } });
+  const versionB = page.waitForResponse(async (response) => {
+    if (!response.url().endsWith("/api/content-translations/version") || response.status() !== 200) return false;
+    return (await response.json()).version.startsWith("Review slow B|");
   });
-  type ResponseHold = { titleHeld: boolean; titleReleased: boolean; release: () => void };
-  const holdState = () =>
-    page.evaluate(() => {
-      const hold = (window as unknown as { translationResponseHold: ResponseHold }).translationResponseHold;
-      return { titleHeld: hold.titleHeld, titleReleased: hold.titleReleased };
-    });
-  const release = () =>
-    page.evaluate(() => {
-      (window as unknown as { translationResponseHold: ResponseHold }).translationResponseHold.release();
-    });
+  await page.getByRole("button", { name: "Settings", exact: true }).first().click();
+  const current = await (await versionB).json();
+
+  let injected = false;
+  let refreshesAfterStale = 0;
+  const rewoundRequests: string[] = [];
+  page.on("request", (request) => {
+    if (!injected) return;
+    if (request.url().endsWith("/api/content-translations/version")) refreshesAfterStale += 1;
+    if (!request.url().endsWith("/api/content-translations/batch")) return;
+    for (const item of request.postDataJSON().items) {
+      if (item.key.includes("Review slow A|")) rewoundRequests.push(item.key);
+    }
+  });
+  // Replay a real A result to the active B request, preserving its correlation
+  // key. Unlike a cancelled A subscription, this response reaches the component.
+  await page.route("**/api/content-translations/batch", async (route) => {
+    const input = route.request().postDataJSON();
+    if (injected || !input.items.some((item: { text: string }) => item.text === title)) {
+      await route.continue();
+      return;
+    }
+    const response = await route.fetch();
+    const body = await response.json();
+    expect(body.items.find((item: { original: string }) => item.original === title).version).toBe(current.version);
+    body.items = body.items.map((item: { key: string; original: string }) =>
+      item.original === title ? { ...oldTitle, key: item.key } : item,
+    );
+    injected = true;
+    await route.fulfill({ response, json: body });
+  });
   const titleVersions = () =>
     page.evaluate(async () => {
       const db = await new Promise<IDBDatabase>((resolve, reject) => {
-        const r = indexedDB.open("kikoto-translations");
-        r.onsuccess = () => resolve(r.result);
-        r.onerror = () => reject(r.error);
+        const request = indexedDB.open("kikoto-translations");
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
       });
       try {
         const rows = await new Promise<Array<{ original: string; version?: string }>>((resolve, reject) => {
-          const r = db.transaction("entries").objectStore("entries").getAll();
-          r.onsuccess = () => resolve(r.result);
-          r.onerror = () => reject(r.error);
+          const request = db.transaction("entries").objectStore("entries").getAll();
+          request.onsuccess = () => resolve(request.result);
+          request.onerror = () => reject(request.error);
         });
         return rows.filter((row) => row.original === "Example title by Example Voice").map((row) => row.version);
       } finally {
@@ -134,29 +135,25 @@ test("a delayed old-model response cannot rewind an observed newer version @desk
       }
     });
   try {
-    await page.goto("/RJ00000000");
-    await expect.poll(async () => (await holdState()).titleHeld).toBe(true);
-    await page.request.patch(`${backend}/api/settings/translation`, { data: { model: "Review slow B" } });
-    await page.getByRole("button", { name: "Settings", exact: true }).first().click();
-    await expect.poll(() => announcedB).toBe(true);
     await page.goBack();
-    const hero = page.getByTestId("detail-hero");
-    await expect(hero).toContainText("ZH: Example title by Example Voice");
-    const current = await (await page.request.get(`${backend}/api/content-translations/version`)).json();
-    // Commit B before releasing A, so B cannot hide a stale write by simply
-    // arriving last. Painting the title alone does not prove its IDB commit.
+    await expect.poll(() => injected).toBe(true);
+    // This new request is caused by consuming the stale result, rather than by
+    // navigation. Waiting for it proves the active version check actually ran.
+    await expect.poll(() => refreshesAfterStale).toBeGreaterThan(0);
+    await expect(page.getByTestId("detail-hero")).not.toContainText("ZH: " + title);
+    expect(await titleVersions()).not.toContain(oldTitle.version);
+    expect(rewoundRequests).toEqual([]);
+
+    // Reopen only after the stale result was handled; a fresh B response must
+    // paint and persist normally, without any request using the A cache scope.
+    await page.getByRole("button", { name: "Settings", exact: true }).first().click();
+    await expect(page.getByRole("tab", { name: "Translation", exact: true })).toBeVisible();
+    await page.goBack();
+    await expect(page.getByTestId("detail-hero")).toContainText("ZH: " + title);
     await expect.poll(titleVersions).toEqual([current.version]);
-    oldReleased = true;
-    await release();
-    await expect.poll(async () => (await holdState()).titleReleased).toBe(true);
-    await page.removeAllListeners("response", { behavior: "wait" });
-    const models = await titleVersions();
-    expect(models.length).toBeGreaterThan(0);
-    expect(models.every((version) => version?.startsWith("Review slow B|"))).toBe(true);
-    await expect(hero).toContainText("ZH: Example title by Example Voice");
-    expect(rewound).toBe(false);
+    expect(rewoundRequests).toEqual([]);
   } finally {
-    await release();
-    await page.removeAllListeners("response", { behavior: "wait" });
+    await page.unrouteAll({ behavior: "wait" });
+    page.removeAllListeners("request");
   }
 });
