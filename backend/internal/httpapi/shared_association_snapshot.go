@@ -75,11 +75,23 @@ var associationWorkLevelSQL = publishedCatalogSQL(`SELECT
 	FROM work w LEFT JOIN personal_transfer_ref r ON r.work_id=w.id AND r.is_primary=1
 		WHERE w.id=?`)
 
-var associationCatalogLocationsSQL = publishedCatalogSQL(`SELECT e.id,COALESCE(e.file_source_id,0),COALESCE(fs.display_name,''),e.title,e.root_path,e.work_id,m.series_id,COALESCE(m.position,0),COALESCE(r.revision,0),COALESCE(sr.revision,0)
-	FROM source_catalog_entry e LEFT JOIN file_source fs ON fs.id=e.file_source_id LEFT JOIN catalog_series_member m ON m.catalog_entry_id=e.id
+// Select the bounded location identities before joining publication projections.
+// An OR across entry and member columns otherwise scans the complete catalog
+// once per matching candidate, including every retained source-less identity.
+var associationCatalogLocationsSQL = publishedCatalogSQL(`WITH related_entries(id) AS MATERIALIZED (
+	SELECT id FROM source_catalog_entry WHERE ?1='catalog' AND id=?2
+	UNION SELECT id FROM source_catalog_entry
+		WHERE work_id IN (SELECT work_id FROM shared_work_identity WHERE identity_work_id=?3 AND ?4>0)
+	UNION SELECT catalog_entry_id FROM catalog_series_member
+		WHERE series_id IN (SELECT id FROM catalog_series WHERE (?5='series' AND id=?6)
+			OR work_id IN (SELECT work_id FROM shared_work_identity WHERE identity_work_id=?7 AND ?8>0))
+	ORDER BY id LIMIT 101
+)
+	SELECT e.id,COALESCE(e.file_source_id,0),COALESCE(fs.display_name,''),e.title,e.root_path,e.work_id,m.series_id,COALESCE(m.position,0),COALESCE(r.revision,0),COALESCE(sr.revision,0)
+	FROM related_entries selected CROSS JOIN source_catalog_entry e ON e.id=selected.id
+	LEFT JOIN file_source fs ON fs.id=e.file_source_id
+	LEFT JOIN (SELECT * FROM catalog_series_member WHERE catalog_entry_id IN (SELECT id FROM related_entries)) m ON m.catalog_entry_id=e.id
 	LEFT JOIN shared_identity_revision r ON r.kind='catalog' AND r.entity_id=e.id LEFT JOIN shared_identity_revision sr ON sr.kind='source' AND sr.entity_id=e.file_source_id
-	WHERE (?='catalog' AND e.id=?) OR e.work_id IN (SELECT work_id FROM shared_work_identity WHERE identity_work_id=? AND ?>0)
-	OR m.series_id IN (SELECT id FROM catalog_series WHERE (?='series' AND id=?) OR (work_id IN (SELECT work_id FROM shared_work_identity WHERE identity_work_id=? AND ?>0)))
 	ORDER BY e.id LIMIT 101`)
 
 var associationSourceLocationsSQL = publishedCatalogSQL(`SELECT p.work_id,p.file_source_id,fs.display_name,p.remote_id,COALESCE(r.revision,0)

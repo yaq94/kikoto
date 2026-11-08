@@ -91,6 +91,10 @@ count, retry time and safe failure category with the same permission.
   serialized metadata. Only digests are retained while comparing candidates.
   Association objects retain the shared operation's existing bounds. Oversized
   evidence is reported as paused.
+- Location evidence selects at most 101 related catalog identities before
+  joining published entry and series-member fields. Direct catalog references,
+  shared work identities and series membership use the same snapshot and sorted
+  limit, without scanning unrelated retained entries for each candidate.
 - At most 1,000 automatic operations are created per day. Saved matching results
   use one row per retained subject; association history remains available for
   splitting and owner decisions.
