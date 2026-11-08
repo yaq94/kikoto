@@ -313,6 +313,11 @@ change: it adds a root when a completed directory has audio and removes it when
 the last such directory becomes incomplete, so a rescan that deletes tracks
 retires the root.
 
+Root admission counts start from directories selected by source, generation and
+card root, then seek observations by directory and revision. Their `CROSS JOIN`
+keeps unrelated source observations outside the three threshold probes. The
+counts retain the shared admission limits and complete-listing requirement.
+
 The worker publishes at most eight batches of 50 rows per invocation, so a long
 backlog does not hold the single SQLite writer across the whole scan; the
 remaining rows stay queued and the job returns to the workflow queue. An

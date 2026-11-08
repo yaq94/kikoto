@@ -20,6 +20,31 @@ type catalogRootAdmission struct {
 	Reason                 string
 }
 
+// Start each bounded count from the root's directories. Starting with the
+// observation index only constrains file_source_id, so a small card would scan
+// the entire source before exhausting its counts. CROSS JOIN keeps the existing
+// root and directory/revision indexes as the outer and inner loops.
+var catalogRootAdmissionQuery = fmt.Sprintf(`SELECT
+		(SELECT count(*) FROM (
+			SELECT 1 FROM source_catalog_directory d
+			CROSS JOIN source_catalog_observation o ON o.file_source_id=d.file_source_id AND o.directory_path=d.path AND o.revision=d.revision
+			WHERE d.file_source_id=?1 AND d.generation=?2 AND d.catalog_root=?3
+						AND d.work_split<>'duplicate' AND o.kind<>'folder' LIMIT %d)),
+		(SELECT count(*) FROM (
+			SELECT 1 FROM source_catalog_directory d
+			CROSS JOIN source_catalog_observation o ON o.file_source_id=d.file_source_id AND o.directory_path=d.path AND o.revision=d.revision
+			WHERE d.file_source_id=?1 AND d.generation=?2 AND d.catalog_root=?3
+					AND d.work_split<>'duplicate' AND o.kind='audio' LIMIT %d)),
+		(SELECT count(*) FROM (
+			SELECT 1 FROM source_catalog_directory d
+			CROSS JOIN source_catalog_observation o ON o.file_source_id=d.file_source_id AND o.directory_path=d.path AND o.revision=d.revision
+			WHERE d.file_source_id=?1 AND d.generation=?2 AND d.catalog_root=?3
+						AND d.work_split<>'duplicate' AND o.kind<>'audio' AND o.kind<>'folder' LIMIT %d)),
+		NOT EXISTS(SELECT 1 FROM source_catalog_directory d
+			WHERE d.file_source_id=?1 AND d.generation=?2 AND d.catalog_root=?3
+					AND d.status<>'complete' AND NOT (d.status='empty' AND d.error_code='not_found'))`,
+	catalogadmission.ProbeFiles+1, catalogadmission.ProbeAudio, catalogadmission.ProbeNonAudio+1)
+
 // catalogRootAdmissionTx counts the observations that belong to one card root.
 // The counts stop at the first value that can decide a threshold, so a card
 // with 87k rows costs the same as one with 5001.
@@ -35,26 +60,7 @@ func catalogRootAdmissionTx(ctx context.Context, tx *sql.Tx, sourceID, generatio
 	if split {
 		return adm, nil
 	}
-	err := tx.QueryRowContext(ctx, fmt.Sprintf(`SELECT
-		(SELECT count(*) FROM (
-			SELECT 1 FROM source_catalog_directory d
-			JOIN source_catalog_observation o ON o.file_source_id=d.file_source_id AND o.directory_path=d.path AND o.revision=d.revision
-			WHERE d.file_source_id=?1 AND d.generation=?2 AND d.catalog_root=?3
-						AND d.work_split<>'duplicate' AND o.kind<>'folder' LIMIT %d)),
-		(SELECT count(*) FROM (
-			SELECT 1 FROM source_catalog_directory d
-			JOIN source_catalog_observation o ON o.file_source_id=d.file_source_id AND o.directory_path=d.path AND o.revision=d.revision
-			WHERE d.file_source_id=?1 AND d.generation=?2 AND d.catalog_root=?3
-					AND d.work_split<>'duplicate' AND o.kind='audio' LIMIT %d)),
-		(SELECT count(*) FROM (
-			SELECT 1 FROM source_catalog_directory d
-			JOIN source_catalog_observation o ON o.file_source_id=d.file_source_id AND o.directory_path=d.path AND o.revision=d.revision
-			WHERE d.file_source_id=?1 AND d.generation=?2 AND d.catalog_root=?3
-						AND d.work_split<>'duplicate' AND o.kind<>'audio' AND o.kind<>'folder' LIMIT %d)),
-		NOT EXISTS(SELECT 1 FROM source_catalog_directory d
-			WHERE d.file_source_id=?1 AND d.generation=?2 AND d.catalog_root=?3
-					AND d.status<>'complete' AND NOT (d.status='empty' AND d.error_code='not_found'))`,
-		catalogadmission.ProbeFiles+1, catalogadmission.ProbeAudio, catalogadmission.ProbeNonAudio+1),
+	err := tx.QueryRowContext(ctx, catalogRootAdmissionQuery,
 		sourceID, generation, root).
 		Scan(&adm.Files, &adm.Audio, &adm.NonAudio, &adm.FullyObserved)
 	if err != nil {

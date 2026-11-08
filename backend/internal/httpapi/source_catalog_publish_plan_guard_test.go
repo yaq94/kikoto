@@ -53,6 +53,22 @@ func TestCatalogPublishQueryPlanStaysDirectoryDriven(t *testing.T) {
 	if first, second := planLine(plan, "SEARCH d"), planLine(plan, "SEARCH o"); first < 0 || second < 0 || first > second {
 		t.Fatalf("publish query is not driven by directories:\n%s", plan)
 	}
+	t.Run("root admission does not scan unrelated observations", func(t *testing.T) {
+		plan := strings.Join(queryPlan(t, db, catalogRootAdmissionQuery, int64(1), int64(10), "/current/Work 0000"), "\n")
+		probes := 0
+		for _, line := range strings.Split(plan, "\n") {
+			if !strings.Contains(line, "SEARCH o ") && !strings.Contains(line, "SCAN o") {
+				continue
+			}
+			probes++
+			if !strings.Contains(line, "file_source_id=? AND directory_path=? AND revision=?") {
+				t.Fatalf("root admission reads observations outside its directory revision:\n%s", plan)
+			}
+		}
+		if probes != 3 {
+			t.Fatalf("expected the three bounded admission probes, got %d:\n%s", probes, plan)
+		}
+	})
 }
 
 func planLine(plan, needle string) int {
