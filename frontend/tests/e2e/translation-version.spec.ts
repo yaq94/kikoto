@@ -68,13 +68,33 @@ test("a delayed old-model response cannot rewind an observed newer version @desk
   });
   await page.request.patch(`${backend}/api/auth/me/preferences`, { data: { metadataLanguages: ["zh-cn", "origin"] } });
   await page.request.patch(`${backend}/api/settings/translation`, { data: { model: "Review slow A" } });
-  let release!: () => void;
-  const held = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  let intercepted!: () => void;
-  const waiting = new Promise<void>((resolve) => {
-    intercepted = resolve;
+  // Delay an already received response at the browser transport boundary.
+  // Navigation can cancel an intercepted network route before route.fulfill;
+  // this completed response must still reach the stale-result check.
+  await page.addInitScript(() => {
+    const originalFetch = window.fetch.bind(window);
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const state = { titleHeld: false, titleReleased: false, release };
+    Object.assign(window, { translationResponseHold: state });
+    window.fetch = async (...args) => {
+      const response = await originalFetch(...args);
+      if (!response.url.endsWith("/api/content-translations/batch") || response.status !== 200) return response;
+      const text = await response.text();
+      const body = JSON.parse(text);
+      const oldTitle = body.items.some(
+        (item: { original: string; version?: string }) =>
+          item.original === "Example title by Example Voice" && item.version?.startsWith("Review slow A|"),
+      );
+      if (oldTitle) {
+        state.titleHeld = true;
+        await held;
+      }
+      if (oldTitle) state.titleReleased = true;
+      return new Response(text, { status: response.status, headers: response.headers });
+    };
   });
   let oldReleased = false;
   let announcedB = false;
@@ -85,25 +105,16 @@ test("a delayed old-model response cannot rewind an observed newer version @desk
     if (version.startsWith("Review slow B|")) announcedB = true;
     if (oldReleased && announcedB && version.startsWith("Review slow A|")) rewound = true;
   });
-  let oldTitleReleased = false;
-  await page.route("**/api/content-translations/batch", async (route) => {
-    const response = await route.fetch();
-    try {
-      const body = await response.json();
-      const oldTitle = body.items.some(
-        (item: { original: string; version?: string }) =>
-          item.original === "Example title by Example Voice" && item.version?.startsWith("Review slow A|"),
-      );
-      if (body.items.some((item: { version?: string }) => item.version?.startsWith("Review slow A|"))) {
-        if (oldTitle) intercepted();
-        await held;
-      }
-      await route.fulfill({ response });
-      if (oldTitle) oldTitleReleased = true;
-    } finally {
-      await response.dispose();
-    }
-  });
+  type ResponseHold = { titleHeld: boolean; titleReleased: boolean; release: () => void };
+  const holdState = () =>
+    page.evaluate(() => {
+      const hold = (window as unknown as { translationResponseHold: ResponseHold }).translationResponseHold;
+      return { titleHeld: hold.titleHeld, titleReleased: hold.titleReleased };
+    });
+  const release = () =>
+    page.evaluate(() => {
+      (window as unknown as { translationResponseHold: ResponseHold }).translationResponseHold.release();
+    });
   const titleVersions = () =>
     page.evaluate(async () => {
       const db = await new Promise<IDBDatabase>((resolve, reject) => {
@@ -124,7 +135,7 @@ test("a delayed old-model response cannot rewind an observed newer version @desk
     });
   try {
     await page.goto("/RJ00000000");
-    await waiting;
+    await expect.poll(async () => (await holdState()).titleHeld).toBe(true);
     await page.request.patch(`${backend}/api/settings/translation`, { data: { model: "Review slow B" } });
     await page.getByRole("button", { name: "Settings", exact: true }).first().click();
     await expect.poll(() => announcedB).toBe(true);
@@ -136,20 +147,16 @@ test("a delayed old-model response cannot rewind an observed newer version @desk
     // arriving last. Painting the title alone does not prove its IDB commit.
     await expect.poll(titleVersions).toEqual([current.version]);
     oldReleased = true;
-    release();
-    // Drain every held A and in-flight B callback while their API responses are
-    // still owned by this test. Errors remain test failures, never ignored.
-    await page.unrouteAll({ behavior: "wait" });
+    await release();
+    await expect.poll(async () => (await holdState()).titleReleased).toBe(true);
     await page.removeAllListeners("response", { behavior: "wait" });
-    expect(oldTitleReleased).toBe(true);
     const models = await titleVersions();
     expect(models.length).toBeGreaterThan(0);
     expect(models.every((version) => version?.startsWith("Review slow B|"))).toBe(true);
     await expect(hero).toContainText("ZH: Example title by Example Voice");
     expect(rewound).toBe(false);
   } finally {
-    release();
-    await page.unrouteAll({ behavior: "wait" });
+    await release();
     await page.removeAllListeners("response", { behavior: "wait" });
   }
 });
