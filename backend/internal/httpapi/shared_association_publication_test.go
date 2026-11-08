@@ -66,3 +66,78 @@ func TestSharedAssociationPreviewUsesPublishedSourceEvidence(t *testing.T) {
 		fmt.Sprintf("/api/shared-associations/%.0f/start", staged["id"]),
 		mustJSON(map[string]any{"version": staged["version"]}), http.StatusConflict)
 }
+
+func TestSharedAssociationRetirementRequiresPublishedSuccessor(t *testing.T) {
+	db, file := openPublicationRetryDB(t)
+	f := newLooseWorkFixtureWithDB(t, map[string][]map[string]any{"/Example": {looseAudio("Original.mp3")}}, db)
+	f.request(t, http.MethodPost, "/catalog/scan", `{}`, 200)
+	var oldID int64
+	if err := db.QueryRow(`SELECT id FROM source_catalog_entry WHERE root_path='/Example'`).Scan(&oldID); err != nil {
+		t.Fatal(err)
+	}
+	metadataReviewExec(t, db, `INSERT INTO source_catalog_entry(id,file_source_id,root_path,title) VALUES
+		(101,?,'/Other','Example other');
+		INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes) VALUES
+		(101,'Other.mp3','Other','audio',1)`, f.sourceID(t))
+	reviewRequest(t, f.handler, f.cookie, http.MethodPatch, "/api/source-catalog/101/user-state", `{"rating":4,"note":"Example retained review"}`, 200)
+	ctx, op, err := f.server.beginCatalogPublication(context.Background(), f.sourceID(t), "synthetic:association-retirement")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx, release, err := beginTxWithDatabaseBusyRetry(ctx, db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newID, err := persistOpenListEntryTx(ctx, tx.Tx, f.sourceID(t), "/Successor", "", "Example successor")
+	if err == nil {
+		_, err = tx.ExecContext(ctx, `INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes) VALUES(?,'Original.mp3','Example Track','audio',1)`, newID)
+	}
+	if err == nil {
+		err = refreshCatalogEntryAdmissionTx(ctx, tx.Tx, newID)
+	}
+	var retired bool
+	if err == nil {
+		retired, err = retireCatalogCardTx(ctx, tx.Tx, oldID, newID)
+	}
+	if err == nil {
+		err = tx.Commit()
+	}
+	release()
+	if err != nil || !retired {
+		t.Fatalf("retire=%v err=%v", retired, err)
+	}
+	preview := func(id int64) map[string]any {
+		t.Helper()
+		return reviewRequest(t, f.handler, f.cookie, http.MethodPost, "/api/shared-associations/previews",
+			fmt.Sprintf(`{"left":{"kind":"catalog","id":%d},"right":{"kind":"catalog","id":101}}`, id), 201)
+	}
+	start := func(value map[string]any, status int) map[string]any {
+		t.Helper()
+		return reviewRequest(t, f.handler, f.cookie, http.MethodPost,
+			fmt.Sprintf("/api/shared-associations/%.0f/start", value["id"]),
+			mustJSON(map[string]any{"version": value["version"]}), status)
+	}
+	staged := preview(oldID)
+	if rejected := start(staged, http.StatusConflict); rejected["error"] == nil {
+		t.Fatal("retired preparation did not report a conflict")
+	}
+	var works, aliasLinks int
+	if err = db.QueryRow(`SELECT count(*),(SELECT count(*) FROM source_catalog_entry WHERE id=? AND work_id IS NOT NULL) FROM work`, oldID).Scan(&works, &aliasLinks); err != nil || works != 1 || aliasLinks != 0 {
+		t.Fatalf("rejected association changed identities: works=%d aliases=%d err=%v", works, aliasLinks, err)
+	}
+	reopenCatalogFiniteFixture(t, f, file)
+	if err = f.server.commitCatalogPublication(ctx, op); err != nil {
+		t.Fatal(err)
+	}
+	if result := start(preview(newID), http.StatusOK); result["status"] != "completed" {
+		t.Fatalf("published successor association did not complete: %v", result["status"])
+	}
+	reopenCatalogFiniteFixture(t, f, file)
+	for _, id := range []int64{oldID, newID, 101} {
+		assertReview(t, reviewRequest(t, f.handler, f.cookie, http.MethodGet,
+			fmt.Sprintf("/api/source-catalog/%d", id), "", 200), float64(4), "Example retained review")
+	}
+	if len(f.gets) != 0 {
+		t.Fatal("association requested media")
+	}
+}
