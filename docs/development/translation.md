@@ -250,6 +250,10 @@ or configuration change invalidated the scanned prefix. The persisted checked
 revision makes unchanged complete ticks constant-cost across restarts. Operator
 snapshots are reused only for the matching revision and configuration; changing
 the corpus during an observation returns an error and a later poll retries.
+Series membership and admission use shared sets within each query, including
+while a catalog publication retains before-images. The operator budget classifies
+each translation row once and reuses those totals for cache counts, persistent
+text and page attribution.
 
 Display-language search applies only to text clauses and covers `title` for
 entries and series, plus `title` and `description` for works; `tag` and

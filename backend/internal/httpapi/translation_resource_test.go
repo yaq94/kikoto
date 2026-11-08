@@ -271,7 +271,15 @@ func TestTranslationCoverageTracksSeriesMembershipAndPublication(t *testing.T) {
 		}
 	}
 	readTotal(3)
-	if _, err := s.db.Exec(`DELETE FROM catalog_series_member WHERE catalog_entry_id=2`); err != nil {
+	ctx, operation, err := s.beginCatalogPublication(context.Background(), 1, "synthetic:coverage-members")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.execCatalogWrite(ctx, `DELETE FROM catalog_series_member WHERE catalog_entry_id=2`); err != nil {
+		t.Fatal(err)
+	}
+	readTotal(3)
+	if err := s.commitCatalogPublication(ctx, operation); err != nil {
 		t.Fatal(err)
 	}
 	readTotal(2)

@@ -120,14 +120,22 @@ func translationCorpusSeriesSQL() string {
 	return publishedCatalogSQL(`SELECT 'series' AS entity_kind, s.id AS entity_id, 'title' AS field, s.title AS source_text
 		FROM catalog_series s
 		WHERE trim(s.title)<>''
-		  AND (SELECT COUNT(*) FROM catalog_series_member m WHERE m.series_id=s.id)>=2
-		  AND EXISTS(
-			SELECT 1 FROM catalog_series_member m
+		  AND ` + translationSeriesEligibilitySQL("s"))
+}
+
+// Compute membership and admission sets once per statement. Correlating these
+// published UNION views with every series (or translation row) repeatedly scans
+// their before-images while a background publication is preparing.
+func translationSeriesEligibilitySQL(alias string) string {
+	return alias + `.id IN (
+		SELECT series_id FROM catalog_series_member GROUP BY series_id HAVING count(*)>=2)
+		AND ` + alias + `.id IN (
+			SELECT m.series_id FROM catalog_series_member m
 			JOIN source_catalog_entry e ON e.id=m.catalog_entry_id
 			JOIN file_source src ON src.id=e.file_source_id
-			WHERE m.series_id=s.id AND e.relocated_to_id IS NULL
+			WHERE e.relocated_to_id IS NULL
 			  AND src.enabled=1 AND src.source_type='openlist'
-			  AND ` + catalogEntryAdmittedSQL("e") + `)`)
+			  AND ` + catalogEntryAdmittedSQL("e") + `)`
 }
 
 func translationCorpusWorkSQL(field string) string {
@@ -503,12 +511,7 @@ func translationPersistentCorpusSQL(alias string) string {
 		OR (` + alias + `.entity_kind='series' AND ` + alias + `.field='title' AND EXISTS(
 			SELECT 1 FROM catalog_series s
 			WHERE s.id=` + alias + `.entity_id AND ` + alias + `.source_text=s.title
-			  AND (SELECT COUNT(*) FROM catalog_series_member m WHERE m.series_id=s.id)>=2
-			  AND EXISTS(SELECT 1 FROM catalog_series_member m
-				JOIN source_catalog_entry e ON e.id=m.catalog_entry_id
-				JOIN file_source src ON src.id=e.file_source_id
-				WHERE m.series_id=s.id AND e.relocated_to_id IS NULL
-				  AND src.enabled=1 AND src.source_type='openlist' AND ` + catalogEntryAdmittedSQL("e") + `)
+			  AND ` + translationSeriesEligibilitySQL("s") + `
 			  AND (` + alias + `.origin='native' OR (` + alias + `.origin='model' AND ` + alias + `.config_key=?))))
 		OR (` + alias + `.entity_kind='work' AND ` + alias + `.field IN ('title','description') AND EXISTS(
 			SELECT 1 FROM work w

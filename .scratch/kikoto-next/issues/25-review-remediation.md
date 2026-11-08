@@ -42,6 +42,8 @@
 
 ## Comments
 
+2026-11-09：实际隔离服务的组合负载初始化复现覆盖统计超过 15 秒。新增包含系列与 preparing 发布操作的规模回归，修复成员查询重复展开及预算统计重复扫描，见[系列覆盖成本](../evidence/25-translation-series-coverage-cost.md)。本批保持原验收预算和 schema 111；同候选真实组合负载及部署仍待完成。
+
 2026-11-09：分组索引 111 与事务内语句复用已集成，见[分组成本](../evidence/25-grouping-lock-cost.md)。最新缓存候选、CI 运行成本及两项复审遗漏已修复，见[淘汰候选](../evidence/25-retention-selection.md)、[race 分片](../evidence/25-ci-race-budget.md)、[关联退役](../evidence/25-association-retirement.md)和[活跃订阅版本](../evidence/25-version-stale-response.md)。上述证据保持原功能与资源门槛，当前票仍待同候选 Full CI、目标机及部署验收。
 
 2026-11-08：`5f78ae45` 修复完整索引及增量恢复中的整根旧拆分卡退役，新增 110 持久游标；1,103 张旧卡的单事务 entry 写入由 1,104 降至 64，故障、低空间和取消后实际重启恢复保留个人评分，见[退役资源证据](../evidence/25-split-retirement-bounds.md)。完整 CI 的工作表观察和拆分保存屏障修正及未解决 race 问题见[完整门禁续验](../evidence/25-ci-publication-and-split.md)。本票继续 in-progress。

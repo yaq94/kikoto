@@ -5,14 +5,16 @@
 
 ## 当前状态
 
-**当前部署（2026-11-09 核实）：** `kikoto:next-53d905e1`，schema 105，容器保持运行且未重启；可用盘约 13.6 GiB、可用内存约 1.6 GiB。新候选仍须完成 105→111→105 的隔离恢复及部署验收。旧部署 Full CI 的失败记录保留；生产清理 apply 暂不执行。
+**当前部署（2026-11-09 核实）：** `kikoto:next-53d905e1`，schema 105，生产未更新。`44007193` 已完成隔离 105→111→105 恢复、个人记录回读、真实媒体 Range、共享关联／拆分及浏览器播放恢复；原始证据在仓库外。组合负载初始化发现覆盖统计超时，本批继续修复；最终候选部署前仍须核实资源、备份与恢复路径。
 **2026-10-28 历史集成记录：** 集成分支 `codex/kikoto-catalog-remediation` 已推进到当前候选 `15b84ed2`；提交清单见 [24 候选账本](evidence/24-candidate-15b84ed2.md) 第 2 节。迁移头仍为 `105`，本候选未改迁移。相对 `c7d793e4` 新增四个提交：`38965f64` 让未进入视口的字段不再声称“正在翻译”（/voices/4 首屏 113 个字段曾永不结算）；`c2057b7c` 把可见性闩锁按请求键作用域并让已定结果优先；`907391f2` 与 `15b84ed2` 修 CI race 用例（该用例在 race 下耗时 300.71 s 触发 503，现为 22.70 s）。部署后实测：`/voices/4` 首屏 60 existing / 7 translated / 113 original、0 pending、0 failed；滚动 8 屏后 159 / 20 / 1、仍 0 pending、0 failed；asmr.one 基线 35 的卡片无徽章，有真实收藏信号后分数升至 40–54；索引详情默认折叠；目录卡入队与两张无编号卡的独立标记均通过。详见 [25 号证据](evidence/25-live-browser.md) 第 14 节。
 
 **审查快照：** 审查时文档基线 `6122b7bf`；代码审查基线 `301e6c63`。`6b4a02ec`（096 与系列暂存）、`728651a6`（v2 可选 `parent`）、`47df9c11`（wall-clock/partial 调度）均已并入当前分支，但仍需在当前候选上重新验收；不要把它们当作已签收的外部交付。历史 run 53 为 partial，不能当作完整覆盖。2026-10-25 的逐项审查见 [audit-20261025-review.md](audit-20261025-review.md)。
 
-**当前整改候选：** 集成分支 `codex/kikoto-catalog-remediation` 已集成 106–111；`f33e51be` 的双轴审查发现三项行为问题，已由 `2c149784` 与 `90559f13` 修复，`76c4a4c7` 修复版本切换测试的迟到响应投递。准备期评价身份和共享预览见[发布与个人记录](evidence/25-publication-records.md)，多根恢复见[有限扫描恢复](evidence/25-finite-root-resume.md)，浏览器版本证据见[响应顺序](evidence/25-version-response-order.md)。`f33e51be` Full CI run `42498479864` 失败于缓存写竞争、三个 race 分片整包超时及版本测试；新候选继续处理并复验，未部署。
+**此前整改记录：** 集成分支 `codex/kikoto-catalog-remediation` 已集成 106–111；`f33e51be` 的双轴审查发现三项行为问题，已由 `2c149784` 与 `90559f13` 修复，`76c4a4c7` 修复版本切换测试的迟到响应投递。准备期评价身份和共享预览见[发布与个人记录](evidence/25-publication-records.md)，多根恢复见[有限扫描恢复](evidence/25-finite-root-resume.md)，浏览器版本证据见[响应顺序](evidence/25-version-response-order.md)。`f33e51be` Full CI run `42498479864` 失败于缓存写竞争、三个 race 分片整包超时及版本测试；新候选继续处理并复验，未部署。
 
 `final-spec-review-20261024.md` 曾在 `a711bc39` 记录 AC-14 的系列发现失败（单集/格式副本/Bonus、成员上限）和 AC-26 的部署证据缺口；后续未提交工作区改动不能替代当前 SHA 的回归，24 必须把 AC-14 列入首要门禁。
+
+**最新整改（2026-11-09）：** `d035ce8e` 修复匹配候选重复编译查询，`a1c73fbb`／`44007193` 修复翻译前置读取成本与原简介候选，证据见[匹配请求预算](evidence/25-matching-request-budget.md)和[翻译前置读取](evidence/25-translation-admission-cost.md)。`44007193` Full CI run `42515346566` 已终态 success，31 个 job 全部通过；该结果不覆盖后续系列统计修复。目录发布期间系列覆盖统计的合成红绿回归和当前检查见[系列覆盖成本](evidence/25-translation-series-coverage-cost.md)；真实索引仍有 27 个未确认空目录，完整覆盖、组合负载与生产部署继续待验收。
 
 ## 当前整改依赖与责任
 

@@ -82,37 +82,17 @@ func (s *Server) pruneContentTranslations(ctx context.Context, cfg translation.C
 // exceeds it. Persistent rows are never deleted, so exceeding the budget is a
 // signal rather than permission to sacrifice search.
 func (s *Server) translationBudgetReport(ctx context.Context, cfg translation.Config) (bool, int64, error) {
-	rows, logical, err := s.evictableTranslationStats(ctx, cfg)
+	usage, err := s.translationBudgetUsage(ctx, cfg)
 	if err != nil {
 		return false, 0, err
 	}
-	bytes := logical
-	if measured, ok := s.translationCacheDiskBytesFor(ctx, cfg); ok {
+	bytes := usage.contentCacheText + usage.sourceText
+	if measured, ok := s.translationCacheDiskBytesForUsage(ctx, usage); ok {
 		bytes = measured
 	}
-	persistent, err := s.persistentTranslationTextBytes(ctx, cfg)
-	if err != nil {
-		return false, 0, err
-	}
-	overRows := cfg.MaxEntries > 0 && rows > int64(cfg.MaxEntries)
-	overBytes := cfg.CacheBytes > 0 && (bytes+persistent > cfg.CacheBytes)
+	overRows := cfg.MaxEntries > 0 && usage.cacheRows > int64(cfg.MaxEntries)
+	overBytes := cfg.CacheBytes > 0 && (bytes+usage.persistentText > cfg.CacheBytes)
 	return overRows || overBytes, bytes, nil
-}
-
-// persistentTranslationTextBytes is the logical text footprint of current
-// title/description rows. It is the protected share that a cache measurement
-// cannot free; the operator still sees it in the soft-budget decision.
-func (s *Server) persistentTranslationTextBytes(ctx context.Context, cfg translation.Config) (int64, error) {
-	var bytes int64
-	err := s.db.QueryRowContext(ctx, `SELECT COALESCE(sum(
-			length(CAST(ct.source_text AS BLOB))+length(CAST(ct.translated_text AS BLOB))),0)
-		FROM content_translation ct
-		WHERE ct.origin='model' AND `+translationPersistentCorpusSQL("ct"),
-		translation.ConfigKey(cfg), translation.ConfigKey(cfg), translation.ConfigKey(cfg)).Scan(&bytes)
-	if err != nil {
-		return 0, fmt.Errorf("measure persistent translation corpus: %w", err)
-	}
-	return bytes, nil
 }
 
 // pruneTranslationCache is the shared implementation. A write-path pass only
@@ -291,6 +271,14 @@ func (s *Server) translationCacheDiskBytes(ctx context.Context) (int64, bool) {
 }
 
 func (s *Server) translationCacheDiskBytesFor(ctx context.Context, cfg translation.Config) (int64, bool) {
+	usage, err := s.translationBudgetUsage(ctx, cfg)
+	if err != nil {
+		return 0, false
+	}
+	return s.translationCacheDiskBytesForUsage(ctx, usage)
+}
+
+func (s *Server) translationCacheDiskBytesForUsage(ctx context.Context, usage translationBudgetUsage) (int64, bool) {
 	var contentPages, sourcePages sql.NullInt64
 	err := s.db.QueryRowContext(ctx, `SELECT
 		COALESCE(sum(CASE WHEN name='content_translation'
@@ -308,17 +296,9 @@ func (s *Server) translationCacheDiskBytesFor(ctx context.Context, cfg translati
 	}
 	// Only rebuildable rows are cache. A native row, or a current corpus row,
 	// contributes its page share to the protected side instead.
-	var cacheText, totalText int64
-	if err = s.db.QueryRowContext(ctx, `SELECT
-		COALESCE(sum(CASE WHEN origin='model' AND NOT `+translationPersistentCorpusSQL("ct")+`
-			THEN length(CAST(ct.source_text AS BLOB))+length(CAST(ct.translated_text AS BLOB)) ELSE 0 END),0),
-		COALESCE(sum(length(CAST(ct.source_text AS BLOB))+length(CAST(ct.translated_text AS BLOB))),0)
-		FROM content_translation ct`, translation.ConfigKey(cfg), translation.ConfigKey(cfg), translation.ConfigKey(cfg)).Scan(&cacheText, &totalText); err != nil {
-		return 0, false
-	}
 	modelContentPages := int64(0)
-	if totalText > 0 {
-		modelContentPages = contentPages.Int64 * cacheText / totalText
+	if usage.contentTotalText > 0 {
+		modelContentPages = contentPages.Int64 * usage.contentCacheText / usage.contentTotalText
 	}
 	return modelContentPages + sourcePages.Int64, true
 }
