@@ -165,6 +165,37 @@ func (s *Server) saveContentTranslations(ctx context.Context, rows []contentTran
 		return "", fmt.Errorf("save content translations: %w", err)
 	}
 	defer release()
+	keys := make([]string, 0, len(rows))
+	for _, row := range rows {
+		if row.CacheKey == "" {
+			return "", errors.New("save content translations: empty cache key")
+		}
+		keys = append(keys, row.CacheKey)
+	}
+	// New rows get their scope from the insert trigger. Only keys already in
+	// this locked snapshot need the explicit upsert refresh; compiling it for
+	// every new translation repeats the same expensive publication-aware work.
+	existingRows, err := tx.QueryContext(ctx, `SELECT cache_key FROM content_translation
+		WHERE cache_key IN (`+sqlPlaceholders(len(keys))+`)`, stringArgs(keys)...)
+	if err != nil {
+		return "", fmt.Errorf("read existing translation keys: %w", err)
+	}
+	var existingKeys []string
+	for existingRows.Next() {
+		var key string
+		if err := existingRows.Scan(&key); err != nil {
+			_ = existingRows.Close()
+			return "", err
+		}
+		existingKeys = append(existingKeys, key)
+	}
+	if err := existingRows.Err(); err != nil {
+		_ = existingRows.Close()
+		return "", err
+	}
+	if err := existingRows.Close(); err != nil {
+		return "", err
+	}
 	stmt, err := tx.PrepareContext(ctx, `
 		INSERT INTO content_translation(
 		  cache_key, entity_kind, entity_id, entity_key, field, language,
@@ -180,11 +211,7 @@ func (s *Server) saveContentTranslations(ctx context.Context, rows []contentTran
 		return "", fmt.Errorf("save content translations: %w", err)
 	}
 	defer stmt.Close()
-	keys := make([]string, 0, len(rows))
 	for _, row := range rows {
-		if row.CacheKey == "" {
-			return "", errors.New("save content translations: empty cache key")
-		}
 		if row.Origin == "model" && row.ConfigKey == "" {
 			if cfgErr != nil {
 				return "", fmt.Errorf("save content translations: load configuration: %w", cfgErr)
@@ -196,13 +223,12 @@ func (s *Server) saveContentTranslations(ctx context.Context, rows []contentTran
 			row.Origin, row.ConfigKey, row.Model, row.TemplateVersion); err != nil {
 			return "", fmt.Errorf("save content translation %q: %w", row.Field, err)
 		}
-		keys = append(keys, row.CacheKey)
 	}
 	// The scope columns answer "is this row still searchable", and they depend
 	// on the row that was just written. The insert trigger covers new keys; an
 	// upsert of an existing key does not fire it, so the batch recomputes its
 	// own rows from the same view the triggers read.
-	if err := refreshContentTranslationScopeTx(ctx, tx.Tx, keys); err != nil {
+	if err := refreshContentTranslationScopeTx(ctx, tx.Tx, existingKeys); err != nil {
 		return "", err
 	}
 	if err := tx.Commit(); err != nil {
