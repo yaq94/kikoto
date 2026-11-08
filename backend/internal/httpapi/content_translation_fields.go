@@ -99,6 +99,9 @@ func (s *Server) loadTranslationField(ctx context.Context, in contentTranslation
 	if in.WorkID <= 0 {
 		return readableTranslationField{}, sql.ErrNoRows
 	}
+	if in.Field == "title" || in.Field == "description" {
+		return s.loadWorkProseTranslationField(ctx, in)
+	}
 	work, err := s.loadWorkDetail(ctx, 0, in.WorkID, false)
 	if err != nil {
 		return readableTranslationField{}, err
@@ -108,64 +111,6 @@ func (s *Server) loadTranslationField(ctx context.Context, in contentTranslation
 		field.Names = append(field.Names, credit.DisplayName)
 	}
 	switch in.Field {
-	case "title", "description":
-		candidates := []string{work.Title}
-		if in.Field == "description" {
-			candidates = []string{work.Description}
-		}
-		inputs, err := s.loadWorkTitleInputs(ctx, []int64{in.WorkID}, true)
-		if err != nil {
-			return field, err
-		}
-		input := inputs[in.WorkID]
-		var originalTitle, originalDescription string
-		if err := s.db.QueryRowContext(ctx, "SELECT title,description FROM work WHERE id=?", in.WorkID).Scan(&originalTitle, &originalDescription); err != nil {
-			return field, err
-		}
-		field.Original = originalTitle
-		if input.Manual[""] != "" {
-			field.Original = input.Manual[""]
-		}
-		if in.Field == "description" {
-			field.Original = originalDescription
-		}
-		for _, v := range work.MetadataView.Variants {
-			if in.Field == "title" {
-				candidates = append(candidates, v.Title)
-			} else {
-				candidates = append(candidates, v.Description)
-			}
-		}
-		for _, v := range input.Variants {
-			if in.Field == "title" {
-				candidates = append(candidates, metadatatitles.Display(v.Title, !v.Origin), v.Title)
-			} else {
-				candidates = append(candidates, v.Description)
-			}
-		}
-		// An existing target-language text only answers the selection it came
-		// from. A title from another edition or a language manual is a separate
-		// source text and must not replace the text the caller selected.
-		if in.Field == "title" {
-			for _, choice := range work.TitleChoices {
-				candidates = append(candidates, choice.Title)
-			}
-			field.Existing = targetTitleFor(input, in.Text, in.Language, true)
-		} else {
-			originDescription := metadatatitles.Original(input.Variants, input.Fallback).Description
-			for _, v := range input.Variants {
-				if v.Language != in.Language || v.Description == "" {
-					continue
-				}
-				if v.Description == in.Text || in.Text == originDescription {
-					field.Existing = v.Description
-					break
-				}
-			}
-		}
-		if slices.Contains(candidates, in.Text) {
-			field.Text = in.Text
-		}
 	case "tag":
 		if slices.Contains(work.Tags, in.Text) {
 			field.Text = in.Text

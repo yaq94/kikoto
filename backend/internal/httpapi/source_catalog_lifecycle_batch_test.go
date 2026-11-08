@@ -60,6 +60,10 @@ type catalogCountingConn struct {
 	counter *catalogStatementCounter
 }
 
+func (c *catalogCountingConn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.Tx, error) {
+	return c.Conn.(driver.ConnBeginTx).BeginTx(ctx, opts)
+}
+
 func (c *catalogCountingConn) ExecContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
 	c.counter.add(query)
 	execer, ok := c.Conn.(driver.ExecerContext)
