@@ -5,7 +5,7 @@
 **Blocked by:** 无新增功能依赖。必须在 [17：发布与部署验收](17-integrated-acceptance-release-plan.md) 之前集成；原 01–17 工单保持原有功能范围。
 
 **Status:** ready-for-agent
-**Implementation:** verified-local；本地实现与 H/R 已验收；最终候选的 Full CI 及生产部署验收由 24 汇总，不能用旧 SHA 的 run 关闭。
+**Implementation:** resolved（验收候选 `2dbfa228`）；本票原始主责及共同验收由当前 SHA 的 Full CI、对应 H/R/F/U 与实际服务证据复核，完整归属、运行范围和部署结果见[候选账本](../evidence/24-candidate-2dbfa228.md)。历史记录仅证明其注明版本。
 **交付分支:** `codex/kikoto-ci-migration`
 
 **依据:** 已确认的四项 CI 修复要求（原继续任务用户指令 `01a13ef8-4654-7460-9b10-9a1e19b87361`）及当前部署完整授权；[正式规格](../spec.md) 的共同可靠性与验收要求。
@@ -19,7 +19,7 @@
 - [x] 原迁移、复制清理、往返、重启回归及有界 race 重复测试通过。
 - [x] 相关 Makefile 检查、文档通过。
 - 提交前运行敏感信息检查，并提交、推送本票分支；以分支 Git 历史及交接 SHA 核对。
-- [ ] 主集成完成最终 Full CI；本票本地验证不替代 Full 终态。
+- [x] 主集成完成最终 Full CI；本票本地验证不替代 Full 终态。
 
 ## 测试与交付边界
 

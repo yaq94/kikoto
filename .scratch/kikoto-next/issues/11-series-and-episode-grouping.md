@@ -8,7 +8,7 @@
 **发布依赖:** 07 全部验收（含真实媒体 LIVE）和本票完整清单仍须通过；本地开发不关闭外部缺口，也不改变作品身份及个人记录保护要求。
 
 **Status:** ready-for-agent
-**Implementation:** resolved；本地实现与 H/F 已验收；生产部署验收见 17。
+**Implementation:** resolved（验收候选 `2dbfa228`）；本票原始主责及共同验收由当前 SHA 的 Full CI、对应 H/R/F/U 与实际服务证据复核，完整归属、运行范围和部署结果见[候选账本](../evidence/24-candidate-2dbfa228.md)。历史记录仅证明其注明版本。
 **本地证据:** [071、H/R/F 与回归验收](../evidence/11-series.md)。本票清单通过，07 真实媒体 LIVE 的发布依赖仍保留。
 
 **依据:** [正式规格](../spec.md) · [工单总览](../ticket-proposal.md)

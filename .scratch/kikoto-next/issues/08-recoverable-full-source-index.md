@@ -8,12 +8,10 @@
 **发布依赖:** 07 全部验收（含真实媒体 LIVE）和本票完整清单仍须通过；本地开发不关闭外部缺口，也不删减真实索引覆盖要求。
 
 **Status:** ready-for-agent
-**Implementation:** verified-local；本地实现与 H/F 已验收；run 53 仍为 partial，真实全量覆盖、093/095/096 迁移链与 G1–G3 由 24 复验。
+**Implementation:** resolved（验收候选 `2dbfa228`）；本票原始主责及共同验收由当前 SHA 的 Full CI、对应 H/R/F/U 与实际服务证据复核，完整归属、运行范围和部署结果见[候选账本](../evidence/24-candidate-2dbfa228.md)。历史记录仅证明其注明版本。
 **Evidence:** [08 本地索引证据](../evidence/08-source-index.md)
 
-production 的 runId 41 终态为 `partial`（14,458/14,491 complete、6 failed、
-27 未确认空），不能写作完整覆盖；修复后的 runId 42 仍在运行。准入规则修复
-与强制新 generation 已合入，生产终态与覆盖证据待该轮收尾后补记。
+历史生产 runId 41 终态为 `partial`（14,458/14,491 complete、6 failed、27未确认空），当时run42仍在运行。当前候选已完成合成全集及真实运行报告复核；隔离完整扫描收于partial，当前生产复用检查点续跑，范围和失败计数以[候选账本](../evidence/24-candidate-2dbfa228.md)为准。
 
 **依据:** [正式规格](../spec.md) · [工单总览](../ticket-proposal.md)
 

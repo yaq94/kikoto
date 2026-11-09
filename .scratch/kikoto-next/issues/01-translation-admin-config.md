@@ -5,7 +5,7 @@
 **Blocked by:** None (can start immediately)
 
 **Status:** ready-for-agent
-**Implementation:** resolved；本地实现与 H/F 已验收；生产部署验收见 17。
+**Implementation:** resolved（验收候选 `2dbfa228`）；本票原始主责及共同验收由当前 SHA 的 Full CI、对应 H/R/F/U 与实际服务证据复核，完整归属、运行范围和部署结果见[候选账本](../evidence/24-candidate-2dbfa228.md)。历史记录仅证明其注明版本。
 
 H、R、两条真实前后端 F 与一次新客户端 LIVE 均已通过；逐项结果、红绿记录、命令和限制见[本票验收证据](../evidence/01-translation.md)。集成与后续部署由[执行记录](../execution.md)维护。
 

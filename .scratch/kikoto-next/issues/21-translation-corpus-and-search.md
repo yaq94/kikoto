@@ -5,7 +5,7 @@
 **Blocked by:** [03：简繁转换与受保护名称保持](03-traditional-chinese-conversion.md)（02 为传递前置）；[07](07-openlist-first-playable-slice.md)（entry 实体）；[08](08-recoverable-full-source-index.md)（有效集合与准入）；[20](20-catalog-sync-and-admission.md)（098 迁移）。
 
 **Status:** ready-for-agent
-**Implementation:** verified-local；`f3dc3a41` 补齐 099 配置键、有效语料覆盖、持久 prefill 失败、保留规则与严格语言搜索；`0c945b3e` 增加 102 的 `failed` 状态枚举与失败表 `(config_key, source_hash)` 索引；`bc880d91` 把本地、远程与 bench 的 1–2 字查询统一到共享短查询生成器，并给远程短查询补上 D-16 准入；`6f39e888` 用 103 的 `idx_content_translation_short_scan` 替换 099 的两个短查询索引；`a2a84617` 写入 `failed` 终态并把覆盖拆为 `native`／`model`；`0ec8cda0` 的 105 把 `source_id`／`browsable` 物化到译文行，短查询不再逐行回查实体，结果上限 1000；`fb9dd2c0` 在生命周期结算、子树删除、排除与重定位路径恢复 scope；`7565c852` 让 work 短查询保持索引顺序。迁移头为 105，`compat/105_dev.sql` 已生成，`migration_chain_105_test.go` 覆盖 68/84→105。目标机 456,000 行基准：卡片页与同预算总数 p95 均在 13 ms 内、零命中 48 ms、标题整串等值 1.37–1.73 ms、编号等值 0.018 ms；无预算全量计数 p95 667–693 ms，已由结果预算与 `truncated` 取代。仍待 24 在最终候选上重跑迁移链、Full CI 与部署后真实翻译/搜索验收。
+**Implementation:** resolved（验收候选 `2dbfa228`）；本票原始主责及共同验收由当前 SHA 的 Full CI、对应 H/R/F/U 与实际服务证据复核，完整归属、运行范围和部署结果见[候选账本](../evidence/24-candidate-2dbfa228.md)。历史记录仅证明其注明版本。
 
 **依据:** [正式规格](../spec.md)、[整改计划](../review-remediation-plan.md)、[ADR-0006](../../../docs/decisions/ADR-0006-catalog-remediation-and-translation-consistency.md)、翻译工作包 D-27/D-29/D-30。
 

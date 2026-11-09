@@ -5,7 +5,7 @@
 **Blocked by:** [16：个人数据导入导出](16-personal-data-transfer-compatibility.md)；迁移 100 已在 099 之后落地，不再阻塞。
 
 **Status:** ready-for-agent
-**Implementation:** resolved（记录 SHA `f727feee`）；迁移 100 增加 `work.parent_work_id`，父级导入与系列详情回退（`catalogEntryId=0`）已落地。导出格式为 `version: 2` 加可选 `parent`（`transfer_export.go:30`），v3 按未知版本拒绝；父级别名冲突报告 `parent_alias_not_imported`（`transfer_import.go:246`）。导出遇多父系列不再致命：`exportIdentity` 把冲突降级为 `issues[].reason=parent_conflict`，条目保留 ref 与评分备注、`parent` 留空（`transfer_identity.go:10-75`）。`go test ./internal/personal/ ./internal/httpapi/ -run 'Personal|Transfer' -count=1` 在记录 SHA 上通过。
+**Implementation:** resolved（验收候选 `2dbfa228`）；本票原始主责及共同验收由当前 SHA 的 Full CI、对应 H/R/F/U 与实际服务证据复核，完整归属、运行范围和部署结果见[候选账本](../evidence/24-candidate-2dbfa228.md)。历史记录仅证明其注明版本。
 
 **依据:** [正式规格](../spec.md)、[ADR-0004](../../../docs/decisions/ADR-0004-work-identity-and-personal-state.md)、[ADR-0006](../../../docs/decisions/ADR-0006-catalog-remediation-and-translation-consistency.md)。
 

@@ -5,7 +5,7 @@
 **Blocked by:** [03：简繁转换与受保护名称保持](03-traditional-chinese-conversion.md)；[05：多源目录刷新与播放状态隔离](05-multi-source-directory-playback.md)；[09：每日更新与已有扫描复用](09-daily-index-update.md)；[10：来源目录改名、失联、删除与恢复](10-source-lifecycle-retention.md)；[14：高置信唯一候选自动关联](14-high-confidence-work-matching.md)；[15：拆分预览与本人记录归属选择](15-split-personal-record-allocation.md)；[16：编号、无码、系列与单集个人数据导入导出](16-personal-data-transfer-compatibility.md)；[18：迁移完成状态与维护状态一致发布](18-ci-migration-completion-state.md)；[19：既有浏览器测试可靠性](19-ci-browser-reliability.md)。
 
 **Status:** ready-for-agent
-**Implementation:** in-progress；当前 106–111 候选的组合负载、真实接口、恢复与部署验收须重新完成。`15b84ed2` 的结果保留在 [17 组合验收](../evidence/17-integrated-acceptance.md)，仅证明该历史产物。
+**Implementation:** resolved（验收候选 `2dbfa228`）；本票原始主责及共同验收由当前 SHA 的 Full CI、对应 H/R/F/U 与实际服务证据复核，完整归属、运行范围和部署结果见[候选账本](../evidence/24-candidate-2dbfa228.md)。历史记录仅证明其注明版本。
 
 **依据:** [正式规格](../spec.md) · [工单总览](../ticket-proposal.md) · [整改计划](../review-remediation-plan.md)。
 
@@ -17,13 +17,13 @@
 
 当前应用候选为 `2dbfa228`，逐项证据见[候选账本](../evidence/24-candidate-2dbfa228.md)。以下门禁只随当前实际结果签收。
 
-- [ ] 同一构建贯通编号/无码浏览、翻译、目录、评价与必要共享操作，包含真实前后端联通。
-- [ ] 播放并行浏览、扫描、翻译及低空间H/R/F通过；音轨、队列和进度保持，失败可恢复。
-- [ ] 请求、队列、缓存、内存与磁盘的实际观察符合已确认预算。
-- [ ] 当前模型、简繁、媒体Range/定位与指定环境播放均有实际证据。
-- [ ] 当前迁移、任务恢复、待确认操作、来源恢复、个人数据传输及备份回滚通过。
-- [ ] 本期只进行已选定的非视觉F，不新增截图、布局或人工视觉门禁。
-- [ ] 完成生产部署和逐项验收，提交脱敏版本、命令、退出状态及必要运维说明。
+- [x] 同一构建贯通编号/无码浏览、翻译、目录、评价与必要共享操作，包含真实前后端联通。
+- [x] 播放并行浏览、扫描、翻译及低空间H/R/F通过；音轨、队列和进度保持，失败可恢复。
+- [x] 请求、队列、缓存、内存与磁盘的实际观察符合已确认预算。
+- [x] 当前模型、简繁、媒体Range/定位与指定环境播放均有实际证据。
+- [x] 当前迁移、任务恢复、待确认操作、来源恢复、个人数据传输及备份回滚通过。
+- [x] 本期只进行已选定的非视觉F，不新增截图、布局或人工视觉门禁。
+- [x] 完成生产部署和逐项验收，提交脱敏版本、命令、退出状态及必要运维说明。
 
 ## 2026-10-28历史验收清单
 

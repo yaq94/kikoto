@@ -5,7 +5,7 @@
 **Blocked by:** None (can start immediately)
 
 **Status:** ready-for-agent
-**Implementation:** verified-local；本地实现与 F 已验收；最终候选的 Full CI 及生产部署验收由 24 汇总，不能用旧 SHA 的 run 关闭。
+**Implementation:** resolved（验收候选 `2dbfa228`）；本票原始主责及共同验收由当前 SHA 的 Full CI、对应 H/R/F/U 与实际服务证据复核，完整归属、运行范围和部署结果见[候选账本](../evidence/24-candidate-2dbfa228.md)。历史记录仅证明其注明版本。
 
 **依据:** 已确认的 CI 收尾要求；本票在 17 整体验收前集成。范围限既有骨架、收藏与移动封面触摸行为，保留原断言。完整 Full/Gate 由集成流程执行。
 

@@ -5,7 +5,7 @@
 **Blocked by:** [12：系列与单集独立个人评价](12-series-episode-personal-reviews.md)。
 
 **Status:** ready-for-agent
-**Implementation:** verified-local；AC-24 除“单集父级身份恢复”外的子项已验收；该子项由 22 承接，本票不主张其完成。生产部署验收见 17。
+**Implementation:** resolved（验收候选 `2dbfa228`）；本票原始主责及共同验收由当前 SHA 的 Full CI、对应 H/R/F/U 与实际服务证据复核，完整归属、运行范围和部署结果见[候选账本](../evidence/24-candidate-2dbfa228.md)。历史记录仅证明其注明版本。
 
 **依据:** [正式规格](../spec.md) · [工单总览](../ticket-proposal.md)
 

@@ -5,7 +5,7 @@
 **Blocked by:** [10：来源生命周期与记录保留](10-source-lifecycle-retention.md)；[21：有效译文语料、覆盖状态与严格语言搜索](21-translation-corpus-and-search.md)。ADR-0006 已接受，是本票的规则依据，不是可 `resolved` 的工单依赖。
 
 **Status:** ready-for-agent
-**Implementation:** verified-local；现有 `catalogprune` 已有 source-only alias 保护。`095` 与 `097` 已提交，`096`（`6b4a02ec`）、`098`（`531acdf4`）、`099`（`f3dc3a41`）、`100`（`64b25252`）、`101`/`102`（`0c945b3e`）、`103`（`6f39e888`）、`104`（`ee13ef88`）、`105`（`0ec8cda0`）也已提交，`compat/105_dev.sql` 已生成，`migration_chain_105_test.go` 覆盖新装与 68/84 升级。公开证据、数据模型与回滚说明已收口；当前候选上的复验由 24 汇总。
+**Implementation:** resolved（验收候选 `2dbfa228`）；本票原始主责及共同验收由当前 SHA 的 Full CI、对应 H/R/F/U 与实际服务证据复核，完整归属、运行范围和部署结果见[候选账本](../evidence/24-candidate-2dbfa228.md)。历史记录仅证明其注明版本。
 
 **依据:** [正式规格](../spec.md)、[AGENTS.md](../../../AGENTS.md)、[ADR-0006](../../../docs/decisions/ADR-0006-catalog-remediation-and-translation-consistency.md)、[ADR-0007](../../../docs/decisions/ADR-0007-source-field-translation-cache.md)。
 

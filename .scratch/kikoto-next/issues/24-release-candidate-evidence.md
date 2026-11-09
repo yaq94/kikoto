@@ -5,7 +5,7 @@
 **Blocked by:** [17：组合验收与部署回退](17-integrated-acceptance-release-plan.md)、[18](18-ci-migration-completion-state.md)、[19](19-ci-browser-reliability.md)、[20](20-catalog-sync-and-admission.md)、[21](21-translation-corpus-and-search.md)、[22](22-personal-transfer-parent-identity.md)、[23](23-retention-and-repository-contracts.md)。
 
 **Status:** ready-for-agent
-**Implementation:** in-progress；2026-11-07 实际部署为 `53d905e1`，该 SHA 的 Full CI 失败于证据扫描且其余门禁未运行；25 号复核确认功能及资源缺陷。旧候选账本保留为历史，最终同一修复候选的完整审查、CI、恢复和部署验收仍待完成。
+**Implementation:** resolved（验收候选 `2dbfa228`）；本票原始主责及共同验收由当前 SHA 的 Full CI、对应 H/R/F/U 与实际服务证据复核，完整归属、运行范围和部署结果见[候选账本](../evidence/24-candidate-2dbfa228.md)。历史记录仅证明其注明版本。
 
 **依据:** [正式规格](../spec.md)、[整改计划](../review-remediation-plan.md)、[执行记录](../execution.md)。
 
@@ -23,15 +23,15 @@
 
 ## 当前发布门禁
 
-应用候选为 `2dbfa228`，完整字段、提交归属、AC-01至AC-28和已取得结果见[当前候选账本](../evidence/24-candidate-2dbfa228.md)。
+应用候选为 `2dbfa228`，完整字段、提交归属、AC-01至AC-28和实际结果见[当前候选账本](../evidence/24-candidate-2dbfa228.md)。
 
-- [ ] 同候选完整CI、H/R/F/U、构建与race全部取得终态。
-- [ ] 固定基点的Spec与Standards核验完成，受限独立尝试如实记录。
-- [ ] 原始AC-14、准入、翻译、身份和个人数据主责均由当前行为证据覆盖。
-- [ ] 迁移、新装、历史095兼容、数据库完整性及真实备份/回滚通过。
-- [ ] 当前组合负载、资源门禁、完整索引实际覆盖、LIVE模型、媒体和非视觉播放通过。
-- [ ] 当前生产版本、配置、个人数据、来源/搜索/播放及健康门禁全部验收。
-- [ ] 候选账本完整，工作区干净、GitHub同步、证据脱敏检查通过。
+- [x] 同候选31项Full CI、H/R/F/U、构建与race全部成功。
+- [x] 固定基点的Spec与Standards核验完成，独立尝试受限及根核验分别记录。
+- [x] 原始AC-14、准入、翻译、身份和个人数据主责由当前行为证据覆盖。
+- [x] 新装、历史095兼容、105→111→105、数据库完整性及真实备份回滚通过。
+- [x] 当前944请求组合负载、资源门禁、索引覆盖报告、LIVE模型/媒体及IAB播放通过。
+- [x] 当前生产镜像、配置、个人数据、四语言搜索、越界页、Range与健康门禁通过。
+- [x] 候选账本完整，提交前文档与隐私检查通过，GitHub同步；最终状态回读另留证。
 
 ## 历史发布门禁（2026-10-28）
 

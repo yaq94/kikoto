@@ -2,7 +2,7 @@
 
 **Status:** ready-for-agent
 **设计状态:** 已确认（Q31）；用户故事、验收要求与测试边界作为实施合同。
-**Implementation:** in-progress；2026-11-07 复核当前实现后确认功能与资源处理缺陷，整改见 [25 号工单](issues/25-review-remediation.md)。旧验收仅保留为历史证据；全部要求继续有效，修复后的同一候选必须重新完成审查、测试、Full CI 与部署验收。
+**Implementation:** resolved；已确认功能及25号整改在 `2dbfa228` 完成验收并部署，Full CI 31项全部成功；AC-01至AC-28、当前运行证据与上游范围见[候选账本](evidence/24-candidate-2dbfa228.md)。本规格全部要求保持有效，历史证据仅证明其注明产物。
 **执行授权:** 用户已授权本规格全部功能实现、必要依赖安装、测试、数据库迁移、部署与回滚；进度及证据见[执行记录](execution.md)。
 **领域依据:** [GLOSSARY](../../GLOSSARY.md) · [作品身份与个人记录 ADR](../../docs/decisions/ADR-0004-work-identity-and-personal-state.md) · [整改一致性 ADR](../../docs/decisions/ADR-0006-catalog-remediation-and-translation-consistency.md)
 
@@ -252,5 +252,5 @@
 - 本规格继承已经确认的 Q1–Q31 决定与“少量浏览器纯功能测试、无真实浏览器视觉验证”边界；当前阶段按已授权的全范围实现、测试、迁移、部署与回滚推进。
 - 真实来源的访问证据按时间与路径分别记录：IAB 匿名网页可播放；程序 fs/get 在早期诊断中失败，后续声明 Kikoto 身份后取得两段真实媒体 Range（206×2 + sha256）。这些证据属于对应旧产物，当前候选仍需由 24 重新验证；详见 [07 证据](evidence/07-openlist.md#真实媒体-live-结果)。
 - Index 官方资料中的权重仓库为 IndexTeam/Index-Translate-35B-A3B-preview，公共客户端示例的 model 为 Index-Translate-35B-A3B；实际服务调用名由管理员配置。中文简体、英语、日语和韩语有官方条目，繁体路线按已确认转换方案验收。
-- 各项验收状态以[执行记录](execution.md)及对应票据为准。01–24 的旧本地、CI 与部署证据仅对各自记录的 SHA 有效，保留于原 evidence 文件。本轮 25 号整改仍在进行，集成分支包含新增 106–111，生产仍为 `53d905e1`/schema 105；不得沿用“候选未改迁移”的旧结论。当前根代理结果与未完成范围见[本轮集成证据](evidence/25-integration-20261108.md)及[完整门禁修复](evidence/25-full-ci-corrections.md)，最终同候选的 H/R/F、真实 Index、媒体及恢复复核由 17/24 重新签收。
+- 各项验收状态以[执行记录](execution.md)及对应票据为准。当前生产为 `2dbfa228`/schema111，01–25已按当前候选证据签收；完整CI、实际Index、媒体、恢复与部署结果见[候选账本](evidence/24-candidate-2dbfa228.md)。真实来源仍按运行报告列出未确认空目录、编码问题及续扫状态，不将未知范围写为全站complete。旧本地、CI与部署证据保留在原文件，只证明其注明SHA。
 - 参考：[OpenList 目录接口](https://github.com/OpenListTeam/OpenList/blob/main/server/handles/fsread.go)、[OpenList 搜索实现](https://github.com/OpenListTeam/OpenList/blob/main/internal/search/search.go)、[Index 模型卡](https://huggingface.co/IndexTeam/Index-Translate-35B-A3B-preview)、[Index 调用客户端](https://github.com/bilibili/Index-Translate/blob/main/inference/llm/call_api.py)、[Index 语言清单](https://arxiv.org/html/2609.40181)。
