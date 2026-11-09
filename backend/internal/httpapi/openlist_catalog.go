@@ -846,14 +846,14 @@ func (s *Server) listOpenListWorks(w http.ResponseWriter, r *http.Request, sourc
 			// more cards exist without a second query shape.
 			countPrefix, countFrom, countArgs = openListCatalogCardsQueryLocalized(
 				source.ID, q, targets, configKey, limit+1, limit+1)
+			// A saturated branch means the work bound, not the card budget,
+			// ended the scan. Report reachable cards and the cut branch.
+			countSQL = catalogStatementPrefix(countPrefix) + `SELECT COUNT(*),
+					(SELECT EXISTS(SELECT 1 FROM search_hits GROUP BY language,entity_kind HAVING COUNT(*)>` +
+				strconv.Itoa(limit) + `)) ` + countFrom
+		} else {
+			countSQL = catalogStatementPrefix(countPrefix) + "SELECT COUNT(*) " + countFrom
 		}
-		// A saturated branch means the work bound, not the card budget, ended the
-		// scan. The merged set can then be smaller than the budget while more
-		// cards exist, so the count reports both facts: cards reachable inside the
-		// bound, and whether any branch was cut.
-		countSQL = catalogStatementPrefix(countPrefix) + `SELECT COUNT(*),
-			(SELECT EXISTS(SELECT 1 FROM search_hits GROUP BY language,entity_kind HAVING COUNT(*)>` +
-			strconv.Itoa(limit) + `)) ` + countFrom
 		separateCount = short
 	} else {
 		prefix, from, args := openListCatalogCardsQuery(source.ID, q)

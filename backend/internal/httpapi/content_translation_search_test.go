@@ -269,33 +269,65 @@ func TestContentTranslationSearchRemoteTraditionalMergesLanguages(t *testing.T) 
 // total must agree with the cards actually returned across pages; the card
 // pipeline and the count share one materialised CTE.
 func TestContentTranslationSearchRemoteTotalMatchesPages(t *testing.T) {
-	db := openMigratedTestDB(t)
+	s, host, admin, _ := translationHTTPFixture(t)
+	db := s.db
 	seedCatalogPlanSource(t, db)
 	for index := int64(1); index <= 5; index++ {
 		insertCatalogPlanEntry(t, db, index, fmt.Sprintf("Original %d", index), "")
 		insertCatalogPlanAudio(t, db, index, "01.mp3", "rain")
 		source := fmt.Sprintf("Original %d", index)
-		insertTranslatedContent(t, db, "entry", index, "title", "zh-Hans", source, fmt.Sprintf("作品%d", index), "model")
+		insertTranslatedContent(t, db, "entry", index, "title", "zh-Hans", source, fmt.Sprintf("示例作品%d", index), "model")
 	}
-	seen := map[int64]bool{}
-	for page := 1; page <= 3; page++ {
-		response := requestRemoteWorks(t, db, fmt.Sprintf("q=%s&lang=zh-cn&pageSize=2&page=%d", url.QueryEscape("作品"), page))
-		if response.Total != 5 {
-			t.Fatalf("page %d total = %d, want 5", page, response.Total)
+	readPage := func(t *testing.T, query string, page int) remoteWorksResponse {
+		t.Helper()
+		req, err := http.NewRequest(http.MethodGet, host.URL+fmt.Sprintf("/api/remote-sources/7/works?q=%s&lang=zh-cn&pageSize=2&page=%d", url.QueryEscape(query), page), nil)
+		if err != nil {
+			t.Fatal(err)
 		}
-		for _, id := range remoteWorkIDs(response) {
-			if seen[id] {
-				t.Fatalf("card %d appeared on two pages", id)
+		req.AddCookie(admin)
+		res, err := host.Client().Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = res.Body.Close() }()
+		if res.StatusCode != http.StatusOK {
+			t.Fatalf("query %q page %d status=%d, want 200", query, page, res.StatusCode)
+		}
+		var response remoteWorksResponse
+		if err := json.NewDecoder(res.Body).Decode(&response); err != nil {
+			t.Fatal(err)
+		}
+		return response
+	}
+	for _, query := range []string{"作品", "示例作品"} {
+		t.Run(query, func(t *testing.T) {
+			seen := map[int64]bool{}
+			for page := 1; page <= 3; page++ {
+				response := readPage(t, query, page)
+				if response.Total != 5 || response.Truncated {
+					t.Fatalf("page %d total = %d, truncated=%t, want 5/false", page, response.Total, response.Truncated)
+				}
+				for _, id := range remoteWorkIDs(response) {
+					if seen[id] {
+						t.Fatalf("card %d appeared on two pages", id)
+					}
+					seen[id] = true
+				}
 			}
-			seen[id] = true
-		}
+			if len(seen) != 5 {
+				t.Fatalf("distinct cards = %d, want 5", len(seen))
+			}
+			out := readPage(t, query, 9)
+			if out.Total != 5 || len(out.Works) != 0 || out.Truncated {
+				t.Fatalf("out-of-range page = total %d rows %d truncated=%t, want 5/0/false", out.Total, len(out.Works), out.Truncated)
+			}
+		})
 	}
-	if len(seen) != 5 {
-		t.Fatalf("distinct cards = %d, want 5", len(seen))
-	}
-	out := requestRemoteWorks(t, db, fmt.Sprintf("q=%s&lang=zh-cn&pageSize=2&page=9", url.QueryEscape("作品")))
-	if out.Total != 5 || len(out.Works) != 0 {
-		t.Fatalf("out-of-range page = total %d rows %d, want 5/0", out.Total, len(out.Works))
+	// A retained page number after changing the search text must still return a
+	// valid empty page and must not match untranslated original titles.
+	out := readPage(t, "Original", 9)
+	if out.Total != 0 || len(out.Works) != 0 || out.Truncated {
+		t.Fatalf("untranslated empty page = total %d rows %d truncated=%t, want 0/0/false", out.Total, len(out.Works), out.Truncated)
 	}
 }
 
