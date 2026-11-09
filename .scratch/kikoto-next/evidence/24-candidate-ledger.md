@@ -109,7 +109,7 @@
 | 部署前 schema / 镜像 | TODO |
 | 回滚镜像 tag | TODO |
 | 回滚 schema 兼容矩阵 | TODO |
-| 健康门禁 | `GET /health` 200；生产 Compose 无 healthcheck |
+| 健康门禁 | `GET /health` 200；实际生产 Compose healthcheck 为 healthy |
 | 部署后验证结果 | TODO |
 | 是否触发回滚 | TODO |
 
