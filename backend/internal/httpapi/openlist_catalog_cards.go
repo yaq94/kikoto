@@ -147,9 +147,12 @@ func openListCatalogCardsQueryFiltered(sourceID int64, query string, entryIDs, s
 			entrySearch = ` AND (instr(lower(e.title),lower(?))>0 OR instr(lower(e.primary_code),lower(?))>0
 	OR EXISTS(SELECT 1 FROM source_catalog_file f WHERE f.catalog_entry_id=e.id AND instr(lower(f.title),lower(?))>0))`
 			entryArgs = []any{query, query, query}
-			seriesSearch = ` AND (instr(lower(s.title),lower(?))>0 OR EXISTS(
-	SELECT 1 FROM catalog_series_member m JOIN source_catalog_entry se ON se.id=m.catalog_entry_id
-	WHERE m.series_id=s.id AND (instr(lower(se.title),lower(?))>0 OR instr(lower(se.primary_code),lower(?))>0
+			// Collect matching member series once. A correlated EXISTS can make
+			// SQLite rescan the published entry union for every series when bounded
+			// planner statistics underestimate a source with retained identities.
+			seriesSearch = ` AND (instr(lower(s.title),lower(?))>0 OR s.id IN (
+	SELECT m.series_id FROM catalog_series_member m JOIN source_catalog_entry se ON se.id=m.catalog_entry_id
+	WHERE (instr(lower(se.title),lower(?))>0 OR instr(lower(se.primary_code),lower(?))>0
 	OR EXISTS(SELECT 1 FROM source_catalog_file sf WHERE sf.catalog_entry_id=se.id AND instr(lower(sf.title),lower(?))>0))))`
 			seriesArgs = []any{query, query, query, query}
 		}

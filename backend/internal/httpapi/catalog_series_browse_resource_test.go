@@ -7,6 +7,8 @@ import (
 	"os"
 	"testing"
 	"time"
+
+	"github.com/yexca/kikoto/backend/internal/storage"
 )
 
 // A flat catalog misses the cost of published series membership. Keep the full
@@ -65,9 +67,9 @@ func TestCatalogSeriesBrowseRequestBudget(t *testing.T) {
 	}
 
 	host.Client().Timeout = 15 * time.Second
-	readPage := func(label string, total int, ids []int64, title string, playable bool) {
+	readPage := func(label, query string, total int, ids []int64, title string, playable bool) {
 		t.Helper()
-		req, err := http.NewRequest(http.MethodGet, host.URL+"/api/remote-sources/70/works?pageSize=24", nil)
+		req, err := http.NewRequest(http.MethodGet, host.URL+"/api/remote-sources/70/works?pageSize=24"+query, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -83,7 +85,7 @@ func TestCatalogSeriesBrowseRequestBudget(t *testing.T) {
 			t.Fatal(err)
 		}
 		t.Logf("%s_browse_ms=%.3f;entries=42624;series=600;total=%d", label, float64(time.Since(started).Microseconds())/1000, view.Total)
-		if res.StatusCode != http.StatusOK || view.Status != "ok" || view.Total != total || view.Truncated || len(view.Works) != 24 {
+		if res.StatusCode != http.StatusOK || view.Status != "ok" || view.Total != total || view.Truncated || len(view.Works) != min(total, 24) {
 			t.Fatalf("%s browse status=%d: %+v", label, res.StatusCode, view)
 		}
 		for i, id := range ids {
@@ -108,7 +110,15 @@ func TestCatalogSeriesBrowseRequestBudget(t *testing.T) {
 		}
 	}
 	beforeIDs := []int64{600, 599, 598, 596, 593, 592, 591, 590, 589, 588, 587, 586, 585, 584, 583, 582, 581, 580, 579, 578, 577, 576, 575, 574}
-	readPage("live", 37228, beforeIDs, "Example series 600", true)
+	readPage("live", "", 37228, beforeIDs, "Example series 600", true)
+	// Stable identities from prior source generations remain after their source
+	// is retired. Planner statistics must include that reachable history shape.
+	metadataReviewExec(t, s.db, `WITH RECURSIVE n(i) AS(SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<80000)
+		INSERT INTO source_catalog_entry(id,root_path,title)
+		SELECT 100000+i,'/Retired example/'||i,'Retired example '||i FROM n;`)
+	if err := storage.OptimizeStatistics(context.Background(), s.db); err != nil {
+		t.Fatal(err)
+	}
 
 	ctx, op, err := s.beginCatalogPublication(context.Background(), 70, "synthetic:browse")
 	if err != nil {
@@ -124,10 +134,15 @@ func TestCatalogSeriesBrowseRequestBudget(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	readPage("preparing", 37228, beforeIDs, "Example series 600", true)
+	readPage("preparing", "", 37228, beforeIDs, "Example series 600", true)
+	// Only file titles contain this needle. The original-language search must
+	// keep those matches, including series members, while the new snapshot is
+	// unpublished; filtering a page after admission would hide the query cost.
+	readPage("preparing_origin_short", "&lang=origin&q=ck", 37228, beforeIDs, "Example series 600", true)
+	readPage("preparing_origin_missing", "&lang=origin&q=zz", 0, nil, "", false)
 	if err := s.commitCatalogPublication(ctx, op); err != nil {
 		t.Fatal(err)
 	}
 	afterIDs := []int64{600, 598, 596, 593, 592, 591, 590, 589, 588, 587, 586, 585, 584, 583, 582, 581, 580, 579, 578, 577, 576, 575, 574, 573}
-	readPage("committed", 37237, afterIDs, "Example replacement series", false)
+	readPage("committed", "", 37237, afterIDs, "Example replacement series", false)
 }

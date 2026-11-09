@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -277,6 +278,71 @@ func TestCatalogPublicationSearchKeepsOldTextUntilCommit(t *testing.T) {
 			t.Fatalf("committed search %s: %#v", tc.q, view)
 		}
 	}
+	t.Run("short_file_members", func(t *testing.T) {
+		s, host, admin, _ := translationHTTPFixture(t)
+		seedCatalogPlanSource(t, s.db)
+		metadataReviewExec(t, s.db, `
+			INSERT INTO file_source(id,code,display_name,source_type) VALUES(8,'other_example','Other Example','openlist');
+			INSERT INTO source_catalog_entry(id,file_source_id,root_path,title,availability_status) VALUES
+			 (1,7,'/First','First episode','available'),(2,8,'/Second','Second episode','available'),
+			 (3,7,'/Standalone','Standalone example','available');
+			INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_bytes) VALUES
+			 (1,'audio.mp3','First audio','audio',1),(2,'audio.mp3','qv audio','audio',1),
+			 (3,'one.mp3','qv one','audio',1),(3,'two.mp3','qv two','audio',1);
+			INSERT INTO catalog_series(id,title,source_id) VALUES(1,'Example series',7);
+			INSERT INTO catalog_series_member(series_id,catalog_entry_id,position,evidence) VALUES
+			 (1,1,1,'manual'),(1,2,2,'manual');`)
+		check := func(query string, wantEntries, wantSeries int) {
+			t.Helper()
+			req, err := http.NewRequest(http.MethodGet, host.URL+"/api/remote-sources/7/works?lang=origin&q="+query, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			req.AddCookie(admin)
+			res, err := host.Client().Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = res.Body.Close() }()
+			var view remoteWorksResponse
+			if err := json.NewDecoder(res.Body).Decode(&view); err != nil {
+				t.Fatal(err)
+			}
+			if res.StatusCode != http.StatusOK || view.Total != wantEntries+wantSeries || len(view.Works) != view.Total {
+				t.Fatalf("short search %q status=%d view=%+v", query, res.StatusCode, view)
+			}
+			entries, series := 0, 0
+			for _, card := range view.Works {
+				if card.SeriesID == 1 {
+					series++
+				} else if card.CatalogEntryID == 3 {
+					entries++
+				} else {
+					t.Fatalf("short search returned unexpected card: %+v", card)
+				}
+			}
+			if entries != wantEntries || series != wantSeries {
+				t.Fatalf("short search %q entries=%d series=%d, want %d/%d", query, entries, series, wantEntries, wantSeries)
+			}
+		}
+		// A series visible through this source can match another member's file;
+		// two matching tracks on a standalone entry still produce one card.
+		check("qv", 1, 1)
+		ctx, operation, err := s.beginCatalogPublication(context.Background(), 8, "synthetic:short-search")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.execCatalogWrite(ctx, `UPDATE source_catalog_file SET title='nx audio' WHERE catalog_entry_id=2`); err != nil {
+			t.Fatal(err)
+		}
+		check("qv", 1, 1)
+		check("nx", 0, 0)
+		if err := s.commitCatalogPublication(ctx, operation); err != nil {
+			t.Fatal(err)
+		}
+		check("qv", 1, 0)
+		check("nx", 0, 1)
+	})
 }
 
 func TestCatalogPublicationSearchDocumentIDsDoNotReusePendingTombstones(t *testing.T) {
