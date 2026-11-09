@@ -125,7 +125,9 @@ coverage and unresolved directories. **Index limits** configures the next start
 or resume; active settings are read-only. **Cancel**, **Resume index** and
 **Refresh progress** operate on persisted state. Reloading the page returns to
 the same run. Polling is limited to active scans and requests are cancelled when
-the panel unmounts; newly published cards refresh the source results.
+the panel unmounts. The source results refresh when the indexed count changes
+and when a run settles, including a partial publication whose prepared count
+stays unchanged.
 
 Scan options are saved with the source's checkpoint and reused by an empty
 start request. An active run keeps its options until it is stopped and resumed.

@@ -28,7 +28,7 @@ export function FullSourceIndex({ sourceId, onDone }: { sourceId: number; onDone
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(false);
   const [reopening, setReopening] = useState(false);
-  const indexed = useRef(-1);
+  const observed = useRef<CatalogIndexProgress | null>(null);
   const notify = useStableCallback(onDone);
   const active = progress?.status === "queued" || progress?.status === "running";
   useEffect(() => {
@@ -41,8 +41,13 @@ export function FullSourceIndex({ sourceId, onDone }: { sourceId: number; onDone
         setProgress(result);
         setOptions((current) => current ?? result.options);
         setError(false);
-        if (indexed.current >= 0 && indexed.current !== result.indexedEntries) notify();
-        indexed.current = result.indexedEntries;
+        const previous = observed.current;
+        // Prepared cards increase the count before the publication becomes
+        // visible. Its terminal marker must also refresh the browse snapshot.
+        const published =
+          result.finishedAt && (previous?.runId !== result.runId || previous?.finishedAt !== result.finishedAt);
+        if ((previous && previous.indexedEntries !== result.indexedEntries) || published) notify();
+        observed.current = result;
         if (result.status === "queued" || result.status === "running") timer = setTimeout(load, 2000);
       } catch {
         if (!abort.signal.aborted) setError(true);
