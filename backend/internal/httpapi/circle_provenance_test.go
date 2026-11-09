@@ -67,8 +67,19 @@ func TestDLsitePartyProjectionSkipsUnchangedSnapshots(t *testing.T) {
 	if partyUpdatedAt != sentinel || catalogLastSeenAt != sentinel || relationUpdatedAt != sentinel {
 		t.Fatalf("unchanged projection timestamps = %q/%q/%q, want sentinel", partyUpdatedAt, catalogLastSeenAt, relationUpdatedAt)
 	}
+	// Reserve the initialized reader while opening the writer. Connection setup
+	// parses the full schema; the deadline below measures lock independence.
+	reader, err := db.Conn(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = reader.Close() })
 	blocker, err := db.BeginTx(ctx, nil)
 	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = blocker.Rollback() })
+	if err := reader.Close(); err != nil {
 		t.Fatal(err)
 	}
 	readCtx, cancelRead := context.WithTimeout(ctx, 500*time.Millisecond)
