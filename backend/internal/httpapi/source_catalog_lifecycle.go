@@ -571,12 +571,20 @@ func (s *Server) settleCatalogLifecycleBatch(ctx context.Context, job workflowJo
 		if readErr != nil {
 			return false, readErr
 		}
+		var fingerprintUpdate *sql.Stmt
+		if len(ids) > 0 {
+			fingerprintUpdate, err = tx.PrepareContext(ctx, `UPDATE source_catalog_entry SET content_fingerprint=?,layout_fingerprint=? WHERE id=?`)
+			if err != nil {
+				return false, err
+			}
+			defer func() { _ = fingerprintUpdate.Close() }()
+		}
 		for _, id := range ids {
 			strong, layout, err := catalogFingerprintsTx(ctx, tx.Tx, id, job.RunID)
 			if err != nil {
 				return false, err
 			}
-			if _, err = tx.ExecContext(ctx, `UPDATE source_catalog_entry SET content_fingerprint=?,layout_fingerprint=? WHERE id=?`, strong, layout, id); err != nil {
+			if _, err = fingerprintUpdate.ExecContext(ctx, strong, layout, id); err != nil {
 				return false, err
 			}
 		}
@@ -609,6 +617,21 @@ func (s *Server) settleCatalogLifecycleBatch(ctx context.Context, job workflowJo
 	}
 	if readErr != nil {
 		return false, readErr
+	}
+	// Trigger programs are compiled once for this bounded transaction. Each
+	// card still checks its observed range and consumes the shared file budget.
+	var fingerprintUpdate, staleFileDelete *sql.Stmt
+	if stage != "reconcile" && len(entries) > 0 {
+		fingerprintUpdate, err = tx.PrepareContext(ctx, `UPDATE source_catalog_entry SET content_fingerprint=?,layout_fingerprint=? WHERE id=?`)
+		if err != nil {
+			return false, err
+		}
+		defer func() { _ = fingerprintUpdate.Close() }()
+		staleFileDelete, err = tx.PrepareContext(ctx, `DELETE FROM source_catalog_file WHERE rowid IN(SELECT rowid FROM source_catalog_file WHERE catalog_entry_id=? AND observed_generation<>? ORDER BY relative_path LIMIT ?)`)
+		if err != nil {
+			return false, err
+		}
+		defer func() { _ = staleFileDelete.Close() }()
 	}
 	updates := make([]catalogEntryStatusUpdate, 0, len(entries))
 	fileBudget := int64(64)
@@ -667,7 +690,7 @@ func (s *Server) settleCatalogLifecycleBatch(ctx context.Context, job workflowJo
 			if readErr != nil {
 				return false, readErr
 			}
-			if _, err = tx.ExecContext(ctx, `UPDATE source_catalog_entry SET content_fingerprint=?,layout_fingerprint=? WHERE id=?`, strong, layout, e.id); err != nil {
+			if _, err = fingerprintUpdate.ExecContext(ctx, strong, layout, e.id); err != nil {
 				return false, err
 			}
 			// Republishing the card does not prove that every directory below
@@ -684,7 +707,7 @@ func (s *Server) settleCatalogLifecycleBatch(ctx context.Context, job workflowJo
 				return false, err
 			}
 			if !uncertain {
-				result, deleteErr := tx.ExecContext(ctx, `DELETE FROM source_catalog_file WHERE rowid IN(SELECT rowid FROM source_catalog_file WHERE catalog_entry_id=? AND observed_generation<>? ORDER BY relative_path LIMIT ?)`, e.id, job.RunID, fileBudget)
+				result, deleteErr := staleFileDelete.ExecContext(ctx, e.id, job.RunID, fileBudget)
 				if deleteErr != nil {
 					return false, deleteErr
 				}

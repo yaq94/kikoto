@@ -206,11 +206,7 @@ func (s *Server) prepareCatalogPublicationAdmissions(ctx context.Context, id int
 			release()
 			return err
 		}
-		for _, entry := range ids {
-			if err = refreshCatalogEntryAdmissionTx(ctx, tx.Tx, entry); err != nil {
-				break
-			}
-		}
+		err = refreshCatalogEntryAdmissionsTx(ctx, tx.Tx, ids)
 		if err == nil {
 			err = tx.Commit()
 		}
