@@ -6,6 +6,8 @@ import (
 	"errors"
 )
 
+const catalogPublicationPendingMediaQuery = `SELECT entity_id,after_location_id FROM source_catalog_publication_entity INDEXED BY source_catalog_publication_entity_media_pending WHERE operation_id=? AND entity_kind='entry' AND media_prepared=0 ORDER BY entity_id LIMIT 1`
+
 // One entry can have thousands of already registered media locations. Their
 // availability is a source projection, prepared in keyset batches before the
 // publication marker, independently of the bounded entry lifecycle batch.
@@ -16,7 +18,7 @@ func (s *Server) prepareCatalogPublicationMedia(ctx context.Context, operation i
 			return err
 		}
 		var entry, after int64
-		err = tx.QueryRowContext(ctx, `SELECT entity_id,after_location_id FROM source_catalog_publication_entity WHERE operation_id=? AND entity_kind='entry' AND media_prepared=0 ORDER BY entity_id LIMIT 1`, operation).Scan(&entry, &after)
+		err = tx.QueryRowContext(ctx, catalogPublicationPendingMediaQuery, operation).Scan(&entry, &after)
 		if errors.Is(err, sql.ErrNoRows) {
 			release()
 			return nil

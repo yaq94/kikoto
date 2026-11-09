@@ -124,6 +124,55 @@ func TestCatalogPublicationKeepsOldTracksUntilCommit(t *testing.T) {
 }
 
 func TestCatalogPublicationLongHistoryKeepsBoundedFilePlan(t *testing.T) {
+	t.Run("pending_entities", func(t *testing.T) {
+		db := openMigratedTestDB(t)
+		seedCatalogPlanSource(t, db)
+		s := &Server{db: db}
+		_, op, err := s.beginCatalogPublication(context.Background(), 7, "synthetic:pending")
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Dirty keys can outlive their entry. Completed keys remain until the
+		// publication commits so a late source write can invalidate them again.
+		metadataReviewExec(t, db, `WITH RECURSIVE n(i) AS(SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<5101)
+			INSERT INTO source_catalog_publication_entity(operation_id,entity_kind,entity_id,translation_prepared,media_prepared)
+			SELECT ?,'entry',i,i<5101,i<5101 FROM n`, op)
+		for _, check := range []struct{ name, query, index string }{
+			{"media", catalogPublicationPendingMediaQuery, "source_catalog_publication_entity_media_pending"},
+			{"translation", catalogPublicationPendingTranslationQuery, "source_catalog_publication_entity_translation_pending"},
+		} {
+			t.Run(check.name, func(t *testing.T) {
+				plan := explainCatalogPlan(t, db, check.query, op)
+				if !strings.Contains(plan, check.index) {
+					t.Errorf("pending work scans the completed prefix: %s", plan)
+				}
+				var kind string
+				var id, cursor int64
+				read := func() {
+					t.Helper()
+					row := db.QueryRow(check.query, op)
+					if check.name == "media" {
+						err = row.Scan(&id, &cursor)
+					} else {
+						err = row.Scan(&kind, &id, &cursor)
+					}
+					if err != nil {
+						t.Fatal(err)
+					}
+				}
+				read()
+				if id != 5101 || cursor != 0 {
+					t.Fatalf("remaining entity=%d cursor=%d", id, cursor)
+				}
+				metadataReviewExec(t, db, `UPDATE source_catalog_publication_entity SET translation_prepared=0,media_prepared=0 WHERE operation_id=? AND entity_kind='entry' AND entity_id=1`, op)
+				read()
+				if id != 1 {
+					t.Fatalf("late invalidation was skipped: entity=%d", id)
+				}
+				metadataReviewExec(t, db, `UPDATE source_catalog_publication_entity SET translation_prepared=1,media_prepared=1 WHERE operation_id=? AND entity_kind='entry' AND entity_id=1`, op)
+			})
+		}
+	})
 	db := openMigratedTestDB(t)
 	seedCatalogPlanSource(t, db)
 	insertCatalogPlanEntry(t, db, 1, "Example Work", "")

@@ -91,7 +91,9 @@ each SQLite write transaction and cleared before commit.
 directory pages with generation, observed revision, expected total, next page
 and bounded-apply cursors. A page and its workflow checkpoint share a commit.
 `source_catalog_publication_entity` identifies affected admission and translation
-scope keys for bounded preparation. `source_catalog_split_retirement` stores
+scope keys for bounded preparation. Media and translation workers select the next
+key through their pending indexes; completed keys remain available for late
+invalidation without being scanned again for each item. `source_catalog_split_retirement` stores
 an operation's affected roots, generation and consumed entry-id cursor. Each
 batch examines at most 64 cards; the full-index orphan pass examines
 at most 100 cards, including protected cards. Root completeness and identity

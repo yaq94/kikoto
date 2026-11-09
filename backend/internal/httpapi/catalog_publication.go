@@ -17,6 +17,10 @@ type catalogPublicationKey struct{}
 type catalogPublicationResourceGuardKey struct{}
 type catalogWriteTimingKey struct{}
 
+// Completed keys remain for late invalidation. Selecting the next key must walk
+// the pending index, not re-read the completed prefix after every transaction.
+const catalogPublicationPendingTranslationQuery = `SELECT entity_kind,entity_id,after_translation_id FROM source_catalog_publication_entity INDEXED BY source_catalog_publication_entity_translation_pending WHERE operation_id=? AND translation_prepared=0 ORDER BY entity_kind,entity_id LIMIT 1`
+
 func (s *Server) catalogPublicationContext(ctx context.Context, options catalogIndexOptions) context.Context {
 	return context.WithValue(ctx, catalogPublicationResourceGuardKey{}, func() error {
 		return s.checkCatalogSyncBatch(ctx, options)
@@ -233,7 +237,7 @@ func (s *Server) commitCatalogPublicationTranslations(ctx context.Context, id in
 		}
 		var kind string
 		var entityID, cursor int64
-		err = tx.QueryRowContext(ctx, `SELECT entity_kind,entity_id,after_translation_id FROM source_catalog_publication_entity WHERE operation_id=? AND translation_prepared=0 ORDER BY entity_kind,entity_id LIMIT 1`, id).Scan(&kind, &entityID, &cursor)
+		err = tx.QueryRowContext(ctx, catalogPublicationPendingTranslationQuery, id).Scan(&kind, &entityID, &cursor)
 		if errors.Is(err, sql.ErrNoRows) {
 			// Source writes can arrive while translation batches are preparing.
 			// Retry admission/media preparation before publishing those keys.
