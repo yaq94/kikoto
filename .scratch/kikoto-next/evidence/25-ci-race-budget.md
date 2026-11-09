@@ -13,3 +13,5 @@ CI 沿用同一分片算法，分配到八个 runner。每个分片仍为 35 分
 - `make backend-format backend-vet backend-build backend-lint` 分段完成，lint 最终 0 issues；完整命令与失败修正见[淘汰候选证据](25-retention-selection.md)。
 
 本地分区检查不是八个 CI 分片的运行结果。最终候选仍须触发 Full 并读取所有 job 终态。
+
+2026-11-09：`677daae1` 与 `5f732e6f` 的第七分片再次耗尽35分钟包预算。日志没有成功测试的逐项耗时，结束时完整索引测试分别只运行1分16秒和1分17秒，不能将终止栈当成整包归因。race Make入口增加`-v`，保留每项名称、输出和耗时；测试分配、规模、断言、race、35分钟期限与重试均不变。该改动只补充诊断信息，不声明修复超时；根另以相同分片的184个httpapi测试采集JSON与CPU profile。

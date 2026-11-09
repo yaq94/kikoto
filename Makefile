@@ -322,8 +322,9 @@ ci-backend-race: backend-race
 
 # One slice of the race suite, as CI runs it on parallel runners; the slices
 # of a total together run every test once: make RACE_SHARD=1/8 backend-race-shard
+# Keep each test's duration in the log when a package exhausts its time budget.
 backend-race-shard:
-	cd backend && $(NODE) ../scripts/go-test-shard.mjs $(RACE_SHARD) -race -timeout=35m
+	cd backend && $(NODE) ../scripts/go-test-shard.mjs $(RACE_SHARD) -race -v -timeout=35m
 
 ci-backend: ci-backend-static ci-backend-coverage ci-backend-race
 
