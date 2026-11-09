@@ -12,9 +12,11 @@
 
 **审查快照：** 审查时文档基线为 `6122b7bf`，代码基线为 `301e6c63`；当时主工作区已提交 `0dee19ea`、`6dee3087`、`134f7c90`。
 
-**当前集成状态（2026-10-27 复核）：** 集成分支 `codex/kikoto-catalog-remediation` 已到 `f727feee`，迁移头 `105`（`101_work_parent_backfill_report.sql`、`102_translation_prefill_status.sql`、`103_translation_short_scan_index.sql`、`104_source_catalog_entry_admission.sql`、`105_translation_search_scope.sql` 已提交，`compat/105_dev.sql` 已生成）。工单 20 的 098 状态机、系列准入与 episode publication 事务内删除 mapping 已合入，其余准入入口（`602afdc0`）已并入并通过定向测试；目标机 42k 卡浏览与 5,001 文件卡拒绝路径的 p95 达标（数值见 20 号票）。21 的 099/102/105、严格语言搜索、共享短查询生成器与 `failed` 终态已合入；1–2 字查询的返回条数与 `total` 共用 1000 张预算，超出以 `truncated` 标记（完整计数 p95 667–693 ms，故不采用）。22 的迁移 100、`work.parent_work_id`、v2 + 可选 `parent` 与 `parent_alias_not_imported` 已合入并记为 `resolved`。23 的文档与保留回归已收口；24 汇总同候选发布证据。逐项结论见 [审查记录](audit-20261025-review.md)。
+**历史集成状态（2026-10-27 复核）：** 集成分支 `codex/kikoto-catalog-remediation` 已到 `f727feee`，迁移头 `105`（`101_work_parent_backfill_report.sql`、`102_translation_prefill_status.sql`、`103_translation_short_scan_index.sql`、`104_source_catalog_entry_admission.sql`、`105_translation_search_scope.sql` 已提交，`compat/105_dev.sql` 已生成）。工单 20 的 098 状态机、系列准入与 episode publication 事务内删除 mapping 已合入，其余准入入口（`602afdc0`）已并入并通过定向测试；目标机 42k 卡浏览与 5,001 文件卡拒绝路径的 p95 达标（数值见 20 号票）。21 的 099/102/105、严格语言搜索、共享短查询生成器与 `failed` 终态已合入；1–2 字查询的返回条数与 `total` 共用 1000 张预算，超出以 `truncated` 标记（完整计数 p95 667–693 ms，故不采用）。22 的迁移 100、`work.parent_work_id`、v2 + 可选 `parent` 与 `parent_alias_not_imported` 已合入并记为 `resolved`。23 的文档与保留回归已收口；24 汇总同候选发布证据。逐项结论见 [审查记录](audit-20261025-review.md)。
 
 交接复核时（2026-10-24 至 2026-10-25）主仓库曾前进到 `d77e37e2`：`6b4a02ec` 提交了 `096_catalog_episode_pending.sql`、`compat/096_dev.sql` 和系列暂存实现，`728651a6` 提交了 v2 可选 `parent` 的个人传输实现，`47df9c11` 提交了 wall-clock/partial 调度修复，`9bafa1ea` 合并了部分整改文档。这些提交均已并入当前分支，但仍需在当前候选上重新验收；后续实现必须以实际 SHA、测试和证据重新核对，不能把“已提交”当成“已满足合同”。
+
+本计划保留 2026-10-27 及以前的实施记录；其中待验证项不代表当前缺口。现行整改以[25号工单](issues/25-review-remediation.md)和[执行记录](execution.md)为准。
 
 ## 0. 已核实的裁决
 
@@ -118,12 +120,12 @@ CREATE INDEX source_catalog_schedule_due
 
 ### 5.3 force 增量
 
-**裁决（2026-10-25）：** `force` 表示“在 failed／partial／paused 的 generation 之后开始一次新的观测 generation”，不表示目录重探。sync 运行中调用 `/catalog/index` 不再返回 409，而是记 `manual_pending=1` 并返回 202，由调度器在 sync 结束后消费一次；不新增独立 force sync 入口。`executeCatalogIncrementalSync` 不调用 `enqueueSourceCatalogIndex`，这一点已满足。
+**裁决（2026-10-25）：** `force` 表示“在 failed／partial／cancelled 的 generation 之后开始一次新的观测 generation”，不表示目录重探。sync 运行中调用 `/catalog/index` 不再返回 409，而是记 `manual_pending=1` 并返回 202，由调度器在 sync 结束后消费一次；不新增独立 force sync 入口。`executeCatalogIncrementalSync` 不调用 `enqueueSourceCatalogIndex`，这一点已满足。
 
 ### 5.4 D-16 三层一致
 
 - 阈值：`audio == 0` 拒绝；`files > 5000` 拒绝；`nonAudio > 2000 && audio < 5` 拒绝。等于阈值允许。
-- 适用范围：每个来源目录／卡片根；系列卡片不聚合文件数。系列中每个成员条目分别判定；未通过成员不进入系列列表、系列详情或成员 tracks，不影响同系列其他合格成员。系列至少有一个合格成员才显示，零可见成员时详情返回 404（当前实现返回 200 加空列表，需改）。同一规则还须覆盖单卡详情、个人评价写入、播放准备、媒体流和作品目录标签。
+- 适用范围：每个来源目录／卡片根；系列卡片不聚合文件数。系列中每个成员条目分别判定；未通过成员不进入系列列表、系列详情或成员 tracks，不影响同系列其他合格成员。系列至少有一个合格成员才显示，零可见成员时详情返回 404。同一规则还须覆盖单卡详情、个人评价写入、播放准备、媒体流和作品目录标签。
 - `catalogadmission.Decision` 是唯一规则源。`catalogEntryAdmittedSQL`、`catalogRootAdmissionTx`、单卡 API 计数必须由同一组常量生成，不得硬编码 5001/2001/5。
 - `catalogadmission/admission.go` 顶部注释改为“三项阈值决定准入；Probe* 是 SQL 计数上限”。
 - 旧测试中“大附属文件卡允许发布”的断言改为拒绝；正常多轨、音频附带字幕／压缩包仍允许。

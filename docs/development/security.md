@@ -293,7 +293,7 @@ cannot create an unchecked outbound path.
   reverted, so do not point an older image at a newer database or edit
   `schema_migration`/`schema_state` to force a start.
 - Keep the pre-migration backup and the prior image reference on durable
-  storage. The procedure and the schema 78 compatibility matrix are in
+  storage. The procedure and schema compatibility matrix are in
   [Release rollback](release-rollback.md).
 
 ## Errors, Logs, and Diagnostics
