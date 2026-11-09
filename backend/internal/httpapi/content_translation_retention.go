@@ -280,6 +280,8 @@ func (s *Server) translationCacheDiskBytesFor(ctx context.Context, cfg translati
 
 func (s *Server) translationCacheDiskBytesForUsage(ctx context.Context, usage translationBudgetUsage) (int64, bool) {
 	var contentPages, sourcePages sql.NullInt64
+	// DBSTAT consumes the name constraint before walking B-trees. CASE alone
+	// filters the result but still reads every unrelated table's pages.
 	err := s.db.QueryRowContext(ctx, `SELECT
 		COALESCE(sum(CASE WHEN name='content_translation'
 			OR name LIKE 'content_translation_search%'
@@ -290,7 +292,17 @@ func (s *Server) translationCacheDiskBytesForUsage(ctx context.Context, usage tr
 			OR name LIKE 'idx_source_field_translation%'
 			OR name LIKE 'sqlite_autoindex_source_field_translation%'
 			THEN pgsize END),0)
-		FROM dbstat`).Scan(&contentPages, &sourcePages)
+		FROM dbstat
+		WHERE name IN (
+			SELECT name FROM sqlite_schema
+			WHERE name='content_translation'
+				OR name LIKE 'content_translation_search%'
+				OR name LIKE 'idx_content_translation%'
+				OR name LIKE 'sqlite_autoindex_content_translation%'
+				OR name='source_field_translation'
+				OR name LIKE 'idx_source_field_translation%'
+				OR name LIKE 'sqlite_autoindex_source_field_translation%'
+		)`).Scan(&contentPages, &sourcePages)
 	if err != nil {
 		return 0, false
 	}

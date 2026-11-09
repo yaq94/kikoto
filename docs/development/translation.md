@@ -193,7 +193,9 @@ Two administrator budgets bound the rebuildable display cache in a maintenance
 pass that runs beside the prefill worker: `maxEntries` limits the number of
 evictable model rows (zero means unlimited), and `cacheBytes` bounds their
 measured SQLite page footprint through `dbstat`, including indexes and FTS
-shadow tables. Budgets below 1 MiB fall back to UTF-8 text bytes because one
+shadow tables. The measurement constrains `dbstat` by the names of those
+translation tables and indexes, so unrelated catalog and publication pages do
+not contribute scan work. Budgets below 1 MiB fall back to UTF-8 text bytes because one
 SQLite page is already larger than the configured value. Native rows carry
 authored text and are never eviction candidates; personal records and source
 identities are in other tables and are never touched. Superseded rows are

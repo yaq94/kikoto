@@ -43,6 +43,48 @@ func TestTranslationCoverageUsesOneCorpusRead(t *testing.T) {
 	if reads != 1 {
 		t.Fatalf("full corpus reads = %d, want 1", reads)
 	}
+	t.Run("disk measurement reads only translation trees", func(t *testing.T) {
+		counter.reset()
+		if _, err := s.cachedTranslationOperatorSnapshot(context.Background(), cfg); err != nil {
+			t.Fatal(err)
+		}
+		measured := false
+		for _, statement := range counter.snapshot() {
+			if !strings.Contains(statement, "FROM dbstat") {
+				continue
+			}
+			measured = true
+			rows, err := db.Query("EXPLAIN QUERY PLAN " + statement)
+			if err != nil {
+				t.Fatal(err)
+			}
+			constrained := false
+			for rows.Next() {
+				var id, parent, unused int
+				var detail string
+				if err := rows.Scan(&id, &parent, &unused, &detail); err != nil {
+					_ = rows.Close()
+					t.Fatal(err)
+				}
+				// DBSTAT's name constraint is bit 0x02 in its query plan.
+				if strings.Contains(detail, "dbstat VIRTUAL TABLE INDEX 2:") ||
+					strings.Contains(detail, "dbstat VIRTUAL TABLE INDEX 0x2:") {
+					constrained = true
+				}
+			}
+			err = rows.Err()
+			_ = rows.Close()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !constrained {
+				t.Fatal("translation disk measurement scans unrelated database trees")
+			}
+		}
+		if !measured {
+			t.Fatal("operator snapshot did not measure translation disk usage")
+		}
+	})
 }
 
 func TestTranslationRevisionRollbackAndUnrelatedWritesKeepSnapshot(t *testing.T) {
