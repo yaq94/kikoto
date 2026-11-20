@@ -7,7 +7,7 @@ COPY VERSION /src/VERSION
 COPY frontend/ ./
 RUN npm run build
 
-FROM golang:1.26.10@sha256:3eca740eb349175cc59f462d409fc324a8239ab3ffdf73d8e63175a041c08b6b AS backend-build
+FROM golang:1.26.11@sha256:4165ee6bf3b7811fd7b40373290405c83d0167dcb87ee5f29c427cdcef45ff8f AS backend-build
 
 WORKDIR /src/backend
 # The module proxy is an environment concern, not a property of the source:

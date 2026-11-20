@@ -29,7 +29,7 @@ NPX ?= npx
 NODE ?= node
 DOCKER ?= docker
 DOCKER_IMAGE ?= kikoto:dev
-GO_IMAGE ?= golang:1.26.10@sha256:3eca740eb349175cc59f462d409fc324a8239ab3ffdf73d8e63175a041c08b6b
+GO_IMAGE ?= golang:1.26.11@sha256:4165ee6bf3b7811fd7b40373290405c83d0167dcb87ee5f29c427cdcef45ff8f
 # Keep build contexts, .env lookup, mounts, and the project name rooted here.
 DOCKER_COMPOSE_DEV = $(DOCKER) compose --project-directory "$(CURDIR)" -f deploy/compose/dev.yml
 SMOKE_COMPOSE_PROJECT := kikoto-smoke
