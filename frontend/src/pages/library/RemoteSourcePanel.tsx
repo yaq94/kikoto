@@ -32,7 +32,7 @@ import {
 } from "./remoteSourceBrowseModel";
 import { RemoteWorkCard } from "./RemoteWorkCard";
 import { recommendationRevealDelay, useRemoteRecommendations } from "./useRemoteRecommendations";
-import { useRemoteSourceActions } from "./useRemoteSourceActions";
+import { type useRemoteCatalogQueue, useRemoteSourceActions } from "./useRemoteSourceActions";
 import { useRemoteSourceSelection } from "./useRemoteSourceSelection";
 
 // The last page each remote source returned in this session sizes its loading
@@ -108,6 +108,7 @@ function RemoteSourceResults({
   bulkCodes,
   syncingWorkKey,
   actions,
+  catalogQueue,
   onToggleBulkCode,
   onClearSearch,
   onOpenPreview,
@@ -132,6 +133,7 @@ function RemoteSourceResults({
   bulkCodes: Set<string>;
   syncingWorkKey: string | null;
   actions: ReturnType<typeof useRemoteSourceActions>;
+  catalogQueue: ReturnType<typeof useRemoteCatalogQueue>;
   onToggleBulkCode: (code: string, checked: boolean) => void;
   onClearSearch: () => void;
   onOpenPreview: (work: RemoteWork) => void;
@@ -210,8 +212,8 @@ function RemoteSourceResults({
                 })
               }
               onEnsureWork={() => actions.ensureRemoteWorkForList(work)}
-              onQueue={() => void actions.queueCatalogWork(work)}
-              isQueueing={actions.queueingCatalogId === work.catalogEntryId}
+              onQueue={() => void catalogQueue.queueCatalogWork(source, work)}
+              isQueueing={work.catalogEntryId !== undefined && catalogQueue.queueingCatalogIds.has(work.catalogEntryId)}
               onListSaved={(workId, favorite) => {
                 onWorkStateChanged(remoteWorkRowKey(work), { workId, favorite });
                 void onSynced(0);
@@ -226,6 +228,7 @@ function RemoteSourceResults({
 
 export function RemoteSourcePanel({
   source,
+  catalogQueue,
   recommendationsEnabled,
   recommendationSessionId,
   result,
@@ -247,6 +250,7 @@ export function RemoteSourcePanel({
   onRetry,
 }: {
   source: LibrarySource;
+  catalogQueue: ReturnType<typeof useRemoteCatalogQueue>;
   recommendationsEnabled: boolean;
   recommendationSessionId: string;
   result: RemoteWorksResponse | null;
@@ -383,6 +387,7 @@ export function RemoteSourcePanel({
         bulkCodes={selection.bulkCodes}
         syncingWorkKey={syncingWorkKey}
         actions={actions}
+        catalogQueue={catalogQueue}
         onToggleBulkCode={selection.toggleBulkCode}
         onClearSearch={onClearSearch}
         onOpenPreview={onOpenPreview}

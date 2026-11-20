@@ -1,7 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "@/auth/AuthProvider";
-import { ContentTranslationScope, TranslatedText } from "@/components/content-translation/ContentTranslation";
+import {
+  ContentOriginalToggle,
+  ContentTranslationScope,
+  TranslatedText,
+} from "@/components/content-translation/ContentTranslation";
 import { Button } from "@/components/ui/button";
 import { api, type CatalogEntry, type CatalogTrack } from "@/lib/api";
 import { usePlayer } from "@/player/PlayerProvider";
@@ -76,14 +80,20 @@ export function CatalogWorkDetail({ id, onBack }: { id: number; onBack: () => vo
         {t("common.back")}
       </Button>
       {entry ? (
-        <ContentTranslationScope key={id} resource={{ catalogEntryId: id }}>
+        <ContentTranslationScope allOriginal key={id} resource={{ catalogEntryId: id }}>
           <header>
             <p className="text-sm text-muted-foreground">
               {entry.sourceName} · {entry.primaryCode || t("openlist.numberless")}
             </p>
-            <h1 className="text-2xl font-semibold">
-              <TranslatedText text={entry.title} field="title" />
-            </h1>
+            <TranslatedText
+              text={entry.title}
+              field="title"
+              blockControls
+              renderText={(value) => (
+                <h1 className="break-words text-2xl font-semibold [overflow-wrap:anywhere]">{value}</h1>
+              )}
+            />
+            <ContentOriginalToggle />
             {entry.workId && (
               <Button
                 variant="outline"

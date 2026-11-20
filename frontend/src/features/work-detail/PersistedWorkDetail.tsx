@@ -807,18 +807,22 @@ export function PersistedWorkDetailController({
           )}
         </>
       }
+      informationExtras={
+        <>
+          {work && (
+            <PersonalReviewEditor
+              key={`${principalID}:${work.id}`}
+              value={{ personalRating: work.personalRating ?? null, personalNote: work.personalNote ?? "" }}
+              onSave={(patch) => api.updateWorkUserState(work.id, patch)}
+            />
+          )}
+          {work && (
+            <SharedAssociationPanel subject={{ kind: "work", id: work.id }} onCompleted={() => void metadataSaved()} />
+          )}
+        </>
+      }
       onBack={onBack}
     >
-      {work && (
-        <PersonalReviewEditor
-          key={`${principalID}:${work.id}`}
-          value={{ personalRating: work.personalRating ?? null, personalNote: work.personalNote ?? "" }}
-          onSave={(patch) => api.updateWorkUserState(work.id, patch)}
-        />
-      )}
-      {work && (
-        <SharedAssociationPanel subject={{ kind: "work", id: work.id }} onCompleted={() => void metadataSaved()} />
-      )}
       <PersistedFilePreviewOverlay
         preview={preview}
         work={work}

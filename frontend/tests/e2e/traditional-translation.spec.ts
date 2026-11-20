@@ -56,9 +56,9 @@ test("Simplified and Traditional reuse generation and preserve protected names, 
     .filter((value: string) => value.includes("Example conversion"));
   expect(contentRequests).toHaveLength(4);
   expect(contentRequests.join("\n")).not.toMatch(/示例声优|示例社团|个人备注/);
-  await hero.getByRole("button", { name: "Show original", exact: true }).click();
+  await hero.getByRole("button", { name: "Show original text for all fields", exact: true }).click();
   await expect(hero).toContainText("Example conversion title 示例声优 示例社团");
-  await hero.getByRole("button", { name: "Show translation", exact: true }).click();
+  await hero.getByRole("button", { name: "Show translations for all fields", exact: true }).click();
   await chooseLanguage(page, "Simplified Chinese");
   await expect(hero).toContainText("听见森林里的音乐 示例声优 示例社团");
   await description.scrollIntoViewIfNeeded();

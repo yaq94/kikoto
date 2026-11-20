@@ -1,11 +1,14 @@
 export const translationAdmin = {
   content: {
+    options: "번역 옵션",
     pending: "번역 중…",
     pendingTooLong: "번역이 아직 완료되지 않았습니다. 다시 시도할 수 있습니다.",
     failed: "번역하지 못했습니다. 원문을 표시합니다.",
     retry: "번역 다시 시도",
     original: "원문 보기",
     translated: "번역문 보기",
+    originalAll: "모든 항목의 원문 보기",
+    translatedAll: "모든 항목의 번역 보기",
     paused: "디스크 공간 부족으로 캐시를 일시 중지했습니다.",
     concurrency: "동시 번역 수",
     maxEntries: "번역 행 수 제한(0은 무제한)",

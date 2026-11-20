@@ -8,7 +8,7 @@ import {
   announceWorkDetailUserState,
   announceWorkDetailWorksChanged,
 } from "@/app/workDetailEvents";
-import { workDetailCodeFromLocation } from "@/app/workDetailNavigation";
+import { workDetailCodeFromLocation, workDetailRoute } from "@/app/workDetailNavigation";
 import { useAuth } from "@/auth/AuthProvider";
 import { toastFromError, useToast } from "@/components/ui/toast";
 import {
@@ -18,6 +18,7 @@ import {
   RemoteOnlyWorkDetailController,
 } from "@/features/work-detail/lazyWorkDetail";
 import { api, type LibrarySource, type ListeningStatus } from "@/lib/api";
+import type { RemoteReviewCommit, SaveRemoteReview } from "@/features/work-detail/RemoteOnlyWorkDetail";
 import { NAVIGATION_EVENT, navigateToHistoryReturn } from "@/lib/browserHistory";
 import {
   detailRemoteCodeFromLocation,
@@ -57,6 +58,31 @@ export function WorkDetailPage({
   const { t } = useTranslation();
   const principalID = auth.user?.id ?? null;
   const [route, setRoute] = useState(currentWorkDetailRoute);
+  const [reviewCommit, setReviewCommit] = useState<RemoteReviewCommit | null>(null);
+  const reviewSave = useRef<{ principalID: number } | null>(null);
+  const [reviewSavingFor, setReviewSavingFor] = useState<number | null>(null);
+
+  useEffect(() => {
+    setReviewCommit((current) => (current?.principalID === principalID ? current : null));
+  }, [principalID]);
+  const saveRemoteReview: SaveRemoteReview = async ({ sourceID, remoteCode, primaryCode }, patch) => {
+    if (principalID === null || reviewSave.current?.principalID === principalID) {
+      throw new Error("Review save unavailable");
+    }
+    const operation = { principalID };
+    reviewSave.current = operation;
+    setReviewSavingFor(principalID);
+    try {
+      const state = await api.updateRemoteWorkUserState(sourceID, remoteCode, patch);
+      if (reviewSave.current === operation) setReviewCommit({ principalID, primaryCode, state });
+      return state;
+    } finally {
+      if (reviewSave.current === operation) {
+        reviewSave.current = null;
+        setReviewSavingFor(null);
+      }
+    }
+  };
   const [sources, setSources] = useState<LibrarySource[]>([]);
   const sourcesLoaded = useRef(false);
   const [sourcesSettled, setSourcesSettled] = useState(false);
@@ -145,12 +171,24 @@ export function WorkDetailPage({
     return (
       <Suspense fallback={<WorkDetailLoading />}>
         <RemoteOnlyWorkDetailController
+          key={`${principalID ?? "anonymous"}:${remoteTarget.source.id}:${remoteTarget.code}`}
           source={remoteTarget.source}
           sources={sources}
           code={remoteTarget.code}
           preview={remoteTarget.preview ?? null}
           onBack={back}
           onWorksChanged={worksChanged}
+          reviewCommit={reviewCommit?.principalID === principalID ? reviewCommit : null}
+          reviewSaving={principalID !== null && reviewSavingFor === principalID}
+          onSaveReview={saveRemoteReview}
+          onSourceChange={(sourceId, remoteCode) => {
+            const next = workDetailRoute({ kind: "remote-only", sourceId, remoteCode });
+            if (!next) return false;
+            // Switching the directory preserves the detail entry and its original return target.
+            window.history.replaceState(window.history.state, "", next);
+            window.dispatchEvent(new Event(NAVIGATION_EVENT));
+            return true;
+          }}
         />
       </Suspense>
     );

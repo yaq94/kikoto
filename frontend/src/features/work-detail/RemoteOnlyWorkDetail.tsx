@@ -17,6 +17,7 @@ import {
 } from "@/features/work-detail/WorkDetailActionBars";
 import {
   buildSourceTabs,
+  remoteSourceCanBrowse,
   type RemoteSourceAvailability,
   remoteSourceTabKey,
   type SourceTabInfo,
@@ -42,7 +43,7 @@ import {
   type TreeStats,
   type TreeTrack,
 } from "@/features/work-detail/media/mediaTreeModel";
-import { type ReactNode, useEffect, useMemo, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { FilePreviewDialog, type FilePreviewRequest } from "@/features/work-detail/dialogs/FilePreviewDialog";
 import {
   DirectoryLoadErrorPanel,
@@ -75,10 +76,14 @@ import {
   type RemoteTrackTerminalDetail,
 } from "@/app/remoteTrackWorkflows";
 import { NotFoundPage } from "@/app/NotFoundPage";
+import { isWorkCode } from "@/lib/workCode";
+import type { PersonalReview, PersonalReviewPatch, WorkUserState } from "@/lib/workApi";
 import { LazyRemoteFetchWorkspaceDialog } from "@/features/work-detail/workflows/LazyRemoteFetchWorkspaceDialog";
 import { defaultDirectoryRoutingRules } from "@/features/work-detail/directory/directoryModel";
 import { PersonalReviewEditor } from "@/features/work-detail/PersonalReviewEditor";
 import { useAuth } from "@/auth/AuthProvider";
+import { SharedAssociationPanel } from "./SharedAssociationPanel";
+import { Button } from "@/components/ui/button";
 
 type RemoteOnlyDetailActionsProps = {
   detail: RemoteWorkDetail | null;
@@ -89,7 +94,7 @@ type RemoteOnlyDetailActionsProps = {
   hasTrackedSource: boolean;
   materializedWorkID: number | null;
   onEnsureListWork: () => Promise<number | null>;
-  onListSaved: () => Promise<void>;
+  onListSaved: (favorite: boolean, workID: number) => void;
   onMark: (status: ListeningStatus) => void;
   /** Checked before the mark menu opens. */
   canMark: () => boolean;
@@ -112,8 +117,8 @@ function RemoteOnlyIdentityActions({
   return (
     <WorkIdentityActionBar
       busy={busy}
-      listeningStatus="none"
-      favorite={false}
+      listeningStatus={detail.listeningStatus}
+      favorite={detail.favorite}
       listWorkId={detail.workId}
       onEnsureListWork={onEnsureListWork}
       onListSaved={onListSaved}
@@ -625,6 +630,17 @@ function RemoteOnlyDetailOverlays({
   );
 }
 
+export type RemoteReviewCommit = {
+  principalID: number;
+  primaryCode: string;
+  state: WorkUserState;
+};
+
+export type SaveRemoteReview = (
+  target: { sourceID: number; remoteCode: string; primaryCode: string },
+  patch: PersonalReviewPatch,
+) => Promise<WorkUserState>;
+
 export function RemoteOnlyWorkDetailController({
   source,
   sources,
@@ -632,6 +648,10 @@ export function RemoteOnlyWorkDetailController({
   preview,
   onBack,
   onWorksChanged,
+  reviewCommit,
+  reviewSaving,
+  onSaveReview,
+  onSourceChange,
 }: {
   source: LibrarySource;
   sources: LibrarySource[];
@@ -639,6 +659,10 @@ export function RemoteOnlyWorkDetailController({
   preview: RemoteWorkPreview | null;
   onBack: () => void;
   onWorksChanged: () => Promise<void>;
+  reviewCommit: RemoteReviewCommit | null;
+  reviewSaving: boolean;
+  onSaveReview: SaveRemoteReview;
+  onSourceChange: (sourceID: number, remoteCode: string) => boolean;
 }) {
   const toast = useToast();
   const requireTrack = usePermissionGate(REMOTE_TRACK_PERMISSIONS, { deferDemo: true });
@@ -646,6 +670,10 @@ export function RemoteOnlyWorkDetailController({
   const canCheckSources = !auth.demoMode && auth.hasPermission("remote:track");
   const { t } = useTranslation();
   const [detail, setDetail] = useState<RemoteWorkDetail | null>(null);
+  // The initial metadata request already follows any save completed before this view opened.
+  const handledReviewCommit = useRef(reviewCommit);
+  const [reviewRefreshStatus, setReviewRefreshStatus] = useState<"idle" | "loading" | "failed">("idle");
+  const [reviewRefreshAttempt, setReviewRefreshAttempt] = useState(0);
   const [identityDetail, setIdentityDetail] = useState<RemoteWorkDetail | null>(null);
   const [selectedMetadataVariantKey, setSelectedMetadataVariantKey] = useState("");
   const [trackedWork, setTrackedWork] = useState<WorkDetail | null>(null);
@@ -899,6 +927,62 @@ export function RemoteOnlyWorkDetailController({
     };
   }, [source.id, code, remoteRetryToken, toast]);
 
+  const detailWorkID = detail?.workId;
+  const detailPrimaryCode = detail?.primaryCode;
+  const detailRemoteCode = detail ? remoteDetailActionCode(detail) : null;
+  useEffect(() => {
+    if (!reviewCommit || reviewCommit === handledReviewCommit.current || !detailRemoteCode) {
+      setReviewRefreshStatus("idle");
+      return;
+    }
+    const { state, primaryCode } = reviewCommit;
+    const apply = (review: PersonalReview) => {
+      handledReviewCommit.current = reviewCommit;
+      setReviewRefreshStatus("idle");
+      setDetail((current) =>
+        current &&
+        remoteDetailActionCode(current) === detailRemoteCode &&
+        (current.workId === null || current.workId === state.workId)
+          ? withSavedReview(current, state.workId, review)
+          : current,
+      );
+    };
+    if (detailWorkID === state.workId) {
+      apply(state);
+    } else if (detailWorkID === null && detailPrimaryCode === primaryCode && isWorkCode(primaryCode)) {
+      // This source may have loaded before the save registered the work. Confirm its identity before sharing the review.
+      const controller = new AbortController();
+      let timedOut = false;
+      const timeout = window.setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+      }, 20_000);
+      setReviewRefreshStatus("loading");
+      void api
+        .getRemoteSourceWorkMetadata(source.id, detailRemoteCode, controller.signal)
+        .then((metadata) => {
+          if (controller.signal.aborted) return;
+          if (metadata.workId === state.workId) {
+            apply({ personalRating: metadata.personalRating ?? null, personalNote: metadata.personalNote ?? "" });
+          } else {
+            setReviewRefreshStatus("idle");
+          }
+        })
+        .catch(() => {
+          if (!controller.signal.aborted || timedOut) setReviewRefreshStatus("failed");
+        })
+        .finally(() => window.clearTimeout(timeout));
+      return () => {
+        window.clearTimeout(timeout);
+        controller.abort();
+      };
+    } else {
+      // A directory edition can change inside this controller. Its review is
+      // independent; keep the commit unhandled in case the user switches back.
+      setReviewRefreshStatus("idle");
+    }
+  }, [detailPrimaryCode, detailRemoteCode, detailWorkID, reviewCommit, reviewRefreshAttempt, source.id]);
+
   const fetchWork = async (reason: string) => {
     if (!detail?.primaryCode || !requireTrack()) return;
     setIsFetching(true);
@@ -927,8 +1011,12 @@ export function RemoteOnlyWorkDetailController({
     setMessage("");
     try {
       const result = await api.syncRemoteSourceWork(source.id, remoteDetailActionCode(detail), reason);
+      setDetail((current) =>
+        matchesRemoteIdentity(current, detail)
+          ? { ...current, workId: result.workId, importStatus: "synced" }
+          : current,
+      );
       await onWorksChanged();
-      setDetail((current) => (current ? { ...current, workId: result.workId, importStatus: "synced" } : current));
       return result.workId;
     } catch (error) {
       toast.notify(toastFromError(error, t("errors.unavailable")));
@@ -944,6 +1032,9 @@ export function RemoteOnlyWorkDetailController({
     if (!workID) return;
     try {
       const result = await api.updateWorkUserState(workID, { listeningStatus: status });
+      setDetail((current) =>
+        matchesRemoteIdentity(current, detail) ? { ...current, listeningStatus: result.listeningStatus } : current,
+      );
       toast.success(
         t("library.markedAs", {
           code: detail.primaryCode,
@@ -1103,6 +1194,18 @@ export function RemoteOnlyWorkDetailController({
   );
   const selectRemoteSourceTab = (key: string) => {
     playbackRouting.disable();
+    const otherRemote = remoteAvailability.find(
+      (item) => item.source.id !== source.id && remoteSourceTabKey(item.source.id) === key,
+    );
+    if (
+      otherRemote &&
+      remoteSourceCanBrowse(otherRemote.summary) &&
+      onSourceChange(
+        otherRemote.source.id,
+        otherRemote.summary.primaryCode || detail?.primaryCode || otherRemote.summary.remoteId,
+      )
+    )
+      return;
     setActiveRemoteTab(key);
   };
   const detailActionProps: RemoteOnlyDetailActionsProps = {
@@ -1114,7 +1217,13 @@ export function RemoteOnlyWorkDetailController({
     hasTrackedSource,
     materializedWorkID,
     onEnsureListWork: () => syncForUserState("detail_list_remote"),
-    onListSaved: onWorksChanged,
+    onListSaved: (favorite, workId) => {
+      if (!detail) return;
+      setDetail((current) =>
+        matchesRemoteIdentity(current, detail) ? { ...current, workId, favorite, importStatus: "synced" } : current,
+      );
+      void onWorksChanged().catch((error) => toast.notify(toastFromError(error, t("errors.unavailable"))));
+    },
     onMark: (status) => void updateRemoteMark(status),
     canMark: () => Boolean(detail?.workId) || requireTrack(),
     onTrack: () => void fetchWork("manual_track"),
@@ -1242,27 +1351,61 @@ export function RemoteOnlyWorkDetailController({
       actions={heroActions}
       renderSourceActions={renderSourceActions}
       directory={directoryPanel}
+      informationExtras={
+        <>
+          {reviewRefreshStatus === "loading" && (
+            <p role="status" className="text-sm text-muted-foreground">
+              {t("personal.review.title")}: {t("common.loading")}
+            </p>
+          )}
+          {reviewRefreshStatus === "failed" && (
+            <div
+              role="alert"
+              aria-label={t("personal.review.title")}
+              className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground"
+            >
+              <span>
+                {t("personal.review.title")}: {t("errors.unavailable")}
+              </span>
+              <Button variant="outline" onClick={() => setReviewRefreshAttempt((value) => value + 1)}>
+                {t("common.retry")}
+              </Button>
+            </div>
+          )}
+          {detail?.primaryCode && (
+            <PersonalReviewEditor
+              key={`${auth.user?.id ?? "anonymous"}:${detail.primaryCode}`}
+              value={{ personalRating: detail.personalRating ?? null, personalNote: detail.personalNote ?? "" }}
+              needsRegistration={!detail.workId}
+              savePending={reviewSaving || reviewRefreshStatus !== "idle"}
+              onSave={async (patch) => {
+                const result = await onSaveReview(
+                  { sourceID: source.id, remoteCode: remoteDetailActionCode(detail), primaryCode: detail.primaryCode },
+                  patch,
+                );
+                setDetail((current) =>
+                  matchesRemoteIdentity(current, detail) ? withSavedReview(current, result.workId, result) : current,
+                );
+                if (!detail.workId) {
+                  void onWorksChanged().catch((error) => toast.notify(toastFromError(error, t("errors.unavailable"))));
+                }
+                return result;
+              }}
+            />
+          )}
+          {auth.user && detail?.workId && (
+            <SharedAssociationPanel
+              subject={{ kind: "work", id: detail.workId }}
+              onCompleted={() => {
+                setRemoteRetryToken((value) => value + 1);
+                void onWorksChanged().catch((error) => toast.notify(toastFromError(error, t("errors.unavailable"))));
+              }}
+            />
+          )}
+        </>
+      }
       onBack={onBack}
     >
-      {detail?.primaryCode && (
-        <PersonalReviewEditor
-          key={`${auth.user?.id ?? "anonymous"}:${detail.primaryCode}`}
-          value={{ personalRating: detail.personalRating ?? null, personalNote: detail.personalNote ?? "" }}
-          needsRegistration={!detail.workId}
-          onSave={async (patch) => {
-            const result = await api.updateRemoteWorkUserState(source.id, remoteDetailActionCode(detail), patch);
-            setDetail((current) =>
-              current?.primaryCode === detail.primaryCode
-                ? { ...current, workId: result.workId, importStatus: "synced" }
-                : current,
-            );
-            if (!detail.workId) {
-              void onWorksChanged().catch((error) => toast.notify(toastFromError(error, t("errors.unavailable"))));
-            }
-            return result;
-          }}
-        />
-      )}
       <RemoteOnlyDetailOverlays
         manageOpen={isManageOpen}
         tree={tree}
@@ -1272,6 +1415,29 @@ export function RemoteOnlyWorkDetailController({
       />
     </UnifiedWorkDetailPage>
   );
+}
+
+function withSavedReview(detail: RemoteWorkDetail, workID: number, review: PersonalReview): RemoteWorkDetail {
+  if (
+    detail.workId === workID &&
+    detail.personalRating === review.personalRating &&
+    detail.personalNote === review.personalNote
+  )
+    return detail;
+  return {
+    ...detail,
+    workId: workID,
+    importStatus: "synced",
+    personalRating: review.personalRating,
+    personalNote: review.personalNote,
+  };
+}
+
+function matchesRemoteIdentity(
+  current: RemoteWorkDetail | null,
+  submitted: RemoteWorkDetail,
+): current is RemoteWorkDetail {
+  return current?.sourceId === submitted.sourceId && current.primaryCode === submitted.primaryCode;
 }
 
 type RemoteOnlyDetailLoadOutcome =

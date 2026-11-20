@@ -536,6 +536,8 @@ export function remoteWorkDetailFixture(overrides: Partial<RemoteWorkDetail> = {
     voiceActors: [],
     importStatus: "remote_only",
     workId: null,
+    favorite: false,
+    listeningStatus: "none",
     metadataPresentation: { defaultVariantKey: "", variants: [] },
     tracks: [],
     languageEditions: [],

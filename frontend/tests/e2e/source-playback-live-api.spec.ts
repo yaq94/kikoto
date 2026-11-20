@@ -305,3 +305,88 @@ test("source checks recover independently while browsing keeps playback intact @
   expect(await audio.evaluate((element: HTMLAudioElement) => element.currentTime)).toBeLessThan(50);
   expect(await audio.evaluate((element: HTMLAudioElement) => element.currentSrc)).toContain("/api/media/2/");
 });
+test("switching remote-only directories leaves the mounted player advancing @desktop", async ({ page }) => {
+  const backend = process.env.SOURCE_PLAYBACK_API_URL;
+  test.skip(!backend, "Start the isolated source-playback-fixture API.");
+  expect(
+    (
+      await page.request.post(`${backend}/api/auth/login`, {
+        data: { username: "synthetic-user", password: "synthetic-password" },
+      })
+    ).ok(),
+  ).toBe(true);
+  expect(
+    (
+      await page.request.post(`${backend}/api/library/onboarding/complete`, {
+        data: { startupScan: false, watchFolders: false },
+      })
+    ).ok(),
+  ).toBe(true);
+
+  await page.goto("/RJ00000000?source=2");
+  const firstTrack = page.getByText("remote-a.wav", { exact: true });
+  const alternateSource = page.getByRole("button", { name: /^Example Remote B/ });
+  await expect(firstTrack).toBeVisible();
+  await page.getByRole("button", { name: /^Check sources/ }).click();
+  await expect(alternateSource).toHaveAccessibleName(/available/i);
+  await firstTrack.click();
+  const audio = page.locator("audio");
+  await expect(audio).toHaveJSProperty("paused", false);
+  const assertCurrentQueue = async (title: RegExp) => {
+    const queueButton = page.getByRole("button", { name: "Playback queue", exact: true });
+    if (!(await queueButton.isVisible())) {
+      await page.locator('[data-player-surface="compact"]').getByRole("button", { name: title }).click();
+    }
+    if ((await queueButton.getAttribute("aria-pressed")) !== "true") await queueButton.click();
+    const queue = page.getByRole("list", { name: "Playback queue", exact: true });
+    await expect(queue.getByRole("listitem")).toHaveCount(1);
+    await expect(queue.getByRole("button", { name: title })).toHaveAttribute("aria-current", "true");
+  };
+  // Nonrecordable remote tracks stay in the live queue, not persisted storage.
+  await assertCurrentQueue(/remote-a\.wav Example Remote A/);
+  await page.getByRole("button", { name: "Collapse player", exact: true }).click();
+  await audio.evaluate((element: HTMLAudioElement) => {
+    element.currentTime = 30;
+  });
+  await expect.poll(() => audio.evaluate((element: HTMLAudioElement) => element.currentTime)).toBeGreaterThan(30.2);
+  const originalAudio = await audio.evaluateHandle((element) => element);
+  const stream = await audio.evaluate((element: HTMLAudioElement) => element.currentSrc);
+  expect(stream).not.toBe("");
+  const events = await audio.evaluateHandle((element: HTMLAudioElement) => {
+    const recorded: string[] = [];
+    for (const type of ["seeking", "emptied", "pause"]) {
+      element.addEventListener(type, () => recorded.push(type), { once: true });
+    }
+    return recorded;
+  });
+  const before = await audio.evaluate((element: HTMLAudioElement) => element.currentTime);
+  const started = Date.now();
+  await alternateSource.click();
+  await expect(page).toHaveURL(/\/RJ00000000\?source=3$/);
+  // The existing source-recovery test can revise the fixture's alternate filename.
+  await expect(page.getByText(/^remote-b(?:-updated)?\.wav$/)).toBeVisible();
+  expect(await audio.evaluate((element, original) => element === original, originalAudio)).toBe(true);
+  expect(await audio.evaluate((element: HTMLAudioElement) => element.currentSrc)).toBe(stream);
+  await expect(audio).toHaveJSProperty("paused", false);
+  await expect
+    .poll(() => audio.evaluate((element: HTMLAudioElement) => element.currentTime))
+    .toBeGreaterThan(before + 0.25);
+  expect(await audio.evaluate((element: HTMLAudioElement) => element.currentTime)).toBeLessThan(
+    before + (Date.now() - started) / 1000 + 1,
+  );
+  expect(await events.jsonValue()).toEqual([]);
+  await page
+    .locator('[data-player-surface="compact"]')
+    .getByRole("button", { name: /remote-a\.wav Example Remote A/ })
+    .click();
+  await assertCurrentQueue(/remote-a\.wav Example Remote A/);
+  await page.getByRole("button", { name: "Collapse player", exact: true }).click();
+
+  // Explicitly selecting the alternate recording replaces the live queue and starts at zero.
+  await page.getByText(/^remote-b(?:-updated)?\.wav$/).click();
+  await expect.poll(() => audio.evaluate((element: HTMLAudioElement) => element.currentSrc)).not.toBe(stream);
+  await expect(audio).toHaveJSProperty("paused", false);
+  await expect.poll(() => audio.evaluate((element: HTMLAudioElement) => element.currentTime)).toBeGreaterThan(0);
+  expect(await audio.evaluate((element: HTMLAudioElement) => element.currentTime)).toBeLessThan(3);
+  await assertCurrentQueue(/remote-b(?:-updated)?\.wav Example Remote B/);
+});

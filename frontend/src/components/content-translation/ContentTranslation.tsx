@@ -1,6 +1,20 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+  type RefObject,
+} from "react";
+import { Languages } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "@/auth/AuthProvider";
+import { AnchoredPopover } from "@/components/ui/anchored-popover";
+import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
 import { ApiError } from "@/lib/apiTransport";
 import { apiSessionVersion } from "@/lib/apiSession";
@@ -68,10 +82,11 @@ const LanguageContext = createContext({
 const ScopeContext = createContext<{
   resource?: ContentTranslationResource;
   original: boolean;
-  toggle: () => void;
-  retry: () => void;
-  revision: number;
-}>({ original: false, toggle: () => undefined, retry: () => undefined, revision: 0 });
+  toggleAll: () => void;
+  viewRevision: number;
+  countTranslation?: (change: 1 | -1) => void;
+}>({ original: false, toggleAll: () => undefined, viewRevision: 0 });
+const HasTranslatedFieldsContext = createContext(false);
 
 /**
  * Returns a notifier with a stable identity. The Provider creates it once, so
@@ -217,29 +232,53 @@ export function useContentLanguageCacheVersion() {
 
 export function ContentTranslationScope({
   resource,
+  allOriginal = false,
   children,
 }: {
   resource?: ContentTranslationResource;
+  allOriginal?: boolean;
   children: ReactNode;
 }) {
-  const { cacheVersion, refreshVersion } = useContext(LanguageContext);
-  const [original, setOriginal] = useState(false);
-  const [revision, setRevision] = useState(0);
+  const { session, language } = useContext(LanguageContext);
+  const viewKey = JSON.stringify([session, language, resource]);
+  const [view, setView] = useState({ key: viewKey, original: false, revision: 0 });
+  if (view.key !== viewKey) setView({ key: viewKey, original: false, revision: view.revision + 1 });
+  const original = view.key === viewKey && view.original;
+  const toggleAll = useCallback(() => {
+    setView((current) => ({ ...current, original: !current.original, revision: current.revision + 1 }));
+  }, []);
+  const [translatedFields, setTranslatedFields] = useState(0);
+  const countTranslation = useCallback((change: 1 | -1) => {
+    setTranslatedFields((current) => current + change);
+  }, []);
+  const scope = useMemo(
+    () => ({
+      resource,
+      original,
+      toggleAll,
+      viewRevision: view.revision,
+      countTranslation: allOriginal ? countTranslation : undefined,
+    }),
+    [resource, original, toggleAll, view.revision, allOriginal, countTranslation],
+  );
   return (
-    <ScopeContext.Provider
-      value={{
-        resource,
-        original,
-        toggle: () => setOriginal((value) => !value),
-        revision,
-        retry: () => {
-          if (!cacheVersion) refreshVersion();
-          setRevision((value) => value + 1);
-        },
-      }}
-    >
-      {children}
+    <ScopeContext.Provider value={scope}>
+      <HasTranslatedFieldsContext.Provider value={translatedFields > 0}>{children}</HasTranslatedFieldsContext.Provider>
     </ScopeContext.Provider>
+  );
+}
+
+/** Explicitly toggles the originals of every translated field in a work detail. */
+export function ContentOriginalToggle() {
+  const { t } = useTranslation();
+  const { language, canRead } = useContext(LanguageContext);
+  const { original, toggleAll } = useContext(ScopeContext);
+  const hasTranslatedFields = useContext(HasTranslatedFieldsContext);
+  if (!canRead || language === "origin" || (!hasTranslatedFields && !original)) return null;
+  return (
+    <button type="button" className="relative min-h-11 text-sm text-muted-foreground underline" onClick={toggleAll}>
+      {t(original ? "translationAdmin.content.translatedAll" : "translationAdmin.content.originalAll")}
+    </button>
   );
 }
 
@@ -254,6 +293,73 @@ export function ContentResourceScope({
   return <ScopeContext.Provider value={{ ...scope, resource }}>{children}</ScopeContext.Provider>;
 }
 
+function CompactTranslationControls({
+  children,
+  returnFocusRef,
+}: {
+  children: ReactNode;
+  returnFocusRef?: RefObject<HTMLButtonElement | null>;
+}) {
+  const { t } = useTranslation();
+  const label = t("translationAdmin.content.options");
+  const [open, setOpen] = useState(false);
+  const anchorRef = useRef<HTMLButtonElement>(null);
+  const actionsRef = useRef<HTMLDivElement>(null);
+  const returnToTitleIfFocused = useCallback(
+    (anchor: HTMLButtonElement | null) => {
+      const active = document.activeElement;
+      if (active === anchor || actionsRef.current?.contains(active)) returnFocusRef?.current?.focus();
+    },
+    [returnFocusRef],
+  );
+  useLayoutEffect(() => {
+    const anchor = anchorRef.current;
+    // A late native result can remove the translation controls, including
+    // the portal which may have opened after this component mounted.
+    return () => returnToTitleIfFocused(anchor);
+  }, [returnToTitleIfFocused]);
+  const close = useCallback(() => {
+    if (actionsRef.current?.contains(document.activeElement)) anchorRef.current?.focus();
+    setOpen(false);
+  }, []);
+  useEffect(() => {
+    if (!open) return;
+    const frame = requestAnimationFrame(() => {
+      const actions = actionsRef.current;
+      (actions?.querySelector("button") ?? actions)?.focus();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [open]);
+  return (
+    <>
+      <Button
+        ref={anchorRef}
+        type="button"
+        size="icon-sm"
+        variant="ghost"
+        className="shrink-0"
+        aria-label={label}
+        aria-expanded={open}
+        aria-haspopup="dialog"
+        title={label}
+        onClick={() => setOpen(!open)}
+      >
+        <Languages aria-hidden="true" />
+      </Button>
+      <AnchoredPopover open={open} anchorRef={anchorRef} ariaLabel={label} onOpenChange={close}>
+        <div
+          ref={actionsRef}
+          tabIndex={-1}
+          className="flex max-w-60 flex-col px-3 py-1 text-sm"
+          onClick={(event) => event.stopPropagation()}
+        >
+          {children}
+        </div>
+      </AnchoredPopover>
+    </>
+  );
+}
+
 // These components render strings only. File names, paths, source selection and
 // player models remain the original objects owned by their existing callers.
 export function TranslatedText({
@@ -263,16 +369,23 @@ export function TranslatedText({
   mediaId,
   path,
   controls = true,
+  renderText,
+  blockControls = false,
+  returnFocusRef,
 }: {
   text: string;
   field: ContentTranslationRequest["field"];
   resource?: ContentTranslationResource;
   mediaId?: number;
   path?: string;
-  controls?: boolean;
+  controls?: boolean | "compact";
+  renderText?: (text: ReactNode) => ReactNode;
+  blockControls?: boolean;
+  returnFocusRef?: RefObject<HTMLButtonElement | null>;
 }) {
   const { t } = useTranslation();
-  const { language, accountScope, session, revision, canRead, cacheVersion, noteVersion } = useContext(LanguageContext);
+  const { language, accountScope, session, revision, canRead, cacheVersion, noteVersion, refreshVersion } =
+    useContext(LanguageContext);
   const scope = useContext(ScopeContext);
   const resource = explicit ?? scope.resource;
   const [element, setElement] = useState<HTMLSpanElement | null>(null);
@@ -282,7 +395,7 @@ export function TranslatedText({
   // requested" so switching language translates what is on screen instead of
   // the whole page the reader has ever visited.
   const [visibleKey, setVisibleKey] = useState<string | null>(null);
-  const key = JSON.stringify([
+  const fieldKey = JSON.stringify([
     session,
     revision,
     language,
@@ -295,9 +408,21 @@ export function TranslatedText({
     text,
     mediaId,
     path,
-    scope.revision,
     cacheVersion,
   ]);
+  const [retryAttempt, setRetryAttempt] = useState({ fieldKey, count: 0 });
+  if (retryAttempt.fieldKey !== fieldKey) setRetryAttempt({ fieldKey, count: 0 });
+  const attempt = retryAttempt.fieldKey === fieldKey ? retryAttempt.count : 0;
+  const key = JSON.stringify([fieldKey, attempt]);
+  const viewKey = JSON.stringify([fieldKey, scope.viewRevision]);
+  const [view, setView] = useState<{ key: string; original?: boolean }>({ key: viewKey });
+  if (view.key !== viewKey) setView({ key: viewKey });
+  const original = (view.key === viewKey ? view.original : undefined) ?? scope.original;
+  const toggle = () => setView({ key: viewKey, original: !original });
+  const retry = () => {
+    if (!cacheVersion) refreshVersion();
+    setRetryAttempt({ fieldKey, count: attempt + 1 });
+  };
   const workId = resource?.workId,
     sourceId = resource?.sourceId,
     code = resource?.code,
@@ -307,11 +432,14 @@ export function TranslatedText({
     () => ({ workId, sourceId, code, catalogEntryId, seriesId, field, text, language, mediaId, path }),
     [workId, sourceId, code, catalogEntryId, seriesId, field, text, language, mediaId, path],
   );
-  const [settled, setSettled] = useState<{ key: string; result: ContentTranslationResult } | null>(null);
+  const [settled, setSettled] = useState<{ fieldKey: string; key: string; result: ContentTranslationResult } | null>(
+    null,
+  );
   // A translation that never settles must not read as progress forever. The
   // wait is bounded so the original text and a retry action appear even when a
   // request is never answered.
-  const [timedOut, setTimedOut] = useState(false);
+  const [timedOutKey, setTimedOutKey] = useState<string>();
+  const timedOut = timedOutKey === key;
   const readable = Boolean(
     canRead &&
     (resource?.workId || resource?.sourceId || resource?.code || resource?.catalogEntryId || resource?.seriesId) &&
@@ -340,13 +468,12 @@ export function TranslatedText({
     const controller = new AbortController();
     const translationInput: ContentTranslationInput = input;
     let cancelled = false;
-    setTimedOut(false);
     const fail = (code: string) => {
       if (cancelled || controller.signal.aborted) return;
-      setSettled({ key, result: { text, original: text, language, status: "failed", code } });
+      setSettled({ fieldKey, key, result: { text, original: text, language, status: "failed", code } });
     };
     const timeout = window.setTimeout(() => {
-      if (!cancelled && !controller.signal.aborted) setTimedOut(true);
+      if (!cancelled && !controller.signal.aborted) setTimedOutKey(key);
     }, CONTENT_TRANSLATION_PENDING_TIMEOUT_MS);
     void (async () => {
       // Preferences can arrive before the authoritative version. Keep the
@@ -356,12 +483,16 @@ export function TranslatedText({
       // A cached display language paints without touching the network. A
       // storage failure must not surface as an unhandled rejection, so the
       // lookup is contained here rather than trusted to stay non-throwing.
-      const cached = await contentTranslationCache
-        .get(accountScope, translationInput, cacheVersion)
-        .catch(() => undefined);
+      // An explicit retry checks with the server. Its own shared cache can
+      // still answer authoritatively without requesting another generation.
+      const cached =
+        attempt > 0
+          ? undefined
+          : await contentTranslationCache.get(accountScope, translationInput, cacheVersion).catch(() => undefined);
       if (cancelled || controller.signal.aborted) return;
       if (cached) {
         setSettled({
+          fieldKey,
           key,
           result: { text: cached.text, original: cached.original, language, status: cached.status },
         });
@@ -388,7 +519,7 @@ export function TranslatedText({
             })
             .catch(() => undefined);
         }
-        if (!cancelled && !controller.signal.aborted) setSettled({ key, result });
+        if (!cancelled && !controller.signal.aborted) setSettled({ fieldKey, key, result });
       } catch (error) {
         if (error instanceof DOMException && error.name === "AbortError") return;
         fail(
@@ -405,65 +536,92 @@ export function TranslatedText({
       window.clearTimeout(timeout);
       controller.abort();
     };
-  }, [enabled, visible, key, input, text, language, accountScope, cacheVersion, noteVersion, session]);
+  }, [
+    enabled,
+    visible,
+    fieldKey,
+    key,
+    input,
+    text,
+    language,
+    accountScope,
+    cacheVersion,
+    noteVersion,
+    session,
+    attempt,
+  ]);
+  const last = settled?.fieldKey === fieldKey ? settled.result : null;
   const result = settled?.key === key ? settled.result : null;
-  const success =
-    enabled && result && (result.status === "translated" || result.status === "existing" || result.status === "native");
+  const translated =
+    enabled && last && (last.status === "translated" || last.status === "existing") && last.text !== last.original;
+  const hasTranslatedText = Boolean(translated);
+  const { countTranslation } = scope;
+  useEffect(() => {
+    if (!hasTranslatedText || !countTranslation) return;
+    countTranslation(1);
+    return () => countTranslation(-1);
+  }, [hasTranslatedText, countTranslation]);
   const status = contentTranslationDisplayState({ enabled, visible, status: result?.status, timedOut });
-  const shown = success && !scope.original ? result.text : (result?.original ?? text);
+  const shown = result && translated && !original ? result.text : (result?.original ?? text);
   const failure = result?.code
     ? t(`translationAdmin.errors.${result.code}`, { defaultValue: t("translationAdmin.content.failed") })
     : t("translationAdmin.content.failed");
-  return (
-    <span
-      ref={setElement}
-      data-translation-state={status}
-      title={success ? text : status === "failed" ? failure : undefined}
-    >
-      <span>{shown}</span>
-      {enabled && controls && (
-        <span
-          className="ml-1 inline-flex flex-wrap items-center gap-1 text-xs font-normal text-muted-foreground"
-          onClick={(event) => event.stopPropagation()}
-        >
-          {status === "pending" && <span role="status">{t("translationAdmin.content.pending")}</span>}
-          {status === "timeout" && (
-            <>
-              <span role="status">{t("translationAdmin.content.pendingTooLong")}</span>
-              <button type="button" className="touch-target relative underline" onClick={scope.retry}>
-                {t("translationAdmin.content.retry")}
-              </button>
-            </>
-          )}
-          {status === "failed" && (
-            <>
-              <span role="status">{failure}</span>
-              <button type="button" className="touch-target relative underline" onClick={scope.retry}>
-                {t("translationAdmin.content.retry")}
-              </button>
-            </>
-          )}
-          {success && (
-            <button type="button" className="touch-target relative underline" onClick={scope.toggle}>
-              {t(scope.original ? "translationAdmin.content.translated" : "translationAdmin.content.original")}
-            </button>
-          )}
-          {success && field === "title" && (
-            <button type="button" className="touch-target relative underline" onClick={scope.retry}>
-              {t("translationAdmin.content.retry")}
-            </button>
-          )}
-          {result?.cacheStatus === "paused_low_disk" && (
-            <span role="status">{t("translationAdmin.content.paused")}</span>
-          )}
-        </span>
-      )}
-      {enabled && !controls && (status === "failed" || status === "timeout") && (
+  const retryable = status === "failed" || status === "timeout";
+  const retryInProgress = enabled && attempt > 0 && !result && !timedOut;
+  const showRetry = retryable || retryInProgress || translated;
+  const paused = result?.cacheStatus === "paused_low_disk";
+  const compact = controls === "compact";
+  const canToggle = (controls === true || compact) && translated;
+  const showControls = enabled && (controls === true || compact);
+  const value = (
+    <span ref={setElement} data-translation-state={status} title={translated ? text : retryable ? failure : undefined}>
+      {shown}
+      {enabled && controls === false && retryable && (
         <span role="status" aria-label={status === "timeout" ? t("translationAdmin.content.pendingTooLong") : failure}>
           {" "}
           !
         </span>
       )}
     </span>
+  );
+  const actions = showControls && (status === "pending" || showRetry || canToggle || paused) && (
+    <>
+      {status === "pending" && <span role="status">{t("translationAdmin.content.pending")}</span>}
+      {retryable && (
+        <span role="status">{status === "failed" ? failure : t("translationAdmin.content.pendingTooLong")}</span>
+      )}
+      {canToggle && (
+        <button type="button" className="relative min-h-11 underline" onClick={toggle}>
+          {t(original ? "translationAdmin.content.translated" : "translationAdmin.content.original")}
+        </button>
+      )}
+      {showRetry && (
+        <button
+          type="button"
+          className="relative min-h-11 underline aria-disabled:opacity-60"
+          aria-disabled={retryInProgress || undefined}
+          onClick={retryInProgress ? undefined : retry}
+        >
+          {t("translationAdmin.content.retry")}
+        </button>
+      )}
+      {paused && <span role="status">{t("translationAdmin.content.paused")}</span>}
+    </>
+  );
+  return (
+    <>
+      {renderText ? renderText(value) : value}
+      {actions &&
+        (compact ? (
+          <CompactTranslationControls returnFocusRef={returnFocusRef}>{actions}</CompactTranslationControls>
+        ) : (
+          <span
+            className={`${blockControls ? "flex" : "ml-1 inline-flex"} min-w-0 flex-wrap items-center gap-x-2 text-xs font-normal text-muted-foreground`}
+            onClick={(event) => event.stopPropagation()}
+          >
+            {actions}
+          </span>
+        ))}
+    </>
   );
 }

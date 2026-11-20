@@ -8,45 +8,55 @@ import type { PersonalReview, PersonalReviewPatch } from "@/lib/workApi";
 export function PersonalReviewEditor({
   value,
   needsRegistration = false,
+  savePending = false,
   onSave,
   title,
 }: {
   value: PersonalReview;
   needsRegistration?: boolean;
+  savePending?: boolean;
   title?: string;
   onSave: (patch: PersonalReviewPatch) => Promise<PersonalReview>;
 }) {
   const { t } = useTranslation();
   const auth = useAuth();
   const id = useId();
-  const [saved, setSaved] = useState(value);
-  const [rating, setRating] = useState(value.personalRating);
-  const [note, setNote] = useState(value.personalNote);
+  const [review, setReview] = useState(() => ({
+    saved: value,
+    rating: value.personalRating,
+    note: value.personalNote,
+  }));
+  const { saved, rating, note } = review;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(false);
   const [complete, setComplete] = useState(false);
+  const { personalRating, personalNote } = value;
   useEffect(() => {
-    setSaved({ personalRating: value.personalRating, personalNote: value.personalNote });
-    setRating(value.personalRating);
-    setNote(value.personalNote);
-    setComplete(false);
-  }, [value.personalRating, value.personalNote]);
+    setReview((current) => ({
+      saved: { personalRating, personalNote },
+      rating: current.rating === current.saved.personalRating ? personalRating : current.rating,
+      note: current.note === current.saved.personalNote ? personalNote : current.note,
+    }));
+  }, [personalRating, personalNote]);
   const canEdit =
     !auth.demoMode &&
     auth.hasPermission("favorites:write") &&
     (!needsRegistration || auth.hasPermission("remote:track"));
   const changed = rating !== saved.personalRating || note !== saved.personalNote;
+  const canSave = canEdit && !busy && !savePending;
   const save = async (patch: PersonalReviewPatch) => {
-    if (!canEdit || busy) return;
+    if (!canSave) return;
     setBusy(true);
     setError(false);
     setComplete(false);
     try {
       const result = await onSave(patch);
-      setSaved(result);
-      // Clearing one field must not discard an unsaved edit to the other.
-      if ("rating" in patch) setRating(result.personalRating);
-      if ("note" in patch) setNote(result.personalNote);
+      setReview((current) => ({
+        saved: result,
+        rating:
+          "rating" in patch || current.rating === current.saved.personalRating ? result.personalRating : current.rating,
+        note: "note" in patch || current.note === current.saved.personalNote ? result.personalNote : current.note,
+      }));
       setComplete(true);
     } catch {
       setError(true);
@@ -70,7 +80,8 @@ export function PersonalReviewEditor({
             value={rating ?? ""}
             disabled={!canEdit || busy}
             onChange={(event) => {
-              setRating(event.target.value === "" ? null : Number(event.target.value));
+              const nextRating = event.target.value === "" ? null : Number(event.target.value);
+              setReview((current) => ({ ...current, rating: nextRating }));
               setComplete(false);
             }}
           >
@@ -84,7 +95,7 @@ export function PersonalReviewEditor({
         </div>
         <Button
           variant="outline"
-          disabled={!canEdit || busy || saved.personalRating === null}
+          disabled={!canSave || saved.personalRating === null}
           onClick={() => void save({ rating: null })}
         >
           {t("personal.review.clearRating")}
@@ -97,14 +108,15 @@ export function PersonalReviewEditor({
           value={note}
           disabled={!canEdit || busy}
           onChange={(event) => {
-            setNote(event.target.value);
+            const nextNote = event.target.value;
+            setReview((current) => ({ ...current, note: nextNote }));
             setComplete(false);
           }}
         />
       </div>
       <div className="flex flex-wrap gap-2">
         <Button
-          disabled={!canEdit || busy || !changed}
+          disabled={!canSave || !changed}
           onClick={() =>
             void save({
               ...(rating !== saved.personalRating ? { rating } : {}),
@@ -116,7 +128,7 @@ export function PersonalReviewEditor({
         </Button>
         <Button
           variant="outline"
-          disabled={!canEdit || busy || saved.personalNote === ""}
+          disabled={!canSave || saved.personalNote === ""}
           onClick={() => void save({ note: "" })}
         >
           {t("personal.review.clearNote")}

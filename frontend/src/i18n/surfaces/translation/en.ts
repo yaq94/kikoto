@@ -1,11 +1,14 @@
 export const translationAdmin = {
   content: {
+    options: "Translation options",
     pending: "Translating…",
     pendingTooLong: "Translation has not finished yet. You can retry.",
     failed: "Translation failed; original retained.",
     retry: "Retry translation",
     original: "Show original",
     translated: "Show translation",
+    originalAll: "Show original text for all fields",
+    translatedAll: "Show translations for all fields",
     paused: "Cache paused: low disk space.",
     concurrency: "Concurrent translations",
     maxEntries: "Translation row limit (0 means unlimited)",

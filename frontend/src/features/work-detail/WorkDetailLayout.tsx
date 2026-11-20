@@ -1,5 +1,9 @@
 import { WorkDescription } from "./metadata/WorkDescription";
-import { ContentTranslationScope, TranslatedText } from "@/components/content-translation/ContentTranslation";
+import {
+  ContentOriginalToggle,
+  ContentTranslationScope,
+  TranslatedText,
+} from "@/components/content-translation/ContentTranslation";
 import type { ContentTranslationResource } from "@/lib/contentTranslationApi";
 import {
   api,
@@ -116,6 +120,7 @@ export function UnifiedWorkDetailPage({
   actions,
   renderSourceActions,
   directory,
+  informationExtras,
   onBack,
   children,
 }: {
@@ -127,6 +132,7 @@ export function UnifiedWorkDetailPage({
   /** Actions for the selected source: a menu with the Hero actions, or an inline list in wide Source info. */
   renderSourceActions?: (layout: SourceActionLayout) => ReactNode;
   directory: ReactNode;
+  informationExtras?: ReactNode;
   onBack: () => void;
   children?: ReactNode;
 }) {
@@ -137,7 +143,7 @@ export function UnifiedWorkDetailPage({
   });
 
   return (
-    <ContentTranslationScope resource={presentation.translationResource ?? { code: presentation.code }}>
+    <ContentTranslationScope allOriginal resource={presentation.translationResource ?? { code: presentation.code }}>
       <div className="space-y-5">
         {compact ? (
           <MobileWorkDetailLayout
@@ -151,6 +157,7 @@ export function UnifiedWorkDetailPage({
               </>
             }
             directory={directory}
+            informationExtras={informationExtras}
           />
         ) : (
           <DesktopWorkDetailLayout
@@ -160,6 +167,7 @@ export function UnifiedWorkDetailPage({
             directory={directory}
           />
         )}
+        {!compact && informationExtras}
         {children}
       </div>
     </ContentTranslationScope>
@@ -592,6 +600,7 @@ function MobileWorkDetailLayout({
   onActiveTabChange,
   actions,
   directory,
+  informationExtras,
 }: {
   coverUrl: string;
   fallbackCode: string;
@@ -637,6 +646,7 @@ function MobileWorkDetailLayout({
   onActiveTabChange: (tab: "info" | "directory") => void;
   actions: ReactNode;
   directory: ReactNode;
+  informationExtras?: ReactNode;
 }) {
   const entityResolver = useDetailEntityResolver(code);
   return (
@@ -718,27 +728,29 @@ function MobileWorkDetailLayout({
 
       <div className="grid grid-cols-2 rounded-lg border bg-card p-1 text-sm">
         <button
-          className={`min-h-10 rounded-md px-3 font-medium ${activeTab === "info" ? "bg-muted text-foreground" : "text-muted-foreground"}`}
+          type="button"
+          aria-pressed={activeTab === "info"}
+          className={`min-h-11 rounded-md px-3 font-medium ${activeTab === "info" ? "bg-muted text-foreground" : "text-muted-foreground"}`}
           onClick={() => onActiveTabChange("info")}
         >
           {i18n.t("libraryDetail.info")}
         </button>
         <button
-          className={`min-h-10 rounded-md px-3 font-medium ${activeTab === "directory" ? "bg-muted text-foreground" : "text-muted-foreground"}`}
+          type="button"
+          aria-pressed={activeTab === "directory"}
+          className={`min-h-11 rounded-md px-3 font-medium ${activeTab === "directory" ? "bg-muted text-foreground" : "text-muted-foreground"}`}
           onClick={() => onActiveTabChange("directory")}
         >
           {i18n.t("libraryDetail.directory")}
         </button>
       </div>
 
-      {activeTab === "info" ? (
-        <div className="space-y-4">
-          <WorkDescription description={description} />
-          <DetailInfoPanel sourceInfo={sourceInfo} dlsiteFetchedAt={dlsiteFetchedAt} className="" />
-        </div>
-      ) : (
-        directory
-      )}
+      <div hidden={activeTab !== "info"} className="space-y-4">
+        <WorkDescription description={description} />
+        <DetailInfoPanel sourceInfo={sourceInfo} dlsiteFetchedAt={dlsiteFetchedAt} className="" />
+        {informationExtras}
+      </div>
+      {activeTab === "directory" && directory}
     </section>
   );
 }
@@ -852,9 +864,17 @@ function DetailTitleBlock({
           </div>
           {versionMenu}
         </div>
-        <h2 className="min-w-0 text-2xl font-semibold leading-tight xl:text-3xl">
-          <TranslatedText text={title} field="title" />
-        </h2>
+        <TranslatedText
+          text={title}
+          field="title"
+          blockControls
+          renderText={(value) => (
+            <h2 className="min-w-0 break-words text-2xl font-semibold leading-tight [overflow-wrap:anywhere] xl:text-3xl">
+              {value}
+            </h2>
+          )}
+        />
+        <ContentOriginalToggle />
         {loading && <div className="h-2 w-40 animate-pulse rounded bg-muted" />}
       </div>
       <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">

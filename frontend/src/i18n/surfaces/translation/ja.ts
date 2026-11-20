@@ -1,11 +1,14 @@
 export const translationAdmin = {
   content: {
+    options: "翻訳オプション",
     pending: "翻訳中…",
     pendingTooLong: "翻訳はまだ完了していません。再試行できます。",
     failed: "翻訳できません。原文を表示しています。",
     retry: "翻訳を再試行",
     original: "原文を表示",
     translated: "訳文を表示",
+    originalAll: "すべての項目を原文で表示",
+    translatedAll: "すべての項目を翻訳で表示",
     paused: "空き容量が不足し、キャッシュを一時停止しています。",
     concurrency: "同時翻訳数",
     maxEntries: "訳文行数の上限（0 は無制限）",

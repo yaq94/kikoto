@@ -1,7 +1,7 @@
 import { AudioLines, Headphones, MicVocal, Star } from "lucide-react";
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import { ContentTranslationScope, TranslatedText } from "@/components/content-translation/ContentTranslation";
+import { ContentTranslationScope } from "@/components/content-translation/ContentTranslation";
 
 import { Card, CardContent } from "@/components/ui/card";
 import { useLocale } from "@/i18n/LocaleProvider";
@@ -11,7 +11,9 @@ import { cn } from "@/lib/tailwindClassNames";
 import {
   WorkCardAgeRating,
   WorkCardIndicators,
+  WorkCardOpenArea,
   WorkCardTags,
+  WorkCardTitle,
   availabilityDotClassName,
   coverChipClassName,
   coverSourceIcon,
@@ -49,7 +51,7 @@ export function CompactWorkCardShell({
 }: WorkCardShellProps & { layout: CompactWorkCardLayout }) {
   const { t } = useTranslation();
   const { circleOpen, voiceOpen } = useWorkCardEntityActions(work, { onCircleOpen, onVoiceOpen, onSeriesOpen });
-  const interactive = Boolean(onOpen) && canOpen;
+  const open = canOpen ? onOpen : undefined;
   const hasTags = work.dlsiteTags.length > 0 || (work.userTags?.length ?? 0) > 0;
   const cover = (
     <CompactCover work={work} layout={layout} selection={selection} onRecommendationOpen={onRecommendationOpen} />
@@ -62,35 +64,18 @@ export function CompactWorkCardShell({
         data-card-layout={layout}
       >
         <CardContent className="flex h-full flex-col rounded-[inherit] p-0">
-          <div
-            className={cn(
-              "flex flex-1 flex-col rounded-t-[inherit] text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
-              interactive ? "cursor-pointer" : "cursor-default",
-            )}
-            role={interactive ? "button" : undefined}
-            tabIndex={interactive ? 0 : undefined}
-            onClick={interactive ? onOpen : undefined}
-            onKeyDown={
-              interactive
-                ? (event) => {
-                    if (event.target !== event.currentTarget) return;
-                    if (event.key === "Enter" || event.key === " ") {
-                      event.preventDefault();
-                      onOpen?.();
-                    }
-                  }
-                : undefined
-            }
-          >
+          <WorkCardOpenArea onOpen={open}>
             {layout === "row" ? (
               <>
                 <div className="flex gap-3 p-2.5 pb-2">
                   <div className="w-[7.5rem] shrink-0">{cover}</div>
                   <div className="flex min-w-0 flex-1 flex-col gap-1">
                     <CodeLine work={work} />
-                    <h3 className="line-clamp-2 text-[0.9375rem] font-semibold leading-5" title={work.title}>
-                      <TranslatedText text={work.title} field="title" />
-                    </h3>
+                    <WorkCardTitle
+                      title={work.title}
+                      onOpen={open}
+                      className="text-[0.9375rem] font-semibold leading-5"
+                    />
                     <CreditLine work={work} onCircleOpen={circleOpen} onVoiceOpen={voiceOpen} />
                     <MetricLine work={work} className="mt-auto pt-0.5" />
                   </div>
@@ -113,9 +98,11 @@ export function CompactWorkCardShell({
                 <div className="p-1.5 pb-0">{cover}</div>
                 <div className="flex flex-1 flex-col gap-1 px-2.5 pb-2.5 pt-2">
                   <CodeLine work={work} />
-                  <h3 className="line-clamp-2 min-h-10 text-sm font-semibold leading-5" title={work.title}>
-                    <TranslatedText text={work.title} field="title" />
-                  </h3>
+                  <WorkCardTitle
+                    title={work.title}
+                    onOpen={open}
+                    className="min-h-10 text-sm font-semibold leading-5"
+                  />
                   <CreditLine work={work} onCircleOpen={circleOpen} />
                   <MetricLine work={work} hidePrice className="mt-auto pt-0.5" />
                 </div>
@@ -124,16 +111,16 @@ export function CompactWorkCardShell({
               <>
                 <div className="p-1.5 pb-0">{cover}</div>
                 <div className="px-2 pb-2 pt-1.5">
-                  <h3
-                    className="line-clamp-2 min-h-9 text-[0.8125rem] font-medium leading-[1.125rem]"
+                  <WorkCardTitle
                     title={work.title}
-                  >
-                    <TranslatedText text={work.title} field="title" />
-                  </h3>
+                    onOpen={open}
+                    compactControls
+                    className="min-h-9 text-[0.8125rem] font-medium leading-[1.125rem]"
+                  />
                 </div>
               </>
             )}
-          </div>
+          </WorkCardOpenArea>
           {layout !== "cover" && footer}
         </CardContent>
       </Card>
@@ -384,7 +371,7 @@ function CreditLine({
 }) {
   const { t } = useTranslation();
   const circleLabel = !work.circle || work.circle === "Unknown circle" ? t("workCard.unknownCircle") : work.circle;
-  const voices = onVoiceOpen ? (work.voiceActors ?? []) : [];
+  const voices = work.voiceActors ?? [];
   const shownVoices = voices.slice(0, 2);
   const hiddenVoiceCount = voices.length - shownVoices.length;
   return (
@@ -415,16 +402,20 @@ function CreditLine({
           {shownVoices.map((name, index) => (
             <span key={name}>
               {index > 0 && ", "}
-              <button
-                type="button"
-                className="hover:text-primary"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onVoiceOpen?.(name);
-                }}
-              >
-                {name}
-              </button>
+              {onVoiceOpen ? (
+                <button
+                  type="button"
+                  className="hover:text-primary"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onVoiceOpen(name);
+                  }}
+                >
+                  {name}
+                </button>
+              ) : (
+                name
+              )}
             </span>
           ))}
           {hiddenVoiceCount > 0 && <span className="ml-1 tabular-nums">+{hiddenVoiceCount}</span>}

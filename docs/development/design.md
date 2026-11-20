@@ -150,7 +150,8 @@ columns and wide screens use short tiles that keep the cover dominant and leave
 out tags and voice credits. Both keep the action row and its 44px touch
 targets. Mini is the deliberate exception to the browsing-level facts: a cover
 and at most two title lines with no action row, so a large collection can be
-scanned by its artwork while the work detail page carries everything else. Only
+scanned by its artwork. When the title has translation actions, an icon beside
+it opens them without adding a row. Only
 cover source marks and the selection control ride on a mini cover. Loading
 placeholders match the footprint of the mode in use.
 

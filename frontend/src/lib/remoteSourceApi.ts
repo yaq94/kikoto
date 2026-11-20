@@ -106,6 +106,8 @@ export type RemoteWorkDetail = {
   voiceActors: string[];
   importStatus: string;
   workId: number | null;
+  favorite: boolean;
+  listeningStatus: ListeningStatus;
   personalRating?: number | null;
   personalNote?: string;
   metadataPresentation: WorkMetadataPresentation;

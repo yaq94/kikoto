@@ -19,6 +19,7 @@ import {
 import { dlsiteWorkURL } from "@/features/work-detail/workDetailShared";
 import i18n from "@/i18n";
 import type { LibrarySource, ListeningStatus, RemoteWork } from "@/lib/api";
+import { isWorkCode } from "@/lib/workCode";
 
 import { libraryCoverSourceBadges } from "./libraryCoverSources";
 import { remoteSourceBadges, sourceBadgesNeedLabel } from "./remoteWorkBadges";
@@ -73,6 +74,7 @@ export function RemoteWorkCard({
   isQueueing: boolean;
   layout: CompactWorkCardLayout | null;
 }) {
+  const productCode = !work.seriesId && isWorkCode(work.primaryCode) ? work.primaryCode : null;
   const Shell = layout ? CompactWorkCardShell : WorkCardShell;
   const toast = useToast();
   const baseView = remoteWorkCardView(
@@ -89,6 +91,7 @@ export function RemoteWorkCard({
   );
   const view: WorkCardViewModel = {
     ...baseView,
+    entityLookupCode: productCode,
     ...sourceBadges,
     // A verdict is the reason to look at the card; an icon plus a tooltip hides
     // it on touch and in a screenshot. Healthy marks keep the compact style.
@@ -111,7 +114,7 @@ export function RemoteWorkCard({
       footer={
         <WorkCardFooter
           className={layout === "row" ? "h-10 border-border/40" : undefined}
-          left={work.primaryCode ? <WorkCardDLsiteAction href={dlsiteWorkURL(work.primaryCode)} /> : null}
+          left={productCode ? <WorkCardDLsiteAction href={dlsiteWorkURL(productCode)} /> : null}
           right={
             <>
               {work.catalogEntryId && (
@@ -203,7 +206,7 @@ function remoteWorkCardView(
       ? i18n.t("catalogSeries.series")
       : work.primaryCode || (work.catalogEntryId ? i18n.t("openlist.numberless") : work.remoteId),
     title: work.title,
-    circle: work.circle || sourceLabel || i18n.t("workCard.unknownCircle"),
+    circle: work.circle,
     ageRating: work.ageRating,
     voiceActors: work.voiceActors,
     coverUrl: work.coverUrl,

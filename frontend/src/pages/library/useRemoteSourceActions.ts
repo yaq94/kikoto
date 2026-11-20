@@ -1,5 +1,5 @@
 import type { TFunction } from "i18next";
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 import {
   REMOTE_BULK_FETCH_PERMISSIONS,
@@ -15,6 +15,45 @@ import { api, type LibrarySource, type ListeningStatus, type RemoteWork } from "
 import { libraryBulkCopy, useRemoteWorkActions } from "@/pages/useRemoteWorkActions";
 
 import { remoteWorkActionCode, remoteWorkRowKey } from "./remoteSourceBrowseModel";
+
+// The library keeps this operation alive while its source panel is unmounted.
+export function useRemoteCatalogQueue(toast: ReturnType<typeof useToast>, t: TFunction) {
+  const queueingEntries = useRef(new Set<number>());
+  const [queueingCatalogIds, setQueueingCatalogIds] = useState<ReadonlySet<number>>(() => new Set());
+  const player = usePlayer();
+
+  /** Queues every published track of a catalog entry, which has no work of its own. */
+  const queueCatalogWork = async (source: LibrarySource, work: RemoteWork) => {
+    const catalogEntryId = work.catalogEntryId;
+    const pending = queueingEntries.current;
+    if (!catalogEntryId || pending.has(catalogEntryId)) return;
+    pending.add(catalogEntryId);
+    setQueueingCatalogIds(new Set(pending));
+    try {
+      const queue = await catalogCardQueue({
+        catalogEntryId,
+        workId: work.workId,
+        sourceId: source.id,
+        sourceName: source.displayName || source.code,
+        primaryCode: work.primaryCode,
+        title: work.title,
+      });
+      if (!queue) {
+        toast.info(t("library.catalogEmpty"));
+        return;
+      }
+      player.appendQueue(queue.tracks);
+      toast.success(t("library.catalogQueued", { count: queue.tracks.length }));
+    } catch (error) {
+      toast.notify(toastFromError(error, t("errors.unavailable")));
+    } finally {
+      pending.delete(catalogEntryId);
+      setQueueingCatalogIds(new Set(pending));
+    }
+  };
+
+  return { queueCatalogWork, queueingCatalogIds };
+}
 
 export function useRemoteSourceActions({
   source,
@@ -41,8 +80,6 @@ export function useRemoteSourceActions({
   const requireBulkTrack = usePermissionGate(REMOTE_BULK_TRACK_PERMISSIONS, { deferDemo: true });
   const requireTrack = usePermissionGate(REMOTE_TRACK_PERMISSIONS, { deferDemo: true });
   const [syncingWorkKey, setSyncingWorkKey] = useState<string | null>(null);
-  const [queueingCatalogId, setQueueingCatalogId] = useState<number | null>(null);
-  const player = usePlayer();
   const [isBulkBusy, setIsBulkBusy] = useState(false);
   const [saveConfirm, setSaveConfirm] = useState<{ codes: string[]; run: () => Promise<void> } | null>(null);
   const fetchWorkspace = useRemoteFetchWorkspace({ onWorksChanged: () => onSynced(0) });
@@ -111,32 +148,6 @@ export function useRemoteSourceActions({
     }
   };
 
-  /** Queues every published track of a catalog entry, which has no work of its own. */
-  const queueCatalogWork = async (work: RemoteWork) => {
-    if (!work.catalogEntryId) return;
-    setQueueingCatalogId(work.catalogEntryId);
-    try {
-      const queue = await catalogCardQueue({
-        catalogEntryId: work.catalogEntryId,
-        workId: work.workId,
-        sourceId: source.id,
-        sourceName: source.displayName || source.code,
-        primaryCode: work.primaryCode,
-        title: work.title,
-      });
-      if (!queue) {
-        toast.info(t("library.catalogEmpty"));
-        return;
-      }
-      player.appendQueue(queue.tracks);
-      toast.success(t("library.catalogQueued", { count: queue.tracks.length }));
-    } catch (error) {
-      toast.notify(toastFromError(error, t("errors.unavailable")));
-    } finally {
-      setQueueingCatalogId(null);
-    }
-  };
-
   const ensureRemoteWorkForState = async (work: RemoteWork, reason: string) => {
     const result = await api.syncRemoteSourceWork(source.id, remoteWorkActionCode(work), reason);
     onWorkStateChanged(remoteWorkRowKey(work), { workId: result.workId });
@@ -199,7 +210,5 @@ export function useRemoteSourceActions({
     markRemoteWork,
     canStateRemoteWork,
     ensureRemoteWorkForList,
-    queueCatalogWork,
-    queueingCatalogId,
   };
 }

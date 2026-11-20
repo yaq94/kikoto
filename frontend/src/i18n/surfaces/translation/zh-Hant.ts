@@ -1,11 +1,14 @@
 export const translationAdmin = {
   content: {
+    options: "翻譯選項",
     pending: "正在翻譯…",
     pendingTooLong: "翻譯尚未完成，可重試。",
     failed: "翻譯失敗，已保留原文。",
     retry: "重試翻譯",
     original: "查看原文",
     translated: "查看譯文",
+    originalAll: "查看全部欄位原文",
+    translatedAll: "查看全部欄位譯文",
     paused: "磁碟空間不足，快取已暫停。",
     concurrency: "翻譯並行數",
     maxEntries: "譯文行數上限（0 為不限）",

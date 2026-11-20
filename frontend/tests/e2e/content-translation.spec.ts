@@ -44,9 +44,15 @@ test("display language translates public detail and dynamic directory while name
   await expect(description).toContainText("ZH: Example description <script>Example text</script>");
   await expect(description.locator("script")).toHaveCount(0);
   await expect(page.getByTestId("detail-identity-metadata")).toContainText("ZH: Example tag");
-  await page.getByTestId("detail-hero").getByRole("button", { name: "Show original", exact: true }).click();
+  await page
+    .getByTestId("detail-hero")
+    .getByRole("button", { name: "Show original text for all fields", exact: true })
+    .click();
   await expect(page.getByTestId("detail-hero")).not.toContainText("ZH: Example title by Example Voice");
-  await page.getByTestId("detail-hero").getByRole("button", { name: "Show translation", exact: true }).click();
+  await page
+    .getByTestId("detail-hero")
+    .getByRole("button", { name: "Show translations for all fields", exact: true })
+    .click();
   // The panel opens the only folder automatically. Step back to the work
   // root and expand it again so the translated text is asserted after a real
   // navigation, not only on first paint.

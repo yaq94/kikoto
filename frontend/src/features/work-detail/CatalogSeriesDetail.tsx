@@ -47,21 +47,37 @@ export function CatalogSeriesEpisodeItem({
   const resource =
     episode.catalogEntryId > 0 ? { catalogEntryId: episode.catalogEntryId } : { workId: episode.workId ?? undefined };
   return (
-    <li className="flex items-center justify-between gap-3 py-3" data-episode-status={episode.status ?? "available"}>
-      <ContentResourceScope resource={resource}>
-        <span className="flex min-w-0 flex-wrap items-center gap-2">
-          <span>
-            {episode.position}. <TranslatedText text={episode.title} field="title" />
-          </span>
+    <li
+      className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-start gap-x-3 gap-y-2 py-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,12rem)_auto] sm:items-center"
+      data-episode-status={episode.status ?? "available"}
+    >
+      <div className="col-span-2 min-w-0 break-words [overflow-wrap:anywhere] sm:col-span-1">
+        <ContentResourceScope resource={resource}>
+          <TranslatedText
+            text={episode.title}
+            field="title"
+            blockControls
+            renderText={(value) => (
+              <span>
+                {episode.position}. {value}
+              </span>
+            )}
+          />
           {missing && (
-            <span className="rounded bg-muted px-1.5 py-0.5 text-xs font-medium text-muted-foreground">
+            <span className="ml-2 rounded bg-muted px-1.5 py-0.5 text-xs font-medium text-muted-foreground">
               {t("catalogSeries.missing")}
             </span>
           )}
-        </span>
-      </ContentResourceScope>
-      <span className="text-sm text-muted-foreground">{episode.sourceName}</span>
-      <Button variant="outline" onClick={() => openCatalogSeriesEpisode(seriesId, seriesTitle, episode)}>
+        </ContentResourceScope>
+      </div>
+      <span className="min-w-0 break-words text-sm text-muted-foreground [overflow-wrap:anywhere]">
+        {episode.sourceName}
+      </span>
+      <Button
+        className="min-h-11"
+        variant="outline"
+        onClick={() => openCatalogSeriesEpisode(seriesId, seriesTitle, episode)}
+      >
         {t("catalogSeries.openEpisode")}
       </Button>
     </li>
@@ -97,9 +113,14 @@ export function CatalogSeriesDetail({ id, onBack }: { id: number; onBack: () => 
         <ContentTranslationScope resource={{ seriesId: id }}>
           <header>
             <p className="text-sm text-muted-foreground">{t("catalogSeries.series")}</p>
-            <h1 className="text-2xl font-semibold">
-              <TranslatedText text={series.title} field="title" />
-            </h1>
+            <TranslatedText
+              text={series.title}
+              field="title"
+              blockControls
+              renderText={(value) => (
+                <h1 className="break-words text-2xl font-semibold [overflow-wrap:anywhere]">{value}</h1>
+              )}
+            />
           </header>
           <ol className="divide-y divide-border" aria-label={t("catalogSeries.episodes")}>
             {series.episodes.map((episode) => (

@@ -118,13 +118,10 @@ test("unregistered catalog translates titles and real-path directories without c
     .click();
   await expect(detail.getByTestId("directory-file-row")).toContainText("Translated: 01 opening.wav");
   await expect(detail.getByTestId("directory-breadcrumb")).toContainText("Translated: Example folder");
-  await detail.getByRole("heading", { level: 1 }).getByRole("button", { name: "Show original", exact: true }).click();
+  await detail.getByRole("button", { name: "Show original text for all fields", exact: true }).click();
   await expect(detail.getByRole("heading", { level: 1 })).not.toContainText("Translated:");
   await expect(detail.getByTestId("directory-file-row")).not.toContainText("Translated:");
-  await detail
-    .getByRole("heading", { level: 1 })
-    .getByRole("button", { name: "Show translation", exact: true })
-    .click();
+  await detail.getByRole("button", { name: "Show translations for all fields", exact: true }).click();
   await expect(detail.getByTestId("directory-file-row")).toContainText("Translated: 01 opening.wav");
   expect(await (await page.request.get(`${backend}/api/source-catalog/${catalogId}`)).json()).toMatchObject({
     title: "Translation Example",

@@ -71,6 +71,8 @@ export type WorkCardBadge = {
 export type WorkCardViewModel = {
   translationResource?: ContentTranslationResource;
   code: string;
+  /** Overrides the label when the card resolves a product code, or null if it has none. */
+  entityLookupCode?: string | null;
   title: string;
   circle: string;
   circleExternalId?: string;
@@ -139,15 +141,16 @@ export function useWorkCardEntityActions(
   const { t } = useTranslation();
   const { demoMode } = useAuth();
   const [resolvingEntity, setResolvingEntity] = useState<WorkEntityLink["kind"] | null>(null);
+  const lookupCode = work.entityLookupCode === undefined ? work.code : work.entityLookupCode;
   const resolveEntity = async (kind: WorkEntityLink["kind"], name = "") => {
-    if (!work.code || resolvingEntity) return;
+    if (!lookupCode || resolvingEntity) return;
     setResolvingEntity(kind);
     const entityKind = entityKindLabel(kind);
     toast.info(kind === "series" ? t("workCard.loadingSeries") : t("workCard.loadingEntity", { kind: entityKind }));
     try {
       const result = demoMode
-        ? await api.lookupWorkEntityLink(work.code, kind, name)
-        : await api.resolveWorkEntityLink(work.code, kind, name);
+        ? await api.lookupWorkEntityLink(lookupCode, kind, name)
+        : await api.resolveWorkEntityLink(lookupCode, kind, name);
       if (result.route) openEntityRoute(result.route);
     } catch (error) {
       toast.notify(toastFromError(error, t("workCard.couldNotOpenEntity", { kind: entityKind })));
@@ -160,11 +163,12 @@ export function useWorkCardEntityActions(
         onCircleOpen
           ? onCircleOpen(work.circleExternalId as string)
           : openEntityRoute(`/circles/${encodeURIComponent(work.circleExternalId as string)}`)
-    : work.circle && work.circle !== "Unknown circle"
+    : lookupCode && work.circle && work.circle !== "Unknown circle"
       ? () => void resolveEntity("circle", work.circle)
       : undefined;
-  const seriesOpen = onSeriesOpen ?? (work.series ? () => void resolveEntity("series", work.series ?? "") : undefined);
-  const voiceOpen = (name: string) => {
+  const seriesOpen =
+    onSeriesOpen ?? (lookupCode && work.series ? () => void resolveEntity("series", work.series ?? "") : undefined);
+  const resolveVoice = (name: string) => {
     const nameKey = name.trim().toLocaleLowerCase();
     const credit = work.voiceCredits?.find((item) => item.displayName.trim().toLocaleLowerCase() === nameKey);
     if (credit?.personId) {
@@ -177,6 +181,8 @@ export function useWorkCardEntityActions(
     }
     void resolveEntity("voice", name);
   };
+  const voiceOpen =
+    lookupCode || onVoiceOpen || work.voiceCredits?.some((credit) => credit.personId) ? resolveVoice : undefined;
   return { circleOpen, seriesOpen, voiceOpen };
 }
 
@@ -197,6 +203,7 @@ export function WorkCardShell({
     onVoiceOpen,
     onSeriesOpen,
   });
+  const open = canOpen ? onOpen : undefined;
   const content = (
     <>
       <WorkCardMedia
@@ -217,6 +224,7 @@ export function WorkCardShell({
       />
       <WorkCardBody
         work={work}
+        onOpen={open}
         onCircleOpen={circleOpen}
         onVoiceOpen={voiceOpen}
         onSeriesOpen={seriesOpen}
@@ -232,36 +240,81 @@ export function WorkCardShell({
         data-testid="work-card"
       >
         <CardContent className="flex h-full flex-col rounded-[inherit] p-0">
-          {onOpen ? (
-            <div
-              className={cn(
-                "flex flex-1 flex-col rounded-t-[inherit] text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
-                canOpen ? "cursor-pointer" : "cursor-default",
-              )}
-              role={canOpen ? "button" : undefined}
-              tabIndex={canOpen ? 0 : undefined}
-              onClick={canOpen ? onOpen : undefined}
-              onKeyDown={
-                canOpen
-                  ? (event) => {
-                      if (event.target !== event.currentTarget) return;
-                      if (event.key === "Enter" || event.key === " ") {
-                        event.preventDefault();
-                        onOpen();
-                      }
-                    }
-                  : undefined
-              }
-            >
-              {content}
-            </div>
-          ) : (
-            <div className="flex flex-1 flex-col text-left">{content}</div>
-          )}
+          <WorkCardOpenArea onOpen={open}>{content}</WorkCardOpenArea>
           {footer}
         </CardContent>
       </Card>
     </ContentTranslationScope>
+  );
+}
+
+/** Pointer clicks on empty card space are a convenience. The title is the keyboard target. */
+export function WorkCardOpenArea({ children, onOpen }: { children: ReactNode; onOpen?: () => void }) {
+  return (
+    <div
+      className={cn("flex flex-1 flex-col rounded-t-[inherit] text-left", onOpen && "cursor-pointer")}
+      onClick={
+        onOpen &&
+        ((event) => {
+          if (
+            event.target instanceof Element &&
+            event.target.closest("button, a, input, [role=button], [role=checkbox]")
+          )
+            return;
+          onOpen();
+        })
+      }
+    >
+      {children}
+    </div>
+  );
+}
+
+export function WorkCardTitle({
+  title,
+  className,
+  onOpen,
+  compactControls = false,
+}: {
+  title: string;
+  className?: string;
+  onOpen?: () => void;
+  compactControls?: boolean;
+}) {
+  const titleRef = useRef<HTMLButtonElement>(null);
+  const titleClasses = cn("line-clamp-2 break-words [overflow-wrap:anywhere]", className);
+  const titleWithActions = (
+    <TranslatedText
+      text={title}
+      field="title"
+      controls={compactControls ? "compact" : true}
+      returnFocusRef={titleRef}
+      blockControls
+      renderText={(text) => (
+        <h3 title={title} className={cn("min-w-0", compactControls && "flex-1", !onOpen && titleClasses)}>
+          {onOpen ? (
+            <button
+              type="button"
+              ref={titleRef}
+              className={cn(
+                titleClasses,
+                "w-full rounded-sm text-left focus-visible:outline-2 focus-visible:outline-ring",
+              )}
+              onClick={onOpen}
+            >
+              {text}
+            </button>
+          ) : (
+            text
+          )}
+        </h3>
+      )}
+    />
+  );
+  return compactControls ? (
+    <div className="flex min-w-0 items-center gap-1 pointer-coarse:gap-2.5">{titleWithActions}</div>
+  ) : (
+    titleWithActions
   );
 }
 
@@ -529,12 +582,14 @@ export function availabilityDotClassName(badge: WorkCardBadge) {
 
 function WorkCardBody({
   work,
+  onOpen,
   onCircleOpen,
   onVoiceOpen,
   onSeriesOpen,
   onTagOpen,
 }: {
   work: WorkCardViewModel;
+  onOpen?: () => void;
   onCircleOpen?: () => void;
   onVoiceOpen?: (name: string) => void;
   onSeriesOpen?: () => void;
@@ -562,12 +617,11 @@ function WorkCardBody({
           />
           <WorkCardAgeRating ageRating={work.ageRating} />
         </div>
-        <h3
-          className="line-clamp-2 min-h-10 text-[0.9375rem] font-semibold leading-5 @max-[12.5rem]/work-card:min-h-9 @max-[12.5rem]/work-card:text-sm @max-[12.5rem]/work-card:leading-[1.125rem]"
+        <WorkCardTitle
           title={work.title}
-        >
-          <TranslatedText text={work.title} field="title" />
-        </h3>
+          onOpen={onOpen}
+          className="min-h-10 text-[0.9375rem] font-semibold leading-5 @max-[12.5rem]/work-card:min-h-9 @max-[12.5rem]/work-card:text-sm @max-[12.5rem]/work-card:leading-[1.125rem]"
+        />
         <div
           className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-left text-[0.8125rem] text-muted-foreground @max-[12.5rem]/work-card:text-xs"
           title={[circleLabel, work.series].filter(Boolean).join(" / ")}

@@ -130,6 +130,7 @@ import { useLibraryRecommendations } from "@/pages/library/useLibraryRecommendat
 import { useLibraryResultsScroll } from "@/pages/library/useLibraryResultsScroll";
 import { useLibrarySourceVisibility } from "@/pages/library/useLibrarySourceVisibility";
 import { useLocalLibraryWorks } from "@/pages/library/useLocalLibraryWorks";
+import { useRemoteCatalogQueue } from "@/pages/library/useRemoteSourceActions";
 import { useRemoteSourceWorks } from "@/pages/library/useRemoteSourceWorks";
 import { remoteOnlyWorkPreview, remoteWorkPreview } from "@/pages/library/workPreviewHistory";
 
@@ -163,6 +164,7 @@ export function LibraryPage({ active = true }: { active?: boolean }) {
   const contentLanguage = useContentLanguage();
   const translationPrefetch = useContentTranslationPrefetch();
   const { t } = useTranslation();
+  const catalogQueue = useRemoteCatalogQueue(toast, t);
   const mobileNavigationLayout = useMobileNavigationLayout();
   const principalID = auth.user?.id ?? null;
   const browseStorageScope = currentClientStorageScope(principalID);
@@ -1270,6 +1272,7 @@ export function LibraryPage({ active = true }: { active?: boolean }) {
         <div className="space-y-3">
           <RemoteSourcePanel
             source={activeTab.source}
+            catalogQueue={catalogQueue}
             recommendationsEnabled={active && showBrowse && recommendBadgesEnabled}
             recommendationSessionId={recommendationSession.id}
             result={remoteWorks.result}
