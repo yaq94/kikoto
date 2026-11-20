@@ -2,7 +2,7 @@
 
 **Status:** ready-for-agent
 **设计状态:** 已确认（Q31）；用户故事、验收要求与测试边界作为实施合同。
-**Implementation:** resolved；已确认功能及25号整改在 `2dbfa228` 完成验收并部署，Full CI 31项全部成功；AC-01至AC-28、当前运行证据与上游范围见[候选账本](evidence/24-candidate-2dbfa228.md)。本规格全部要求保持有效，历史证据仅证明其注明产物。
+**Implementation:** in-progress；[26 线上复审整改](issues/26-live-review-remediation.md)正在复验。`2dbfa228` 的 AC-01 至 AC-28 历史证据见[候选账本](evidence/24-candidate-2dbfa228.md)。本规格全部要求保持有效。
 **执行授权:** 用户已授权本规格全部功能实现、必要依赖安装、测试、数据库迁移、部署与回滚；进度及证据见[执行记录](execution.md)。
 **领域依据:** [GLOSSARY](../../GLOSSARY.md) · [作品身份与个人记录 ADR](../../docs/decisions/ADR-0004-work-identity-and-personal-state.md) · [整改一致性 ADR](../../docs/decisions/ADR-0006-catalog-remediation-and-translation-consistency.md)
 

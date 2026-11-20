@@ -2,7 +2,7 @@
 
 **Status:** ready-for-agent
 **发布状态:** 用户已批准原 24 张正式工单；第 25 张承接现行实现重新审查发现的功能与资源整改。
-**Implementation:** resolved；01–25已按 `2dbfa228` 完整验收并部署，Full CI 31项全部成功；原主责、整改子项及实际服务证据见[候选账本](evidence/24-candidate-2dbfa228.md)。历史记录保留其原版本，不自动延续。
+**Implementation:** in-progress；[26 线上复审整改](issues/26-live-review-remediation.md)包含索引、查询、翻译、远端状态及布局五条并行工作。01–25 的主责和历史签收见[候选账本](evidence/24-candidate-2dbfa228.md)。
 **执行授权:** 用户已授权全部功能实现、必要依赖安装、测试、数据库迁移、部署与回滚；[执行记录](execution.md)维护当前状态与证据。
 **依据:** [正式规格](spec.md) · [领域词汇表](../../GLOSSARY.md) · [作品身份与个人记录 ADR](../../docs/decisions/ADR-0004-work-identity-and-personal-state.md)
 

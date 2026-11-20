@@ -1,11 +1,13 @@
 # Kikoto 下一阶段执行记录
 
 **Status:** ready-for-agent
-**Implementation:** resolved；01–25按 `2dbfa228` 的当前证据签收，生产schema111。完整验收、审查限制与上游范围见[候选账本](evidence/24-candidate-2dbfa228.md)。
+**Implementation:** in-progress；[26 线上复审整改](issues/26-live-review-remediation.md)从 `55458f0e` 进入集成。01–25 的历史证据及范围见[候选账本](evidence/24-candidate-2dbfa228.md)。
 
 ## 当前状态
 
-**已验收候选：** `2dbfa228` Full run `42663172758` 终态success，31个job全部成功。944请求组合负载、当前模型/简繁、编号/无码Range、两用户8份记录、IAB重载与同流推进、目标机规模及105→111→105恢复均通过。生产实际搜索、模型、媒体、配置和个人记录比对通过，详见[候选账本](evidence/24-candidate-2dbfa228.md)。
+**当前代码候选：** `c5e3021b` 包含 26 号整改。11 月 20 日两轴复审的发现已修复，Full run `44752451208` 正在运行；当前产物和剩余门禁见[26 号集成证据](evidence/26-live-review-candidate.md)。用户已明确取消强制 1Password 签名，并确认继续同步当前公开仓库。
+
+**历史已验收候选：** `2dbfa228` Full run `42663172758` 终态success，31个job全部成功。944请求组合负载、当前模型/简繁、编号/无码Range、两用户8份记录、IAB重载与同流推进、目标机规模及105→111→105恢复均通过。生产实际搜索、模型、媒体、配置和个人记录比对通过，详见[候选账本](evidence/24-candidate-2dbfa228.md)。
 
 **当前部署（2026-11-10 核实）：** `kikoto:next-2dbfa228`，schema111，Compose healthy，公开入口200。四张个人表与本次105快照逐行相同，翻译配置指纹一致；新旧镜像、当前部署备份及a40失败数据库保留于受限运维目录。完整索引复用原任务继续推进，未知范围不计为完整覆盖。
 

@@ -19,6 +19,10 @@ series.
   circle and cast names verbatim.
 - Translations are cached per source text, model, and template, with bounded
   concurrency, queueing, and storage.
+- Mini cards keep original-text and retry controls beside the title, with
+  separate touch targets and keyboard focus recovery when native text arrives.
+- A manual background translation pause survives disk checks and completion of
+  an in-flight batch. Resuming fills missing fields without bypassing retry delays.
 
 </details>
 
@@ -34,6 +38,10 @@ series.
   full-tree job; low disk space pauses the scan without losing progress.
 - Renames, missing directories, deleted sources, and restored directories keep
   the card and its personal records.
+- A failed source-root request preserves the published catalog. Publication
+  resumes media and translation preparation in bounded batches.
+- Localized long-word searches use matching index rows before loading card
+  details, including empty pages and their result counts.
 
 </details>
 
@@ -49,6 +57,12 @@ series.
   conflict decision, and keep both playback editions.
 - Personal data export and import cover every record type and remain compatible
   with the numbered format.
+- Source cards reload the current user's favorites and listening state, and
+  prevent duplicate queue requests when returning to an in-flight source page.
+- Reviews saved during a source switch update the matching work without
+  discarding an unfinished draft; failed identity checks provide a retry.
+- Mobile information and directory panels preserve drafts and expose the
+  selected panel to keyboard and assistive-technology users.
 
 </details>
 
