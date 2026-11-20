@@ -190,11 +190,6 @@ the Makefile has no target for the required check.
 
 ## Release and Handoff
 
-Use the repository's normal signed-commit path. If the 1Password signing agent
-requires approval or is unavailable, stop and ask the user. Do not disable
-commit signing, pass a no-sign flag, replace the configured signer, or otherwise
-bypass the agent.
-
 Release and migration boundaries are derived from repository state:
 
 - Read `VERSION` for the application version; do not hard-code the current
