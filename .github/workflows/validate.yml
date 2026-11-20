@@ -11,6 +11,10 @@ on:
           pr selects jobs from the changed paths; full runs every job.
         required: true
         type: string
+      export_image:
+        description: Retain the tested production image as a short-lived artifact.
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -288,6 +292,26 @@ jobs:
           mv -- "$RUNNER_TEMP/kikoto-buildx-cache-next" "$RUNNER_TEMP/kikoto-buildx-cache"
       - name: Exercise the production image
         run: make DOCKER_IMAGE=kikoto:ci production-e2e
+      - name: Export the tested image
+        if: inputs.export_image
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/kikoto-image"
+          docker tag kikoto:ci "kikoto:next-$GITHUB_SHA"
+          docker image inspect kikoto:ci --format '{{.Id}}' > "$RUNNER_TEMP/kikoto-image/image-id.txt"
+          printf '%s\n' "$GITHUB_SHA" > "$RUNNER_TEMP/kikoto-image/commit.txt"
+          docker save "kikoto:next-$GITHUB_SHA" | gzip -1 > "$RUNNER_TEMP/kikoto-image/image.tar.gz"
+          cd "$RUNNER_TEMP/kikoto-image"
+          sha256sum image.tar.gz image-id.txt commit.txt > SHA256SUMS
+      - name: Upload the tested image
+        if: inputs.export_image
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: kikoto-image-${{ github.sha }}
+          path: ${{ runner.temp }}/kikoto-image
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 2
 
   dev-smoke:
     name: Development Compose

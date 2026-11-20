@@ -16,6 +16,14 @@ fix(player): restore progress seek
 docs(readme): reorganize public docs
 ```
 
+## Validated Deployment Images
+
+The manual Full workflow can export its tested production image with
+`export_image`. The artifact is retained for two days and includes the source
+commit, image ID, and checksums. Deploy it only after every required job in that
+Full run succeeds. Verify the archive checksums, source commit, and loaded image
+ID before updating a service.
+
 ## Release Notes
 
 A release note shows its area titles and folds the changes under each one, so

@@ -7,6 +7,11 @@ on:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      export_image:
+        description: Export the tested production image for deployment
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -19,3 +24,4 @@ jobs:
     uses: ./.github/workflows/validate.yml
     with:
       tier: full
+      export_image: ${{ inputs.export_image == true }}
