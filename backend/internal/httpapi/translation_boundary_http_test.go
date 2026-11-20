@@ -178,3 +178,31 @@ func TestTranslationTrialBoundsConcurrencyAndCancelsOnShutdown(t *testing.T) {
 		t.Fatalf("unexpected shutdown result: %#v", result)
 	}
 }
+
+func TestTranslationModelReusesConnectionAcrossTrialAndContent(t *testing.T) {
+	var connections, requests atomic.Int32
+	upstream := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		_, _ = io.Copy(io.Discard, r.Body)
+		_, _ = io.WriteString(w, `{"choices":[{"message":{"content":"示例译文"},"finish_reason":"stop"}]}`)
+	}))
+	upstream.Config.ConnState = func(_ net.Conn, state http.ConnState) {
+		if state == http.StateNew {
+			connections.Add(1)
+		}
+	}
+	upstream.Start()
+	defer upstream.Close()
+	s, host, admin, listener := translationHTTPFixture(t)
+	seedPrefillCard(t, s, 1, "Example title")
+	configurePrefillModel(t, host, admin, upstream.URL)
+
+	translationRequest(t, host, admin, "POST", "/api/settings/translation/test", `{"text":"Example trial.","targetLanguage":"zh-Hans"}`, 200)
+	view := translationRequest(t, host, listener, "POST", "/api/content-translations", `{"catalogEntryId":1,"field":"title","text":"Example title","language":"zh-cn"}`, 200)
+	if view["status"] != "translated" || requests.Load() != 2 {
+		t.Fatalf("expected two successful model calls, got %d requests and content %#v", requests.Load(), view)
+	}
+	if got := connections.Load(); got != 1 {
+		t.Fatalf("model calls used %d TCP connections, want one", got)
+	}
+}

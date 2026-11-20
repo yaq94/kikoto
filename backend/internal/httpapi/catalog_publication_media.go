@@ -8,6 +8,27 @@ import (
 
 const catalogPublicationPendingMediaQuery = `SELECT entity_id,after_location_id FROM source_catalog_publication_entity INDEXED BY source_catalog_publication_entity_media_pending WHERE operation_id=? AND entity_kind='entry' AND media_prepared=0 ORDER BY entity_id LIMIT 1`
 
+// Look up locations by card fingerprint before checking their source. Driving the
+// lookup from the source's locations can visit every registered track per card.
+const catalogPublicationMediaLocations = `
+	FROM media_item m INDEXED BY idx_media_item_fingerprint
+	CROSS JOIN media_file_location l INDEXED BY idx_media_file_location_item_source_type
+	ON l.media_item_id=m.id`
+
+const catalogPublicationPrepareEmptyMedia = `WITH next AS MATERIALIZED (
+	SELECT entity_id,after_location_id FROM source_catalog_publication_entity
+	INDEXED BY source_catalog_publication_entity_media_pending
+	WHERE operation_id=?1 AND entity_kind='entry' AND media_prepared=0
+	ORDER BY entity_id LIMIT 64
+)
+UPDATE source_catalog_publication_entity SET media_prepared=1
+WHERE operation_id=?1 AND entity_kind='entry' AND entity_id IN (
+	SELECT n.entity_id FROM next n WHERE NOT EXISTS(SELECT 1 ` + catalogPublicationMediaLocations + `
+		WHERE m.fingerprint>=('catalog:'||n.entity_id||':') AND m.fingerprint<('catalog:'||n.entity_id||';')
+		AND l.location_type='catalog_stream' AND l.file_source_id=(SELECT file_source_id FROM source_catalog_publication WHERE id=?1)
+		AND l.id>n.after_location_id)
+)`
+
 // One entry can have thousands of already registered media locations. Their
 // availability is a source projection, prepared in keyset batches before the
 // publication marker, independently of the bounded entry lifecycle batch.
@@ -29,7 +50,7 @@ func (s *Server) prepareCatalogPublicationMedia(ctx context.Context, operation i
 		}
 		rows, err := tx.QueryContext(ctx, `SELECT l.id,CASE WHEN e.id IS NULL OR e.file_source_id IS NULL OR e.availability_status IN ('missing','excluded') THEN 'unavailable'
 		 WHEN e.availability_status='available' THEN CASE WHEN EXISTS(SELECT 1 FROM source_catalog_file f WHERE f.catalog_entry_id=e.id AND f.kind='audio' AND m.fingerprint='catalog:'||e.id||':'||f.relative_path) THEN 'available' ELSE 'unavailable' END ELSE l.availability END
-		 FROM media_item m JOIN media_file_location l ON l.media_item_id=m.id LEFT JOIN source_catalog_entry e ON e.id=?
+		 `+catalogPublicationMediaLocations+` LEFT JOIN source_catalog_entry e ON e.id=?
 		 WHERE m.fingerprint>=('catalog:'||?||':') AND m.fingerprint<('catalog:'||?||';') AND l.location_type='catalog_stream'
 		 AND l.file_source_id=(SELECT file_source_id FROM source_catalog_publication WHERE id=?) AND l.id>? ORDER BY l.id LIMIT 64`, entry, entry, entry, operation, after)
 		if err != nil {
@@ -61,7 +82,11 @@ func (s *Server) prepareCatalogPublicationMedia(ctx context.Context, operation i
 		if len(batch) > 0 {
 			after = batch[len(batch)-1].id
 		}
-		if err == nil {
+		if err == nil && len(batch) == 0 {
+			// Group idle keys without skipping any registered locations. The
+			// ownership rows stay in place so a later write can invalidate them.
+			_, err = tx.ExecContext(ctx, catalogPublicationPrepareEmptyMedia, operation)
+		} else if err == nil {
 			_, err = tx.ExecContext(ctx, `UPDATE source_catalog_publication_entity SET after_location_id=?,media_prepared=? WHERE operation_id=? AND entity_kind='entry' AND entity_id=?`, after, len(batch) < 64, operation, entry)
 		}
 		if err == nil {

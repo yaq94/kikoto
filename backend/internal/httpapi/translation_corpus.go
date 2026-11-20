@@ -321,6 +321,7 @@ type translationCorpusLanguageCoverage struct {
 	// the corpus transitions, so Native+Model may exceed Rows.
 	Native  int64
 	Model   int64
+	Derived int64
 	Missing int64
 	Stale   int64
 	Failed  int64
@@ -405,15 +406,18 @@ func (s *Server) translationCorpusCoverageFor(ctx context.Context, cfg translati
 		languages(language) AS (VALUES ('en'),('zh-Hans'),('ja'),('ko'),('zh-Hant')),
 		items AS MATERIALIZED (
 			SELECT c.entity_kind,c.entity_id,c.field,l.language,
-				sum(CASE WHEN ct.source_text=c.source_text AND ct.origin='native' THEN 1 ELSE 0 END) AS native,
+				sum(CASE WHEN ct.language=l.language AND ct.source_text=c.source_text
+					AND ct.origin='native' THEN 1 ELSE 0 END) AS native,
 				sum(CASE WHEN l.language<>'zh-Hant' AND ct.source_text=c.source_text
 					AND ct.origin='model' AND ct.config_key=? THEN 1 ELSE 0 END) AS model,
+				max(CASE WHEN l.language='zh-Hant' AND ct.language='zh-Hans' AND ct.source_text=c.source_text
+					AND (ct.origin='native' OR (ct.origin='model' AND ct.config_key=?)) THEN 1 ELSE 0 END) AS derived,
 				max(CASE WHEN ct.source_text<>c.source_text OR (ct.origin='model' AND ct.config_key<>?)
 					THEN 1 ELSE 0 END) AS stale,
 				COALESCE(max(f.attempts),0) AS attempts
 			FROM corpus c CROSS JOIN languages l
 			LEFT JOIN content_translation ct ON ct.entity_kind=c.entity_kind AND ct.entity_id=c.entity_id
-				AND ct.field=c.field AND ct.language=l.language
+				AND ct.field=c.field AND ct.language IN (l.language, CASE WHEN l.language='zh-Hant' THEN 'zh-Hans' END)
 			LEFT JOIN translation_prefill_failure f ON f.entity_kind=c.entity_kind AND f.entity_id=c.entity_id
 				AND f.field=c.field AND f.language=l.language AND f.config_key=?
 				AND f.source_hash=`+translationSourceHashFunction+`(c.source_text)
@@ -422,11 +426,12 @@ func (s *Server) translationCorpusCoverageFor(ctx context.Context, cfg translati
 		SELECT l.language,(SELECT revision FROM translation_corpus_revision WHERE id=1),(SELECT count(*) FROM corpus),
 			COALESCE(sum(CASE WHEN i.native+i.model>0 THEN 1 ELSE 0 END),0),
 			COALESCE(sum(i.native),0),COALESCE(sum(i.model),0),
-			COALESCE(sum(CASE WHEN l.language<>'zh-Hant' AND i.native+i.model=0 AND i.stale=1 THEN 1 ELSE 0 END),0),
-			COALESCE(sum(CASE WHEN l.language<>'zh-Hant' AND i.native+i.model=0 AND i.stale=0 AND i.attempts>=? THEN 1 ELSE 0 END),0),
-			COALESCE(sum(CASE WHEN l.language<>'zh-Hant' AND i.native+i.model=0 AND i.stale=0 AND i.attempts>0 AND i.attempts<? THEN 1 ELSE 0 END),0)
+			COALESCE(sum(CASE WHEN i.native=0 THEN i.derived ELSE 0 END),0),
+			COALESCE(sum(CASE WHEN l.language<>'zh-Hant' AND i.native+i.model=0 AND i.attempts=0 AND i.stale=1 THEN 1 ELSE 0 END),0),
+			COALESCE(sum(CASE WHEN l.language<>'zh-Hant' AND i.native+i.model=0 AND i.attempts>=? THEN 1 ELSE 0 END),0),
+			COALESCE(sum(CASE WHEN l.language<>'zh-Hant' AND i.native+i.model=0 AND i.attempts>0 AND i.attempts<? THEN 1 ELSE 0 END),0)
 		FROM languages l LEFT JOIN items i ON i.language=l.language GROUP BY l.language`,
-		translation.ConfigKey(cfg), translation.ConfigKey(cfg), translation.ConfigKey(cfg),
+		translation.ConfigKey(cfg), translation.ConfigKey(cfg), translation.ConfigKey(cfg), translation.ConfigKey(cfg),
 		translationPrefillFailureStop, translationPrefillFailureStop)
 	if err != nil {
 		return coverage, fmt.Errorf("read effective translation coverage: %w", err)
@@ -435,15 +440,16 @@ func (s *Server) translationCorpusCoverageFor(ctx context.Context, cfg translati
 	for rows.Next() {
 		var item translationCorpusLanguageCoverage
 		if err := rows.Scan(&item.Language, &coverage.Revision, &coverage.Total, &item.Rows, &item.Native, &item.Model,
-			&item.Stale, &item.Failed, &item.Retry); err != nil {
+			&item.Derived, &item.Stale, &item.Failed, &item.Retry); err != nil {
 			return coverage, err
 		}
-		item.Missing = max64(coverage.Total-item.Rows-item.Stale-item.Failed, 0)
+		item.Rows += item.Derived
+		item.Missing = max64(coverage.Total-item.Rows-item.Stale-item.Failed-item.Retry, 0)
 		coverage.Languages[item.Language] = item
 		coverage.Native += item.Native
 		coverage.Model += item.Model
-		// Traditional Chinese is a native-only projection; zh-tw can use the
-		// current Simplified row and conversion, so this gap does not block.
+		// The Traditional display projection has no separate generation queue.
+		// Aggregate only gaps the prefill worker can process directly.
 		if item.Language != translation.SourceHant {
 			coverage.Missing += item.Missing
 			coverage.Stale += item.Stale
@@ -468,18 +474,17 @@ func (s *Server) translationCorpusItemCurrent(ctx context.Context, item translat
 	return exists != 0, err
 }
 
-// translationPrefillItemExhausted reports a persisted failure that already
-// spent its attempt budget for this exact source text. Such an item stays
-// failed and incomplete, but the scan must not spend a model call on it again.
-func (s *Server) translationPrefillItemExhausted(ctx context.Context, item translationCorpusItem, configKey string) (bool, error) {
-	var exhausted int
+// translationPrefillItemHasFailure checks whether the retry queue owns this
+// exact source text and configuration.
+func (s *Server) translationPrefillItemHasFailure(ctx context.Context, item translationCorpusItem, configKey string) (bool, error) {
+	var exists int
 	err := s.db.QueryRowContext(ctx, `SELECT EXISTS(
 		SELECT 1 FROM translation_prefill_failure
 		WHERE entity_kind=? AND entity_id=? AND field=? AND language=? AND config_key=?
-		  AND source_hash=? AND attempts>=?)`,
+		  AND source_hash=?)`,
 		item.EntityKind, item.EntityID, item.Field, item.Language, configKey,
-		translationSourceHash(item.SourceText), translationPrefillFailureStop).Scan(&exhausted)
-	return exhausted != 0, err
+		translationSourceHash(item.SourceText)).Scan(&exists)
+	return exists != 0, err
 }
 
 // translationCorpusItemText reloads one effective field. It returns

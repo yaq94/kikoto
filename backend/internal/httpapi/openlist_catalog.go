@@ -773,6 +773,7 @@ func (b *catalogTrackBuilder) render() []map[string]any {
 }
 
 func (s *Server) listOpenListWorks(w http.ResponseWriter, r *http.Request, source remoteSourceForUse) {
+	w.Header().Set("Cache-Control", "private, no-store")
 	if s.cfg.IsDemo() {
 		writeAPIError(w, 404, "not_found", "source not found", false)
 		return
@@ -800,7 +801,8 @@ func (s *Server) listOpenListWorks(w http.ResponseWriter, r *http.Request, sourc
 		// A short translated search builds a page from the trimmed card set and
 		// reports the count of that same set, so the page query carries no
 		// window total and the count is one cheap statement.
-		separateCount bool
+		separateCount          bool
+		pageIncludesEmptyTotal bool
 	)
 	// An empty query stays on the browse path: there is nothing to match, so
 	// the display language must not narrow the list.
@@ -823,38 +825,32 @@ func (s *Server) listOpenListWorks(w http.ResponseWriter, r *http.Request, sourc
 		// the whole card pipeline. The count reads the same statement one row
 		// further, which is how it tells "exactly the budget" from "more than the
 		// budget".
-		limit := 0
 		if short {
-			limit = catalogShortSearchResultLimit
-		}
-		// The page reads one row past the arm bound so a saturated branch is
-		// visible to the same set the count reads, while the card budget still
-		// trims the merged set to the response limit.
-		prefix, from, args := openListCatalogCardsQueryLocalized(source.ID, q, targets, configKey, limit+1, limit)
-		pageArgs = append([]any{}, args...)
-		pageSQL = catalogCardPageSQL(prefix, from, short)
-		pageArgs = append(pageArgs, pageSize, (page-1)*pageSize)
-		// The count reads the same cards one row past the budget, so the reported
-		// total is the number of cards a reader can actually reach and one extra
-		// row proves more exist without a second shape of query.
-		countPrefix, countFrom := prefix, from
-		countArgs = args
-		if short {
+			limit := catalogShortSearchResultLimit
+			// Read one row past the arm bound so a saturated branch is visible
+			// to the same set that the count reads, then trim to the card budget.
+			prefix, from, args := openListCatalogCardsQueryLocalized(source.ID, q, targets, configKey, limit+1, limit)
+			pageSQL = catalogCardPageSQL(prefix, from, true)
+			pageArgs = append(args, pageSize, (page-1)*pageSize)
 			// Both bounds move together: a row past the card budget can only
 			// exist if some arm was allowed to read past its own bound, and a
 			// single arm has to be able to supply it. One extra row then proves
 			// more cards exist without a second query shape.
-			countPrefix, countFrom, countArgs = openListCatalogCardsQueryLocalized(
+			countPrefix, countFrom, args := openListCatalogCardsQueryLocalized(
 				source.ID, q, targets, configKey, limit+1, limit+1)
+			countArgs = args
 			// A saturated branch means the work bound, not the card budget,
 			// ended the scan. Report reachable cards and the cut branch.
 			countSQL = catalogStatementPrefix(countPrefix) + `SELECT COUNT(*),
 					(SELECT EXISTS(SELECT 1 FROM search_hits GROUP BY language,entity_kind HAVING COUNT(*)>` +
 				strconv.Itoa(limit) + `)) ` + countFrom
+			separateCount = true
 		} else {
-			countSQL = catalogStatementPrefix(countPrefix) + "SELECT COUNT(*) " + countFrom
+			prefix, from, args := openListCatalogCardsQueryLocalized(source.ID, q, targets, configKey, 0, 0)
+			pageSQL = localizedCatalogPageWithTotalSQL(prefix, from)
+			pageArgs = append(args, pageSize, (page-1)*pageSize)
+			pageIncludesEmptyTotal = true
 		}
-		separateCount = short
 	} else {
 		prefix, from, args := openListCatalogCardsQuery(source.ID, q)
 		pageSQL = catalogCardPageSQL(prefix, from, false)
@@ -883,6 +879,9 @@ func (s *Server) listOpenListWorks(w http.ResponseWriter, r *http.Request, sourc
 		var hasAudio bool
 		if err = catalogCardScan(rows, &item, &availability, &exact, &hasAudio, &total, separateCount); err != nil {
 			break
+		}
+		if pageIncludesEmptyTotal && item.CatalogEntryID == 0 && item.SeriesID == 0 {
+			continue
 		}
 		item.RemoteID = strconv.FormatInt(item.CatalogEntryID, 10)
 		if item.SeriesID > 0 {
@@ -914,6 +913,10 @@ func (s *Server) listOpenListWorks(w http.ResponseWriter, r *http.Request, sourc
 		writeError(w, err)
 		return
 	}
+	if err := s.loadOpenListCardUserState(r.Context(), optionalUserID(r.Context()), works); err != nil {
+		writeError(w, err)
+		return
+	}
 	saturated := false
 	if separateCount {
 		if err = s.catalogRead(r.Context()).QueryRowContext(r.Context(), countSQL, countArgs...).Scan(&total, &saturated); err != nil {
@@ -921,7 +924,7 @@ func (s *Server) listOpenListWorks(w http.ResponseWriter, r *http.Request, sourc
 			return
 		}
 	}
-	if len(works) == 0 && page > 1 && !separateCount {
+	if len(works) == 0 && page > 1 && !separateCount && !pageIncludesEmptyTotal {
 		// The total rides on the page. An out-of-range page has no row to carry
 		// it, so only that page pays for a separate count.
 		if err = s.catalogRead(r.Context()).QueryRowContext(r.Context(), countSQL, countArgs...).Scan(&total); err != nil {
@@ -941,4 +944,47 @@ func (s *Server) listOpenListWorks(w http.ResponseWriter, r *http.Request, sourc
 		truncated = true
 	}
 	writeJSON(w, 200, remoteWorksResponse{SourceID: source.ID, Works: works, Page: page, PageSize: pageSize, Total: total, Status: "ok", Sort: "updated", Direction: "desc", SortApplied: true, Truncated: truncated})
+}
+
+// Load state for the returned page after ranking and paginating the public cards.
+// Personal state is live even when the catalog metadata comes from a publication snapshot.
+func (s *Server) loadOpenListCardUserState(ctx context.Context, userID int64, works []remoteWorkSummary) error {
+	if userID == 0 {
+		return nil
+	}
+	cardIndexes := make(map[int64][]int)
+	args := []any{userID}
+	for i, item := range works {
+		if item.WorkID == nil {
+			continue
+		}
+		id := *item.WorkID
+		if _, found := cardIndexes[id]; !found {
+			args = append(args, id)
+		}
+		cardIndexes[id] = append(cardIndexes[id], i)
+	}
+	if len(cardIndexes) == 0 {
+		return nil
+	}
+	rows, err := s.catalogRead(ctx).QueryContext(ctx, `
+		SELECT work_id, favorite, listening_status FROM user_work_state
+		WHERE user_id=? AND work_id IN (`+sqlPlaceholders(len(cardIndexes))+`)`, args...)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var id int64
+		var favorite bool
+		var status string
+		if err := rows.Scan(&id, &favorite, &status); err != nil {
+			return err
+		}
+		for _, i := range cardIndexes[id] {
+			works[i].Favorite = favorite
+			works[i].ListeningStatus = status
+		}
+	}
+	return rows.Err()
 }

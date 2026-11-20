@@ -42,12 +42,11 @@ func (s *Server) testTranslation(w http.ResponseWriter, r *http.Request) {
 		writeTranslationTrialError(w, &translation.Error{Code: "translation_not_configured", Message: "Configure a translation service first."})
 		return
 	}
-	client, err := s.newTranslationClient(r.Context(), cfg)
+	client, err := s.translationModelClient(r.Context(), cfg)
 	if err != nil {
 		writeTranslationTrialError(w, err)
 		return
 	}
-	defer client.CloseIdleConnections()
 	result, err := s.contentTranslationQueue(cfg).Do(ctx, "trial", time.Duration(cfg.TimeoutSeconds)*time.Second, true, func(ctx context.Context) (translation.Result, error) {
 		return translation.Translate(ctx, client, cfg, input)
 	})
@@ -70,10 +69,30 @@ func writeTranslationTrialError(w http.ResponseWriter, err error) {
 	writeAPIError(w, status, public.Code, public.Message, false)
 }
 
-// This credentialed path permits only the explicitly configured origin,
-// including an intentional LAN origin. All redirects are refused, even same
-// origin redirects, so POST bodies and credentials cannot be replayed elsewhere.
-func (s *Server) newTranslationClient(ctx context.Context, cfg translation.Config) (*http.Client, error) {
+type translationClientKey struct {
+	baseURL, proxyRoute string
+	timeout             time.Duration
+}
+
+// The model has one configured endpoint and one resolved proxy route. Pool its
+// connections across all model calls and release idle sockets on a route swap.
+func (s *Server) translationModelClient(ctx context.Context, cfg translation.Config) (*http.Client, error) {
+	route, err := s.resolveProxyRoute(ctx, proxyconfig.ScopeOther, 0)
+	if err != nil {
+		return nil, err
+	}
+	key := translationClientKey{cfg.BaseURL, route.key(), time.Duration(cfg.TimeoutSeconds) * time.Second}
+	s.translationClientMu.Lock()
+	defer s.translationClientMu.Unlock()
+	if cause := context.Cause(s.lifetime.ctx); cause != nil {
+		return nil, cause
+	}
+	if s.translationClient != nil && s.translationClientKey == key {
+		return s.translationClient, nil
+	}
+
+	// Every transport uses the exact configured origin, including an intentional
+	// LAN origin. DNS validation and pinning still apply to each new connection.
 	policyFor := func(proxy *url.URL) (*outbound.Policy, error) {
 		options := s.translationNetwork
 		options.Proxy = proxy
@@ -83,15 +102,25 @@ func (s *Server) newTranslationClient(ctx context.Context, cfg translation.Confi
 	if err != nil {
 		return nil, err
 	}
-	route, err := s.resolveProxyRoute(ctx, proxyconfig.ScopeOther, 0)
-	if err != nil {
-		return nil, err
-	}
 	transport, err := proxiedTransport(route, policyFor)
 	if err != nil {
 		return nil, err
 	}
-	client := policy.Client(transport, time.Duration(cfg.TimeoutSeconds)*time.Second)
+	client := policy.Client(transport, key.timeout)
+	// Never replay a credentialed model POST after a redirect.
 	client.CheckRedirect = func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }
+	if s.translationClient != nil {
+		s.translationClient.CloseIdleConnections()
+	}
+	s.translationClientKey, s.translationClient = key, client
 	return client, nil
+}
+
+func (s *Server) closeTranslationModelClient() {
+	s.translationClientMu.Lock()
+	defer s.translationClientMu.Unlock()
+	if s.translationClient != nil {
+		s.translationClient.CloseIdleConnections()
+		s.translationClient = nil
+	}
 }

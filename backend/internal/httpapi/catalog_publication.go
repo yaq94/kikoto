@@ -21,6 +21,18 @@ type catalogWriteTimingKey struct{}
 // the pending index, not re-read the completed prefix after every transaction.
 const catalogPublicationPendingTranslationQuery = `SELECT entity_kind,entity_id,after_translation_id FROM source_catalog_publication_entity INDEXED BY source_catalog_publication_entity_translation_pending WHERE operation_id=? AND translation_prepared=0 ORDER BY entity_kind,entity_id LIMIT 1`
 
+const catalogPublicationPrepareEmptyTranslations = `WITH next AS MATERIALIZED (
+	SELECT entity_kind,entity_id,after_translation_id FROM source_catalog_publication_entity
+	INDEXED BY source_catalog_publication_entity_translation_pending
+	WHERE operation_id=?1 AND translation_prepared=0 ORDER BY entity_kind,entity_id LIMIT 64
+)
+UPDATE source_catalog_publication_entity SET translation_prepared=1
+WHERE operation_id=?1 AND (entity_kind,entity_id) IN (
+	SELECT n.entity_kind,n.entity_id FROM next n WHERE NOT EXISTS(
+		SELECT 1 FROM content_translation WHERE entity_kind=n.entity_kind AND entity_id=n.entity_id AND id>n.after_translation_id
+	)
+)`
+
 func (s *Server) catalogPublicationContext(ctx context.Context, options catalogIndexOptions) context.Context {
 	return context.WithValue(ctx, catalogPublicationResourceGuardKey{}, func() error {
 		return s.checkCatalogSyncBatch(ctx, options)
@@ -231,10 +243,12 @@ func (s *Server) commitCatalogPublicationTranslations(ctx context.Context, id in
 		if err != nil {
 			return false, err
 		}
-		var kind string
-		var entityID, cursor int64
-		err = tx.QueryRowContext(ctx, catalogPublicationPendingTranslationQuery, id).Scan(&kind, &entityID, &cursor)
-		if errors.Is(err, sql.ErrNoRows) {
+		prepared, err := prepareCatalogPublicationTranslationBatch(ctx, tx, id)
+		switch {
+		case err != nil:
+			release()
+			return false, err
+		case !prepared:
 			// Source writes can arrive while translation batches are preparing.
 			// Retry admission/media preparation before publishing those keys.
 			var pending bool
@@ -255,51 +269,72 @@ func (s *Server) commitCatalogPublicationTranslations(ctx context.Context, id in
 			release()
 			return !pending && err == nil, err
 		}
-		if err != nil {
-			release()
-			return false, err
-		}
-		rows, err := tx.QueryContext(ctx, `SELECT id FROM content_translation WHERE entity_kind=? AND entity_id=? AND id>? ORDER BY id LIMIT 64`, kind, entityID, cursor)
-		if err != nil {
-			release()
-			return false, err
-		}
-		ids := []int64{}
-		for rows.Next() {
-			var row int64
-			if err = rows.Scan(&row); err != nil {
-				break
-			}
-			ids = append(ids, row)
-		}
-		if err == nil {
-			err = rows.Err()
-		}
-		_ = rows.Close()
-		if err != nil {
-			release()
-			return false, err
-		}
-		for _, row := range ids {
-			if _, err = tx.ExecContext(ctx, `UPDATE content_translation SET (source_id,browsable)=(SELECT source_id,browsable FROM content_translation_scope_live WHERE translation_id=content_translation.id) WHERE id=?`, row); err != nil {
-				break
-			}
-		}
-		if err == nil {
-			if len(ids) < 64 {
-				_, err = tx.ExecContext(ctx, `UPDATE source_catalog_publication_entity SET translation_prepared=1 WHERE operation_id=? AND entity_kind=? AND entity_id=?`, id, kind, entityID)
-			} else {
-				_, err = tx.ExecContext(ctx, `UPDATE source_catalog_publication_entity SET after_translation_id=? WHERE operation_id=? AND entity_kind=? AND entity_id=?`, ids[len(ids)-1], id, kind, entityID)
-			}
-		}
-		if err == nil {
-			err = tx.Commit()
-		}
+		err = tx.Commit()
 		release()
 		if err != nil {
 			return false, err
 		}
+		if err = pauseCatalogWriter(ctx); err != nil {
+			return false, err
+		}
 	}
+}
+
+// A writer pass checks at most 64 keys and refreshes at most 64 rows, including
+// when many adjacent cards have only one cached title each. The marker runs in
+// its own transaction so a new write can invalidate a prepared key before it.
+func prepareCatalogPublicationTranslationBatch(ctx context.Context, tx *catalogWriteTx, operation int64) (bool, error) {
+	const limit = 64
+	var refresh []int64
+	prepared := false
+	for keys := 0; keys < limit && len(refresh) < limit; keys++ {
+		var kind string
+		var entityID, cursor int64
+		err := tx.QueryRowContext(ctx, catalogPublicationPendingTranslationQuery, operation).Scan(&kind, &entityID, &cursor)
+		if errors.Is(err, sql.ErrNoRows) {
+			break
+		}
+		if err != nil {
+			return false, err
+		}
+		prepared = true
+		remaining := limit - len(refresh)
+		rows, err := tx.QueryContext(ctx, `SELECT id FROM content_translation WHERE entity_kind=? AND entity_id=? AND id>? ORDER BY id LIMIT ?`, kind, entityID, cursor, remaining)
+		if err != nil {
+			return false, err
+		}
+		for rows.Next() {
+			if err = rows.Scan(&cursor); err != nil {
+				_ = rows.Close()
+				return false, err
+			}
+			refresh = append(refresh, cursor)
+		}
+		err = rows.Err()
+		_ = rows.Close()
+		if err != nil {
+			return false, err
+		}
+		// Empty keys can be consumed as a group when this pass has made
+		// no prior progress. A later write can still invalidate them.
+		if keys == 0 && len(refresh) == 0 {
+			_, err = tx.ExecContext(ctx, catalogPublicationPrepareEmptyTranslations, operation)
+			return true, err
+		}
+		if _, err = tx.ExecContext(ctx, `UPDATE source_catalog_publication_entity SET after_translation_id=?,translation_prepared=?
+			WHERE operation_id=? AND entity_kind=? AND entity_id=?`, cursor, len(refresh) < limit, operation, kind, entityID); err != nil {
+			return false, err
+		}
+	}
+	if len(refresh) > 0 {
+		_, err := tx.ExecContext(ctx, `UPDATE content_translation SET (source_id,browsable)=(SELECT source_id,browsable
+			FROM content_translation_scope_live WHERE translation_id=content_translation.id)
+			WHERE id IN (`+sqlPlaceholders(len(refresh))+`)`, int64Args(refresh)...)
+		if err != nil {
+			return false, err
+		}
+	}
+	return prepared, nil
 }
 
 // Public queries read the same source-owned projection; identity and user state

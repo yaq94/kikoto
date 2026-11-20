@@ -62,6 +62,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	s.lifetime.stopping = true
 	s.lifetime.mu.Unlock()
 	s.lifetime.cancel(ErrShuttingDown)
+	s.closeTranslationModelClient()
 	done := make(chan struct{})
 	go func() {
 		s.lifetime.tasks.Wait()

@@ -75,9 +75,21 @@ func TestPersonalReviewRegistersOnlyMetadataAndSharesAcrossSources(t *testing.T)
 		t.Fatalf("source duplicated work: %v / %v", result["workId"], other["workId"])
 	}
 	assertReview(t, other, float64(3), "Shared private note")
-	assertReview(t, reviewRequest(t, handler, cookie, http.MethodGet, "/api/remote-sources/2/works/RJ00000001", "", http.StatusOK), float64(3), "Shared private note")
+	list := reviewRequest(t, handler, cookie, http.MethodPost, "/api/favorite-lists", `{"name":"Example list"}`, http.StatusCreated)
+	listID := strconv.Itoa(int(list["id"].(float64)))
+	reviewRequest(t, handler, cookie, http.MethodPut, "/api/works/"+id+"/favorite-lists", `{"listIds":[`+listID+`]}`, http.StatusOK)
+	reviewRequest(t, handler, cookie, http.MethodPatch, "/api/works/"+id+"/user-state", `{"listeningStatus":"listening"}`, http.StatusOK)
+	ownerView := reviewRequest(t, handler, cookie, http.MethodGet, "/api/remote-sources/2/works/RJ00000001", "", http.StatusOK)
+	assertReview(t, ownerView, float64(3), "Shared private note")
+	if ownerView["favorite"] != true || ownerView["listeningStatus"] != "listening" {
+		t.Fatalf("second source did not return owner's favorite and listening state: %v / %v", ownerView["favorite"], ownerView["listeningStatus"])
+	}
 	otherUser := loginTestSession(t, handler, "synthetic-listener", "synthetic-password")
-	assertReview(t, reviewRequest(t, handler, otherUser, http.MethodGet, "/api/remote-sources/2/works/RJ00000001", "", http.StatusOK), nil, "")
+	otherView := reviewRequest(t, handler, otherUser, http.MethodGet, "/api/remote-sources/2/works/RJ00000001", "", http.StatusOK)
+	assertReview(t, otherView, nil, "")
+	if otherView["favorite"] != false || otherView["listeningStatus"] != "none" {
+		t.Fatalf("second source returned unexpected favorite and listening state: %v / %v", otherView["favorite"], otherView["listeningStatus"])
+	}
 	assertReview(t, reviewRequest(t, handler, otherUser, http.MethodPatch, "/api/remote-sources/2/works/RJ00000001/user-state", `{"rating":1,"note":"Second remote note"}`, http.StatusOK), float64(1), "Second remote note")
 	assertReview(t, reviewRequest(t, handler, cookie, http.MethodGet, "/api/remote-sources/2/works/RJ00000001", "", http.StatusOK), float64(3), "Shared private note")
 	library := reviewRequest(t, handler, cookie, http.MethodGet, "/api/works?q=RJ00000001", "", http.StatusOK)

@@ -28,11 +28,10 @@ func (s *Server) cachedTranslation(ctx context.Context, cfg translation.Config, 
 		if cfg.BaseURL == "" {
 			return translation.Result{}, &translation.Error{Code: "translation_not_configured", Message: "Configure a translation service first."}
 		}
-		client, err := s.newTranslationClient(callCtx, cfg)
+		client, err := s.translationModelClient(callCtx, cfg)
 		if err != nil {
 			return translation.Result{}, err
 		}
-		defer client.CloseIdleConnections()
 		result, err := translation.Translate(callCtx, client, cfg, input)
 		if err != nil {
 			return result, err
@@ -72,8 +71,8 @@ func (s *Server) getTranslationRuntime(w http.ResponseWriter, r *http.Request) {
 	}
 	counts := []translationLanguageCount{}
 	for _, item := range prefill.Languages {
-		if item.Rows > 0 {
-			counts = append(counts, translationLanguageCount{item.Language, item.Rows, item.Native, item.Model})
+		if stored := item.Rows - item.Derived; stored > 0 {
+			counts = append(counts, translationLanguageCount{item.Language, stored, item.Native, item.Model})
 		}
 	}
 	writeJSON(w, 200, struct {

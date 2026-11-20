@@ -319,9 +319,8 @@ func TestTranslationPrefillCoverageCountsNativeAndModel(t *testing.T) {
 	}
 }
 
-// zh-Hant is a native-only display projection. A missing native Traditional
-// title is visible per language but must not block the model languages from
-// reaching complete.
+// Current Simplified rows supply Traditional display coverage even when no
+// native Traditional row exists.
 func TestTranslationPrefillCompletesWithoutNativeTraditional(t *testing.T) {
 	s, host, admin, _ := translationHTTPFixture(t)
 	seedPrefillCard(t, s, 1, "Example title")
@@ -339,12 +338,11 @@ func TestTranslationPrefillCompletesWithoutNativeTraditional(t *testing.T) {
 	}
 	languages := prefillLanguageRows(t, view)
 	hant := languages["zh-Hant"]
-	if hant == nil || hant["rows"] != float64(0) || hant["missing"] != float64(1) ||
-		hant["native"] != float64(0) || hant["model"] != float64(0) {
-		t.Fatalf("zh-Hant coverage = %#v, want zero rows and one visible missing item", hant)
+	if hant == nil || hant["rows"] != float64(1) || hant["missing"] != float64(0) ||
+		hant["native"] != float64(0) || hant["model"] != float64(0) || hant["derived"] != float64(1) {
+		t.Fatalf("zh-Hant coverage = %#v, want complete derived coverage", hant)
 	}
-	// The native Traditional projection is visible per language, but its gap is
-	// not part of the global missing count that gates completion.
+	// Only work queued for generation gates completion.
 	coverage, err := s.translationCorpusCoverageFor(context.Background(), mustTranslationConfig(t, s))
 	if err != nil {
 		t.Fatal(err)
@@ -806,5 +804,76 @@ func TestTranslationPrefillSourceChangeClearsOldFailureHash(t *testing.T) {
 	}
 	if stale != 0 {
 		t.Fatalf("stale hash row survived: %d", stale)
+	}
+}
+
+func TestTranslationPrefillReportsTraditionalDisplayCoverage(t *testing.T) {
+	s, host, admin, _ := translationHTTPFixture(t)
+	for index, title := range []string{"Example both", "Example derived", "Example native", "Example missing"} {
+		id := int64(index + 1)
+		seedPrefillCard(t, s, id, title)
+		if index < 2 {
+			insertTranslatedContent(t, s.db, "entry", id, "title", "zh-Hans", title, "示例译文", "model")
+		}
+		if index == 0 || index == 2 {
+			insertTranslatedContent(t, s.db, "entry", id, "title", "zh-Hant", title, "範例譯文", "native")
+		}
+	}
+	prefill := translationRequest(t, host, admin, "GET", "/api/settings/translation/prefill", "", 200)
+	traditional := prefillLanguageRows(t, prefill)["zh-Hant"]
+	if traditional["rows"] != float64(3) || traditional["native"] != float64(2) || traditional["derived"] != float64(1) || traditional["missing"] != float64(1) {
+		t.Fatalf("Traditional display = %#v, want three fields covered by two native and one derived, with one gap", traditional)
+	}
+	runtime := translationRequest(t, host, admin, "GET", "/api/settings/translation/runtime", "", 200)
+	if rows := prefillLanguageRows(t, runtime)["zh-Hant"]; rows["rows"] != float64(2) || rows["model"] != float64(0) {
+		t.Fatalf("runtime storage coverage = %#v, want two native fields and no model rows", rows)
+	}
+}
+
+func TestTranslationPrefillRecoversMissingPrefixWithoutBypassingRetryDelay(t *testing.T) {
+	ctx := context.Background()
+	var calls atomic.Int32
+	model := successfulPrefillModel(t, &calls)
+	defer model.Close()
+	s, host, admin, _ := translationHTTPFixture(t)
+	seedPrefillCard(t, s, 1, "Example first title")
+	seedPrefillCard(t, s, 2, "Example second title")
+	configurePrefillModel(t, host, admin, model.URL)
+	if _, err := s.runTranslationPrefillBatch(ctx); err != nil {
+		t.Fatal(err)
+	}
+	// Two rows behind the cursor need attention. Only one is eligible now.
+	metadataReviewExec(t, s.db, `DELETE FROM content_translation WHERE entity_kind='entry' AND language='ja';
+		UPDATE translation_prefill_state SET status='running' WHERE id=1;`)
+	cfg := mustTranslationConfig(t, s)
+	item := translationCorpusItem{EntityKind: "entry", EntityID: 1, Field: "title", Language: "ja", SourceText: "Example first title"}
+	if _, err := s.recordTranslationPrefillFailure(ctx, item, translation.ConfigKey(cfg), errors.New("example transient failure")); err != nil {
+		t.Fatal(err)
+	}
+	metadataReviewExec(t, s.db, `UPDATE translation_prefill_failure SET next_retry_at=datetime('now','+1 day');`)
+	before := calls.Load()
+	for range 4 {
+		if _, err := s.runTranslationPrefillBatch(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := calls.Load() - before; got != 1 {
+		t.Fatalf("model calls before retry is due = %d, want only the genuinely missing field", got)
+	}
+	var filledID int64
+	if err := s.db.QueryRow(`SELECT entity_id FROM content_translation WHERE entity_kind='entry' AND language='ja'`).Scan(&filledID); err != nil || filledID != 2 {
+		t.Fatalf("recovered entity = %d, err = %v, want entity 2", filledID, err)
+	}
+	if cursor, status, _ := readPrefillState(t, s); cursor == 0 || status != "running" {
+		t.Fatalf("retry-only state = cursor %d, status %q, want a retained end cursor and running", cursor, status)
+	}
+	metadataReviewExec(t, s.db, `UPDATE translation_prefill_failure SET next_retry_at=datetime('now','-1 minute');`)
+	for range 2 {
+		if _, err := s.runTranslationPrefillBatch(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, status, errorText := readPrefillState(t, s); status != "complete" || errorText != "" || calls.Load() != before+2 {
+		t.Fatalf("settled status=%q error=%q new calls=%d, want complete with two recovered fields", status, errorText, calls.Load()-before)
 	}
 }

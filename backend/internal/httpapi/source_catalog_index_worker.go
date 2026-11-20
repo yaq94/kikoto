@@ -173,13 +173,15 @@ func (s *Server) executeSourceCatalogIndexJob(ctx context.Context, job workflowJ
 			if err != nil {
 				return err
 			}
-			// A root-level unconfirmed or failed listing makes the whole tree
-			// suspect, so a deletion decision waits for a later generation.
-			rootEmpty := false
-			if p.Empty > 0 {
+			// A failed, restricted or unconfirmed-empty configured root leaves
+			// all old ranges unverified. Preserve their directory checkpoints for
+			// the next daily recovery instead of sweeping them as stale.
+			rootUncertain := false
+			if p.Empty+p.Failed+p.Restricted > 0 {
 				if err = s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM source_catalog_directory
-					WHERE file_source_id=? AND generation=? AND status='empty' AND error_code<>'not_found' AND path='/')`,
-					input.SourceID, job.RunID).Scan(&rootEmpty); err != nil {
+					WHERE file_source_id=? AND generation=? AND path='/'
+					AND (status IN ('failed','restricted') OR (status='empty' AND error_code<>'not_found')))`,
+					input.SourceID, job.RunID).Scan(&rootUncertain); err != nil {
 					return err
 				}
 			}
@@ -187,7 +189,7 @@ func (s *Server) executeSourceCatalogIndexJob(ctx context.Context, job workflowJ
 			// walks every published card and can span many invocations on a large
 			// source; the visible duplicate is a correctness problem, while the old
 			// file rows are storage hygiene. Both are resumable and independent.
-			if !rootEmpty {
+			if !rootUncertain {
 				retired, err := s.retireOrphanSplitRootsBatch(ctx, job, input.SourceID)
 				if err != nil {
 					return err
@@ -202,7 +204,7 @@ func (s *Server) executeSourceCatalogIndexJob(ctx context.Context, job workflowJ
 			// Retire stale container and format cards as its own bounded step.
 			// It used to run inside the final publish transaction, where one
 			// root-completeness query per card held the writer for seconds.
-			if !rootEmpty {
+			if !rootUncertain {
 				retiredCards, done, err := s.retireCatalogCardsBatch(ctx, job, input.SourceID)
 				if err != nil {
 					return err
@@ -254,20 +256,20 @@ func (s *Server) executeSourceCatalogIndexJob(ctx context.Context, job workflowJ
 			// suspect and no lifecycle pass runs.
 			status := "succeeded"
 			unconfirmedEmpty := 0
-			if p.Empty > 0 && !rootEmpty {
+			if p.Empty > 0 && !rootUncertain {
 				if err = s.db.QueryRowContext(ctx, `SELECT count(*) FROM source_catalog_directory
 					WHERE file_source_id=? AND generation=? AND status='empty' AND error_code<>'not_found'`,
 					input.SourceID, job.RunID).Scan(&unconfirmedEmpty); err != nil {
 					return err
 				}
 			}
-			if p.Failed+p.Restricted > 0 || rootEmpty || unconfirmedEmpty > 0 {
+			if p.Failed+p.Restricted > 0 || rootUncertain || unconfirmedEmpty > 0 {
 				status = "partial"
 			}
 			// Per-range uncertainty keeps a failed subtree, so a failure
 			// elsewhere must not freeze ranges this generation observed fully.
 			// Only an unlistable configured root makes every range suspect.
-			if !rootEmpty {
+			if !rootUncertain {
 				lifecycleStarted := time.Now()
 				pending, err := s.settleCatalogLifecycleBatch(ctx, job, input.SourceID)
 				s.recordCatalogPhase(ctx, job.RunID, "lifecycle", lifecycleStarted)

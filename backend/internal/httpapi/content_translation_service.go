@@ -157,11 +157,10 @@ func (s *Server) translateOnLane(ctx context.Context, cfg translation.Config, ke
 		if cfg.BaseURL == "" {
 			return translation.Result{}, &translation.Error{Code: "translation_not_configured", Message: "Configure a translation service first."}
 		}
-		client, err := s.newTranslationClient(callCtx, cfg)
+		client, err := s.translationModelClient(callCtx, cfg)
 		if err != nil {
 			return translation.Result{}, err
 		}
-		defer client.CloseIdleConnections()
 		input := translation.Input{Text: protected.Text, TargetLanguage: target.modelLanguage}
 		return translation.Translate(callCtx, client, cfg, input)
 	}

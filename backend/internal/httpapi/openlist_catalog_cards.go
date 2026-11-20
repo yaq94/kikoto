@@ -30,6 +30,9 @@ func openListCatalogCardsQuery(sourceID int64, query string) (string, string, []
 // the extra row. Zero in both keeps every match, which the trigram path and the
 // diagnostic readers use.
 func openListCatalogCardsQueryLocalized(sourceID int64, query string, targets []library.DisplaySearchTarget, configKey string, armScanLimit, cardLimit int) (string, string, []any) {
+	if utf8.RuneCountInString(strings.TrimSpace(query)) >= 3 {
+		return openListCatalogCardsQueryTrigram(sourceID, targets, configKey)
+	}
 	return openListCatalogCardsQueryFiltered(sourceID, query, nil, nil, targets, configKey, armScanLimit, cardLimit)
 }
 
@@ -92,13 +95,12 @@ func openListCatalogCardsQueryFiltered(sourceID int64, query string, entryIDs, s
 		if len(localized) > 0 {
 			// A display language searches only its own corpus. Original-title
 			// matches are not a fallback for a missing translation.
-			prefix, args = localizedCatalogSearchSQL(localized, sourceID, utf8.RuneCountInString(query) < 3, configKey, armScanLimit)
+			prefix, args = localizedCatalogSearchSQL(localized, sourceID, true, configKey, armScanLimit)
 			// The hit set already names the cards. Driving the pipeline from it
 			// keeps the work proportional to the matches instead of scanning
 			// every entry of the source and filtering afterwards. A 1-2
 			// character query can match the whole source, so each branch's scan
 			// is bounded, and the merged union is trimmed to one card budget.
-			short := utf8.RuneCountInString(query) < 3
 			// The cap lives inside each arm, so SQLite stops scanning at the
 			// bound instead of materializing a full-source match first.
 			// `exact` rides along so the page can order exact titles first
@@ -114,7 +116,7 @@ func openListCatalogCardsQueryFiltered(sourceID int64, query string, entryIDs, s
 			scope = append(scope, `s.id IN (SELECT id FROM requested_series)`)
 			seriesScope = " AND (" + strings.Join(scope, " OR ") + ")"
 			searched = true
-			trustedScope = short
+			trustedScope = true
 		} else if utf8.RuneCountInString(query) >= 3 {
 			prefix = `WITH search_hits AS MATERIALIZED (
 	SELECT d.catalog_entry_id, d.series_id
@@ -249,7 +251,7 @@ func openListCatalogCardsQueryFiltered(sourceID int64, query string, entryIDs, s
 		AND s.id IN (` + seriesInSource + `)` + seriesSearch + `
 	)`
 	if searched {
-		rankSuffix = `FROM (SELECT candidates.*,ROW_NUMBER() OVER (PARTITION BY CASE WHEN work_id IS NOT NULL THEN 'work:' || (SELECT identity_work_id FROM shared_work_identity WHERE work_id=candidates.work_id) WHEN series_id>0 THEN 'series:' || series_id ELSE 'catalog:' || id END ORDER BY series_id,id) AS identity_rank FROM ` + arms + ` AS candidates) AS cards WHERE identity_rank=1`
+		rankSuffix = rankCatalogCardMatches(arms)
 	} else {
 		rankSuffix = `FROM ` + arms + ` AS cards`
 	}
@@ -266,6 +268,60 @@ func openListCatalogCardsQueryFiltered(sourceID int64, query string, entryIDs, s
 			strconv.Itoa(cardLimit) + `) AS budgeted`
 	}
 	return prefix, from, args
+}
+
+func openListCatalogCardsQueryTrigram(sourceID int64, targets []library.DisplaySearchTarget, configKey string) (string, string, []any) {
+	prefix, args := localizedCatalogSearchSQL(targets, sourceID, false, configKey, 0)
+	// Give the compound published views their selected IDs in WHERE clauses.
+	// SQLite pushes those filters into the live and before-image branches. A
+	// join from a hit set to a published view can instead materialize every row.
+	prefix += `, requested_entry(id,exact) AS MATERIALIZED (
+		SELECT catalog_entry_id,max(exact) FROM search_hits WHERE catalog_entry_id<>0 GROUP BY catalog_entry_id
+	), requested_series(id,exact) AS MATERIALIZED (
+		SELECT series_id,max(exact) FROM search_hits WHERE series_id<>0 GROUP BY series_id
+	), matched_series(id) AS MATERIALIZED (
+		SELECT id FROM requested_series
+		UNION
+		SELECT series_id FROM catalog_series_member WHERE catalog_entry_id IN (SELECT id FROM requested_entry)
+	), matched_members AS MATERIALIZED (
+		SELECT series_id,catalog_entry_id FROM catalog_series_member WHERE series_id IN (SELECT id FROM matched_series)
+	), matched_entries AS MATERIALIZED (
+		SELECT id,primary_code,title,work_id,updated_at,availability_status
+		FROM source_catalog_entry WHERE id IN (SELECT id FROM requested_entry)
+	), admitted_members AS MATERIALIZED (
+		SELECT e.id,e.file_source_id,e.availability_status FROM source_catalog_entry e
+		WHERE e.id IN (SELECT catalog_entry_id FROM matched_members)
+		  AND e.relocated_to_id IS NULL AND ` + catalogEntryAdmittedSQL("e") + `
+	), groups AS MATERIALIZED (
+		SELECT m.series_id,
+			max(e.file_source_id=?) AS in_source,
+			max(CASE WHEN ` + catalogVerdictPlayableSQL("e.availability_status") + ` THEN 1 ELSE 0 END) AS playable,
+			max(r.exact) AS member_exact
+		FROM matched_members m
+		LEFT JOIN admitted_members e ON e.id=m.catalog_entry_id
+		LEFT JOIN requested_entry r ON r.id=m.catalog_entry_id
+		GROUP BY m.series_id HAVING count(*)>=2
+	) `
+	args = append(args, sourceID)
+	// Entry hits already passed admission. A series remains eligible only if
+	// it has at least one admitted member from the requested source.
+	arms := `(
+		SELECT e.id,0 AS series_id,e.primary_code,e.title,e.work_id,e.updated_at,e.availability_status,
+			r.exact,1 AS has_audio
+		FROM matched_entries e JOIN requested_entry r ON r.id=e.id
+		WHERE e.id NOT IN (SELECT m.catalog_entry_id FROM matched_members m JOIN groups g ON g.series_id=m.series_id)
+		UNION ALL
+		SELECT 0,s.id,'',s.title,s.work_id,s.created_at,
+			CASE WHEN g.playable THEN 'available' ELSE 'missing' END,
+			COALESCE((SELECT exact FROM requested_series WHERE id=s.id),g.member_exact,0),1
+		FROM (SELECT id,title,work_id,created_at FROM catalog_series WHERE id IN (SELECT id FROM matched_series)) s
+		JOIN groups g ON g.series_id=s.id WHERE g.in_source
+	)`
+	return prefix, rankCatalogCardMatches(arms), args
+}
+
+func rankCatalogCardMatches(arms string) string {
+	return `FROM (SELECT candidates.*,ROW_NUMBER() OVER (PARTITION BY CASE WHEN work_id IS NOT NULL THEN 'work:' || (SELECT identity_work_id FROM shared_work_identity WHERE work_id=candidates.work_id) WHEN series_id>0 THEN 'series:' || series_id ELSE 'catalog:' || id END ORDER BY series_id,id) AS identity_rank FROM ` + arms + ` AS candidates) AS cards WHERE identity_rank=1`
 }
 
 func ftsPhrase(query string) string {
@@ -292,6 +348,23 @@ func catalogCardPageSQL(prefix, from string, capped bool) string {
 	}
 	return catalogStatementPrefix(prefix) + `SELECT ` + catalogCardPageColumns + total + ` ` + from +
 		` ORDER BY ` + catalogCardOrder + ` LIMIT ? OFFSET ?`
+}
+
+// localizedCatalogPageWithTotalSQL keeps an empty page, including a page past
+// the last card, on the same hit set as the total. One totals-only row (both
+// identifiers zero) carries the count when none of the cards can do so.
+func localizedCatalogPageWithTotalSQL(prefix, from string) string {
+	return catalogStatementPrefix(prefix) + `,
+		matching_cards AS MATERIALIZED (SELECT ` + catalogCardPageColumns + ` ` + from + `),
+		matching_total AS MATERIALIZED (SELECT count(*) AS total FROM matching_cards),
+		selected_cards AS MATERIALIZED (
+			SELECT ` + catalogCardPageColumns + ` FROM matching_cards ORDER BY ` + catalogCardOrder + ` LIMIT ? OFFSET ?
+		)
+		SELECT ` + catalogCardPageColumns + `,total FROM selected_cards CROSS JOIN matching_total
+		UNION ALL
+		SELECT 0,0,'','',NULL,'','',0,0,total FROM matching_total
+		WHERE NOT EXISTS(SELECT 1 FROM selected_cards)
+		ORDER BY ` + catalogCardOrder
 }
 
 // catalogStatementPrefix closes a CTE list that ends with a separator, so a
@@ -334,44 +407,45 @@ const catalogShortSearchResultLimit = 1000
 // remote, local and benchmark paths cannot diverge again.
 func localizedCatalogSearchSQL(targets []library.DisplaySearchTarget, sourceID int64, short bool, configKey string, shortLimit int) (string, []any) {
 	if !short {
-		prefix := `WITH search_hits AS MATERIALIZED (`
-		args := []any{}
+		ftsSets := make([]string, 0, len(targets))
+		branches := make([]string, 0, len(targets)*2)
+		args := make([]any, 0, len(targets)*9)
 		for index, target := range targets {
-			if index > 0 {
-				prefix += ` UNION ALL `
-			}
-			phrase := ftsPhrase(target.Query)
-			prefix += `SELECT ct.entity_id AS catalog_entry_id,0 AS series_id,(ct.translated_text=?) AS exact FROM content_translation_search
-				JOIN content_translation ct ON ct.id=content_translation_search.rowid
-				JOIN source_catalog_entry e ON e.id=ct.entity_id
-				WHERE content_translation_search MATCH ? AND ct.entity_kind='entry'
-				  AND ct.field='title' AND ct.language=?
-				  AND e.file_source_id=? AND e.relocated_to_id IS NULL
-				  AND ct.source_text=e.title
-				  AND ct.browsable=1
-				  AND ` + catalogEntryAdmittedSQL("e") + `
-				  AND ` + translationCurrentRowSQL("ct", target.Language) + `
-				UNION ALL
-				SELECT 0 AS catalog_entry_id,ct.entity_id AS series_id,(ct.translated_text=?) AS exact FROM content_translation_search
-				JOIN content_translation ct ON ct.id=content_translation_search.rowid
-				JOIN catalog_series s ON s.id=ct.entity_id
-				WHERE content_translation_search MATCH ? AND ct.entity_kind='series' AND ct.field='title' AND ct.language=?
-				  AND s.source_id=? AND ct.source_text=s.title
-				  AND ct.browsable=1
-				  AND (SELECT COUNT(*) FROM catalog_series_member sm WHERE sm.series_id=s.id)>=2
-				  AND EXISTS(SELECT 1 FROM catalog_series_member sm JOIN source_catalog_entry se ON se.id=sm.catalog_entry_id
-					WHERE sm.series_id=s.id AND se.relocated_to_id IS NULL AND ` + catalogEntryAdmittedSQL("se") + `)
-				  AND ` + translationCurrentRowSQL("ct", target.Language)
-			args = append(args, target.Query, phrase, target.Language, sourceID)
-			if target.Language != translation.SourceHant {
-				args = append(args, configKey)
-			}
-			args = append(args, target.Query, phrase, target.Language, sourceID)
-			if target.Language != translation.SourceHant {
-				args = append(args, configKey)
-			}
+			ftsSet := "fts_hits_" + strconv.Itoa(index)
+			ftsSets = append(ftsSets, ftsSet+`(id) AS MATERIALIZED (
+				SELECT rowid FROM content_translation_search WHERE content_translation_search MATCH ?)`)
+			args = append(args, ftsPhrase(target.Query))
 		}
-		return prefix + `) `, args
+		for index, target := range targets {
+			// An IN filter can be pushed into both arms of the published view.
+			// Joining the view to FTS instead can materialize the whole view.
+			ftsFilter := `ct.id IN (SELECT id FROM fts_hits_` + strconv.Itoa(index) + `)`
+			current := translationCurrentRowSQL("ct", target.Language)
+			branches = append(branches, `SELECT ct.entity_id AS catalog_entry_id,0 AS series_id,(ct.translated_text=?) AS exact
+				FROM content_translation ct
+				WHERE `+ftsFilter+` AND ct.entity_kind='entry' AND ct.field='title' AND ct.language=?
+				  AND ct.browsable=1 AND `+current+`
+				  AND EXISTS(SELECT 1 FROM source_catalog_entry e WHERE e.id=ct.entity_id
+				    AND e.file_source_id=? AND e.relocated_to_id IS NULL AND ct.source_text=e.title
+				    AND `+catalogEntryAdmittedSQL("e")+`)`)
+			args = append(args, target.Query, target.Language)
+			if target.Language != translation.SourceHant {
+				args = append(args, configKey)
+			}
+			args = append(args, sourceID)
+			branches = append(branches, `SELECT 0 AS catalog_entry_id,ct.entity_id AS series_id,(ct.translated_text=?) AS exact
+				FROM content_translation ct
+				WHERE `+ftsFilter+` AND ct.entity_kind='series' AND ct.field='title' AND ct.language=?
+				  AND ct.browsable=1 AND `+current+`
+				  AND EXISTS(SELECT 1 FROM catalog_series s WHERE s.id=ct.entity_id
+				    AND s.source_id=? AND ct.source_text=s.title)`)
+			args = append(args, target.Query, target.Language)
+			if target.Language != translation.SourceHant {
+				args = append(args, configKey)
+			}
+			args = append(args, sourceID)
+		}
+		return `WITH ` + strings.Join(ftsSets, ", ") + `, search_hits AS MATERIALIZED (` + strings.Join(branches, " UNION ALL ") + `) `, args
 	}
 
 	// The row itself carries the conclusion: `browsable` says the stored text

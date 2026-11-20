@@ -35,6 +35,8 @@ Administrator routes require `sources:write`:
 - `GET /api/settings/translation/prefill` returns the durable prefill cursor,
   per-language coverage (`rows`, `native`, `model`, `missing`, `stale`,
   `failed`, `retry`), the night-window flag, the recent rate and the last error.
+  The Traditional display row (`zh-Hant`) also includes `derived` when current
+  Simplified rows supply coverage.
   `POST` the same route with `{"status":"running"|"paused"}` pauses or resumes
   the pass.
 - `POST /api/content-translations/batch` accepts a display `language` and up to
@@ -116,9 +118,9 @@ the selected display language. Cache budgets and model/template invalidation
 apply to the shared Simplified entry.
 
 `ContentLanguageProvider` reads the account's display preference independently
-of UI locale. `ContentTranslationScope` supplies the resource and shared
-original/retry controls; `ContentResourceScope` changes the resource for a source
-directory. `TranslatedText` accepts a public field, display text, optional
+of UI locale. `ContentTranslationScope` supplies the resource and the optional page-wide original
+view. Each translated field handles its original view and retries independently.
+`ContentResourceScope` changes the resource for a source directory. `TranslatedText` accepts a public field, display text, optional
 resource, media id and path. It renders plain text, translates visible dynamic
 content, retains original text while waiting or after failure, and cancels stale
 requests on language, resource, page or account changes. A field asks for a
@@ -236,11 +238,12 @@ inheriting the old failure. `complete` is written only when the effective corpus
 has at least one item and no missing, stale, failed or retry item. A scan that
 reaches its end with no continuable new item, no due retry and an exhausted
 failure writes `failed`; that status is not terminal and the next due retry or
-new item still resumes the same worker. `zh-tw` is a display projection and is
-not a separate prefill queue; native `zh-Hant` rows are reported with their own
-`rows`, `native`, `model` and `missing` counts, but a missing one is excluded
-from the global missing total and does not block completion because the
-`zh-Hans` projection still serves the reader.
+new item still resumes the same worker. A scan that revisits its prefix fills
+untracked gaps and leaves tracked failures to the persisted retry schedule.
+For `zh-tw`, display coverage counts native `zh-Hant` first and current
+`zh-Hans` as derived coverage for the remaining fields. Each field contributes
+at most once. Completion depends on the four generation languages. The runtime
+language summary counts stored rows.
 
 `translation_corpus_revision` advances in the same transaction as semantic
 changes to entities, source enablement/type, published generations, admission,
@@ -271,9 +274,12 @@ translated_text, entity_id)`.
 the source an entry or series belongs to. `browsable` means the stored source
 text still equals the entity's current text, the owning source is enabled, and
 the card passes the admission bounds. Both sit in the index prefix, so a
-per-source search answers language, kind, field, source, admission and text from
-one index range; it never joins the entity row per candidate. `entity_id` is the
-last column so the returned id also comes from the index.
+short per-source search answers language, kind, field, source, admission and text
+from one index range. `entity_id` is the last column so the returned ID also comes
+from the index. For terms of three or more characters, the remote source query
+selects trigram hits first, then reads the matching published entries and their
+series memberships. The card page and its exact total use that same result set,
+including when the requested page has no cards.
 
 `content_translation_scope` is the single definition of that conclusion.
 Triggers recompute the affected rows when an entity title, source, admission
@@ -350,9 +356,11 @@ The shared outbound policy restricts requests to the administrator's exact
 configured origin, including an intentional private or reserved address. Unusable
 addresses remain rejected. DNS is resolved and validated once per connection,
 then the transport dials that numeric address. All redirects are refused. TLS
-certificate verification remains enabled. The Other proxy scope is used, but a
-completion body cannot be replayed by proxy failover; a failure never triggers
-another generation automatically.
+certificate verification remains enabled. The transport follows the Other
+proxy scope. Trial, interactive and background calls share a single bounded
+connection pool for the configured base URL, resolved proxy route and timeout.
+Endpoint, route or timeout changes replace that pool and close its idle
+connections. A completion failure does not replay the generation.
 
 Only one string completion with `finish_reason=stop`, nonempty content and no
 thinking blocks is accepted. Errors distinguish empty output, output-limit

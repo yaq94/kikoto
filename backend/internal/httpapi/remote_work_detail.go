@@ -39,6 +39,8 @@ type remoteWorkDetail struct {
 	VoiceRefs        []remoteEntityRef        `json:"voiceRefs"`
 	ImportStatus     string                   `json:"importStatus"`
 	WorkID           *int64                   `json:"workId"`
+	Favorite         bool                     `json:"favorite"`
+	ListeningStatus  string                   `json:"listeningStatus"`
 	PersonalRating   *int64                   `json:"personalRating"`
 	PersonalNote     string                   `json:"personalNote"`
 	MetadataView     workMetadataPresentation `json:"metadataPresentation"`
@@ -115,9 +117,11 @@ func (s *Server) getRemoteSourceWork(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	if detail.WorkID != nil {
+	if userID := optionalUserID(r.Context()); detail.WorkID != nil && userID != 0 {
 		var rating sql.NullInt64
-		err := s.db.QueryRowContext(r.Context(), `SELECT rating, note FROM user_work_state WHERE user_id = ? AND work_id = ?`, optionalUserID(r.Context()), *detail.WorkID).Scan(&rating, &detail.PersonalNote)
+		err := s.db.QueryRowContext(r.Context(), `
+			SELECT favorite, listening_status, rating, note FROM user_work_state WHERE user_id = ? AND work_id = ?`,
+			userID, *detail.WorkID).Scan(&detail.Favorite, &detail.ListeningStatus, &rating, &detail.PersonalNote)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			writeError(w, err)
 			return
@@ -215,6 +219,7 @@ func (s *Server) remoteWorkDetailWithLanguages(ctx context.Context, source remot
 		VoiceRefs:        projected.VoiceRefs,
 		ImportStatus:     status,
 		WorkID:           workID,
+		ListeningStatus:  "none",
 		MetadataView:     remoteWorkMetadataPresentation(work, languages),
 		LanguageEditions: normalizedRemoteLanguageEditions(work),
 	}, nil

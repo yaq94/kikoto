@@ -31,6 +31,7 @@ type translationPrefillLanguage struct {
 	Rows     int64  `json:"rows"`
 	Native   int64  `json:"native"`
 	Model    int64  `json:"model"`
+	Derived  int64  `json:"derived,omitempty"`
 	Missing  int64  `json:"missing"`
 	Stale    int64  `json:"stale"`
 	Failed   int64  `json:"failed"`
@@ -100,7 +101,7 @@ func (s *Server) translationPrefillStatus(ctx context.Context) (translationPrefi
 	for _, language := range append(append([]string{}, translationModelLanguages...), translation.SourceHant) {
 		item := coverage.Languages[language]
 		view.Languages = append(view.Languages, translationPrefillLanguage{
-			Language: language, Rows: item.Rows, Native: item.Native, Model: item.Model, Missing: item.Missing,
+			Language: language, Rows: item.Rows, Native: item.Native, Model: item.Model, Derived: item.Derived, Missing: item.Missing,
 			Stale: item.Stale, Failed: item.Failed, Retry: item.Retry,
 		})
 	}
@@ -245,30 +246,40 @@ func (s *Server) runTranslationPrefillBatch(ctx context.Context) (bool, error) {
 				WHERE id=1 AND (SELECT revision FROM translation_corpus_revision WHERE id=1)=?`, coverage.Revision, coverage.Revision)
 			return false, err
 		}
-		if _, err = s.db.ExecContext(ctx, `UPDATE translation_prefill_state
+		// Coverage can take long enough for an operator command to arrive.
+		err = s.db.QueryRowContext(ctx, `UPDATE translation_prefill_state
 			SET status='running',last_error=?,cursor_language='',cursor_kind='entry',cursor_field='title',cursor_id=0,
-			updated_at=CURRENT_TIMESTAMP WHERE id=1`,
-			coverageMessage(coverage)); err != nil {
-			return false, err
-		}
-		state.Status = "running"
-		state.CursorLanguage, state.CursorKind, state.CursorField, state.Cursor = "", "entry", "title", 0
-	}
-	if state.Status == "paused" {
-		// A manual pause waits for the operator. A low-disk pause is a
-		// resource condition: resume by itself once the reserve is available
-		// again, without guessing whether the operator meant to keep it off.
-		if state.LastError == "" || s.translationDiskPause(cfg) != "" {
+			updated_at=CURRENT_TIMESTAMP WHERE id=1 AND status='complete' AND config_key=? RETURNING status`,
+			coverageMessage(coverage), configKey).Scan(&state.Status)
+		if errors.Is(err, sql.ErrNoRows) {
 			return false, nil
 		}
-		if _, err = s.db.ExecContext(ctx, `UPDATE translation_prefill_state SET status='running', last_error='', updated_at=CURRENT_TIMESTAMP WHERE id=1`); err != nil {
+		if err != nil {
 			return false, err
 		}
-		state.Status = "running"
+		state.CursorLanguage, state.CursorKind, state.CursorField, state.Cursor = "", "entry", "title", 0
+	}
+	if state.Status == "paused" && state.LastError != "paused_low_disk" && state.LastError != "disk_space_unknown" {
+		return false, nil
 	}
 	if pause := s.translationDiskPause(cfg); pause != "" {
-		_, err = s.db.ExecContext(ctx, `UPDATE translation_prefill_state SET status='paused', last_error=?, updated_at=CURRENT_TIMESTAMP WHERE id=1`, pause)
+		if state.Status != "paused" {
+			_, err = s.db.ExecContext(ctx, `UPDATE translation_prefill_state SET status='paused',last_error=?,updated_at=CURRENT_TIMESTAMP
+				WHERE id=1 AND status=? AND config_key=?`, pause, state.Status, configKey)
+		}
 		return false, err
+	}
+	if state.Status == "paused" {
+		// Resume only the resource pause we observed before measuring the disk.
+		// The operator's pause clears the resource reason.
+		err = s.db.QueryRowContext(ctx, `UPDATE translation_prefill_state SET status='running',last_error='',updated_at=CURRENT_TIMESTAMP
+			WHERE id=1 AND status='paused' AND last_error=? AND config_key=? RETURNING status`, state.LastError, configKey).Scan(&state.Status)
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, nil
+		}
+		if err != nil {
+			return false, err
+		}
 	}
 	// A due retry is taken before new items: a failure must not sit behind a
 	// long queue of fresh cards, and its persisted attempt count is the only
@@ -305,14 +316,13 @@ func (s *Server) runTranslationPrefillBatch(ctx context.Context) (bool, error) {
 			return false, currentErr
 		}
 		if !current {
-			exhausted, exhaustedErr := s.translationPrefillItemExhausted(ctx, item, configKey)
-			if exhaustedErr != nil {
-				return false, exhaustedErr
+			hasFailure, failureErr := s.translationPrefillItemHasFailure(ctx, item, configKey)
+			if failureErr != nil {
+				return false, failureErr
 			}
-			if exhausted {
-				// The item is permanently failed for this source hash. It still
-				// keeps coverage incomplete, but retrying it every pass would
-				// spend the whole batch on one bad card.
+			if hasFailure {
+				// The persistent retry queue owns this item, including its delay
+				// and attempt limit, even when the scan revisits the same prefix.
 				continue
 			}
 			pending = append(pending, item)
@@ -324,6 +334,14 @@ func (s *Server) runTranslationPrefillBatch(ctx context.Context) (bool, error) {
 	work := append(append([]translationCorpusItem{}, retries...), pending...)
 	if len(work) > translationPrefillBatchSize {
 		work = work[:translationPrefillBatchSize]
+	}
+	// Disk measurement and preparation do not admit a batch. Check the current
+	// operator state just before dispatching work that can make model requests.
+	var canStart bool
+	err = s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM translation_prefill_state
+		WHERE id=1 AND status<>'paused' AND config_key=?)`, configKey).Scan(&canStart)
+	if err != nil || !canStart {
+		return false, err
 	}
 	written, failures, runErr := s.translationPrefillItems(ctx, cfg, work)
 	message := ""
@@ -348,7 +366,7 @@ func (s *Server) runTranslationPrefillBatch(ctx context.Context) (bool, error) {
 		switch {
 		case coverage.complete():
 			status, message = "complete", ""
-		case len(pending) == 0 && coverage.Failed > 0 && coverage.Missing == 0 && coverage.Stale == 0:
+		case len(pending) == 0 && coverage.Failed > 0 && coverage.Retry == 0 && coverage.Missing == 0 && coverage.Stale == 0:
 			// This batch had no continuable new item and no due retry, while at
 			// least one item exhausted its attempt budget. Report failed so the
 			// operator sees the permanent gap instead of a worker that looks
@@ -358,31 +376,38 @@ func (s *Server) runTranslationPrefillBatch(ctx context.Context) (bool, error) {
 			status, message = "failed", coverageMessage(coverage)
 		}
 	}
-	result, err := s.db.ExecContext(ctx, `UPDATE translation_prefill_state SET
-		cursor_language=?,cursor_kind=?,cursor_field=?,cursor_id=?,
-		config_key=?,status=?,last_error=?,checked_revision=?,updated_at=CURRENT_TIMESTAMP WHERE id=1
-		AND (SELECT entities FROM translation_corpus_revision WHERE id=1)=?
-		AND (?<>'complete' OR (SELECT revision FROM translation_corpus_revision WHERE id=1)=?)`,
-		next.Language, next.Kind, next.Field, next.ID, configKey, status, message, coverage.Revision,
-		state.entities, status, coverage.Revision)
-	if err != nil {
-		return false, err
+	// Coverage is only a fallback when the batch has no more specific error.
+	if endOfScan && status == "running" && message == "" {
+		message = coverageMessage(coverage)
 	}
-	if changed, err := result.RowsAffected(); err != nil {
-		return false, err
-	} else if changed == 0 {
+	// Finish the checkpoint even if the operator paused while a model request
+	// was in flight, but preserve the manual pause and its empty error field.
+	err = s.db.QueryRowContext(ctx, `UPDATE translation_prefill_state SET
+		cursor_language=?,cursor_kind=?,cursor_field=?,cursor_id=?,config_key=?,
+		status=CASE WHEN status='paused' THEN status ELSE ? END,
+		last_error=CASE WHEN status='paused' THEN last_error ELSE ? END,
+		checked_revision=?,updated_at=CURRENT_TIMESTAMP WHERE id=1
+		AND (SELECT entities FROM translation_corpus_revision WHERE id=1)=?
+		AND (?<>'complete' OR (SELECT revision FROM translation_corpus_revision WHERE id=1)=?)
+		RETURNING status`,
+		next.Language, next.Kind, next.Field, next.ID, configKey, status, message, coverage.Revision,
+		state.entities, status, coverage.Revision).Scan(&status)
+	if errors.Is(err, sql.ErrNoRows) {
 		// Entity/configuration writes while the model was running invalidate the
 		// scanned prefix. Keep a manual pause but revisit earlier ids next time.
 		_, err = s.db.ExecContext(ctx, `UPDATE translation_prefill_state SET cursor_language='',cursor_kind='entry',
 			cursor_field='title',cursor_id=0,status=CASE WHEN status='paused' THEN status ELSE 'running' END WHERE id=1`)
 		return true, err
 	}
+	if err != nil {
+		return false, err
+	}
 	s.noteTranslationPrefillWrite(written)
 	if status != state.Status {
 		// Publish status-only changes to the operator snapshot as well.
 		s.invalidateTranslationCoverageCache()
 	}
-	if status == "complete" {
+	if status == "complete" || status == "paused" {
 		return false, nil
 	}
 	if !endOfScan {
@@ -395,14 +420,6 @@ func (s *Server) runTranslationPrefillBatch(ctx context.Context) (bool, error) {
 		if _, err = s.db.ExecContext(ctx, `UPDATE translation_prefill_state SET
 			cursor_language='',cursor_kind='entry',cursor_field='title',cursor_id=0,
 			updated_at=CURRENT_TIMESTAMP WHERE id=1`); err != nil {
-			return false, err
-		}
-	}
-	// Keep a concrete failure reason visible. Coverage is a summary, not a
-	// replacement for the upstream error the operator needs to act on.
-	if message == "" && status != "failed" {
-		if _, err = s.db.ExecContext(ctx, `UPDATE translation_prefill_state
-			SET last_error=?,updated_at=CURRENT_TIMESTAMP WHERE id=1`, coverageMessage(coverage)); err != nil {
 			return false, err
 		}
 	}

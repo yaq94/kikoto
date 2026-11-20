@@ -101,6 +101,9 @@ type Server struct {
 	lifetime                       *serverLifetime
 	startupRepairsOnce             sync.Once
 	translationNetwork             outbound.Options
+	translationClientMu            sync.Mutex
+	translationClientKey           translationClientKey
+	translationClient              *http.Client
 	translationTrialMu             sync.Mutex
 	translationQueueOnce           sync.Once
 	translationQueue               *translation.Queue

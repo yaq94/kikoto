@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"fmt"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -68,6 +69,29 @@ INSERT INTO source_catalog_file(catalog_entry_id,relative_path,title,kind,size_b
 	if saved["workId"] != first["workId"] {
 		t.Fatalf("review used a different work: %#v", saved)
 	}
+	workURL := fmt.Sprintf("/api/works/%.0f", first["workId"])
+	var list struct{ ID int64 }
+	workReferenceRequest(t, app, admin, "POST", "/api/favorite-lists", `{"name":"Example list"}`, 201, &list)
+	workReferenceRequest(t, app, admin, "PUT", workURL+"/favorite-lists", fmt.Sprintf(`{"listIds":[%d]}`, list.ID), 200, nil)
+	workReferenceRequest(t, app, admin, "PATCH", workURL+"/user-state", `{"listeningStatus":"listening"}`, 200, nil)
+	for _, tc := range []struct {
+		name     string
+		favorite bool
+		status   string
+	}{
+		{"synthetic-user", true, "listening"},
+		{"synthetic-listener", false, "none"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cookie := workReferenceLogin(t, app, tc.name)
+			var cards remoteWorksResponse
+			workReferenceRequest(t, app, cookie, "GET", "/api/remote-sources/7/works", "", 200, &cards)
+			if len(cards.Works) != 1 || cards.Works[0].Favorite != tc.favorite || cards.Works[0].ListeningStatus != tc.status {
+				t.Fatalf("catalog card favorite/mark do not match reader's state: %+v", cards.Works)
+			}
+		})
+	}
+
 }
 
 func TestSharedTagTranslationReusesOneVocabularyEntry(t *testing.T) {
