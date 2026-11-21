@@ -252,5 +252,5 @@
 - 本规格继承已经确认的 Q1–Q31 决定与“少量浏览器纯功能测试、无真实浏览器视觉验证”边界；当前阶段按已授权的全范围实现、测试、迁移、部署与回滚推进。
 - 真实来源的访问证据按时间与路径分别记录：IAB 匿名网页可播放；程序 fs/get 在早期诊断中失败，后续声明 Kikoto 身份后取得两段真实媒体 Range（206×2 + sha256）。这些证据属于对应旧产物，当前候选仍需由 24 重新验证；详见 [07 证据](evidence/07-openlist.md#真实媒体-live-结果)。
 - Index 官方资料中的权重仓库为 IndexTeam/Index-Translate-35B-A3B-preview，公共客户端示例的 model 为 Index-Translate-35B-A3B；实际服务调用名由管理员配置。中文简体、英语、日语和韩语有官方条目，繁体路线按已确认转换方案验收。
-- 各项验收状态以[执行记录](execution.md)及对应票据为准。当前生产为 `2dbfa228`/schema111，01–25已按当前候选证据签收；完整CI、实际Index、媒体、恢复与部署结果见[候选账本](evidence/24-candidate-2dbfa228.md)。真实来源仍按运行报告列出未确认空目录、编码问题及续扫状态，不将未知范围写为全站complete。旧本地、CI与部署证据保留在原文件，只证明其注明SHA。
+- 各项验收状态以[执行记录](execution.md)及对应票据为准。当前生产为 `b49e2d9f`/schema111，26 号工单的当前候选验收保持开放；01–25 在 `2dbfa228` 的历史签收见[候选账本](evidence/24-candidate-2dbfa228.md)。真实来源仍按运行报告列出未确认空目录、编码问题及续扫状态，不将未知范围写为全站complete。旧本地、CI与部署证据保留在原文件，只证明其注明SHA。
 - 参考：[OpenList 目录接口](https://github.com/OpenListTeam/OpenList/blob/main/server/handles/fsread.go)、[OpenList 搜索实现](https://github.com/OpenListTeam/OpenList/blob/main/internal/search/search.go)、[Index 模型卡](https://huggingface.co/IndexTeam/Index-Translate-35B-A3B-preview)、[Index 调用客户端](https://github.com/bilibili/Index-Translate/blob/main/inference/llm/call_api.py)、[Index 语言清单](https://arxiv.org/html/2609.40181)。
