@@ -153,6 +153,83 @@ func TestBoundedTransactionGivesUpWithinTheBudget(t *testing.T) {
 	}
 }
 
+// Waiting for a pool slot is part of the write budget too. A caller without a
+// deadline must not remain blocked behind reads that leased every connection.
+func TestBoundedTransactionBoundsPoolWaitAndRecovers(t *testing.T) {
+	db := openProbeDB(t)
+	db.SetMaxOpenConns(1)
+	conn, err := db.Conn(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close() }()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		_, release, err := BeginBoundedTx(ctx, db)
+		if release != nil {
+			release()
+		}
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("pool wait error = %v, want context deadline exceeded", err)
+		}
+	case <-time.After(DefaultWriteBudget + time.Second):
+		cancel()
+		<-done
+		t.Fatal("pool wait exceeded the default write budget")
+	}
+	if ctx.Err() != nil {
+		t.Fatalf("write budget cancelled the caller: %v", ctx.Err())
+	}
+	if err := conn.Close(); err != nil {
+		t.Fatal(err)
+	}
+	// The successful transaction must outlive its completed acquisition wait.
+	tx, release, err := BeginBoundedTx(ctx, db)
+	if err != nil {
+		t.Fatalf("pool did not recover after the budget expired: %v", err)
+	}
+	defer release()
+	if _, err := tx.ExecContext(ctx, "INSERT INTO probe(id, value) VALUES (1, 'recovered')"); err != nil {
+		t.Fatalf("returned transaction is unusable: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	var value string
+	if err := db.QueryRowContext(ctx, "SELECT value FROM probe WHERE id=1").Scan(&value); err != nil || value != "recovered" {
+		t.Fatalf("committed value = %q, error = %v", value, err)
+	}
+}
+
+func TestBoundedTransactionPoolWaitHonorsCallerDeadline(t *testing.T) {
+	db := openProbeDB(t)
+	db.SetMaxOpenConns(1)
+	conn, err := db.Conn(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close() }()
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+	_, release, err := BeginBoundedTx(ctx, db)
+	if release != nil {
+		release()
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("pool wait error = %v, want caller deadline exceeded", err)
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("caller deadline exceeded by pool wait: %v", elapsed)
+	}
+}
+
 // IsLocked recognises the driver's contention code, and IsBusy also matches the
 // message-only form so callers keep treating a busy database as retryable.
 func TestLockDetection(t *testing.T) {

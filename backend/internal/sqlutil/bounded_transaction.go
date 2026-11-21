@@ -75,7 +75,7 @@ func BeginBoundedTx(ctx context.Context, db *sql.DB) (*BoundedTx, func(), error)
 			}
 			return nil, nil, err
 		}
-		tx, release, err := beginLockAttempt(ctx, db)
+		tx, release, err := beginLockAttempt(ctx, waitCtx, db)
 		if err == nil {
 			return &BoundedTx{Tx: tx, release: release}, release, nil
 		}
@@ -122,9 +122,11 @@ func writeWaitContext(ctx context.Context) (context.Context, context.CancelFunc)
 
 // beginLockAttempt leases one connection, shortens its busy timeout, and tries
 // to take the write lock. A failed attempt restores the wait policy and returns
-// the connection to the pool before the caller retries.
-func beginLockAttempt(ctx context.Context, db *sql.DB) (*sql.Tx, func(), error) {
-	conn, err := db.Conn(ctx)
+// the connection to the pool before the caller retries. Pool acquisition uses
+// the wait budget, while the transaction keeps the caller's context so ending
+// that acquisition budget does not roll back a successfully returned transaction.
+func beginLockAttempt(ctx, waitCtx context.Context, db *sql.DB) (*sql.Tx, func(), error) {
+	conn, err := db.Conn(waitCtx)
 	if err != nil {
 		return nil, nil, err
 	}
