@@ -23,9 +23,9 @@ func TestCatalogEmptyPublishBoundsHistoricalReads(t *testing.T) {
 	started := f.request(t, http.MethodPost, "/catalog/index", `{"pagesPerBatch":32}`, http.StatusAccepted)
 	runID := int64(started["runId"].(float64))
 	metadataReviewExec(t, f.server.db, `DELETE FROM source_catalog_directory WHERE file_source_id=?`, sourceID)
-	directories, observations := 1500, 64
+	directories, observations, pageBudget := 1500, 64, 8000
 	if os.Getenv("KIKOTO_CATALOG_RESOURCE_SCALE") == "1" {
-		directories, observations = 42000, 32
+		directories, observations, pageBudget = 42000, 32, 500000
 	}
 	seedLargeCatalog(t, f.server.db, sourceID, runID, directories, observations)
 	// Old-generation pending rows must neither lead the batch nor be consumed.
@@ -54,10 +54,11 @@ func TestCatalogEmptyPublishBoundsHistoricalReads(t *testing.T) {
 	if err != nil || published != 0 {
 		t.Fatalf("empty current publication = %d, %v", published, err)
 	}
-	// Directory probes may scale with roots; completed or historical file counts
-	// must not multiply the amount of data visited inside the write transaction.
-	if pages > directories*20+5000 {
-		t.Fatalf("empty publication read %d SQLite pages; budget=%d", pages, directories*20+5000)
+	// The CI budget allows headroom for directory probes but excludes scanning
+	// the retained observations. The larger opt-in fixture has a separate page
+	// budget; neither budget depends on elapsed time.
+	if pages > pageBudget {
+		t.Fatalf("empty publication read %d SQLite pages; budget=%d", pages, pageBudget)
 	}
 	var stale int
 	if err = f.server.db.QueryRow(`SELECT count(*) FROM source_catalog_observation o JOIN source_catalog_directory d
