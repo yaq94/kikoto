@@ -107,6 +107,7 @@ func (s *Server) loadTranslationField(ctx context.Context, in contentTranslation
 		return readableTranslationField{}, err
 	}
 	field := readableTranslationField{Names: append([]string{work.Circle}, work.VoiceActors...)}
+	field.Names = translationProtectedNames(field.Names, work.Title, work.Description)
 	for _, credit := range work.VoiceCredits {
 		field.Names = append(field.Names, credit.DisplayName)
 	}
@@ -208,7 +209,7 @@ func targetTitleFor(input workTitleInputs, text, language string, acceptSelected
 // A catalog card and its directory names can mention the circle or a voice
 // actor. Those names stay as published, even when no work is registered yet.
 func (s *Server) catalogEntryProtectedNames(ctx context.Context, entry catalogEntry) ([]string, error) {
-	names := []string{}
+	names := translationProtectedNames(nil, entry.Title)
 	if entry.WorkID == nil {
 		// An unregistered card still carries the release credits the sidecar
 		// reader stored. Those names are published identity, not translatable
@@ -231,6 +232,7 @@ func (s *Server) catalogEntryProtectedNames(ctx context.Context, entry catalogEn
 		return nil, err
 	}
 	names = append(names, work.Circle)
+	names = translationProtectedNames(names, work.Title, work.Description)
 	names = append(names, work.VoiceActors...)
 	for _, credit := range work.VoiceCredits {
 		names = append(names, credit.DisplayName)
@@ -241,17 +243,20 @@ func (s *Server) catalogEntryProtectedNames(ctx context.Context, entry catalogEn
 // A series title belongs to the same work as its episodes, so every member's
 // circle and cast are protected names for that title.
 func (s *Server) catalogSeriesProtectedNames(ctx context.Context, seriesID int64) ([]string, error) {
-	rows, err := s.catalogRead(ctx).QueryContext(ctx, `SELECT m.catalog_entry_id,COALESCE(e.work_id,0) FROM catalog_series_member m
+	rows, err := s.catalogRead(ctx).QueryContext(ctx, `SELECT m.catalog_entry_id,COALESCE(e.work_id,0),e.title FROM catalog_series_member m
 		JOIN source_catalog_entry e ON e.id=m.catalog_entry_id
 		WHERE m.series_id=?`, seriesID)
 	if err != nil {
 		return nil, err
 	}
-	type member struct{ entryID, workID int64 }
+	type member struct {
+		entryID, workID int64
+		title           string
+	}
 	members := []member{}
 	for rows.Next() {
 		var item member
-		if err = rows.Scan(&item.entryID, &item.workID); err != nil {
+		if err = rows.Scan(&item.entryID, &item.workID, &item.title); err != nil {
 			_ = rows.Close()
 			return nil, err
 		}
@@ -267,6 +272,7 @@ func (s *Server) catalogSeriesProtectedNames(ctx context.Context, seriesID int64
 	// wait on itself.
 	names := []string{}
 	for _, item := range members {
+		names = append(names, translationProtectedNames(nil, item.title)...)
 		if item.workID == 0 {
 			// An episode that is not registered yet still publishes its credits
 			// in the release sidecar. Those names must stay verbatim too.
@@ -288,6 +294,7 @@ func (s *Server) catalogSeriesProtectedNames(ctx context.Context, seriesID int64
 			return nil, loadErr
 		}
 		names = append(names, work.Circle)
+		names = append(names, translationProtectedNames(nil, work.Title, work.Description)...)
 		names = append(names, work.VoiceActors...)
 		for _, credit := range work.VoiceCredits {
 			names = append(names, credit.DisplayName)
@@ -306,6 +313,7 @@ func (s *Server) loadRemoteTranslationField(ctx context.Context, in contentTrans
 		return readableTranslationField{}, err
 	}
 	field := readableTranslationField{Names: append([]string{detail.Circle}, detail.VoiceActors...)}
+	field.Names = translationProtectedNames(field.Names, work.Title, detail.Title)
 	switch in.Field {
 	case "description":
 		// A Kikoeru listing publishes no description. The request names a

@@ -102,7 +102,15 @@ Responses contain `text`, `original`, `language`, `status` (`original`, `existin
 `translated`, `failed`), optional error `code`, and optional `cacheStatus`.
 `origin` resolves original text without calling the model. Circle and voice actor
 names are replaced with placeholders before generation; missing, duplicated or
-modified placeholders reject the output. Personal notes and personal tags have
+modified placeholders reject the output. Explicit colon-labelled credits such as
+`CV:`, `声優:` and `サークル:` in public titles and descriptions supply the
+same local protection list, including unregistered cards with no sidecar. A closed
+`(CVName)` credit also qualifies without a colon, including full-width CV letters
+and parentheses. Inline brackets and line/section separators bound these credits;
+unlabelled prose does
+not infer people or circles. A card's credits also protect its directory display
+names and its series title. This protection does not create metadata or alter
+media paths. Personal notes and personal tags have
 no automatic translation path. Conversion failures return the verified original,
 `status=failed` and `translation_conversion_failed`; the same original/retry
 controls remain available. Conversion accepts at most 256 KiB of valid UTF-8 text.
@@ -330,7 +338,15 @@ The default model invocation name is `Index-Translate-35B-A3B`; a configured nam
 is sent without replacement. The base URL is unset until an administrator saves
 the service URL. The caller appends `/chat/completions` to that base.
 
-Template `index-user-v1` uses one user message with automatic source language:
+Template `index-user-v2` versions the prompt and the local explicit-credit
+protection protocol. A version change invalidates model output in persistent
+corpus, source-field display caches and browser caches through the configuration
+key and public version endpoint. Native rows stay valid. Stale model rows are
+excluded from target-language search and current coverage while the existing
+bounded prefill pass regenerates them; original-language reads remain available.
+No concurrency, timeout, retry or disk budget changes accompany invalidation.
+
+The template uses one user message with automatic source language:
 
 ```text
 请将以下文本翻译为{target-language}，直接输出翻译结果，不要进行任何解释。

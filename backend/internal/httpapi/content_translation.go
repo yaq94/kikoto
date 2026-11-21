@@ -210,6 +210,7 @@ func (s *Server) translateContentField(ctx context.Context, in contentTranslatio
 	if text == "" || text != in.Text {
 		return contentTranslationResponse{}, "", &translation.Error{Code: "translation_content_changed", Message: "Reload the content before translating."}
 	}
+	field.Names = translationProtectedNames(field.Names, text)
 	original := field.Original
 	if original == "" {
 		original = text

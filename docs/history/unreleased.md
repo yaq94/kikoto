@@ -16,7 +16,14 @@ series.
 - Titles, descriptions, system tags, and directory names follow the display
   language, with the original text always available.
 - Traditional Chinese conversion reuses the Simplified translation and keeps
-  circle and cast names verbatim.
+  circle and cast names verbatim. Explicit CV and circle credits inside public
+  prose are protected even without sidecar or registered-work metadata.
+- The `index-user-v2` protection protocol invalidates earlier model translations
+  in display caches and searchable coverage. Native text remains available; the
+  existing bounded prefill rebuilds model rows. Plan for up to four model-language
+  slots per corpus field, minus native slots, with at most three persistent
+  attempts per missing slot. Original-language reads remain available during
+  rebuilding; target-language search includes only current translations.
 - Translations are cached per source text, model, and template, with bounded
   concurrency, queueing, and storage.
 - Mini cards keep original-text and retry controls beside the title, with

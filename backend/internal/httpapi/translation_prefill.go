@@ -656,7 +656,7 @@ func (s *Server) translationPrefillProtectedNames(ctx context.Context, kind stri
 		if err != nil {
 			return nil, err
 		}
-		names := append([]string{work.Circle}, work.VoiceActors...)
+		names := translationProtectedNames(append([]string{work.Circle}, work.VoiceActors...), work.Title, work.Description)
 		for _, credit := range work.VoiceCredits {
 			names = append(names, credit.DisplayName)
 		}

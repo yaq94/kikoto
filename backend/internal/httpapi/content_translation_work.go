@@ -49,7 +49,7 @@ func (s *Server) loadWorkProseTranslationField(ctx context.Context, in contentTr
 			names = append(names, credit.DisplayName)
 		}
 	}
-	field := readableTranslationField{Names: names, Original: title}
+	field := readableTranslationField{Names: translationProtectedNames(names, title, description), Original: title}
 	selected := metadatatitles.Select(input.Variants, input.Manual, s.viewerMetadataLanguages(ctx), input.Fallback)
 	candidates := []string{}
 	if in.Field == "title" {

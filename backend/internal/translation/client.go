@@ -15,7 +15,10 @@ import (
 	"github.com/yexca/kikoto/backend/internal/outbound"
 )
 
-const TemplateVersion = "index-user-v1"
+// TemplateVersion covers the prompt and the local name-masking protocol.
+// Changing either invalidates model rows, browser display caches and prefill
+// coverage through the existing configuration key; native rows remain valid.
+const TemplateVersion = "index-user-v2"
 const MaxInputBytes = 8 << 10
 const MaxResponseBytes = 256 << 10
 

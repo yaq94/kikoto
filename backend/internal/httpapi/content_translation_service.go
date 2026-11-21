@@ -147,6 +147,7 @@ func (s *Server) translateInBackground(ctx context.Context, cfg translation.Conf
 }
 
 func (s *Server) translateOnLane(ctx context.Context, cfg translation.Config, key string, names []string, text string, target translationTarget, background bool) (string, error) {
+	names = translationProtectedNames(names, text)
 	protected, err := translation.Protect(text, names)
 	if err != nil {
 		return "", err
