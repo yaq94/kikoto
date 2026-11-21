@@ -91,9 +91,12 @@ func (s *Server) blockUnadmittedCatalogRootsTx(ctx context.Context, tx *sql.Tx, 
 	// early admissible card from occupying every pass and starving the queue.
 	// A partially observed root waits for its full listing: a later page may
 	// still add the audio that makes it playable.
+	// Keep directories outermost and probe only their pending observations.
+	// Stale statistics must not turn an empty pass into a scan of every file
+	// or of a previous generation's backlog while this transaction owns the writer.
 	rows, err := tx.QueryContext(ctx, `SELECT d.catalog_root
 		FROM source_catalog_directory d
-		JOIN source_catalog_observation o
+		CROSS JOIN source_catalog_observation o INDEXED BY source_catalog_observation_pending
 			ON o.file_source_id=d.file_source_id AND o.directory_path=d.path AND o.revision=d.revision
 			WHERE d.file_source_id=? AND d.generation=? AND d.catalog_root<>'' AND o.publish_pending=1
 				AND NOT EXISTS(SELECT 1 FROM source_catalog_directory d2

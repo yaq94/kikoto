@@ -319,6 +319,11 @@ Root admission counts start from directories selected by source, generation and
 card root, then seek observations by directory and revision. Their `CROSS JOIN`
 keeps unrelated source observations outside the three threshold probes. The
 counts retain the shared admission limits and complete-listing requirement.
+The admission prepass also starts from the current generation's directories and
+probes their pending observations through the partial index. Completed file
+history and an earlier generation's backlog do not drive the write transaction,
+even with stale planner statistics. Only fully observed roots can have their
+pending flags cleared; unfinished roots and old revisions remain queued.
 
 The worker publishes at most eight batches of 50 rows per invocation, so a long
 backlog does not hold the single SQLite writer across the whole scan; the
