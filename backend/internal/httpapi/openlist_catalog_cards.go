@@ -52,9 +52,9 @@ func openListCatalogCardsQueryFiltered(sourceID int64, query string, entryIDs, s
 	seriesScope := ""
 	scope := []string{}
 	searched := entryIDs != nil || seriesIDs != nil
-	// A short translated search only returns rows whose stored `browsable` flag
-	// already means "admitted and playable". Recomputing admission and the audio
-	// probe per candidate would repeat that work 1000 times for no new answer.
+	// A short translated search admits candidates before its bounded hit set:
+	// source-owned rows use stored `browsable`, while manual series check their
+	// current member scope. The card stage reuses that proof.
 	trustedScope := false
 	if searched {
 		// A display-language search already knows the matching identities.
@@ -209,9 +209,9 @@ func openListCatalogCardsQueryFiltered(sourceID int64, query string, entryIDs, s
 	seriesHasAudio := `s.id IN (SELECT series_id FROM admitted_series_member)`
 	seriesInSource := `SELECT series_id FROM admitted_series_member WHERE file_source_id=?`
 	if trustedScope {
-		// A stored `browsable` row already passed admission and has audio. The
-		// series arm still needs a member's availability, but its admission and
-		// audio probes are known to succeed.
+		// The bounded hit set already passed admission and has audio. The series
+		// arm still needs a member's availability; admission and audio need not
+		// be recomputed for every candidate.
 		entryHasAudio = "1"
 		entryAdmitted = "1=1"
 		seriesInSource = `SELECT m.series_id FROM catalog_series_member m CROSS JOIN source_catalog_entry e ON e.rowid=m.catalog_entry_id
@@ -403,8 +403,8 @@ const catalogShortSearchResultLimit = 1000
 // localizedCatalogSearchSQL builds the translated hit set for a display
 // language. Entry and series titles are searchable; source_catalog_entry has
 // no description column. Three or more characters use the trigram index;
-// one- and two-character needles use the shared keyset generator so the
-// remote, local and benchmark paths cannot diverge again.
+// one- and two-character needles use indexed substring scans. Source-owned
+// rows use the shared keyset generator; manual series check member scope.
 func localizedCatalogSearchSQL(targets []library.DisplaySearchTarget, sourceID int64, short bool, configKey string, shortLimit int) (string, []any) {
 	if !short {
 		ftsSets := make([]string, 0, len(targets))
@@ -436,9 +436,9 @@ func localizedCatalogSearchSQL(targets []library.DisplaySearchTarget, sourceID i
 			branches = append(branches, `SELECT 0 AS catalog_entry_id,ct.entity_id AS series_id,(ct.translated_text=?) AS exact
 				FROM content_translation ct
 				WHERE `+ftsFilter+` AND ct.entity_kind='series' AND ct.field='title' AND ct.language=?
-				  AND ct.browsable=1 AND `+current+`
+				  AND (ct.browsable=1 OR ct.source_id IS NULL) AND `+current+`
 				  AND EXISTS(SELECT 1 FROM catalog_series s WHERE s.id=ct.entity_id
-				    AND s.source_id=? AND ct.source_text=s.title)`)
+				    AND (s.source_id=? OR s.source_id IS NULL) AND ct.source_text=s.title)`)
 			args = append(args, target.Query, target.Language)
 			if target.Language != translation.SourceHant {
 				args = append(args, configKey)
@@ -474,6 +474,35 @@ func localizedCatalogSearchSQL(targets []library.DisplaySearchTarget, sourceID i
 	if seriesSQL != "" {
 		branches = append(branches, `SELECT 0 AS catalog_entry_id,entity_id AS series_id,exact,language,entity_kind FROM (`+seriesSQL+`)`)
 		args = append(args, seriesArgs...)
+	}
+	// A manually confirmed series is shared across its member sources and has
+	// no owning source. Its stored scope cannot answer per-source admission, so
+	// check the current title and an admitted member before spending the bound.
+	// The NULL-source range remains on the covering short-scan index.
+	for _, target := range targets {
+		needle := strings.TrimSpace(target.Query)
+		if needle == "" {
+			continue
+		}
+		branch := `SELECT 0 AS catalog_entry_id,ct.entity_id AS series_id,(ct.translated_text=?) AS exact,ct.language,ct.entity_kind
+			FROM content_translation ct INDEXED BY idx_content_translation_short_scan
+			WHERE ct.language=? AND ct.entity_kind='series' AND ct.field='title' AND ct.source_id IS NULL
+			  AND ` + translationCurrentRowSQL("ct", target.Language) + ` AND instr(ct.translated_text,?)>0
+			  AND EXISTS(SELECT 1 FROM catalog_series s WHERE s.id=ct.entity_id AND s.source_id IS NULL AND s.title=ct.source_text
+			    AND EXISTS(SELECT 1 FROM catalog_series_member sibling WHERE sibling.series_id=s.id LIMIT 1 OFFSET 1)
+			    AND EXISTS(SELECT 1 FROM catalog_series_member m CROSS JOIN source_catalog_entry e ON e.rowid=m.catalog_entry_id
+			      WHERE m.series_id=s.id AND e.file_source_id=? AND e.relocated_to_id IS NULL AND ` + catalogEntryAdmittedSQL("e") + `))`
+		branchArgs := []any{needle, target.Language}
+		if target.Language != translation.SourceHant {
+			branchArgs = append(branchArgs, configKey)
+		}
+		branchArgs = append(branchArgs, needle, sourceID)
+		if shortLimit > 0 {
+			branch = `SELECT * FROM (` + branch + ` ORDER BY ct.browsable,ct.id LIMIT ?)`
+			branchArgs = append(branchArgs, shortLimit)
+		}
+		branches = append(branches, branch)
+		args = append(args, branchArgs...)
 	}
 	prefix := `WITH search_hits AS MATERIALIZED (` + strings.Join(branches, " UNION ALL ") + `) `
 	return prefix, args

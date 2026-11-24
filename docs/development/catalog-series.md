@@ -130,8 +130,12 @@ groups cannot be merged through this entry point; member work identities and
 records remain intact. [Shared associations](shared-associations.md) provide
 same-level series or episode association with record-owner conflict confirmation. Private values contribute only to an internal digest.
 
-Source browsing shows one series card and still matches episode titles during
-search. Opening an episode selects its existing directory controls. Opening a
+Source browsing shows one series card and matches both series and episode
+titles. A manual series title is searchable in each member source through the
+current native or translated rows for the selected content language. At least
+one admitted member belongs to that source; the title and membership follow the
+published snapshot.
+Opening an episode selects its existing directory controls. Opening a
 series, episode or format does not change the persistent player; selecting a
 track uses that episode's real relative path and playback identity.
 
