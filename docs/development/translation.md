@@ -86,7 +86,11 @@ take precedence over generation. Missing Traditional Chinese fields use the
 matching authored Simplified field, or obtain its generated Simplified translation
 through the shared queue and cache. OpenCC `s2t` converts that text locally before
 protected names are restored; selecting either script never sends a Traditional
-target to the model. Authored Traditional fields retain precedence.
+target to the model. Authored Traditional fields retain precedence. Native
+Simplified text uses the same local conversion. A successful `native` response
+whose text differs from its original displays the converted text by default and
+allows viewing the original; same-language, unchanged native text has no
+translation action.
 
 Remote titles, tags and directory display names have no durable work or
 catalogue-entry identity. Their successful model output is stored in
@@ -99,7 +103,7 @@ source is still revalidated before a cached row is considered, so disabling or
 restricting a source cannot be bypassed through this cache.
 
 Responses contain `text`, `original`, `language`, `status` (`original`, `existing`,
-`translated`, `failed`), optional error `code`, and optional `cacheStatus`.
+`translated`, `native`, `failed`), optional error `code`, and optional `cacheStatus`.
 `origin` resolves original text without calling the model. Circle and voice actor
 names are replaced with placeholders before generation; missing, duplicated or
 modified placeholders reject the output. Explicit colon-labelled credits such as

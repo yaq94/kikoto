@@ -146,6 +146,7 @@ export const surfaceHant = {
     openlistType: "OpenList",
     detail: "來源索引作品",
     numberless: "無發行編號",
+    reloadDirectory: "重新載入已儲存目錄",
     scan: "掃描已設定目錄",
     scanStatus: "目錄掃描",
     running: "正在掃描已設定目錄…",

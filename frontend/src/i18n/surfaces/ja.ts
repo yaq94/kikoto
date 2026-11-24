@@ -147,6 +147,7 @@ export const surfaceJapanese = {
     openlistType: "OpenList",
     detail: "ソースカタログの作品",
     numberless: "作品番号なし",
+    reloadDirectory: "保存済みのディレクトリを再読み込み",
     scan: "設定したフォルダーをスキャン",
     scanStatus: "カタログスキャン",
     running: "設定したフォルダーをスキャン中…",

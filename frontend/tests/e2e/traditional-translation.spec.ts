@@ -117,3 +117,50 @@ test("Traditional pending and failed generation keeps original, retries and cann
   await hero.getByRole("button", { name: "Retry translation", exact: true }).click();
   await expect(hero).toContainText("聽見森林裏的音樂 示例声优 示例社团");
 });
+
+test("Native Simplified text displays its Traditional conversion without model generation @desktop", async ({
+  page,
+}) => {
+  const original = "听见森林里的音乐 示例声优 示例社团";
+  const converted = "聽見森林裏的音樂 示例声优 示例社团";
+  const before = await (await page.request.get(`${backend}/__fixture/state`)).json();
+  expect(
+    (
+      await page.request.patch(`${backend}/api/works/27/manual-overrides`, {
+        data: { title: original },
+      })
+    ).ok(),
+  ).toBe(true);
+  await page.goto("/RJ00000026");
+  const hero = page.getByTestId("detail-hero");
+  await expect(hero).toContainText(original);
+
+  const answer = page.waitForResponse((response) => {
+    if (!response.url().endsWith("/api/content-translations/batch")) return false;
+    const request = response.request().postDataJSON();
+    return request.items.some(
+      (item: { workId?: number; field: string; language: string }) =>
+        item.workId === 27 && item.field === "title" && item.language === "zh-tw",
+    );
+  });
+  await chooseLanguage(page, "Traditional Chinese");
+  const response = await answer;
+  const request = response.request().postDataJSON();
+  const titleKey = request.items.find(
+    (item: { workId?: number; field: string; language: string }) =>
+      item.workId === 27 && item.field === "title" && item.language === "zh-tw",
+  ).key;
+  const translated = await response.json();
+  expect(translated.items.find((item: { key: string }) => item.key === titleKey)).toMatchObject({
+    status: "native",
+    original,
+    text: converted,
+  });
+  await expect(hero).toContainText(converted);
+  await hero.getByRole("button", { name: "Show original text for all fields", exact: true }).click();
+  await expect(hero).toContainText(original);
+  await hero.getByRole("button", { name: "Show translations for all fields", exact: true }).click();
+  await expect(hero).toContainText(converted);
+  const after = await (await page.request.get(`${backend}/__fixture/state`)).json();
+  expect(after.requests.slice(before.requests.length).join("\n")).not.toContain("听见森林里的音乐");
+});
