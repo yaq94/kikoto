@@ -395,19 +395,18 @@ matches the backup.
 | v0.8.0 | `059` | `059_v0.8.0.sql` |
 | v0.8.1, v0.8.2 | `066` | `066_v0.8.1.sql` |
 | v0.8.3 | `068` | `068_v0.8.3.sql` |
-| development build (unreleased) | `105` | Development baseline only; `compat/105_dev.sql` |
+| development build (unreleased) | `111` | Development baseline only; `compat/111_dev.sql` |
 
-The numbered chain runs `096` through `105` without a gap.
-`compat/105_dev.sql` is the current development baseline; `compat/104_dev.sql`,
-`compat/103_dev.sql`,
-`compat/102_dev.sql` and `compat/096_dev.sql` remain as earlier development
-baselines, and there is no separate `compat/101_dev.sql`.
+The numbered chain runs `096` through `111` without a gap.
+`compat/111_dev.sql` is the current development baseline. Earlier packaged
+`compat/` files remain accepted for development databases created from them;
+there is no separate `compat/101_dev.sql`.
 
 Per-release upgrade steps are in the [release notes](../history/index.md).
 
 ## Kikoto-next Schema Additions
 
-Migrations `069` through `105` extend the source catalog, shared associations,
+Migrations `069` through `111` extend the source catalog, shared associations,
 personal transfer, and the recoverable index. Pending release notes and upgrade
 steps are in
 [Unreleased](../history/unreleased.md).
@@ -451,6 +450,12 @@ steps are in
 | `103_translation_short_scan_index.sql` | Replace the 099 short-query indexes with `idx_content_translation_short_scan` | An ordered short page reads the index in keyset order; the complete-set count needs no table lookup |
 | `104_source_catalog_entry_admission.sql` | `source_catalog_entry_admission`, one count row per card and generation | A matching generation answers admission from the primary key; a file write invalidates the row and the reader counts live rows |
 | `105_translation_search_scope.sql` | Stored `source_id`/`browsable`, scoped short-scan index, scope views and triggers | A per-source short search answers language, kind, field, source, admission and text from one covering range |
+| `106_translation_corpus_revision.sql` | Corpus revision and checked prefill revision | Changed effective inputs reopen prefill without counting a finished cursor as complete |
+| `107_catalog_publication.sql` | Publication before-images and durable listing pages | Readers retain the committed snapshot while bounded preparation resumes |
+| `108_catalog_grouping.sql` | Grouping and finite-directory checkpoints | Classification and finite scans resume without changing stable identities |
+| `109_catalog_lookup_affinity.sql` | Integer identity affinity and indexed size range | Publication lookups use the declared identity and bounded format candidates |
+| `110_catalog_split_retirement.sql` | Obsolete split-card retirement cursor | Bounded retirement preserves protected source identities and personal records |
+| `111_catalog_grouping_kind_order.sql` | Grouping kind and name index | Grouping reads use the indexed kind/name order |
 
 The Release To Schema Map above lists every numbered file. `069` rebuilds `work`
 and `logical_work` to relax code uniqueness and creates the catalog entry and
