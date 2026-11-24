@@ -71,6 +71,7 @@ export type CatalogEntry = PersonalReview & {
   status?: CatalogStatus;
   relocationCandidates?: Array<{ catalogEntryId: number; title: string; reason: string }>;
 };
+export type CatalogEntryDetail = CatalogEntry & { checkedAt: string; checkPending: boolean };
 export type CatalogSeriesEpisode = Omit<CatalogEntry, keyof PersonalReview> & { position: number };
 export type CatalogSeries = PersonalReview & {
   seriesId: number;
@@ -212,7 +213,8 @@ export const sourceCatalogApi = {
     postJSONBody<{ targets: CatalogPlaybackTarget[] }>(`/api/source-catalog/${id}/playback`, { paths }, signal),
   refreshCatalogDirectory: (id: number, signal?: AbortSignal) =>
     postJSONBody<{ status: string }>(`/api/source-catalog/${id}/refresh`, {}, signal),
-  getCatalogEntry: (id: number, signal?: AbortSignal) => getJSON<CatalogEntry>(`/api/source-catalog/${id}`, signal),
+  getCatalogEntry: (id: number, signal?: AbortSignal) =>
+    getJSON<CatalogEntryDetail>(`/api/source-catalog/${id}`, signal),
   getCatalogTracks: (id: number, options?: CatalogTrackOptions, signal?: AbortSignal) => {
     const params = new URLSearchParams();
     if (options?.path !== undefined) params.set("path", options.path);

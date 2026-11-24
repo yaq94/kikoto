@@ -147,6 +147,7 @@ export const surfaceKorean = {
     openlistType: "OpenList",
     detail: "소스 카탈로그 작품",
     numberless: "발매 번호 없음",
+    reloadDirectory: "저장된 디렉터리 다시 불러오기",
     scan: "설정한 폴더 스캔",
     scanStatus: "카탈로그 스캔",
     running: "설정한 폴더를 스캔하는 중…",

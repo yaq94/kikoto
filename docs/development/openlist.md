@@ -435,8 +435,11 @@ timestamp-only change.
 `GET /api/remote-sources/{id}/works` uses the existing paged source card and
 search response. OpenList cards add `catalogEntryId` and may have an empty
 `primaryCode`; an absent `workId` means the entry has not been registered.
-`GET /api/source-catalog/{id}` reads the current entry and only the viewer's
-personal review. `GET .../tracks` reads its persisted directory snapshot.
+`GET /api/source-catalog/{id}` reads the current entry, only the viewer's
+personal review, UTC `checkedAt`, and `checkPending` for a queued or active
+availability check. `GET .../tracks` reads its persisted directory snapshot.
+Both reads follow the [source lifecycle](#source-lifecycle) check policy without
+waiting for the upstream result or registering a work.
 `GET .../media?path=<relative path>` selects a file from that snapshot, resolves
 its current URL from OpenList, and streams it without creating a media cache. It
 does not mutate stored state, so it follows the instance media model rather than
@@ -570,8 +573,13 @@ that entry's observed root with the same per-root limits and a five-minute
 overall deadline. It publishes a complete playable snapshot atomically. An
 upstream error or empty audio result retains the previous snapshot. Source tab
 selection and content-language changes do not trigger a scan. The directory's
-**Check sources** action requests this explicit refresh; read-only viewers
-reload the saved snapshot.
+**Check sources** action requests this explicit refresh; viewers without
+`sources:write` use **Reload saved directory** to read the saved snapshot.
+The independent catalog detail keeps its displayed files, selected folder,
+private review draft, and global player during a refresh or retry. A failed
+refresh reads back the saved source verdict without clearing that state. A
+response from an earlier root-directory read or another catalog detail cannot replace
+the current result.
 
 `POST /api/source-catalog/{id}/playback` requires `playback:use` and an already
 registered work. Its body supplies `paths` (1–256 exact audio paths, at most
@@ -602,6 +610,20 @@ personal records. Explicit directory refresh records its failure status and a
 successful refresh restores availability. A full scan confirms missing entries
 only after all its directory ranges are complete; cancelled or partial scans
 cannot declare a missing work. Availability belongs to each source separately.
+Opening a catalog detail or reading its tracks with `remote:track` queues a
+background check when the enabled source has no check time or its observation
+is at least 24 hours old. Fresh observations and disabled sources do not queue
+a check. The existing bounded queue coalesces a card's queued and active check;
+failure or cancellation releases that card for a later retry. A successful media
+Range request does not renew directory availability.
+
+The independent detail displays its saved result while `checkPending` is true.
+A viewer with `remote:track` reads the verdict every two seconds, for at most
+ten follow-up reads. Completion reads the saved directory again; a failed read,
+leaving the detail, or exhausting the read budget stops automatic reads. The
+refresh or saved-directory reload button remains available after that budget,
+with its existing permission boundary.
+
 A 404 or 410 answer is a definitive absence and is recorded as an empty
 directory rather than a failed range, so a deleted folder cannot hold the whole
 source at `partial` forever. Status matching is path-bounded: a failed `/Work`

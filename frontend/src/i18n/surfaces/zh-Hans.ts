@@ -145,6 +145,7 @@ export const surfaceHans = {
     kikoeruType: "Kikoeru",
     openlistType: "OpenList",
     detail: "来源索引作品",
+    reloadDirectory: "重新载入已保存目录",
     numberless: "无发行编号",
     scan: "扫描已配置目录",
     scanStatus: "目录扫描",

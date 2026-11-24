@@ -151,6 +151,7 @@ export const surfaceEnglish = {
     openlistType: "OpenList",
     detail: "Source catalog work",
     numberless: "No product code",
+    reloadDirectory: "Reload saved directory",
     scan: "Scan configured directories",
     scanStatus: "Catalog scan",
     running: "Scanning configured directories…",

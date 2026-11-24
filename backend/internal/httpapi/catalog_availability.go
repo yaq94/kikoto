@@ -31,6 +31,24 @@ func catalogDirectoryNeedsCheck(status, checkedAt string, now time.Time) bool {
 	return now.Sub(checked) >= catalogAvailabilityCheckTTL
 }
 
+// readCatalogEntryAvailability uses the same published snapshot as the saved
+// directory. Only a reader with remote:track can request a background check.
+func (s *Server) readCatalogEntryAvailability(ctx context.Context, entry catalogEntry, source remoteSourceForUse) (string, bool, error) {
+	var checkedAt string
+	if err := s.catalogRead(ctx).QueryRowContext(ctx, `SELECT COALESCE(strftime('%Y-%m-%dT%H:%M:%SZ',status_checked_at),'')
+		FROM source_catalog_entry WHERE id=?`, entry.ID).Scan(&checkedAt); err != nil {
+		return "", false, err
+	}
+	viewer, known := userFromContext(ctx)
+	if source.Enabled && source.SourceType == sourceTypeOpenList && known && userHasPermission(viewer, "remote:track") && catalogDirectoryNeedsCheck(entry.Status, checkedAt, time.Now()) {
+		s.enqueueCatalogDirectoryCheck(entry.ID)
+	}
+	s.catalogAvailabilityMu.Lock()
+	_, pending := s.catalogAvailabilityQueued[entry.ID]
+	s.catalogAvailabilityMu.Unlock()
+	return checkedAt, pending, nil
+}
+
 // enqueueCatalogDirectoryCheck coalesces requests for the same card. The queue
 // is deliberately small: a work page has only a few catalog tabs, and a full
 // queue must not delay the page response.
@@ -66,15 +84,23 @@ func (s *Server) RunCatalogAvailabilityWorker(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case id := <-s.catalogAvailabilityQueue:
-			s.catalogAvailabilityMu.Lock()
-			delete(s.catalogAvailabilityQueued, id)
-			s.catalogAvailabilityMu.Unlock()
-			checkCtx, cancel := context.WithTimeout(ctx, catalogAvailabilityTimeout)
-			status, err := s.refreshCatalogEntry(checkCtx, id)
-			cancel()
-			if err != nil && ctx.Err() == nil {
-				slog.Warn("catalog availability check failed", "catalog_entry_id", id, "status", status, "error", err)
-			}
+			s.runCatalogAvailabilityCheck(ctx, id)
 		}
+	}
+}
+
+func (s *Server) runCatalogAvailabilityCheck(ctx context.Context, id int64) {
+	// The marker owns both queued and active work. Releasing it when dequeued
+	// lets another reader schedule the same stale entry while this probe runs.
+	defer func() {
+		s.catalogAvailabilityMu.Lock()
+		delete(s.catalogAvailabilityQueued, id)
+		s.catalogAvailabilityMu.Unlock()
+	}()
+	checkCtx, cancel := context.WithTimeout(ctx, catalogAvailabilityTimeout)
+	defer cancel()
+	status, err := s.refreshCatalogEntry(checkCtx, id)
+	if err != nil && ctx.Err() == nil {
+		slog.Warn("catalog availability check failed", "catalog_entry_id", id, "status", status, "error", err)
 	}
 }

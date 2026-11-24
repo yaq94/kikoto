@@ -440,6 +440,11 @@ func (s *Server) getSourceCatalogEntry(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	checkedAt, checkPending, err := s.readCatalogEntryAvailability(r.Context(), entry, source)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
 	var rating sql.NullInt64
 	note := ""
 	if entry.WorkID != nil && optionalUserID(r.Context()) > 0 {
@@ -471,7 +476,7 @@ func (s *Server) getSourceCatalogEntry(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	writeJSON(w, 200, map[string]any{"seriesId": seriesID, "catalogEntryId": entry.ID, "sourceId": entry.SourceID, "sourceName": source.DisplayName, "title": entry.Title, "primaryCode": entry.PrimaryCode, "workId": entry.WorkID, "personalRating": personalRating, "personalNote": note, "status": entry.Status, "relocationCandidates": candidates})
+	writeJSON(w, 200, map[string]any{"seriesId": seriesID, "catalogEntryId": entry.ID, "sourceId": entry.SourceID, "sourceName": source.DisplayName, "title": entry.Title, "primaryCode": entry.PrimaryCode, "workId": entry.WorkID, "personalRating": personalRating, "personalNote": note, "status": entry.Status, "checkedAt": checkedAt, "checkPending": checkPending, "relocationCandidates": candidates})
 }
 
 func (s *Server) getSourceCatalogTracks(w http.ResponseWriter, r *http.Request) {
@@ -480,7 +485,7 @@ func (s *Server) getSourceCatalogTracks(w http.ResponseWriter, r *http.Request) 
 		writeAPIError(w, 400, "invalid_request", "invalid catalog id", false)
 		return
 	}
-	readCtx, entry, _, done, err := s.beginCatalogEntryRead(r.Context(), id)
+	readCtx, entry, source, done, err := s.beginCatalogEntryRead(r.Context(), id)
 	if err != nil {
 		writeUpstreamError(w, err)
 		return
@@ -496,6 +501,10 @@ func (s *Server) getSourceCatalogTracks(w http.ResponseWriter, r *http.Request) 
 		// The card exists for provenance but never passed the publish threshold.
 		// It has no playable tracks, so it must not answer a track request.
 		writeCatalogEntryNotAvailable(w, admission)
+		return
+	}
+	if _, _, err = s.readCatalogEntryAvailability(r.Context(), entry, source); err != nil {
+		writeError(w, err)
 		return
 	}
 	id = entry.ID

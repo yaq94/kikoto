@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "@/auth/AuthProvider";
 import {
@@ -7,66 +7,33 @@ import {
   TranslatedText,
 } from "@/components/content-translation/ContentTranslation";
 import { Button } from "@/components/ui/button";
-import { api, type CatalogEntry, type CatalogTrack } from "@/lib/api";
 import { usePlayer } from "@/player/PlayerProvider";
 import { openWorkDetail } from "@/app/workDetailNavigation";
 import { toastFromError, useToast } from "@/components/ui/toast";
 import { DirectoryExplorer } from "./directory/DirectoryExplorer";
 import { type TreeTrack } from "./media/mediaTreeModel";
 import { PersonalReviewEditor } from "./PersonalReviewEditor";
-import { buildCatalogTree, mergeCatalogTracks } from "./catalogTreeModel";
+import { buildCatalogTree } from "./catalogTreeModel";
 import { catalogPlaybackQueue, catalogResumeQueue } from "./catalogPlayback";
 import { useWorkPlaybackCursor } from "./media/useWorkPlaybackCursor";
 import { CatalogGroupingEditor } from "./CatalogGroupingEditor";
 import { CatalogAvailabilityNotice } from "./CatalogAvailabilityNotice";
 import { SharedAssociationPanel } from "./SharedAssociationPanel";
+import { useCatalogWorkDetail } from "./useCatalogWorkDetail";
 
 export function CatalogWorkDetail({ id, onBack }: { id: number; onBack: () => void }) {
   const { t } = useTranslation();
   const auth = useAuth();
   const player = usePlayer();
   const toast = useToast();
-  const [entry, setEntry] = useState<CatalogEntry | null>(null);
-  const [tracks, setTracks] = useState<CatalogTrack[]>([]);
-  const [failed, setFailed] = useState(false);
-  const [attempt, setAttempt] = useState(0);
-  const request = useRef<AbortController | null>(null);
+  const detail = useCatalogWorkDetail(id, auth.user?.id, auth.hasPermission("remote:track"));
+  const { entry, tracks, failed, checking } = detail;
+  const canRefresh = auth.hasPermission("sources:write") && entry?.status !== "disabled";
   const { cursor } = useWorkPlaybackCursor(entry?.workId ?? null);
-  useEffect(() => {
-    const controller = new AbortController();
-    request.current = controller;
-    setEntry(null);
-    setTracks([]);
-    setFailed(false);
-    void api
-      .getCatalogEntry(id, controller.signal)
-      .then(setEntry)
-      .catch(() => {
-        if (!controller.signal.aborted) setFailed(true);
-      });
-    void api
-      .getCatalogTracks(id, { depth: 1 }, controller.signal)
-      .then((result) => setTracks(result.tracks))
-      .catch(() => {
-        if (!controller.signal.aborted) setFailed(true);
-      });
-    return () => controller.abort();
-  }, [id, auth.user?.id, attempt]);
   const tree = useMemo(() => buildCatalogTree(id, tracks), [id, tracks]);
-  const loadFolder = (folderPath: string) => {
-    const signal = request.current?.signal;
-    void api
-      .getCatalogTracks(id, { path: folderPath, depth: 1 }, signal)
-      .then((result) => {
-        if (!signal?.aborted) setTracks((current) => mergeCatalogTracks(current, folderPath, result.tracks));
-      })
-      .catch(() => {
-        // The folder stays collapsed; the next open retries the request.
-      });
-  };
   const play = async (files: TreeTrack[], locationId: number) => {
     if (!entry) return;
-    const signal = request.current?.signal;
+    const signal = detail.signal();
     try {
       const queue = await catalogPlaybackQueue(entry, files, locationId, signal);
       if (!signal?.aborted) player.playQueue(queue.tracks, queue.locationId, 0);
@@ -122,6 +89,17 @@ export function CatalogWorkDetail({ id, onBack }: { id: number; onBack: () => vo
             )}
           </header>
           <CatalogAvailabilityNotice entry={entry} />
+          <Button
+            variant="outline"
+            disabled={checking}
+            onClick={() => void (canRefresh ? detail.refresh() : detail.reload())}
+          >
+            {checking
+              ? t("libraryDetail.checkingSources")
+              : canRefresh
+                ? t("libraryDetail.checkSources")
+                : t("openlist.reloadDirectory")}
+          </Button>
           {entry.seriesId ? (
             <Button
               variant="outline"
@@ -148,27 +126,15 @@ export function CatalogWorkDetail({ id, onBack }: { id: number; onBack: () => vo
             onPlayFolder={
               auth.hasPermission("playback:use") ? (files, locationId) => void play(files, locationId) : undefined
             }
-            onFolderOpen={loadFolder}
+            onFolderOpen={(path) => void detail.loadFolder(path)}
           />
-          <SharedAssociationPanel
-            subject={{ kind: "catalog", id }}
-            onCompleted={() => {
-              void api
-                .getCatalogEntry(id)
-                .then(setEntry)
-                .catch(() => setFailed(true));
-            }}
-          />
+          <SharedAssociationPanel subject={{ kind: "catalog", id }} onCompleted={() => void detail.reload()} />
           <PersonalReviewEditor
             key={`${id}:${auth.user?.id}`}
             title={entry.seriesId ? t("catalogSeries.episodeReview", { title: entry.title }) : undefined}
             value={entry}
             needsRegistration={entry.workId === null}
-            onSave={async (patch) => {
-              const result = await api.updateCatalogReview(id, patch);
-              setEntry((current) => (current ? { ...current, workId: result.workId } : current));
-              return result;
-            }}
+            onSave={detail.saveReview}
           />
         </ContentTranslationScope>
       ) : (
@@ -177,7 +143,9 @@ export function CatalogWorkDetail({ id, onBack }: { id: number; onBack: () => vo
       {failed && (
         <div role="alert">
           <p>{t("errors.unavailable")}</p>
-          <Button onClick={() => setAttempt((n) => n + 1)}>{t("common.retry")}</Button>
+          <Button onClick={() => void (entry && canRefresh ? detail.refresh() : detail.reload())}>
+            {t("common.retry")}
+          </Button>
         </div>
       )}
     </section>
