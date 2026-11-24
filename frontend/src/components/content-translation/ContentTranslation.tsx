@@ -553,7 +553,10 @@ export function TranslatedText({
   const last = settled?.fieldKey === fieldKey ? settled.result : null;
   const result = settled?.key === key ? settled.result : null;
   const translated =
-    enabled && last && (last.status === "translated" || last.status === "existing") && last.text !== last.original;
+    enabled &&
+    last &&
+    (last.status === "translated" || last.status === "existing" || last.status === "native") &&
+    last.text !== last.original;
   const hasTranslatedText = Boolean(translated);
   const { countTranslation } = scope;
   useEffect(() => {
